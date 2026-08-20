@@ -48,7 +48,9 @@ and stay next to the machine until you trust it.
 
 ## Install
 
-On the printer (ssh as `pwned`):
+On the printer (ssh as `pwned` — this assumes a jailbroken printer; how to
+get root/ssh access is covered in the community
+[Discord](https://discord.gg/tYs3eNEDq)):
 
 ```sh
 # 1. the klippy extra (firmware partition — may need remount rw)
