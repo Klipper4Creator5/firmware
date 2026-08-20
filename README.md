@@ -182,3 +182,9 @@ Fool-proofing, in rough priority order:
 
 Reverse-engineering notes (recovered sequences, addresses, JSON semantics)
 live in the parent project's `OKF/` directory.
+
+## Support
+
+If this saved your build plate (or your sanity), you can
+
+<a href="https://buymeacoffee.com/monstrofil"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-monstrofil-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a>
