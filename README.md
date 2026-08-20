@@ -182,6 +182,12 @@ Fool-proofing, in rough priority order:
 * **Move the absolute print Z offset from `START_PRINT` to the first
   toolchange of a job**, removing the ordering dependency between the
   macro and the slicer's start G-code.
+* **Block the stock touchscreen UI during Mainsail prints.** The app
+  doesn't know a print is running (it only tracks jobs it started
+  itself), so the screen stays fully live — a stray tap can home, move
+  the carriage, start a filament load, or fire its own toolchange into
+  the middle of a running job. The module should lock the UI out (or at
+  least its motion commands) while a Mainsail-started print is active.
 
 ## Reverse-engineering notes
 
