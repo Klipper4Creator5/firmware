@@ -17,6 +17,7 @@ documented in the file headers.
 | [`config/ff-toolchange.cfg`](config/ff-toolchange.cfg) | `/usr/data/config/` | Configuration + `SDCARD_PRINT_FILE` wrapper. Carries **no per-unit numbers** — calibration is read live from firmwareExe's own JSON |
 | [`config/ff-print-macros.cfg`](config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences |
 | [`orca/`](orca/) | OrcaSlicer printer profile | Machine start/end G-code, change-filament G-code, example project |
+| [`docs/notes/`](docs/notes/) | (reference only) | Condensed reverse-engineering notes: what the stock app actually does, with binary addresses |
 
 ## ⚠️ Use at your own risk
 
@@ -182,8 +183,13 @@ Fool-proofing, in rough priority order:
   toolchange of a job**, removing the ordering dependency between the
   macro and the slicer's start G-code.
 
-Reverse-engineering notes (recovered sequences, addresses, JSON semantics)
-live in the parent project's `OKF/` directory.
+## Reverse-engineering notes
+
+Condensed notes from the `firmwareExe` analysis — recovered sequences, binary
+addresses, JSON semantics — live in [`docs/notes/`](docs/notes/):
+architecture overview, the Klipper-fork delta (including the `Tn` interception),
+the verified grab/release sequences, the offset model, and the full print
+lifecycle with the deliberate divergences listed.
 
 ## Support
 
