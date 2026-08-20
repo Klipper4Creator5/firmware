@@ -1,5 +1,7 @@
 # FlashForge Creator 5 Pro — native toolchanger for Klipper/Mainsail
 
+<a href="https://buymeacoffee.com/monstrofil"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-monstrofil-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a>
+
 Makes the Creator 5 Pro's 4-tool toolchanger and print lifecycle work for
 prints started from Mainsail/Moonraker (e.g. sliced in OrcaSlicer), without
 the stock touchscreen app in the loop. Based on reverse-engineering the
@@ -186,5 +188,4 @@ live in the parent project's `OKF/` directory.
 ## Support
 
 If this saved your build plate (or your sanity), you can
-
-<a href="https://buymeacoffee.com/monstrofil"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-monstrofil-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a>
+[buy me a ~~coffee~~ new hotend](https://buymeacoffee.com/monstrofil).
