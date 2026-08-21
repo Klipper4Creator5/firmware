@@ -24,8 +24,10 @@ handles all of this. Kept as reference for future work.
 - **Nozzle offset calibration** (`testEddyExtruderOffsetForward*`): heats and cleans
   each nozzle, probes the fixed under-bed sensor with the eddy, then touches it with
   each nozzle; circular probing + least-squares circle fit for XY; results →
-  `tN_offset_x/y/z`, `z_station_pos` in extruder.json. This is what
-  `TOOLCHANGE_RELOAD` picks up after a touchscreen recalibration.
+  `tN_offset_x/y/z`, `z_station_pos` in extruder.json. Reimplemented in Klipper as
+  `STATION_CALIBRATE` / `TOOL_OFFSET_CALIBRATE` (`45-tool-offset-calibration.md`,
+  `46-offset-calibration-recovered.md`); the JSON is imported once with
+  `FF_IMPORT_FIRMWARE_CONFIG` and not consulted afterwards.
 - **Input shaper**: `STEPPER_RESONANCE_FACTORY_CALIBRATE` (fork) / `SHAPER_CALIBRATE`.
 - **Auto PA**: prints slow-fast-slow line patterns per PA candidate, scores via
   `PA_ACTION`/`PA_GET` (sensor unknown), stores per-tool table via `SET_PA_ADVANCE`.

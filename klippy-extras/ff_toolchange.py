@@ -16,20 +16,15 @@
 # switch state; E0145 "Lock motor current abnormal" is raised Klipper/MCU-side.
 # Driving the same MOTOR_* macros therefore inherits that behaviour unchanged.
 #
-# Install: copy to /usr/prog/klipper/klippy/extras/ff_toolchange.py, then in
-# /usr/data/config/printer.cfg:
-#     [ff_toolchange]
-#     dock_x: ...
+# Install: copy ff_tool.py and ff_toolchange.py to
+# /usr/prog/klipper/klippy/extras/, then see config/ff-toolchange.cfg.
 #
 # Klipper calls Tn only for lines that reach the gcode engine; a bare "Tn" in a
 # printing file is still swallowed by the FlashForge virtual_sdcard fork, so
 # touchscreen jobs are unaffected.
 
 import contextlib
-import json
 import logging
-import math
-import os
 
 EXTRUDER_COUNT = 4
 
@@ -49,12 +44,6 @@ RELEASE_RETRIES = 3         # MOTOR_RELEASE sends per attempt (fail on 3rd)
 RELEASE_STAGE_BACKOFF = 10.0    # release staging "G1 X<dock-10>" (@0xdb6af8)
 PULLBACK_FEED = 4800            # grab pullback's literal " F4800" (@0xdb4d40)
 
-# Feed fallbacks (mm/min) the app uses when testConfig() has no usable value.
-FAST_FEED_DEFAULT = 24000.
-SLOW_FEED_DEFAULT = 6000.           # grab side
-RELEASE_SLOW_FEED_DEFAULT = 5400.   # release reads the same grabSpeedSlow but
-                                    # substitutes 5400 (0x1518), not 6000
-
 # Firmware error codes. Per-tool families report E<base + tool>; both grab
 # and release map through the LANG_SRC table built at 0x689838.
 ERR_NOT_IN_DOCK_BASE = 127      # E0127+t  tool not detected in its dock (grab)
@@ -65,195 +54,17 @@ ERR_RELEASE_STATE = 144         # E0144    state error after release verify
 
 
 # ---------------------------------------------------------------------------
-# FlashForge's own per-unit configuration.
+# Where the numbers come from
 #
-# The values this module needs already exist on the printer, written by the
-# factory calibration and maintained by firmwareExe. Duplicating them into a
-# Klipper .cfg guarantees the two drift apart the moment anything recalibrates,
-# so we read the originals and treat the .cfg purely as an override layer.
-#
-# Config::extruderConfig() / testConfig() / zOffsetConfig() are backed by these
-# files. Note they are NOT strict JSON: each ends with a trailing C-style
-# comment after the closing brace ("/* Printer Extruder Offset Config */"),
-# which makes json.loads() raise "Extra data". raw_decode() stops at the end of
-# the first value and ignores the tail.
-#
-# There is exactly ONE config directory. initManagers() @0x412efc checks for
-# /usr/data/config/test.json and, if present, FileManager::copy()s it into
-# /usr/data/firmwareRes/config/ and then FileManager::remove()s the original --
-# it is a one-shot drop-in install hook, not a second search path. Every reader
-# then calls Config::load("/usr/data/firmwareRes/config") exactly once.
-#
-# Key names and their order were read off the binary's symbol table and the
-# load functions themselves (Config::loadExtruderConfig @0x64f7f8,
-# loadTestConfig @0x654380, loadZOffsetConfig @0x65621c), so the struct offsets
-# quoted below are the app's real layout:
-#   t0..t3_offset_x/y/z          +0x00..+0x2c
-#   x_check_pos ,y_check_pos     +0x30/+0x34    (X and Y interleaved per tool)
-#   x_check_pos1,y_check_pos1    +0x38/+0x3c
-#   x_check_pos2,y_check_pos2    +0x40/+0x44
-#   x_check_pos3,y_check_pos3    +0x48/+0x4c
-#   x/y/z_station_pos            +0x50/+0x54/+0x58
-#   now_extruder                 +0x5c
-#   test.json: grabSpeed +0, grabSpeedSlow +4, grabOffset +8
-#
-# We never WRITE these files. Config::syncExtruderConfig @0x651388 rewrites the
-# whole of extruder.json from the app's in-memory struct, so anything we wrote
-# would be silently clobbered (and could revert unrelated keys). We do not
-# mirror now_extruder either -- the mounted tool is derived from the dock
-# sensors on demand and nothing is stored. See OKF/34-mounted-tool-state.md.
+# Everything per-unit lives in Klipper's own config:
+#   [ff_tool <n>]   dock_x, dock_y, z_adjust                  (ff_tool.py)
+#                   nozzle_x/y/z  <- TOOL_OFFSET_CALIBRATE via SAVE_CONFIG
+#   [ff_tool_offset] station_x/y/z <- STATION_CALIBRATE  via SAVE_CONFIG
+#   [ff_toolchange]  feeds, x_correction, temp_offset, staging positions
+# firmwareExe's JSON (extruder.json / test.json / zoffset.json) is no longer
+# read at runtime; ff_legacy.py's FF_IMPORT_FIRMWARE_CONFIG copies the
+# factory numbers into the layout above once.
 # ---------------------------------------------------------------------------
-
-
-FIRMWARE_CONFIG_DIR = '/usr/data/firmwareRes/config'
-
-
-class FFFirmwareConfig:
-    """Read-only view of firmwareExe's per-unit JSON configuration."""
-
-    def __init__(self, directory):
-        self.dir = directory
-        self.files = {}
-        self.errors = []
-        self.load()
-
-    def load(self):
-        self.files = {}
-        self.errors = []
-        for name in ('extruder', 'test', 'zoffset'):
-            path = os.path.join(self.dir, name + '.json')
-            try:
-                with open(path, 'r') as fh:
-                    text = fh.read()
-            except IOError as e:
-                self.errors.append("%s: %s" % (path, e))
-                continue
-            try:
-                # raw_decode, not loads -- see the note above.
-                obj, _ = json.JSONDecoder().raw_decode(text.lstrip())
-            except ValueError as e:
-                self.errors.append("%s: not valid JSON (%s)" % (path, e))
-                continue
-            if not isinstance(obj, dict):
-                self.errors.append("%s: expected a JSON object" % path)
-                continue
-            self.files[name] = obj
-            logging.info("ff_toolchange: loaded %s (%d keys)",
-                         path, len(obj))
-        for msg in self.errors:
-            logging.warning("ff_toolchange: %s", msg)
-
-    # -- primitives ---------------------------------------------------------
-
-    def _num(self, fname, key):
-        obj = self.files.get(fname)
-        if obj is None:
-            return None
-        val = obj.get(key)
-        if isinstance(val, bool) or not isinstance(val, (int, float)):
-            return None
-        if not math.isfinite(val):
-            logging.warning("ff_toolchange: %s.json: %s is not finite (%r),"
-                            " ignoring", fname, key, val)
-            return None
-        return float(val)
-
-    def _series(self, fname, keys):
-        """All-or-nothing -- a DELIBERATE divergence from the app.
-
-        Config::loadExtruderConfig reads each key as
-        Json::Value::get(key, <current member>), so a missing key silently
-        falls back to the app's compiled-in init default (initExtruderConfig
-        @0x65119c: x_check_pos 298.219, x_check_pos1 298.605, ...). Those are
-        generic values, ~1.7 mm from this unit's calibration, and substituting
-        one into a dock approach would drive the carriage to the wrong place
-        with no indication anything was wrong.
-
-        We would rather fail loudly, so a series is used only if every key of
-        it is present."""
-        vals = [self._num(fname, k) for k in keys]
-        if any(v is None for v in vals):
-            return None
-        return vals
-
-    # -- the quantities the toolchanger needs -------------------------------
-
-    def dock_x(self):
-        # extruderConfig() +0x30/+0x38/+0x40/+0x48
-        return self._series('extruder', ['x_check_pos', 'x_check_pos1',
-                                         'x_check_pos2', 'x_check_pos3'])
-
-    def dock_y(self):
-        # extruderConfig() +0x34/+0x3c/+0x44/+0x4c
-        return self._series('extruder', ['y_check_pos', 'y_check_pos1',
-                                         'y_check_pos2', 'y_check_pos3'])
-
-    def x_correction(self):
-        # testConfig()+8
-        return self._num('test', 'grabOffset')
-
-    def _speed(self, key, fallback):
-        # The app reads a mm/s word and multiplies by 60, falling back to a
-        # constant when the stored value is <= 0.
-        val = self._num('test', key)
-        if val is None:
-            return None
-        val *= 60.0
-        return val if val > 0 else float(fallback)
-
-    def fast_feed(self):
-        # testConfig()+0
-        return self._speed('grabSpeed', FAST_FEED_DEFAULT)
-
-    def slow_feed(self):
-        # testConfig()+4
-        return self._speed('grabSpeedSlow', SLOW_FEED_DEFAULT)
-
-    def slow_feed_release(self):
-        # doReleaseExtruderLatest reads the same testConfig()+4 word but its
-        # <= 0 fallback is 5400, not the grab side's 6000.
-        return self._speed('grabSpeedSlow', RELEASE_SLOW_FEED_DEFAULT)
-
-    def offset_z(self):
-        # zoffset.json is 1-BASED: z_offset_t1 is tool 0.
-        return self._series('zoffset',
-                            ['z_offset_t%d' % (i + 1) for i in range(4)])
-
-    def tool_offsets(self):
-        """t0..t3_offset_x/y/z, exactly as OffsetMgr::rebootInitValue @0x6593e8
-        loads them into its map: map[Tn] = extruderConfig()+{0,4,8} + 0xc*n.
-        No transformation is applied there and none is applied here."""
-        rows = []
-        for n in range(EXTRUDER_COUNT):
-            v = [self._num('extruder', 't%d_offset_%s' % (n, a))
-                 for a in ('x', 'y', 'z')]
-            if any(x is None for x in v):
-                return None
-            rows.append(v)
-        return rows
-
-    def z_station_pos(self):
-        # extruderConfig()+0x58 -- the Z at which the EDDY probe triggered
-        # over the fixed nozzle-touch sensor during calibration (the sensor
-        # sits below the bed plane; negative on this unit). t<n>_offset_z is
-        # the Z at which tool n's NOZZLE touched that same sensor, so
-        # (t<n>_offset_z - z_station_pos) is the absolute gap between the
-        # eddy trigger plane and tool n's nozzle plane -- the core of the
-        # print-start Z offset (BuildPage::startPrint @0x9fc148).
-        return self._num('extruder', 'z_station_pos')
-
-    def temp_offset(self):
-        # testConfig()+0xc -- degC-to-mm thermal compensation factor in the
-        # print-start Z offset: (nozzle_temp - 120) * tempOffset.
-        return self._num('test', 'tempOffset')
-
-    def now_extruder(self):
-        # extruderConfig()+0x5c -- the app's own active-tool index.
-        val = self._num('extruder', 'now_extruder')
-        # _num already rejects non-finite values, but guard int() anyway.
-        if val is None or not math.isfinite(val):
-            return None
-        return int(val)
 
 
 class FFToolchangeError(Exception):
@@ -267,67 +78,33 @@ class FFToolchange:
         self.gcode = self.printer.lookup_object('gcode')
         self.name = config.get_name()
 
-        # --- where the numbers come from -----------------------------------
-        # Precedence, highest first:
-        #   1. an option explicitly set in this printer.cfg section
-        #   2. firmwareExe's own per-unit JSON under firmware_config_dir
-        #   3. the app's hardcoded fallback
-        # So a stock machine needs no geometry in the .cfg at all, and anything
-        # you do write here is an intentional override of the factory value.
-        self.fw_dir = config.get('firmware_config_dir', FIRMWARE_CONFIG_DIR)
-        self.fw = FFFirmwareConfig(self.fw_dir)
-        self.sources = {}
-
-        def _resolve(option, fw_value, fallback, getter):
-            """Return (value, provenance) honouring the precedence above."""
-            cfg_value = getter(option, None)
-            if cfg_value is not None:
-                self.sources[option] = 'printer.cfg'
-                return cfg_value
-            if fw_value is not None:
-                self.sources[option] = 'firmware'
-                return fw_value
-            self.sources[option] = 'default'
-            return fallback
-
-        def scalar(option, fw_value, fallback):
-            return _resolve(option, fw_value, fallback, config.getfloat)
-
-        def series(option, fw_value, fallback):
-            def getter(opt, _default):
-                raw = config.get(opt, None)
-                if raw is None:
-                    return None
-                vals = [float(v.strip()) for v in raw.split(',')]
-                if len(vals) != EXTRUDER_COUNT:
-                    raise config.error(
-                        "%s: %s needs %d comma-separated values"
-                        % (self.name, opt, EXTRUDER_COUNT))
-                return vals
-            return _resolve(option, fw_value, fallback, getter)
-
-        # Per-unit dock geometry -- extruderConfig() +0x30..+0x4c.
-        self.dock_x = series('dock_x', self.fw.dock_x(), None)
-        self.dock_y = series('dock_y', self.fw.dock_y(), None)
-        if self.dock_x is None or self.dock_y is None:
-            raise config.error(
-                "%s: dock coordinates unavailable -- %s could not be read (%s)."
-                " Set dock_x/dock_y explicitly, or point firmware_config_dir at"
-                " a copy of the printer's firmwareRes/config directory."
-                % (self.name, self.fw_dir,
-                   "; ".join(self.fw.errors) or "keys missing"))
-        # testConfig()+8.
-        self.x_correction = scalar('x_correction', self.fw.x_correction(), 0.0)
+        # Per-tool sections. load_object() resolves them regardless of the
+        # order they appear in printer.cfg.
+        self.tools = []
+        for i in range(EXTRUDER_COUNT):
+            try:
+                self.tools.append(
+                    self.printer.load_object(config, 'ff_tool %d' % i))
+            except Exception:
+                raise config.error(
+                    "%s: section [ff_tool %d] is required (dock_x/dock_y);"
+                    " run FF_IMPORT_FIRMWARE_CONFIG from ff_legacy.py to"
+                    " generate it from the factory JSON" % (self.name, i))
+        self.dock_x = [t.dock_x for t in self.tools]
+        self.dock_y = [t.dock_y for t in self.tools]
+        # testConfig()+8 grabOffset in the app.
+        self.x_correction = config.getfloat('x_correction', 0.0)
+        # degC-to-mm thermal term of the print-start Z offset
+        # ((nozzle_temp - 120) * temp_offset); testConfig()+0xc in the app.
+        self.temp_offset = config.getfloat('temp_offset', 0.00045)
 
         # Per-tool G-code offsets -- differences against a base tool, exactly
         # as CommMgr::setGrabGcodeOffsetMgr computes them. See _derive_offsets
         # and OKF/33-per-tool-offsets.md.
         self.offset_base = config.getint('offset_base', 0,
                                          minval=0, maxval=EXTRUDER_COUNT - 1)
-        fx, fy, fz = self._derive_offsets(self.offset_base)
-        self.off_x = series('offset_x', fx, [0.0] * EXTRUDER_COUNT)
-        self.off_y = series('offset_y', fy, [0.0] * EXTRUDER_COUNT)
-        self.off_z = series('offset_z', fz, [0.0] * EXTRUDER_COUNT)
+        self.off_x = self.off_y = self.off_z = [0.0] * EXTRUDER_COUNT
+        self.refresh_offsets()
         # The tool-derived part of the Z offset we last applied. The remainder
         # of Klipper's gcode Z offset is the user's babystep, which the app
         # keeps separately at CommMgr+0x130 and re-adds on every change so a
@@ -339,15 +116,14 @@ class FFToolchange:
         self.x_approach = config.getfloat('x_approach', 280.0)
         self.grab_pullback = config.getfloat('grab_pullback', 20.0)
 
-        # Feeds. testConfig()+0 and +4 are mm/s and get multiplied by 60, with
-        # the app falling back to 24000/6000 when the stored value is <= 0.
-        self.fast_feed = int(scalar('fast_feed', self.fw.fast_feed(),
-                                    FAST_FEED_DEFAULT))
-        self.slow_feed = int(scalar('slow_feed', self.fw.slow_feed(),
-                                    SLOW_FEED_DEFAULT))
-        self.release_slow_feed = int(scalar(
-            'release_slow_feed', self.fw.slow_feed_release(),
-            RELEASE_SLOW_FEED_DEFAULT))
+        # Feeds (mm/min). The app reads grabSpeed/grabSpeedSlow (mm/s) from
+        # test.json and multiplies by 60 -- 500/90 on this unit, i.e.
+        # 30000/5400 -- falling back to 24000/6000 (5400 on release) when the
+        # stored value is <= 0. Defaults here are the factory numbers.
+        self.fast_feed = config.getint('fast_feed', 30000, minval=1)
+        self.slow_feed = config.getint('slow_feed', 5400, minval=1)
+        self.release_slow_feed = config.getint('release_slow_feed', 5400,
+                                               minval=1)
         self.grab_retreat_feed = config.getint('grab_retreat_feed', 1500)
         self.release_retreat_feed = config.getint('release_retreat_feed', 4800)
         self.accel_move = config.getint('accel_move', 8000)
@@ -399,11 +175,11 @@ class FFToolchange:
             'TOOLCHANGE_PARK', self.cmd_TOOLCHANGE_PARK,
             desc=self.cmd_TOOLCHANGE_PARK_help)
         self.gcode.register_command(
-            'TOOLCHANGE_RELOAD', self.cmd_TOOLCHANGE_RELOAD,
-            desc=self.cmd_TOOLCHANGE_RELOAD_help)
-        self.gcode.register_command(
             'TOOLCHANGE_SET_PRINT_OFFSET', self.cmd_TOOLCHANGE_SET_PRINT_OFFSET,
             desc=self.cmd_TOOLCHANGE_SET_PRINT_OFFSET_help)
+        self.gcode.register_command(
+            'TOOL_Z_ADJUST', self.cmd_TOOL_Z_ADJUST,
+            desc=self.cmd_TOOL_Z_ADJUST_help)
 
         self.printer.register_event_handler('klippy:connect',
                                             self._handle_connect)
@@ -412,40 +188,58 @@ class FFToolchange:
 
     def _derive_offsets(self, base):
         """Per-tool G-code offsets, as CommMgr::setGrabGcodeOffsetMgr @0x77f1dc
-        computes them.
+        computes them:
 
-            X = t<tool>_offset_x - t<base>_offset_x
-            Y = t<tool>_offset_y - t<base>_offset_y
-            Z = z_offset_t<tool+1> + (t<tool>_offset_z - t<base>_offset_z)
+            X = nozzle_x[tool] - nozzle_x[base]
+            Y = nozzle_y[tool] - nozzle_y[base]
+            Z = z_adjust[tool] + (nozzle_z[tool] - nozzle_z[base])
 
-        i.e. DIFFERENCES against a base tool, not absolute positions. The base
-        is CommMgr+0x59c, zeroed by the constructor (so T0) and changed only by
-        setBaseExtruder(), which the touchscreen calls from serialPrint and
-        BuildPage::compareExtruderFromMf.
+        DIFFERENCES against a base tool (T0 by default), not absolute
+        positions. nozzle_* are the station-bore centre measured with each
+        tool's nozzle ([ff_tool n], written by TOOL_OFFSET_CALIBRATE);
+        z_adjust is the user's per-tool Z tune (the app's zoffset.json).
 
-        The values come from OffsetMgr, which loads extruderConfig() verbatim,
-        and the z term's zoffset part is CommMgr::getAdjustOffset @0x77efd4 =
-        zOffsetConfig()[tool].
-
-        Do NOT confuse this with CommMgr::getStationExOffset @0x79a508, which
-        computes (x_station_pos - tN_offset_x) ~= 12 mm. That one is only used
-        by the calibration dialogs and moveCylinderPos -- it is not on the
-        print-offset path.
-
-        Returns (xs, ys, zs), or (None, None, None) if the data is unavailable.
+        A tool without a calibration contributes zero offset (and is listed
+        by TOOLCHANGE_STATUS / warned about at ready). If the BASE tool is
+        uncalibrated every tool is treated as zero, since nothing can be
+        measured against it.
         """
-        tools = self.fw.tool_offsets()
-        zoff = self.fw.offset_z()
-        if tools is None:
-            return None, None, None
-        bx, by, bz = tools[base]
-        xs = [t[0] - bx for t in tools]
-        ys = [t[1] - by for t in tools]
-        if zoff is None:
-            zs = None
-        else:
-            zs = [zoff[i] + (tools[i][2] - bz) for i in range(EXTRUDER_COUNT)]
+        tools = self.tools
+        if not tools[base].calibrated():
+            return ([0.0] * EXTRUDER_COUNT, [0.0] * EXTRUDER_COUNT,
+                    [t.z_adjust for t in tools])
+        bx, by, bz = tools[base].nozzle
+        xs, ys, zs = [], [], []
+        for t in tools:
+            if t.calibrated():
+                xs.append(t.nozzle[0] - bx)
+                ys.append(t.nozzle[1] - by)
+                zs.append(t.z_adjust + (t.nozzle[2] - bz))
+            else:
+                xs.append(0.0)
+                ys.append(0.0)
+                zs.append(t.z_adjust)
         return xs, ys, zs
+
+    def refresh_offsets(self, gcmd=None):
+        """Re-derive after a calibration changed an [ff_tool] live."""
+        fx, fy, fz = self._derive_offsets(self.offset_base)
+        changed = (fx, fy, fz) != (self.off_x, self.off_y, self.off_z)
+        self.off_x, self.off_y, self.off_z = fx, fy, fz
+        if gcmd is not None:
+            gcmd.respond_info("ff_toolchange: offsets %s"
+                              % ("updated" if changed else "unchanged"))
+        return changed
+
+    def uncalibrated_tools(self):
+        return [t.index for t in self.tools if not t.calibrated()]
+
+    def _station_z(self):
+        """station_z from [ff_tool_offset] (STATION_CALIBRATE), or None."""
+        st = self.printer.lookup_object('ff_tool_offset', None)
+        if st is None or st.station is None:
+            return None
+        return st.station[2]
 
     # ---------------- plumbing ----------------
 
@@ -487,12 +281,13 @@ class FFToolchange:
                 % (self.name, ", ".join(missing)))
 
     def _handle_ready(self):
-        if any(self.sources.get(k) == 'default'
-               for k in ('offset_x', 'offset_y', 'offset_z')):
+        missing = self.uncalibrated_tools()
+        if missing:
             self.gcode.respond_info(
-                "ff_toolchange: WARNING: per-tool offsets not found in"
-                " firmware JSON and not set in printer.cfg -- all tools"
-                " assume zero offset. Check %s." % self.fw_dir)
+                "ff_toolchange: WARNING: no nozzle calibration for %s --"
+                " those tools get ZERO X/Y/Z offset. Run"
+                " TOOL_OFFSET_CALIBRATE (or FF_IMPORT_FIRMWARE_CONFIG once)"
+                " and SAVE_CONFIG." % ", ".join("T%d" % i for i in missing))
 
     def _make_tn(self, index):
         def handler(gcmd):
@@ -612,7 +407,7 @@ class FFToolchange:
         return self.dock_x[tool] + self.x_correction, self.dock_y[tool]
 
     def _extruder_name(self, tool):
-        return 'extruder' if tool == 0 else 'extruder%d' % tool
+        return self.tools[tool].extruder_name
 
     def _current_max_accel(self):
         toolhead = self.printer.lookup_object('toolhead')
@@ -993,17 +788,18 @@ class FFToolchange:
             current, _why = self._current_tool_or_none()
             tool = current if current is not None and current >= 0 else 0
 
-        tools = self.fw.tool_offsets()
-        z_station = self.fw.z_station_pos()
-        temp_coeff = self.fw.temp_offset()
-        if tools is None or z_station is None or temp_coeff is None:
+        z_station = self._station_z()
+        temp_coeff = self.temp_offset
+        if not self.tools[tool].calibrated() or z_station is None:
             raise gcmd.error(
-                "TOOLCHANGE_SET_PRINT_OFFSET: t*_offset_z / z_station_pos /"
-                " tempOffset unavailable from firmware JSON (%s) -- cannot"
+                "TOOLCHANGE_SET_PRINT_OFFSET: T%d nozzle_z and/or"
+                " [ff_tool_offset] station_z are not calibrated -- cannot"
                 " compute the print Z offset. Without it the eddy-homed Z is"
-                " several mm too low; NOT printing is the safe choice."
-                % self.fw_dir)
-        zoff = self.fw.offset_z() or [0.0] * EXTRUDER_COUNT
+                " several mm too low; NOT printing is the safe choice. Run"
+                " STATION_CALIBRATE / TOOL_OFFSET_CALIBRATE (or"
+                " FF_IMPORT_FIRMWARE_CONFIG) and SAVE_CONFIG." % tool)
+        tools = [t.nozzle or (0.0, 0.0, 0.0) for t in self.tools]
+        zoff = [t.z_adjust for t in self.tools]
         z = tools[tool][2] - z_station + (nozzle - 120.0) * temp_coeff
         if bed >= 100.0:
             z += 0.08
@@ -1021,6 +817,43 @@ class FFToolchange:
         self._run('SET_GCODE_OFFSET X=%.3f Y=%.3f Z=%.3f'
                   ' MOVE=1 MOVE_SPEED=100'
                   % (self.off_x[tool], self.off_y[tool], z))
+
+    cmd_TOOL_Z_ADJUST_help = (
+        "Per-tool persistent Z correction: TOOL_Z_ADJUST TOOL=<0..3> "
+        "(ADJUST=<+/-mm> | VALUE=<mm>); SAVE_CONFIG to persist")
+
+    def cmd_TOOL_Z_ADJUST(self, gcmd):
+        """The per-tool counterpart of SET_GCODE_OFFSET Z_ADJUST.
+
+        Klipper's babystep is one global number; this edits [ff_tool n]
+        z_adjust instead, which _apply_tool_diff_offsets adds on every grab of
+        that tool only. If the tool is mounted right now the new value is
+        applied immediately through the same path (so the live babystep is
+        preserved), and the change is staged for SAVE_CONFIG."""
+        tool = gcmd.get_int('TOOL', minval=0, maxval=EXTRUDER_COUNT - 1)
+        adjust = gcmd.get_float('ADJUST', None)
+        value = gcmd.get_float('VALUE', None)
+        if (adjust is None) == (value is None):
+            raise gcmd.error("TOOL_Z_ADJUST: give exactly one of ADJUST= or"
+                             " VALUE=")
+        t = self.tools[tool]
+        old = t.z_adjust
+        new = value if value is not None else old + adjust
+        t.set_z_adjust(new)
+        self.refresh_offsets()
+        applied = ""
+        try:
+            self._wait_moves()
+            current, _why = self._current_tool_or_none()
+        except FFToolchangeError:
+            current = None
+        if current == tool:
+            self._apply_tool_diff_offsets(tool)
+            applied = ", applied now"
+        gcmd.respond_info(
+            "T%d z_adjust %.3f -> %.3f%s. The SAVE_CONFIG command will update"
+            " the printer config file and restart the printer."
+            % (tool, old, new, applied))
 
     cmd_TOOLCHANGE_STATUS_help = "Report toolchanger sensor state"
 
@@ -1044,14 +877,22 @@ class FFToolchange:
             except FFToolchangeError as e:
                 lines.append("  grab (%s): %s" % (n, e))
 
-        lines.append("firmware config: %s" % self.fw_dir)
-        for msg in self.fw.errors:
-            lines.append("  ! %s" % msg)
+        lines.append("geometry ([ff_tool n] / [ff_toolchange]):")
+        for t in self.tools:
+            if t.calibrated():
+                lines.append("  T%d nozzle (%.4f, %.4f, %.4f)  z_adjust %+.3f"
+                             % (t.index, t.nozzle[0], t.nozzle[1],
+                                t.nozzle[2], t.z_adjust))
+            else:
+                lines.append("  T%d nozzle NOT CALIBRATED (zero offset)"
+                             % t.index)
+        sz = self._station_z()
+        lines.append("  station_z     %s"
+                     % ("%.4f" % sz if sz is not None else "NOT CALIBRATED"))
 
         def series_line(option, values):
-            lines.append("  %-14s[%s] (%s)"
-                         % (option, ", ".join("%.4f" % v for v in values),
-                            self.sources.get(option)))
+            lines.append("  %-14s[%s]"
+                         % (option, ", ".join("%.4f" % v for v in values)))
 
         series_line('dock_x', self.dock_x)
         series_line('dock_y', self.dock_y)
@@ -1059,27 +900,11 @@ class FFToolchange:
         series_line('offset_x', self.off_x)
         series_line('offset_y', self.off_y)
         lines.append("  offset_base   T%d" % self.offset_base)
-        lines.append("  x_correction  %.4f (%s)"
-                     % (self.x_correction, self.sources.get('x_correction')))
-        lines.append("  fast_feed     %d (%s)"
-                     % (self.fast_feed, self.sources.get('fast_feed')))
-        lines.append("  slow_feed     %d (%s)"
-                     % (self.slow_feed, self.sources.get('slow_feed')))
-        lines.append("  release_slow_feed %d (%s)"
-                     % (self.release_slow_feed,
-                        self.sources.get('release_slow_feed')))
-
-        # firmwareExe keeps its own active-tool index (extruderConfig()+0x5c,
-        # persisted as now_extruder). We do not write it -- the app holds the
-        # struct in memory and rewrites the whole file, so our write would be
-        # clobbered. Surfacing a disagreement is the useful part.
-        now = self.fw.now_extruder()
-        if now is not None:
-            # Informational only. The app resets its index to -1 on every
-            # home, so the two legitimately differ much of the time.
-            flag = "" if now == tool else "   (differs from ours)"
-            lines.append("  now_extruder  %d (firmwareExe's own index)%s"
-                         % (now, flag))
+        lines.append("  x_correction  %.4f" % self.x_correction)
+        lines.append("  fast_feed     %d" % self.fast_feed)
+        lines.append("  slow_feed     %d" % self.slow_feed)
+        lines.append("  release_slow_feed %d" % self.release_slow_feed)
+        lines.append("  temp_offset   %.6f" % self.temp_offset)
         gcmd.respond_info("\n".join(lines))
 
     cmd_TOOLCHANGE_PARK_help = "Dock whatever tool is currently mounted"
@@ -1099,58 +924,26 @@ class FFToolchange:
         except FFToolchangeError as e:
             raise gcmd.error(str(e))
 
-    cmd_TOOLCHANGE_RELOAD_help = ("Re-read firmwareExe's per-unit JSON config "
-                                  "(dock coordinates, feeds, Z offsets)")
-
-    def cmd_TOOLCHANGE_RELOAD(self, gcmd):
-        """Pick up recalibration done from the touchscreen without a restart.
-
-        Options explicitly set in printer.cfg still win -- reloading cannot
-        silently override a deliberate local override."""
-        self.fw.load()
-        changed = []
-
-        def adopt(option, attr, fw_value, fmt):
-            if self.sources.get(option) == 'printer.cfg' or fw_value is None:
-                return
-            if getattr(self, attr) != fw_value:
-                changed.append("%s: %s -> %s" % (option, fmt(getattr(self, attr)),
-                                                 fmt(fw_value)))
-                setattr(self, attr, fw_value)
-                self.sources[option] = 'firmware'
-
-        def fmt_series(v):
-            return "[%s]" % ", ".join("%.4f" % x for x in v)
-
-        def fmt_num(v):
-            return "%.4f" % v
-
-        fx, fy, fz = self._derive_offsets(self.offset_base)
-        adopt('offset_x', 'off_x', fx, fmt_series)
-        adopt('offset_y', 'off_y', fy, fmt_series)
-        adopt('offset_z', 'off_z', fz, fmt_series)
-        adopt('dock_x', 'dock_x', self.fw.dock_x(), fmt_series)
-        adopt('dock_y', 'dock_y', self.fw.dock_y(), fmt_series)
-        adopt('x_correction', 'x_correction', self.fw.x_correction(), fmt_num)
-        ff, sf = self.fw.fast_feed(), self.fw.slow_feed()
-        adopt('fast_feed', 'fast_feed', None if ff is None else int(ff),
-              lambda v: "%d" % v)
-        adopt('slow_feed', 'slow_feed', None if sf is None else int(sf),
-              lambda v: "%d" % v)
-        rsf = self.fw.slow_feed_release()
-        adopt('release_slow_feed', 'release_slow_feed',
-              None if rsf is None else int(rsf), lambda v: "%d" % v)
-
-        out = ["reloaded %s" % self.fw_dir]
-        out += ["  ! %s" % m for m in self.fw.errors]
-        out += ["  %s" % c for c in changed] or ["  no changes"]
-        gcmd.respond_info("\n".join(out))
+    def print_offset_ready(self, tool=None):
+        """Can TOOLCHANGE_SET_PRINT_OFFSET succeed? Needs station_z and
+        nozzle_z of the tool (all tools when tool is None)."""
+        if self._station_z() is None:
+            return False
+        if tool is None:
+            return not self.uncalibrated_tools()
+        return self.tools[tool].calibrated()
 
     def get_status(self, eventtime):
         tool, why = self._current_tool_or_none(eventtime)
         return {'current_tool': -1 if tool is None else tool,
                 'state_ok': tool is not None,
-                'state_reason': why}
+                'state_reason': why,
+                'calibrated_tools': [t.index for t in self.tools
+                                     if t.calibrated()],
+                'station_z': self._station_z(),
+                # True when every tool and the station are calibrated, i.e.
+                # a print's Z frame can be established for any tool.
+                'print_offset_ready': self.print_offset_ready()}
 
 
 def load_config(config):

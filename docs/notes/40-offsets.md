@@ -25,10 +25,11 @@ Key files:
 
 `Config::syncExtruderConfig` @0x651388 rewrites the whole file from the app's
 in-memory struct on every toolchange — anything written externally is clobbered, and
-a partial write could revert unrelated per-unit calibration. `ff_toolchange.py` only
-READS them. Precedence per option: `printer.cfg` > firmwareRes JSON > app fallback;
-`TOOLCHANGE_STATUS` shows each value's provenance; `TOOLCHANGE_RELOAD` re-reads after
-a touchscreen recalibration.
+a partial write could revert unrelated per-unit calibration. On the `klipper-vanilla`
+branch these files are not read at runtime at all: `ff_legacy.py`'s
+`FF_IMPORT_FIRMWARE_CONFIG` imports them once into `[ff_tool n]` / `[ff_tool_offset]`
+(`SAVE_CONFIG` block of `printer.cfg`), and calibration is redone from Klipper with
+`STATION_CALIBRATE` / `TOOL_OFFSET_CALIBRATE` (see `45-tool-offset-calibration.md`).
 
 ## Per-tool offsets — `setGrabGcodeOffsetMgr` @0x77f1dc
 
