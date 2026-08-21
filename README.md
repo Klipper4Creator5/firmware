@@ -320,6 +320,8 @@ Fool-proofing, in rough priority order:
 Condensed notes from the `firmwareExe` analysis — recovered sequences, binary
 addresses, JSON semantics — live in [`docs/notes/`](docs/notes/):
 architecture overview, the Klipper-fork delta (including the `Tn` interception),
+[who decides what — app vs Klipper](docs/notes/25-app-vs-klipper-ownership.md)
+(heaters, runout, doors, calibration; which "features" are dead code),
 the verified grab/release sequences, the offset model, the recovered
 nozzle-offset calibration and its Klipper port, and the full print
 lifecycle with the deliberate divergences listed.

@@ -66,10 +66,12 @@ Two sensors exist: the eddy coil on the head (used by G28 Z / bed mesh — trigg
 a coil-to-bed distance) and a fixed nozzle-touch sensor below the bed plane. Factory
 calibration stores, in extruder.json:
 
-- `z_station_pos` — Z where the EDDY triggered over the fixed sensor (≈ −1.68)
+- `z_station_pos` — Z where the fixed sensor fired under the EMPTY carriage (≈ −1.68);
+  it detects a carriage feature ~12.4 mm +X of the nozzle, not the eddy coil
+  (corrected after the asm recovery, see 46-offset-calibration-recovered.md)
 - `t0..t3_offset_z` — Z where each NOZZLE touched the same sensor (≈ +1.5)
 
-so `t<n>_offset_z − z_station_pos` ≈ the 3.19 mm gap between the eddy trigger plane
+so `t<n>_offset_z − z_station_pos` ≈ the 3.19 mm gap between the station's empty-carriage trigger plane
 and tool n's nozzle plane. At print start the app computes:
 
 ```
