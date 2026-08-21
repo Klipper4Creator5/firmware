@@ -67,6 +67,69 @@ ERR_RELEASE_STATE = 144         # E0144    state error after release verify
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# klipper-toolchanger-shaped status surface
+#
+# UIs with native tool-changer support (HelixScreen, anything written for
+# viesturz/klipper-toolchanger) discover a toolchanger by object NAME in
+# objects/list: `toolchanger` plus one `tool <name>` per tool. We register
+# those names as read-only views over this module and the [ff_tool n]
+# sections, and provide the commands such UIs send (SELECT_TOOL,
+# UNSELECT_TOOL, INITIALIZE_TOOLCHANGER, ASSIGN_TOOL). Always on: nothing else
+# on this machine could own those names.
+#
+# HelixScreen subscribes (src/api/moonraker_discovery_sequence.cpp):
+#   toolchanger : status (ready|changing|error|uninitialized), tool_number,
+#                 tool_numbers[, tool_names, tool]
+#   tool T<n>   : active, mounted, extruder, fan, gcode_x/y/z_offset
+#                 (detect_state omitted on purpose: we have dock switches,
+#                  not on-carriage detection, and "absent" is a hard fault)
+# ---------------------------------------------------------------------------
+
+class _ToolchangerView:
+    def __init__(self, tc):
+        self.tc = tc
+
+    def get_status(self, eventtime):
+        st = self.tc.get_status(eventtime)
+        cur = st['current_tool']
+        if self.tc.changing:
+            status = 'changing'
+        elif not st['state_ok']:
+            status = 'error'
+        else:
+            status = 'ready'
+        return {'status': status,
+                'tool_number': cur,
+                'tool_numbers': list(range(EXTRUDER_COUNT)),
+                'tool_names': ['T%d' % i for i in range(EXTRUDER_COUNT)],
+                'tool': 'T%d' % cur if cur >= 0 else None,
+                'state_reason': st['state_reason'],
+                'print_offset_ready': st['print_offset_ready']}
+
+
+class _ToolView:
+    def __init__(self, tc, index):
+        self.tc = tc
+        self.index = index
+
+    def get_status(self, eventtime):
+        tc = self.tc
+        cur = tc.get_status(eventtime)['current_tool']
+        t = tc.tools[self.index]
+        return {'tool_number': self.index,
+                'name': 'T%d' % self.index,
+                'active': cur == self.index,
+                'mounted': cur == self.index,
+                'extruder': t.extruder_name,
+                'fan': tc.part_fan,
+                # the differences actually applied on a grab
+                'gcode_x_offset': tc.off_x[self.index],
+                'gcode_y_offset': tc.off_y[self.index],
+                'gcode_z_offset': tc.off_z[self.index],
+                'calibrated': t.calibrated()}
+
+
 class FFToolchangeError(Exception):
     """A toolchange step failed or the sensors report an unusable state."""
 
@@ -105,6 +168,20 @@ class FFToolchange:
                                          minval=0, maxval=EXTRUDER_COUNT - 1)
         self.off_x = self.off_y = self.off_z = [0.0] * EXTRUDER_COUNT
         self.refresh_offsets()
+        # True while a T<n>/TOOLCHANGE sequence is running (reported as
+        # toolchanger.status = 'changing').
+        self.changing = False
+        # Reported as every tool's `fan`: the part-cooling fan is shared on
+        # this machine (fanM106 via M106 P1); heat_fan0..3 are hotend fans.
+        self.part_fan = config.get('part_fan', 'fan_generic fanM106')
+        for oname, view in [('toolchanger', _ToolchangerView(self))] + [
+                ('tool T%d' % i, _ToolView(self, i))
+                for i in range(EXTRUDER_COUNT)]:
+            if self.printer.lookup_object(oname, None) is not None:
+                raise config.error(
+                    "%s: Klipper object '%s' already exists (real"
+                    " klipper-toolchanger installed?)" % (self.name, oname))
+            self.printer.add_object(oname, view)
         # The tool-derived part of the Z offset we last applied. The remainder
         # of Klipper's gcode Z offset is the user's babystep, which the app
         # keeps separately at CommMgr+0x130 and re-adds on every change so a
@@ -180,6 +257,17 @@ class FFToolchange:
         self.gcode.register_command(
             'TOOL_Z_ADJUST', self.cmd_TOOL_Z_ADJUST,
             desc=self.cmd_TOOL_Z_ADJUST_help)
+        # klipper-toolchanger command names
+        self.gcode.register_command(
+            'SELECT_TOOL', self.cmd_SELECT_TOOL, desc=self.cmd_SELECT_TOOL_help)
+        self.gcode.register_command(
+            'UNSELECT_TOOL', self.cmd_UNSELECT_TOOL,
+            desc=self.cmd_UNSELECT_TOOL_help)
+        self.gcode.register_command(
+            'INITIALIZE_TOOLCHANGER', self.cmd_INITIALIZE_TOOLCHANGER,
+            desc=self.cmd_INITIALIZE_TOOLCHANGER_help)
+        self.gcode.register_command(
+            'ASSIGN_TOOL', self.cmd_ASSIGN_TOOL, desc=self.cmd_ASSIGN_TOOL_help)
 
         self.printer.register_event_handler('klippy:connect',
                                             self._handle_connect)
@@ -653,6 +741,7 @@ class FFToolchange:
         if tool < 0 or tool >= EXTRUDER_COUNT:
             raise gcmd.error("TOOLCHANGE: INDEX must be 0..%d, got %d"
                              % (EXTRUDER_COUNT - 1, tool))
+        self.changing = True
         try:
             self._wait_moves()
             self._ensure_homed()
@@ -691,6 +780,8 @@ class FFToolchange:
                 " offsets may be zeroed. Run TOOLCHANGE_STATUS, then T<n>"
                 " again before resuming a print.")
             raise
+        finally:
+            self.changing = False
 
     def _gcode_z_offset(self):
         gm = self.printer.lookup_object('gcode_move')
@@ -854,6 +945,63 @@ class FFToolchange:
             "T%d z_adjust %.3f -> %.3f%s. The SAVE_CONFIG command will update"
             " the printer config file and restart the printer."
             % (tool, old, new, applied))
+
+    # ---------------- klipper-toolchanger command aliases ----------------
+
+    def _tool_arg(self, gcmd, required=True):
+        """klipper-toolchanger accepts T=<number> or TOOL=<name>."""
+        t = gcmd.get_int('T', None)
+        if t is None:
+            name = gcmd.get('TOOL', None)
+            if name is not None:
+                name = name.strip()
+                if name.upper().startswith('T') and name[1:].isdigit():
+                    t = int(name[1:])
+                else:
+                    raise gcmd.error("TOOL must be T0..T%d, got '%s'"
+                                     % (EXTRUDER_COUNT - 1, name))
+        if t is None:
+            if required:
+                raise gcmd.error("T=<n> or TOOL=T<n> is required")
+            return None
+        if not 0 <= t < EXTRUDER_COUNT:
+            raise gcmd.error("T must be 0..%d" % (EXTRUDER_COUNT - 1))
+        return t
+
+    cmd_SELECT_TOOL_help = "Select a tool (T=<n> | TOOL=T<n>); same as T<n>"
+
+    def cmd_SELECT_TOOL(self, gcmd):
+        self._toolchange(gcmd, self._tool_arg(gcmd))
+
+    cmd_UNSELECT_TOOL_help = "Dock the mounted tool; same as TOOLCHANGE_PARK"
+
+    def cmd_UNSELECT_TOOL(self, gcmd):
+        t = self._tool_arg(gcmd, required=False)
+        if t is not None:
+            cur, _why = self._current_tool_or_none()
+            if cur != t:
+                raise gcmd.error("UNSELECT_TOOL: T%d is not the mounted tool"
+                                 " (current %s)" % (t, cur))
+        self.cmd_TOOLCHANGE_PARK(gcmd)
+
+    cmd_INITIALIZE_TOOLCHANGER_help = (
+        "Re-derive toolchanger state from the dock sensors (no motion)")
+
+    def cmd_INITIALIZE_TOOLCHANGER(self, gcmd):
+        self._wait_moves()
+        cur, why = self._current_tool_or_none()
+        if cur is None:
+            raise gcmd.error("toolchanger state not derivable: %s" % why)
+        gcmd.respond_info("toolchanger ready, tool_number=%d (%s)"
+                          % (cur, why))
+
+    cmd_ASSIGN_TOOL_help = "Not supported on this toolchanger"
+
+    def cmd_ASSIGN_TOOL(self, gcmd):
+        raise gcmd.error(
+            "ASSIGN_TOOL: logical-to-physical tool remapping is not supported"
+            " here; remap in the slicer (the fork's"
+            " SDCARD_SET_GCODE_EX_USED_BASE table is the future home)")
 
     cmd_TOOLCHANGE_STATUS_help = "Report toolchanger sensor state"
 

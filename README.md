@@ -21,6 +21,7 @@ documented in the file headers.
 | File | Goes to (on the printer) | What it does |
 |---|---|---|
 | [`klippy-extras/ff_toolchange.py`](klippy-extras/ff_toolchange.py) | `/usr/prog/klipper/klippy/extras/` | The toolchanger: `T0..T3`, dock/grab state machine with sensor polling and retries, per-tool G-code offsets, `TOOLCHANGE_SET_PRINT_OFFSET` (the absolute print-start Z offset), `TOOL_Z_ADJUST` (per-tool persistent babystep), `TOOLCHANGE_STATUS`, `TOOLCHANGE_PARK` |
+| [`helixscreen/flashforge_creator5_pro.json`](helixscreen/flashforge_creator5_pro.json) | HelixScreen `config/printer_database.d/` | Printer-database entry so HelixScreen auto-detects the Creator 5 Pro as a tool changer |
 | [`klippy-extras/ff_tool.py`](klippy-extras/ff_tool.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_tool n]` — one section per tool: hand-written `dock_x`/`dock_y`, autosaved `nozzle_x/y/z` and `z_adjust` |
 | [`klippy-extras/ff_tool_offset.py`](klippy-extras/ff_tool_offset.py) | `/usr/prog/klipper/klippy/extras/` | `TOOL_OFFSET_CALIBRATE` / `STATION_CALIBRATE` / `TOOL_OFFSET_STATUS` — the touchscreen's nozzle XY/Z offset calibration, recovered from the binary and reimplemented in Klipper |
 | [`klippy-extras/ff_legacy.py`](klippy-extras/ff_legacy.py) | `/usr/prog/klipper/klippy/extras/` | `FF_IMPORT_FIRMWARE_CONFIG` — one-shot import of the factory/touchscreen JSON into Klipper config. Needed once, at install |
@@ -314,6 +315,29 @@ Fool-proofing, in rough priority order:
   the carriage, start a filament load, or fire its own toolchange into
   the middle of a running job. The module should lock the UI out (or at
   least its motion commands) while a Mainsail-started print is active.
+
+## HelixScreen / tool-changer-aware UIs
+
+`ff_toolchange` also registers the Klipper objects that UIs written for
+[klipper-toolchanger](https://github.com/viesturz/klipper-toolchanger) look
+for — `toolchanger` (`status`, `tool_number`, `tool_numbers`, `tool_names`) and
+`tool T0..T3` (`active`, `mounted`, `extruder`, `fan`, `gcode_x/y/z_offset`) —
+and the commands they send: `SELECT_TOOL T=<n>` (= `T<n>`), `UNSELECT_TOOL`
+(= `TOOLCHANGE_PARK`), `INITIALIZE_TOOLCHANGER` (state check, no motion).
+`ASSIGN_TOOL` is refused — remap tools in the slicer. Nothing to enable; it is
+always on. `part_fan` in `[ff_toolchange]` is what gets reported as each
+tool's fan (shared `fan_generic fanM106` on this machine).
+
+[HelixScreen](https://github.com/prestonbrown/helixscreen) then runs its Tool
+Changer backend: tool slots in the sidebar and print status, per-tool
+temperatures and offsets, Spoolman per tool, the plain single-extruder runout
+dialog. Drop `helixscreen/flashforge_creator5_pro.json` into HelixScreen's
+`config/printer_database.d/` for auto-detection (`ams_type: tool_changer`,
+`z_offset_calibration_strategy: firmware_managed`). Known gap: HelixScreen's
+Load/Unload mounts the tool and then calls `LOAD_FILAMENT` / `UNLOAD_FILAMENT`,
+which this project does not provide yet (the stock load sequence is
+touchscreen-app code — see
+[`docs/notes/25-app-vs-klipper-ownership.md`](docs/notes/25-app-vs-klipper-ownership.md)).
 
 ## Reverse-engineering notes
 
