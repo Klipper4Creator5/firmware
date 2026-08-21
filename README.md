@@ -29,6 +29,7 @@ documented in the file headers.
 | [`config/ff-tool-offset.cfg`](config/ff-tool-offset.cfg) | `/usr/data/config/` | `[ff_tool_offset]` — probe geometry and guards for the calibration commands |
 | [`config/ff-legacy.cfg`](config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — include only for the import step, then remove |
 | [`config/ff-print-macros.cfg`](config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the calibration gate |
+| [`config/ff-filament.cfg`](config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
 | [`orca/`](orca/) | OrcaSlicer printer profile | Machine start/end G-code, change-filament G-code, example project |
 | [`docs/notes/`](docs/notes/) | (reference only) | Condensed reverse-engineering notes: what the stock app actually does, with binary addresses |
 
@@ -83,7 +84,7 @@ scp klippy-extras/ff_tool.py klippy-extras/ff_toolchange.py \
 
 # 2. the config files (data partition — survives OTA)
 scp config/ff-toolchange.cfg config/ff-tool-offset.cfg \
-    config/ff-print-macros.cfg config/ff-legacy.cfg \
+    config/ff-print-macros.cfg config/ff-filament.cfg config/ff-legacy.cfg \
     pwned@PRINTER:/usr/data/config/
 ```
 
@@ -95,6 +96,7 @@ scp config/ff-toolchange.cfg config/ff-tool-offset.cfg \
 [include ff-toolchange.cfg]
 [include ff-tool-offset.cfg]
 [include ff-print-macros.cfg]
+[include ff-filament.cfg]
 [include ff-legacy.cfg]        ; temporary — only for step 5
 ```
 
@@ -217,6 +219,33 @@ tool is mounted, is added on every later grab of that tool, and persists.
   (`auto_home: False`) — a remote G28 with a tool mounted rams the nozzle
   into whatever is on the bed.
 
+## Filament load / unload
+
+`config/ff-filament.cfg` reproduces the touchscreen's FilamentLoad page
+(recovered from the binary — [`docs/notes/47-filament-load-recovered.md`](docs/notes/47-filament-load-recovered.md)):
+each tool has its own direct-drive extruder, so loading means *grab the tool,
+drive it to the purge chute at the back right (X275 Y254), heat to material
+temperature + 30, push 150 + 145 mm at F240, park the tool, heater off*.
+
+```gcode
+LOAD_FILAMENT TOOL=1 TEMP=220          ; or MATERIAL=PETG (app's temperature table)
+UNLOAD_FILAMENT TOOL=1 TEMP=220        ; prime 10 mm, then pull 80 mm out (LENGTH= to tune)
+PURGE TOOL=1 PURGE_TEMP=220 LENGTH=50  ; app's clearNozzlePrint purge
+```
+
+* `TOOL` defaults to the mounted tool; `RELEASE=0` keeps the tool on the
+  carriage afterwards, `HEAT_OFF=0` leaves the heater on.
+* While a print is **paused** the macros only act on the mounted tool, use
+  the app's in-print lengths (100 mm then −5), and leave tool and heater for
+  `RESUME`. While **printing** they refuse.
+* The stock app has **no retract-unload** — its "unload" is the same forward
+  push and the on-screen guide tells you to cut and pull. `UNLOAD_FILAMENT`
+  is therefore designed, not ported; `unload_length` (80 mm) in
+  `[gcode_macro _FF_FILAMENT]` is a first guess — shorten it once you have
+  measured the nozzle-to-above-gears path.
+* All geometry, feeds, the temperature table and the per-tool chute nudges
+  are variables of `[gcode_macro _FF_FILAMENT]`.
+
 ## OrcaSlicer setup
 
 In the printer profile:
@@ -333,11 +362,11 @@ Changer backend: tool slots in the sidebar and print status, per-tool
 temperatures and offsets, Spoolman per tool, the plain single-extruder runout
 dialog. Drop `helixscreen/flashforge_creator5_pro.json` into HelixScreen's
 `config/printer_database.d/` for auto-detection (`ams_type: tool_changer`,
-`z_offset_calibration_strategy: firmware_managed`). Known gap: HelixScreen's
-Load/Unload mounts the tool and then calls `LOAD_FILAMENT` / `UNLOAD_FILAMENT`,
-which this project does not provide yet (the stock load sequence is
-touchscreen-app code — see
-[`docs/notes/25-app-vs-klipper-ownership.md`](docs/notes/25-app-vs-klipper-ownership.md)).
+`z_offset_calibration_strategy: firmware_managed`). Its default Load/Unload buttons only mount/unmount the tool (`SELECT_TOOL` /
+`UNSELECT_TOOL`); to actually feed or pull filament assign `LOAD_FILAMENT`,
+`UNLOAD_FILAMENT` and `PURGE` from [`config/ff-filament.cfg`](config/ff-filament.cfg)
+in Settings → Macro Buttons — a user-assigned macro outranks the backend, and
+the parameter dialog picks up `TOOL` / `TEMP` / `PURGE_TEMP` from the macros.
 
 ## Reverse-engineering notes
 

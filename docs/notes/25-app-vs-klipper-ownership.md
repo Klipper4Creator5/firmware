@@ -11,7 +11,7 @@ print is driven from Mainsail unless `ff_*` re-provides it.
 | Material temps | from `filament.json` via `getFilamentOperationTemp` | none | CommMgr.c, LoadFilamentPrint.c |
 | Runout / clog | app state machine on `filament_switch_sensor fd_ex*` `filament_detected` + `"wheel runout:Tn"` text; arms/disarms with `SET_FILAMENT_SENSOR … ENABLE=0/1`; endless-spool auto-swap (E0162/E0163) | all eight sensors `pause_on_runout: False`; motion sensors' `runout_gcode` only `action_respond_info` | `printer.filament.cfg`, `dealFilamentWheelStatus`, `checkAndAutoFeed` |
 | Doors | `openDoorPause` toggle in general.json | `[gcode_button topDoor/frontDoor]` with **empty** `press_gcode` | `printer.base.cfg:278-287` |
-| Load / unload / purge | app sequences (`FilamentLoad::doLoad/doUnload`, `clearNozzlePrint`) | `MANUAL_STEPPER gear_stepper` primitives only | `printer.motor.cfg` |
+| Load / unload / purge | app sequences (`FilamentLoad::doLoad/doUnload`, `clearNozzlePrint`) — grab tool, purge chute X275 Y254, material+30 °C, `G1 E150`+`E145`; "unload" is the same push | nothing (extruders are direct drive; `gear_stepper` is the tool lock) — **ported** to `config/ff-filament.cfg`, see `48-filament-load-port.md` | `47-filament-load-recovered.md` |
 | Print lifecycle | prepare (14 steps), preamble, pause (**all hotends off**), resume (staged reheat + re-grab), exit block | no START/END/PAUSE/RESUME macros in stock config | 50-print-lifecycle.md |
 | Z frame | absolute print-start Z offset (~+3.2 mm) computed in `BuildPage::startPrint`; per-tool XY/Z diffs applied on every grab | nothing; eddy `G28 Z` is **not** nozzle zero | 40-offsets.md |
 | Mesh / leveling | app triggers `BED_MESH_CALIBRATE` / `BED_MESH_PROFILE LOAD=…` | executes | 50-print-lifecycle.md |
