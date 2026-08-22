@@ -118,10 +118,18 @@ class _ToolView:
         tc = self.tc
         cur = tc.get_status(eventtime)['current_tool']
         t = tc.tools[self.index]
+        # klipper-toolchanger's detect_state: is THIS tool seen on the
+        # carriage -- our per-tool grab sensor. 'unavailable' if unreadable.
+        try:
+            detect = ('present' if tc._sensor(tc.grab_sensors[self.index],
+                                              eventtime) else 'absent')
+        except (FFToolchangeError, IndexError):
+            detect = 'unavailable'
         return {'tool_number': self.index,
                 'name': 'T%d' % self.index,
                 'active': cur == self.index,
                 'mounted': cur == self.index,
+                'detect_state': detect,
                 'extruder': t.extruder_name,
                 'fan': tc.part_fan,
                 # the differences actually applied on a grab

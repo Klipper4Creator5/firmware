@@ -422,12 +422,34 @@ Fool-proofing, in rough priority order:
 `ff_toolchange` also registers the Klipper objects that UIs written for
 [klipper-toolchanger](https://github.com/viesturz/klipper-toolchanger) look
 for — `toolchanger` (`status`, `tool_number`, `tool_numbers`, `tool_names`) and
-`tool T0..T3` (`active`, `mounted`, `extruder`, `fan`, `gcode_x/y/z_offset`) —
-and the commands they send: `SELECT_TOOL T=<n>` (= `T<n>`), `UNSELECT_TOOL`
+`tool T0..T3` (`active`, `mounted`, `detect_state` = `present|absent` from the
+tool's grab sensor, `extruder`, `fan`, `gcode_x/y/z_offset`) — and the
+commands they send: `SELECT_TOOL T=<n>` (= `T<n>`), `UNSELECT_TOOL [T=<n>]`
 (= `TOOLCHANGE_PARK`), `INITIALIZE_TOOLCHANGER` (state check, no motion).
+`status` is `changing` from before the first move until the sensors confirm
+the swap, `error` when the dock sensors disagree, else `ready`.
 `ASSIGN_TOOL` is refused — remap tools in the slicer. Nothing to enable; it is
 always on. `part_fan` in `[ff_toolchange]` is what gets reported as each
-tool's fan (shared `fan_generic fanM106` on this machine).
+tool's fan (shared `fan_generic fanM106` on this machine). `ff_toolchange`
+itself stays (the printer-database fingerprint keys on it); the new objects
+sit alongside.
+
+Verify from any machine that can reach Moonraker (port 7125):
+
+```sh
+curl -s http://PRINTER:7125/printer/objects/list | grep -o '"toolchanger"\|"tool T[0-3]"'
+# expect all five names
+curl -s 'http://PRINTER:7125/printer/objects/query?toolchanger&tool%20T0'
+# toolchanger.status "ready", tool_number -1 (parked) or 0..3;
+# tool T0: mounted/active false, detect_state "absent" while docked
+```
+
+Then `SELECT_TOOL T=0` from the console and poll the query again: `status`
+goes `changing`, then `ready` with `tool_number: 0` and `tool T0`
+`detect_state: "present"`. HelixScreen's log on connect should read
+`[Moonraker Client] Subscribing to toolchanger + 4 tool objects`, and its
+tool panel shows the mounted head and Park/Select per tool. The resonance
+commands are wrapped so they grab a head first (see [Input shaper](#input-shaper)).
 
 [HelixScreen](https://github.com/prestonbrown/helixscreen) then runs its Tool
 Changer backend: tool slots in the sidebar and print status, per-tool
