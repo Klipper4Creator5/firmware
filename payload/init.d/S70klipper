@@ -1,0 +1,58 @@
+#!/bin/sh
+# Klipper.
+#
+# WHY THIS EXISTS -- the single most important dependency in this whole mod:
+# on stock firmware nothing in /etc/init.d starts Klipper. It is FlashForge's
+# firmwareExe that runs "/usr/prog/klipper/start.sh &" (verified with
+# `strings firmwareExe`). So the moment HelixScreen replaces firmwareExe, the
+# printer boots to a working screen with NO klippy behind it: no motion, no
+# heaters, no printing.
+#
+# Therefore Klipper startup is owned here, independently of whichever UI runs.
+#
+# Double-start guard: when MOD_UI=stock, firmwareExe still starts Klipper
+# itself, so we must not race it. We only start Klipper if it is not already
+# running, and start.sh carries the same guard.
+MODDIR=/usr/data/mod
+[ -f $MODDIR/mod.conf ] && . $MODDIR/mod.conf
+
+klippy_running() {
+    [ -S /tmp/uds ] && return 0
+    if command -v pgrep >/dev/null 2>&1; then
+        pgrep -f 'klippy\.py' >/dev/null 2>&1 && return 0
+    else
+        ps 2>/dev/null | grep 'klippy.py' | grep -v grep >/dev/null && return 0
+    fi
+    return 1
+}
+
+start() {
+    if klippy_running; then
+        echo "klipper: already running"
+        return 0
+    fi
+    if [ "${MOD_UI:-stock}" = "stock" ]; then
+        # firmwareExe will start it. Give it a moment, then only step in if
+        # it did not, so a stock-UI machine behaves exactly like stock.
+        sleep 15
+        if klippy_running; then
+            echo "klipper: started by firmwareExe (stock path)"
+            return 0
+        fi
+        echo "klipper: firmwareExe did not start it -- starting directly"
+    fi
+    [ -x /usr/prog/klipper/start.sh ] || { echo "klipper: start.sh missing"; return 1; }
+    /usr/prog/klipper/start.sh &
+    echo "klipper: start.sh launched"
+}
+stop() {
+    [ -x /usr/prog/klipper/klipperDaemon ] && /usr/prog/klipper/klipperDaemon stop
+    echo "klipper: stopped"
+}
+case "$1" in
+    start|'') start ;;
+    stop)     stop ;;
+    restart)  stop; sleep 2; start ;;
+    status)   klippy_running && echo "klipper: running" || echo "klipper: not running" ;;
+    *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac

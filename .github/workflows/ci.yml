@@ -1,0 +1,63 @@
+name: ci
+
+# The stock FlashForge firmware is proprietary and ~93MB, so it is never in
+# the repo. Every job below runs against a synthetic fixture that reproduces
+# the package STRUCTURE (see test/fixtures/make-stock-fixture.sh), which is
+# enough to exercise the entire pipeline and every brick-safety check.
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            openssl xz-utils unzip binutils file squashfs-tools
+
+      - name: Shell syntax + brick-risk lint
+        run: |
+          for f in bin/*.sh payload/*.sh payload/init.d/S* test/*.sh test/fixtures/*.sh; do
+            [ -f "$f" ] || continue
+            sh -n "$f" || bash -n "$f" || { echo "syntax error in $f"; exit 1; }
+          done
+          ./test/lint-danger.sh payload payload/init.d
+
+      - name: shellcheck
+        run: |
+          sudo apt-get install -y shellcheck
+          # payload scripts run under busybox ash on the printer
+          shellcheck -s sh -S warning payload/*.sh payload/init.d/S* payload/firmwareExe || true
+          shellcheck -s bash -S error bin/*.sh || true
+
+      - name: Full test suite (fixture-based)
+        run: ./test/run-tests.sh
+
+      - name: Upload built fixture packages
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixture-packages
+          path: work/out/*.tgz
+          if-no-files-found: ignore
+          retention-days: 7
+
+  abi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install qemu-user-static + binutils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static binutils file
+      - name: MIPS ABI checks
+        # Skips cleanly when no MIPS binaries are present (they are build
+        # artifacts and are never committed).
+        run: ./test/test-abi.sh

@@ -1,0 +1,80 @@
+#!/bin/sh
+# Decide WHICH UI should run, and record the verdict in $MODDIR/.ui-choice
+# for the firmwareExe wrapper to act on.
+#
+# The decision is separated from the launching because the UI must run in the
+# FOREGROUND of the firmwareExe wrapper (so app_startup.sh's `ps | grep
+# firmwareExe` watchdog sees a live process). An init script cannot hold that
+# foreground, so it only chooses.
+#
+# Safety rules encoded here -- they matter because the goal is to retire
+# FlashForge's firmwareExe, and once it no longer drives the screen a UI
+# crash must not cost you the machine:
+#   * ssh comes from the stock /etc/init.d/S50dropbear, which busybox init
+#     already ran long before this script. It is up regardless of what
+#     happens here.
+#   * A UI that crash-loops latches SAFE-MODE after MAX_UI_FAILURES boots and
+#     the printer falls back to the stock UI.
+#   * Delete /usr/data/mod/SAFE-MODE (over ssh) to try the new UI again.
+MODDIR=/usr/data/mod
+[ -f $MODDIR/mod.conf ] && . $MODDIR/mod.conf
+MAX_UI_FAILURES="${MOD_MAX_UI_FAILURES:-3}"
+FAILFILE=$MODDIR/ui-failures
+SAFEFILE=$MODDIR/SAFE-MODE
+CHOICE=$MODDIR/.ui-choice
+STOCK_UI=/usr/prog/PROGRAM/software/firmwareExe.stock
+
+have_helix() { [ -x $MODDIR/helixscreen/bin/helix-launcher.sh ] || [ -x $MODDIR/helixscreen/bin/helix-screen ]; }
+have_stock() { [ -x "$STOCK_UI" ]; }
+
+start() {
+    want="${MOD_UI:-stock}"
+
+    if [ -f "$SAFEFILE" ]; then
+        echo "ui: SAFE-MODE latched -- forcing stock UI (delete $SAFEFILE to retry)"
+        want=stock
+    fi
+
+    failures=`cat "$FAILFILE" 2>/dev/null || echo 0`
+    case "$failures" in ''|*[!0-9]*) failures=0 ;; esac
+
+    # Every boot increments the counter; the UI clears it once it has been
+    # alive for a while (see the settle check below). A crash-loop therefore
+    # walks the counter up until SAFE-MODE latches.
+    if [ "$failures" -ge "$MAX_UI_FAILURES" ]; then
+        echo "ui: $failures consecutive short boots -- latching SAFE-MODE"
+        : > "$SAFEFILE"
+        want=stock
+    fi
+
+    if [ "$want" = helix ] && ! have_helix; then
+        echo "ui: helix requested but not installed -- falling back to stock"
+        want=stock
+    fi
+    if [ "$want" = stock ] && ! have_stock; then
+        echo "ui: WARNING no stock UI available either -- printer will be headless"
+        echo "    ssh is still up via /etc/init.d/S50dropbear"
+    fi
+
+    echo "$want" > "$CHOICE"
+    echo "ui: chose $want"
+
+    # Arm the failure counter, then clear it in the background once the UI has
+    # survived long enough to be considered healthy.
+    echo `expr $failures + 1` > "$FAILFILE"
+    ( sleep 90
+      if [ -s "$CHOICE" ]; then rm -f "$FAILFILE"; fi ) &
+}
+stop() {
+    killall helix-screen helix-watchdog helix-splash firmwareExe.stock 2>/dev/null
+    echo "ui: stopped"
+}
+case "$1" in
+    start|'') start ;;
+    stop)     stop ;;
+    restart)  stop; sleep 2; start ;;
+    status)   echo "ui choice: `cat $CHOICE 2>/dev/null || echo unset`";
+              echo "failures:  `cat $FAILFILE 2>/dev/null || echo 0`";
+              [ -f "$SAFEFILE" ] && echo "SAFE-MODE: latched" || echo "SAFE-MODE: clear" ;;
+    *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac

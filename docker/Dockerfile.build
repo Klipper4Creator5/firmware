@@ -1,0 +1,18 @@
+# Reproducible build environment.
+#
+# The packaging depends on exact tool behaviour (openssl DES3 with MD5 key
+# derivation, GNU tar member ordering, md5sum output format), so pinning the
+# image keeps a package built on a laptop byte-comparable with one built in
+# CI. It is also what `make shell` drops you into.
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
+ && apt-get update && apt-get install -y --no-install-recommends \
+      bash coreutils tar xz-utils gzip openssl unzip curl ca-certificates \
+      python3 binutils file findutils grep sed gawk make git \
+      squashfs-tools \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+CMD ["bash"]
