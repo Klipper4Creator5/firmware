@@ -372,6 +372,10 @@ class FFToolchange:
 
         A misspelled button, extruder or macro name would otherwise only
         surface mid-toolchange, with the carriage already at a dock."""
+        # [ff_tool_offset] may be included after this section, so station_z
+        # was not visible to the refresh_offsets() in __init__ -- re-derive
+        # now that every object exists, or Z would stay in the relative form.
+        self.refresh_offsets()
         missing = []
 
         for name in self.dock_sensors + self.grab_sensors:
