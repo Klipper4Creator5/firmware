@@ -33,7 +33,7 @@ ifeq ($(LOCAL),)
           -v "$(CURDIR)":"$(CURDIR)" -w "$(CURDIR)" \
           $(if $(ASSET_ROOT),-v "$(ASSET_ROOT)":"$(ASSET_ROOT)",) \
           -v $(DOCKER_SOCK):$(DOCKER_SOCK) \
-          -e PROFILE -e REAL_PKG -e SIM_IMAGE \
+          -e PROFILE -e MODEL -e TARGET_MACHINE -e REAL_PKG -e SIM_IMAGE \
           $(IMAGE)
   RUNTTY = $(subst --rm -i,--rm -it,$(RUN))
 else
@@ -44,7 +44,7 @@ endif
 .DEFAULT_GOAL := help
 .PHONY: help image shell build probe ssh web full helix all-profiles \
         rootfs verify test test-lint test-install \
-        test-recovery test-ui test-ash test-abi clean distclean
+        test-recovery test-ui test-ash test-abi test-model release clean distclean
 
 help:
 	@echo 'creator5-custom-firmware -- everything runs in Docker'
@@ -56,6 +56,10 @@ help:
 	@echo '  make full         stage 3  + forked Klipper, toolchanger'
 	@echo '  make helix        stage 4  + HelixScreen as the UI'
 	@echo '  make all-profiles'
+	@echo '  make release PROFILE=<p>   build BOTH models into dist/'
+	@echo
+	@echo 'Models: packages are model-specific and refuse to install on the'
+	@echo 'other one. MODEL=Creator5 make web  builds the non-Pro variant.'
 	@echo
 	@echo 'Recovery: keep a copy of the STOCK FlashForge .tgz on a spare stick.'
 	@echo 'Flashing it restores every file the mod touches (see make test-recovery).'
@@ -66,6 +70,7 @@ help:
 	@echo '  make test-install     run the installer against a fake printer'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo '  make test-ui          UI selection, crash fallback, SAFE-MODE'
+	@echo '  make test-model       both models gated + firmware correct'
 	@echo '  make test-ash         parse the payload with the printer own busybox'
 	@echo '  make test-abi         MIPS ELF ABI checks'
 	@echo
@@ -97,6 +102,19 @@ all-profiles: image config.env
 	@for p in probe ssh web full helix; do \
 	   echo "=== $$p ==="; PROFILE=$$p $(RUN) ./bin/build.sh || exit 1; done
 
+# One package per model, collected in dist/. They cannot share content: the
+# two stock packages ship different firmwareExe binaries.
+release: image config.env
+	@rm -rf dist && mkdir -p dist
+	@for m in Creator5Pro Creator5; do \
+	   echo "=== $$m / $(PROFILE) ==="; \
+	   MODEL=$$m PROFILE=$(PROFILE) $(RUN) ./bin/build.sh || exit 1; \
+	   MODEL=$$m $(RUN) ./bin/verify.sh || exit 1; \
+	   cp work/out/$$m-*.tgz dist/ || exit 1; \
+	 done
+	@echo; echo "dist/:"; ls -lh dist | awk 'NR>1{print "   "$$9"  "$$5}'
+	@echo; echo "Each file installs ONLY on the model in its name."
+
 rootfs: image config.env
 	@$(RUN) ./bin/unpack.sh >/dev/null
 	@$(RUN) ./bin/extract-rootfs.sh
@@ -109,6 +127,9 @@ test: image
 
 test-lint: image
 	@$(RUN) ./test/lint-danger.sh payload payload/init.d
+
+test-model: image
+	@$(RUN) ./test/test-model-gate.sh
 
 test-ash: image
 	@$(RUN) ./test/test-ash-conformance.sh

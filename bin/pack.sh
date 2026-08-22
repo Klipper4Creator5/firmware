@@ -90,27 +90,38 @@ if [ "$PLAIN" = "1" ]; then
     echo
     echo "PLAIN package: work/out/plain/  -> copy its CONTENTS to the USB root"
 else
+    # Name the output after the model the package is actually for. The two
+    # models ship DIFFERENT firmwareExe binaries, so emitting both filenames
+    # from one build (as an earlier version did) would hand the wrong
+    # firmware to one of them. Each model must be built from its own stock
+    # package.
+    PKG_MACHINE=$(cat work/.pkg_machine 2>/dev/null || echo "")
+    if [ "$PKG_MACHINE" = unknown ]; then PKG_MACHINE=""; fi
+    if [ -n "$PKG_MACHINE" ] && [ "$PKG_MACHINE" != "${TARGET_MACHINE:-$PKG_MACHINE}" ]; then
+        echo "MODEL MISMATCH: stock package is for '$PKG_MACHINE', TARGET_MACHINE='$TARGET_MACHINE'" >&2
+        echo "  point STOCK_TGZ_$(echo "$TARGET_MACHINE" | tr a-z A-Z) at a $TARGET_MACHINE package" >&2
+        exit 1
+    fi
+    OUT_MACHINE="${PKG_MACHINE:-${TARGET_MACHINE:-Creator5Pro}}"
+
     echo ">> tarring + encrypting"
     # Outer tar is NOT gzipped despite the .tgz name -- unTar pipes the
     # decrypted stream straight into `tar xvf -`.
+    # The Pro's app_startup.sh globs /mnt/Creator5Pro-*.tgz and the non-Pro
+    # globs /mnt/Creator5-*.tgz, so the filename prefix must match the model.
+    OUTFILE="work/out/${OUT_MACHINE}-${BASE}.tgz"
     tar -cf - -C work/stage . \
-        | openssl des3 -salt -md md5 -k "$FF_KEY" \
-        > "work/out/Creator5Pro-${BASE}.tgz"
-
-    # The Pro's app_startup.sh globs Creator5Pro-*.tgz, the non-Pro globs
-    # Creator5-*.tgz. Ship both names (FlashForge does the same with its
-    # factory package -- the two files are byte-identical).
-    cp -f "work/out/Creator5Pro-${BASE}.tgz" "work/out/Creator5-${BASE}.tgz"
+        | openssl des3 -salt -md md5 -k "$FF_KEY" > "$OUTFILE"
 
     echo
-    echo "Packages:"
-    ls -lh work/out/*.tgz | awk '{print "   "$9"  "$5}'
+    echo "Package:"
+    ls -lh "$OUTFILE" | awk '{print "   "$9"  "$5}'
+    echo "   installs on: $OUT_MACHINE only"
     echo
     echo "Sanity check (decrypt + list):"
-    openssl des3 -d -k "$FF_KEY" -salt -md md5 -in "work/out/Creator5Pro-${BASE}.tgz" 2>/dev/null \
+    openssl des3 -d -k "$FF_KEY" -salt -md md5 -in "$OUTFILE" 2>/dev/null \
         | tar -tvf - | sed 's/^/   /'
     echo
-    echo "Copy BOTH .tgz files to the root of a FAT32 USB stick, plug it in,"
-    echo "and power the printer on. It installs and reboots by itself."
+    echo "Copy it to the root of a FAT32 USB stick, plug it in, power on."
     echo "Install log afterwards: /usr/data/mod-install.log"
 fi

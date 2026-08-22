@@ -42,8 +42,14 @@ hdr "brick-risk lint"
 sub "lint-danger" ./test/lint-danger.sh payload payload/init.d
 
 hdr "synthetic stock package"
-run ./test/fixtures/make-stock-fixture.sh "$TMP/fx"
-FIXTURE="$TMP/fx/Creator5Pro-stock-fixture.tgz"
+# The fixture must live INSIDE the repo, not in $TMP. The simulations start
+# sibling containers through the docker socket, and those mounts are resolved
+# by the host daemon -- a path under the build container's /tmp does not exist
+# there, so the sibling would mount an empty file.
+FXDIR="$ROOT/work/.fixture"
+run ./test/fixtures/make-stock-fixture.sh "$FXDIR"
+FIXTURE="$FXDIR/Creator5Pro-stock-fixture.tgz"
+export TARGET_MACHINE=Creator5Pro
 [ -f "$FIXTURE" ] || { echo "no fixture -- aborting"; exit 1; }
 
 cat > config.env <<CFG
@@ -57,6 +63,7 @@ HELIX_TGZ=""
 MAINSAIL_ZIP=""
 BUSYBOX_BIN=""
 DEFAULT_PROFILE=probe
+TARGET_MACHINE=Creator5Pro
 MOD_UI=stock
 ROOT_PW_HASH='\$6\$ci\$abcdefghijklmnopqrstuvwxyz'
 FF_KEY='FFP0331&*%root'
@@ -96,6 +103,9 @@ sub "install mod -> flash stock -> back to stock" ./test/sim-roundtrip.sh "$MODP
 
 hdr "UI selection and fallback"
 sub "ui fallback" ./test/sim-ui-fallback.sh
+
+hdr "model gates"
+sub "model gate" ./test/test-model-gate.sh
 
 hdr "busybox ash conformance (printer's own shell)"
 sub "ash conformance" ./test/test-ash-conformance.sh

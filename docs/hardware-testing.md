@@ -23,12 +23,17 @@ valid recovery image either.
 | Creator 5 | `Creator5` | `0028` |
 | Creator 5 Pro | `Creator5Pro` | `0029` |
 
+The gate is not cosmetic: the two models ship **different `firmwareExe`
+binaries**, so a package must be built from the stock package for its own
+model. `make release` builds both.
+
 Find yours in Settings → About, or in
 `/usr/data/firmwareRes/config/general.json` (`machineName`), and set
 `TARGET_MACHINE` in `config.env`. Then:
 
 ```sh
-make full && make verify
+make full && make verify        # one model
+make release PROFILE=full       # both, into dist/
 ```
 
 `verify.sh` fails loudly on a mismatch. **You must start from a stock package
