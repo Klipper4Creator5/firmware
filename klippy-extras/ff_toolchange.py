@@ -57,7 +57,8 @@ ERR_RELEASE_STATE = 144         # E0144    state error after release verify
 # Where the numbers come from
 #
 # Everything per-unit lives in Klipper's own config:
-#   [ff_tool <n>]   dock_x, dock_y, z_adjust                  (ff_tool.py)
+#   [ff_tool <n>]   dock_x/dock_y <- FF_IMPORT_FIRMWARE_CONFIG via SAVE_CONFIG
+#                   z_adjust      <- TOOL_Z_ADJUST          via SAVE_CONFIG
 #                   nozzle_x/y/z  <- TOOL_OFFSET_CALIBRATE via SAVE_CONFIG
 #   [ff_tool_offset] station_x/y/z <- STATION_CALIBRATE  via SAVE_CONFIG
 #   [ff_toolchange]  feeds, x_correction, temp_offset, staging positions
@@ -150,11 +151,9 @@ class FFToolchange:
                     self.printer.load_object(config, 'ff_tool %d' % i))
             except Exception:
                 raise config.error(
-                    "%s: section [ff_tool %d] is required (dock_x/dock_y);"
-                    " run FF_IMPORT_FIRMWARE_CONFIG from ff_legacy.py to"
-                    " generate it from the factory JSON" % (self.name, i))
-        self.dock_x = [t.dock_x for t in self.tools]
-        self.dock_y = [t.dock_y for t in self.tools]
+                    "%s: section [ff_tool %d] is required (an empty"
+                    " section is enough; FF_IMPORT_FIRMWARE_CONFIG fills"
+                    " in dock and nozzle data)" % (self.name, i))
         # testConfig()+8 grabOffset in the app.
         self.x_correction = config.getfloat('x_correction', 0.0)
         # degC-to-mm thermal term of the print-start Z offset
@@ -299,37 +298,50 @@ class FFToolchange:
                                             self._handle_ready)
 
     def _derive_offsets(self, base):
-        """Per-tool G-code offsets, as CommMgr::setGrabGcodeOffsetMgr @0x77f1dc
-        computes them:
+        """Per-tool G-code offsets.
 
             X = nozzle_x[tool] - nozzle_x[base]
             Y = nozzle_y[tool] - nozzle_y[base]
-            Z = z_adjust[tool] + (nozzle_z[tool] - nozzle_z[base])
+            Z = z_adjust[tool] + (nozzle_z[tool] - station_z)
 
-        DIFFERENCES against a base tool (T0 by default), not absolute
-        positions. nozzle_* are the station-bore centre measured with each
-        tool's nozzle ([ff_tool n], written by TOOL_OFFSET_CALIBRATE);
-        z_adjust is the user's per-tool Z tune (the app's zoffset.json).
+        X/Y are DIFFERENCES against a base tool (T0 by default), as
+        CommMgr::setGrabGcodeOffsetMgr @0x77f1dc computes them. Z is
+        ABSOLUTE: nozzle_z - station_z is this tool's nozzle-to-eddy-trigger
+        gap (~3.2 mm), the raw-eddy-frame-to-bed-frame conversion the app
+        only applies at print start (setZOffsetWhenPrint). Applying it on
+        every grab instead means Z=0 is the bed plane whenever a tool is
+        mounted, so a manual move after T<n> cannot drive the nozzle into
+        the plate. The print-only terms (thermal, bed, thin layer) are
+        added by TOOLCHANGE_SET_PRINT_OFFSET on top.
 
-        A tool without a calibration contributes zero offset (and is listed
-        by TOOLCHANGE_STATUS / warned about at ready). If the BASE tool is
-        uncalibrated every tool is treated as zero, since nothing can be
+        nozzle_* are the station-bore centre measured with each tool's
+        nozzle ([ff_tool n], written by TOOL_OFFSET_CALIBRATE); z_adjust is
+        the user's per-tool Z tune (the app's zoffset.json).
+
+        Without station_z (STATION_CALIBRATE) Z falls back to the app's
+        relative form, nozzle_z[tool] - nozzle_z[base]. A tool without a
+        calibration contributes zero offset (and is listed by
+        TOOLCHANGE_STATUS / warned about at ready). If the BASE tool is
+        uncalibrated X/Y are zero for every tool, since nothing can be
         measured against it.
         """
         tools = self.tools
-        if not tools[base].calibrated():
-            return ([0.0] * EXTRUDER_COUNT, [0.0] * EXTRUDER_COUNT,
-                    [t.z_adjust for t in tools])
-        bx, by, bz = tools[base].nozzle
+        z_station = self._station_z()
+        base_ok = tools[base].calibrated()
+        bx, by, bz = tools[base].nozzle if base_ok else (0.0, 0.0, 0.0)
         xs, ys, zs = [], [], []
         for t in tools:
-            if t.calibrated():
+            if t.calibrated() and base_ok:
                 xs.append(t.nozzle[0] - bx)
                 ys.append(t.nozzle[1] - by)
-                zs.append(t.z_adjust + (t.nozzle[2] - bz))
             else:
                 xs.append(0.0)
                 ys.append(0.0)
+            if t.calibrated() and z_station is not None:
+                zs.append(t.z_adjust + (t.nozzle[2] - z_station))
+            elif t.calibrated() and base_ok:
+                zs.append(t.z_adjust + (t.nozzle[2] - bz))
+            else:
                 zs.append(t.z_adjust)
         return xs, ys, zs
 
@@ -603,7 +615,12 @@ class FFToolchange:
             return None, str(e)
 
     def _dock(self, tool):
-        return self.dock_x[tool] + self.x_correction, self.dock_y[tool]
+        t = self.tools[tool]
+        if not t.has_dock():
+            raise FFToolchangeError(
+                "T%d has no dock position ([ff_tool %d] dock_x/dock_y) --"
+                " run FF_IMPORT_FIRMWARE_CONFIG and SAVE_CONFIG" % (tool, tool))
+        return t.dock_x + self.x_correction, t.dock_y
 
     def _extruder_name(self, tool):
         return self.tools[tool].extruder_name
@@ -909,31 +926,19 @@ class FFToolchange:
         return gm.get_status(self.reactor.monotonic())['homing_origin'].z
 
     def _apply_tool_diff_offsets(self, tool):
-        """Apply this tool's RELATIVE offsets after a successful grab.
+        """Apply this tool's offsets after a successful grab.
         Port of CommMgr::setGrabGcodeOffsetMgr(tool, onlyZ=false).
 
-        These are small tool-to-tool DIFFERENCES (fractions of a mm), not
-        absolute positions: off_x/off_y/off_z are each tool's calibration
-        value minus the base tool's (see _derive_offsets). The big absolute
-        print offset (~+3.2 mm, the raw-eddy-frame-to-bed-frame conversion)
-        is NOT set here -- it is set once per print by
-        TOOLCHANGE_SET_PRINT_OFFSET and *carried* through every toolchange
-        by the babystep recovery below.
-
-        Which base? The app measures its diffs against the print's FIRST
-        tool (setBaseExtruder from serialPrint / compareExtruderFromMf);
-        we use the fixed offset_base (T0 by default). The choice cancels:
+        off_x/off_y are small tool-to-tool DIFFERENCES against the base
+        tool; off_z is this tool's ABSOLUTE gap to the bed plane (~+3.2 mm,
+        see _derive_offsets). Unlike the app, which sets that gap once per
+        print (setZOffsetWhenPrint) and carries it across changes, every
+        grab establishes it here -- so the only thing carried is whatever
+        sits on top of it: TOOLCHANGE_SET_PRINT_OFFSET's job terms and the
+        user's live babystep.
 
             new Z = off_z[new] + (old Z - off_z[old])
-                  = zoff[new] + (t_new_z - t_base_z)
-                    + [t_old_z - z_station + job terms + zoff[old]]
-                    - [zoff[old] + (t_old_z - t_base_z)]
-                  = t_new_z - z_station + job terms + zoff[new]
-
-        t_base_z drops out, so after a print-start on ANY initial tool
-        (T0..T3) every grab lands on that tool's own absolute gap. E.g. a
-        T3-first job: base 3.258 set by the print-offset command, change to
-        T0 -> 0.018 diff removed -> 3.240, back to T3 -> 3.258 again.
+                  = [t_new_z - z_station + zoff[new]] + job terms + babystep
 
         The app sends two commands, different move speeds, 3-decimal
         formatting (BaseFunction::float_to_string(v, 3)):
@@ -988,10 +993,12 @@ class FFToolchange:
         t*_offset_z / z_station_pos = nozzle-touch vs eddy-touch calibration
         against the fixed under-bed sensor. Derivation: OKF/62.
 
-        _z_tool_term is deliberately NOT updated -- the next _apply_tool_diff_offsets
-        recovers this base as "babystep", as the app re-adds m_zOffset on
-        every grab. END/CANCEL must reset with SET_GCODE_OFFSET Z=0 MOVE=1
-        (app exit block @0x7a25f0)."""
+        The gap term (nozzle_z - station_z + z_adjust) is already the grab
+        offset (off_z, applied by every T<n>); this command re-asserts it and
+        adds the job terms, which the next _apply_tool_diff_offsets then
+        carries as "babystep" -- the app re-adds m_zOffset on every grab.
+        END/CANCEL must reset with SET_GCODE_OFFSET Z=0 MOVE=1 (app exit
+        block @0x7a25f0)."""
         nozzle = gcmd.get_float('NOZZLE')
         bed = gcmd.get_float('BED', 0.)
         layer = gcmd.get_float('LAYER', 0.)
@@ -1029,6 +1036,9 @@ class FFToolchange:
         self._run('SET_GCODE_OFFSET X=%.3f Y=%.3f Z=%.3f'
                   ' MOVE=1 MOVE_SPEED=100'
                   % (self.off_x[tool], self.off_y[tool], z))
+        # off_z[tool] is the gap + z_adjust part of z (station_z and the
+        # calibration were checked above); the remainder is the job terms.
+        self._z_tool_term = self.off_z[tool]
 
     cmd_TOOL_Z_ADJUST_help = (
         "Per-tool persistent Z correction: TOOL_Z_ADJUST TOOL=<0..3> "
@@ -1191,8 +1201,15 @@ class FFToolchange:
             lines.append("  %-14s[%s]"
                          % (option, ", ".join("%.4f" % v for v in values)))
 
-        series_line('dock_x', self.dock_x)
-        series_line('dock_y', self.dock_y)
+        series_line('dock_x', [t.dock_x if t.has_dock() else float('nan')
+                               for t in self.tools])
+        series_line('dock_y', [t.dock_y if t.has_dock() else float('nan')
+                               for t in self.tools])
+        missing = [t.index for t in self.tools if not t.has_dock()]
+        if missing:
+            lines.append("  ! no dock position for T%s -- run"
+                         " FF_IMPORT_FIRMWARE_CONFIG and SAVE_CONFIG"
+                         % ", T".join(str(i) for i in missing))
         series_line('offset_z', self.off_z)
         series_line('offset_x', self.off_x)
         series_line('offset_y', self.off_y)

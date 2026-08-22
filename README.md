@@ -20,12 +20,12 @@ documented in the file headers.
 
 | File | Goes to (on the printer) | What it does |
 |---|---|---|
-| [`klippy-extras/ff_toolchange.py`](klippy-extras/ff_toolchange.py) | `/usr/prog/klipper/klippy/extras/` | The toolchanger: `T0..T3`, dock/grab state machine with sensor polling and retries, per-tool G-code offsets, `TOOLCHANGE_SET_PRINT_OFFSET` (the absolute print-start Z offset), `TOOL_Z_ADJUST` (per-tool persistent babystep), `TOOLCHANGE_STATUS`, `TOOLCHANGE_PARK` |
+| [`klippy-extras/ff_toolchange.py`](klippy-extras/ff_toolchange.py) | `/usr/prog/klipper/klippy/extras/` | The toolchanger: `T0..T3`, dock/grab state machine with sensor polling and retries, per-tool G-code offsets (the absolute ~3.2 mm bed-frame Z is applied at every grab), `TOOLCHANGE_SET_PRINT_OFFSET` (the print-start thermal/bed/layer Z terms), `TOOL_Z_ADJUST` (per-tool persistent babystep), `TOOLCHANGE_STATUS`, `TOOLCHANGE_PARK` |
 | [`helixscreen/flashforge_creator5_pro.json`](helixscreen/flashforge_creator5_pro.json) | HelixScreen `config/printer_database.d/` | Printer-database entry so HelixScreen auto-detects the Creator 5 Pro as a tool changer |
-| [`klippy-extras/ff_tool.py`](klippy-extras/ff_tool.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_tool n]` — one section per tool: hand-written `dock_x`/`dock_y`, autosaved `nozzle_x/y/z` and `z_adjust` |
+| [`klippy-extras/ff_tool.py`](klippy-extras/ff_tool.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_tool n]` — one section per tool; `dock_x/dock_y`, `nozzle_x/y/z` and `z_adjust` are all autosaved (import or calibration + `SAVE_CONFIG`) |
 | [`klippy-extras/ff_tool_offset.py`](klippy-extras/ff_tool_offset.py) | `/usr/prog/klipper/klippy/extras/` | `TOOL_OFFSET_CALIBRATE` / `STATION_CALIBRATE` / `TOOL_OFFSET_STATUS` — the touchscreen's nozzle XY/Z offset calibration, recovered from the binary and reimplemented in Klipper |
 | [`klippy-extras/ff_legacy.py`](klippy-extras/ff_legacy.py) | `/usr/prog/klipper/klippy/extras/` | `FF_IMPORT_FIRMWARE_CONFIG` — one-shot import of the factory/touchscreen JSON into Klipper config. Needed once, at install |
-| [`config/ff-toolchange.cfg`](config/ff-toolchange.cfg) | `/usr/data/config/` | `[ff_tool 0..3]` dock coordinates (**per unit — ships with the author's numbers**), `[ff_toolchange]` feeds/geometry, `SDCARD_PRINT_FILE` wrapper |
+| [`config/ff-toolchange.cfg`](config/ff-toolchange.cfg) | `/usr/data/config/` | empty `[ff_tool 0..3]` sections (the per-unit dock/nozzle data is autosaved, nothing unit-specific ships), `[ff_toolchange]` feeds/geometry, `SDCARD_PRINT_FILE` wrapper |
 | [`config/ff-tool-offset.cfg`](config/ff-tool-offset.cfg) | `/usr/data/config/` | `[ff_tool_offset]` — probe geometry and guards for the calibration commands |
 | [`config/ff-legacy.cfg`](config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — include only for the import step, then remove |
 | [`config/ff-print-macros.cfg`](config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the calibration gate |
@@ -51,14 +51,17 @@ and stay next to the machine until you trust it.
 
 * **The eddy probe's Z home is ~3.2 mm below the real bed plane.** The stock
   app compensates with an absolute `SET_GCODE_OFFSET Z=+3.2xx` at print
-  start; `START_PRINT` calls `TOOLCHANGE_SET_PRINT_OFFSET` to do the same.
-  Printing without these macros (or with a stale copy of them) drives the
-  nozzle into the plate.
+  start. Here every `T<n>` grab applies that tool's gap
+  (`nozzle_z − station_z + z_adjust`) as the Z offset, so Z=0 is the bed
+  whenever a tool is mounted; `START_PRINT`'s `TOOLCHANGE_SET_PRINT_OFFSET`
+  only adds the thermal/bed/thin-layer terms (< 0.1 mm). With no tool
+  mounted, or on an uncalibrated machine, Z=0 is still ~3.2 mm *below* the
+  plate — the print gate refuses to start in that state.
 * **Where the numbers live.** Nothing is read from firmwareExe's JSON at
-  runtime any more. Dock positions (`[ff_tool n] dock_x/dock_y`) and feeds
-  (`[ff_toolchange]`) are hand-written in `ff-toolchange.cfg`. Calibrated
-  values — `nozzle_x/y/z` per tool, `station_x/y/z`, `z_adjust` — are
-  written by the calibration commands (`configfile.set`) and persisted with
+  runtime any more. Feeds and staging positions (`[ff_toolchange]`) are
+  plain config in `ff-toolchange.cfg`. Per-unit values — `dock_x/dock_y`,
+  `nozzle_x/y/z` and `z_adjust` per tool, `station_x/y/z`, `cylinder_x/y` —
+  are written by the import/calibration commands (`configfile.set`) and persisted with
   `SAVE_CONFIG` into the `#*#` block at the end of `printer.cfg`, exactly
   like PID or input-shaper results. **Never put those autosaved options
   into an included `.cfg`**: this Klipper fork's `SAVE_CONFIG` refuses with
@@ -111,20 +114,19 @@ scp config/ff-toolchange.cfg config/ff-tool-offset.cfg \
    FF_IMPORT_FIRMWARE_CONFIG
    ```
 
-   This reads `extruder.json` / `test.json` / `zoffset.json`, stages the
-   nozzle and station values (and any per-tool Z tune) for `SAVE_CONFIG`,
-   and prints an `[ff_tool n]` / `[ff_toolchange]` / `[ff_tool_offset]`
-   snippet with **your unit's** dock coordinates, feeds and station start
-   point. `ff-toolchange.cfg` ships with the author's dock numbers — paste
-   the snippet's `dock_x`/`dock_y` into its `[ff_tool 0..3]` sections (and
-   any feed that differs into `[ff_toolchange]`) before moving anything.
+   This reads `extruder.json` / `test.json` / `zoffset.json` and stages
+   **your unit's** dock coordinates, nozzle and station values, station
+   start point and any per-tool Z tune for `SAVE_CONFIG`. Nothing to
+   paste; it only prints an `[ff_toolchange]` snippet if a feed in the JSON
+   differs from the running config (it does not on a stock unit).
 
 6. `SAVE_CONFIG` — persists the imported values into `printer.cfg`'s `#*#`
    block and restarts.
 
 7. `TOOLCHANGE_STATUS` and `TOOL_OFFSET_STATUS` — every tool should show a
-   nozzle triple and the station `z` must be present; nothing should say
-   `NOT CALIBRATED` or "unsaved calibration pending".
+   nozzle triple and a dock position, the station `z` must be present;
+   nothing should say `NOT CALIBRATED`, "no dock position" or "unsaved
+   calibration pending".
 
 8. Remove the `[include ff-legacy.cfg]` line and `RESTART`. The import is
    one-shot; the touchscreen's JSON is not consulted again.
@@ -135,8 +137,9 @@ Before moving anything:
 
 * `TOOLCHANGE_STATUS` — current tool as derived from the dock sensors, every
   sensor's state, each tool's nozzle position and `z_adjust`, `station_z`,
-  dock coordinates and the derived tool-to-tool offsets. Check the
-  `dock_x`/`dock_y` rows are your unit's values, not the shipped ones.
+  dock coordinates and the derived offsets (`offset_z` is each tool's
+  absolute bed-frame gap, ~3.2). Check the `dock_x`/`dock_y` rows are
+  numbers, not `nan`.
 * `TOOL_OFFSET_STATUS` — saved calibration per tool and for the station,
   and a warning if anything is staged but not yet `SAVE_CONFIG`'d.
 * Physical Z check (clean bed, nothing on it):
@@ -149,11 +152,12 @@ Before moving anything:
   G1 Z0.1 F600
   ```
 
-  The offset command reports a Z around +3.2 with a term-by-term
-  breakdown, and the nozzle should end up a paper-thickness above the
-  bed at the center. If it presses into the plate instead, STOP — the
-  offset is not being applied; do not print until `TOOLCHANGE_STATUS`
-  and `TOOL_OFFSET_STATUS` are clean. Afterwards restore the idle state:
+  `T0` already applies the ~+3.2 mm gap (watch the gcode Z offset in the
+  UI); the offset command reports the full Z with a term-by-term breakdown,
+  and the nozzle should end up a paper-thickness above the bed at the
+  center. If it presses into the plate instead, STOP — the offset is not
+  being applied; do not print until `TOOLCHANGE_STATUS` and
+  `TOOL_OFFSET_STATUS` are clean. Afterwards restore the idle state:
 
   ```gcode
   G1 Z10 F1200
@@ -341,24 +345,23 @@ module.
 
 ## Design notes
 
-* Per-tool offsets are **differences vs a base tool (T0)**, applied on each
-  grab the way `CommMgr::setGrabGcodeOffsetMgr` computes them; the
-  once-per-print **absolute** Z base (`BuildPage::startPrint`) is set by
-  `TOOLCHANGE_SET_PRINT_OFFSET` after the first grab and carried through
-  toolchanges. The base-tool term cancels algebraically, so a print may
-  start on any tool. Babysteps made mid-print are carried across
-  toolchanges, as in the app. Note this split (absolute base at print
-  start + differences on grab) is a rewrite of how the original
-  `firmwareExe` structures it, kept for fidelity — it would arguably be
-  cleaner to apply the absolute offset on the *first toolchange* rather
-  than as a `START_PRINT` step, and that change is being considered (see
-  Roadmap).
+* Per-tool X/Y offsets are **differences vs a base tool (T0)**, applied on
+  each grab the way `CommMgr::setGrabGcodeOffsetMgr` computes them. Z is
+  **absolute** on every grab: `nozzle_z − station_z + z_adjust`, the
+  bed-frame gap the app only sets once per print (`BuildPage::startPrint`).
+  This departs from the app deliberately — with the app's scheme a tool
+  picked up outside a print sits in the raw eddy frame and a manual
+  `G1 Z0.1` drives it 3 mm into the plate. `TOOLCHANGE_SET_PRINT_OFFSET`
+  adds only the job terms (thermal, bed ≥ 100 °C, thin first layer) and
+  those, plus mid-print babysteps, are carried across toolchanges as in
+  the app. A print may start on any tool.
 * Calibration is stored the way Klipper's own calibrators store theirs:
   absolute `nozzle_x/y/z` per `[ff_tool n]` section (modelled on
   `[bed_mesh <profile>]` / klipper-toolchanger's `[tool Tn]`) plus
   `[ff_tool_offset] station_x/y/z`, written with `configfile.set()` and
-  persisted by `SAVE_CONFIG`. The T0-relative differences are derived at
-  load. `[save_variables]` is deliberately not used. The stock touchscreen
+  persisted by `SAVE_CONFIG`; dock positions and the station start point
+  are imported the same way. The offsets are derived at load.
+  `[save_variables]` is deliberately not used. The stock touchscreen
   cannot see Klipper-side results — it keeps using its own JSON.
 * Everything is a Python extra (not gcode_macro) because the grab sequence
   polls the grab sensor and retries up to 3 times, and the calibration
@@ -378,9 +381,6 @@ Fool-proofing, in rough priority order:
 * **Z-height / clearance check after picking a tool**, before leaving the
   dock area — catch a bad grab early instead of dragging or breaking the
   tool on the way out.
-* **Move the absolute print Z offset from `START_PRINT` to the first
-  toolchange of a job**, removing the ordering dependency between the
-  macro and the slicer's start G-code.
 * **Block the stock touchscreen UI during Mainsail prints.** The app
   doesn't know a print is running (it only tracks jobs it started
   itself), so the screen stays fully live — a stray tap can home, move

@@ -7,20 +7,20 @@
 #   FF_IMPORT_FIRMWARE_CONFIG [DIR=/usr/data/firmwareRes/config] [APPLY=1]
 #
 # reads extruder.json / test.json / zoffset.json and
-#   * stages the CALIBRATION data for SAVE_CONFIG (configfile.set), exactly
+#   * stages the per-unit data for SAVE_CONFIG (configfile.set), exactly
 #     as TOOL_OFFSET_CALIBRATE / STATION_CALIBRATE would:
-#         [ff_tool n]      nozzle_x/y/z  <- t<n>_offset_x/y/z
-#                          z_adjust      <- zoffset.json z_offset_t<n+1> (if != 0)
-#         [ff_tool_offset] station_x/y/z <- x/y/z_station_pos
-#   * PRINTS a ready-to-paste snippet for the settings that belong in the
-#     hand-written part of the config and must not be autosaved (SAVE_CONFIG
-#     refuses to autosave an option an include already sets):
 #         [ff_tool n]      dock_x/dock_y  <- x_check_pos<n>/y_check_pos<n>
+#                          nozzle_x/y/z   <- t<n>_offset_x/y/z
+#                          z_adjust       <- zoffset.json z_offset_t<n+1> (if != 0)
+#         [ff_tool_offset] station_x/y/z  <- x/y/z_station_pos
+#                          cylinder_x/y   <- cylinder_x/y
+#   * PRINTS a snippet for the few [ff_toolchange] settings that are plain
+#     config (and so cannot be autosaved), only when the JSON disagrees with
+#     the running value -- on a stock unit it never does:
 #         [ff_toolchange]  x_correction   <- grabOffset
 #                          fast_feed      <- grabSpeed * 60
 #                          slow_feed, release_slow_feed <- grabSpeedSlow * 60
 #                          temp_offset    <- tempOffset
-#         [ff_tool_offset] cylinder_x/y   <- cylinder_x/y
 # APPLY=0 only prints everything and stages nothing.
 #
 # Key names and the struct layout were read off the binary
@@ -138,11 +138,21 @@ class FFLegacy:
                 configfile.set(section, option, "%.6f" % value)
             staged.append("  [%s] %s = %.6f" % (section, option, value))
 
-        # -- calibration data -> autosave --------------------------------
+        # -- per-unit data -> autosave -----------------------------------
         tools = fw.tool_offsets()
         zadj = fw.z_adjust()
+        docks = fw.docks()
         for n in range(EXTRUDER_COUNT):
             sec = 'ff_tool %d' % n
+            if docks[n] is not None:
+                stage(sec, 'dock_x', docks[n][0])
+                stage(sec, 'dock_y', docks[n][1])
+                obj = self.printer.lookup_object(sec, None)
+                if apply and obj is not None:
+                    obj.dock_x, obj.dock_y = docks[n]
+            else:
+                out.append("  ! x/y_check_pos%s missing -- T%d dock not imported"
+                           % ('' if n == 0 else n, n))
             if tools[n] is not None:
                 stage(sec, 'nozzle_x', tools[n][0])
                 stage(sec, 'nozzle_y', tools[n][1])
@@ -168,6 +178,14 @@ class FFLegacy:
                 obj.station = st
         else:
             out.append("  ! x/y/z_station_pos missing -- station not imported")
+        obj = self.printer.lookup_object('ff_tool_offset', None)
+        for opt, attr in (('cylinder_x', 'cfg_cylinder_x'),
+                          ('cylinder_y', 'cfg_cylinder_y')):
+            v = fw.num('test', opt)
+            if v is not None:
+                stage('ff_tool_offset', opt, v)
+                if apply and obj is not None:
+                    setattr(obj, attr, v)
 
         tc = self.printer.lookup_object('ff_toolchange', None)
         if apply and tc is not None and hasattr(tc, 'refresh_offsets'):
@@ -176,39 +194,29 @@ class FFLegacy:
         out.append("%s for SAVE_CONFIG:" % ("staged" if apply else "would stage"))
         out += staged or ["  (nothing)"]
 
-        # -- hand-written settings -> snippet ----------------------------
-        snippet = []
-        docks = fw.docks()
-        for n in range(EXTRUDER_COUNT):
-            snippet.append("[ff_tool %d]" % n)
-            if docks[n] is not None:
-                snippet.append("dock_x: %.6f" % docks[n][0])
-                snippet.append("dock_y: %.6f" % docks[n][1])
-            else:
-                snippet.append("# x/y_check_pos%s missing in extruder.json"
-                               % ('' if n == 0 else n))
-            snippet.append("")
-        snippet.append("[ff_toolchange]")
+        # -- plain [ff_toolchange] settings -> snippet, only if different --
+        wanted = []
         for opt, key in (('x_correction', 'grabOffset'),
                          ('temp_offset', 'tempOffset')):
             v = fw.num('test', key)
             if v is not None:
-                snippet.append("%s: %.6g" % (opt, v))
+                wanted.append((opt, v, "%.6g"))
         fast = fw.speed('grabSpeed')
         slow = fw.speed('grabSpeedSlow')
         if fast is not None:
-            snippet.append("fast_feed: %d" % fast)
+            wanted.append(('fast_feed', fast, "%d"))
         if slow is not None:
-            snippet.append("slow_feed: %d" % slow)
-            snippet.append("release_slow_feed: %d" % slow)
-        snippet.append("")
-        snippet.append("[ff_tool_offset]")
-        for opt in ('cylinder_x', 'cylinder_y'):
-            v = fw.num('test', opt)
-            if v is not None:
-                snippet.append("%s: %.6g" % (opt, v))
-        out.append("paste into the hand-written config (NOT autosaved):")
-        out += ["  " + l for l in snippet]
+            wanted.append(('slow_feed', slow, "%d"))
+            wanted.append(('release_slow_feed', slow, "%d"))
+        snippet = []
+        for opt, v, fmt in wanted:
+            cur = getattr(tc, opt, None) if tc is not None else None
+            if cur is None or abs(float(cur) - float(v)) > 1e-9:
+                snippet.append(("%s: " + fmt) % (opt, v))
+        if snippet:
+            out.append("[ff_toolchange] differs from the factory JSON --"
+                       " set by hand in ff-toolchange.cfg if intended:")
+            out += ["  " + l for l in snippet]
         if apply and staged:
             out.append("Then run SAVE_CONFIG to persist the staged values.")
         gcmd.respond_info("\n".join(out))
