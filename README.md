@@ -243,11 +243,17 @@ temperature + 30, push 150 + 145 mm at F240, park the tool, heater off*.
 ```gcode
 LOAD_FILAMENT TOOL=1 TEMP=220          ; or MATERIAL=PETG (app's temperature table)
 UNLOAD_FILAMENT TOOL=1 TEMP=220        ; prime 10 mm, then pull 80 mm out (LENGTH= to tune)
-PURGE TOOL=1 PURGE_TEMP=220 LENGTH=50  ; app's clearNozzlePrint purge
+PURGE TOOL=1 PURGE_TEMP=220 LENGTH=50  ; app's clearNozzlePrint purge + cold wipe (WIPE=0 to skip)
 ```
 
 * `TOOL` defaults to the mounted tool; `RELEASE=0` keeps the tool on the
   carriage afterwards, `HEAT_OFF=0` leaves the heater on.
+* `PURGE` ends the way the app's pre-print clean does: the nozzle rests on
+  the front-right wipe spot (266.5, 13.8) 1 mm above the eddy trigger height
+  while the hotend cools by 100 °C, then lifts — the purge string freezes
+  and tears off instead of riding back to the dock. `WIPE=0` skips it.
+  `LOAD_FILAMENT` has no wipe, as in the app (its guide tells you to pull
+  the string off).
 * While a print is **paused** the macros only act on the mounted tool, use
   the app's in-print lengths (100 mm then −5), and leave tool and heater for
   `RESUME`. While **printing** they refuse.
