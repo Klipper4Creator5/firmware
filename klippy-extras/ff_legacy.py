@@ -115,6 +115,37 @@ class FFLegacy:
         self.gcode.register_command(
             'FF_IMPORT_FIRMWARE_CONFIG', self.cmd_FF_IMPORT_FIRMWARE_CONFIG,
             desc=self.cmd_FF_IMPORT_FIRMWARE_CONFIG_help)
+        # auto_import: while no [ff_tool n] carries a nozzle position (nothing
+        # calibrated or saved yet), load the stock firmware's numbers at
+        # startup so the printer -- and a UI's setup wizard -- sees the
+        # calibration firmwareExe already made. Applied live and staged; the
+        # next SAVE_CONFIG (e.g. after a recalibration) persists it, after
+        # which this no longer triggers.
+        self.auto_import = config.getboolean('auto_import', True)
+        self.auto_import_dir = config.get('firmware_config_dir',
+                                          FIRMWARE_CONFIG_DIR)
+        self.printer.register_event_handler('klippy:ready',
+                                            self._handle_ready)
+
+    def _handle_ready(self):
+        if not self.auto_import:
+            return
+        for n in range(EXTRUDER_COUNT):
+            tool = self.printer.lookup_object('ff_tool %d' % n, None)
+            if tool is not None and tool.calibrated():
+                return  # something is calibrated or saved -- leave it alone
+        if not os.path.exists(os.path.join(self.auto_import_dir,
+                                           'extruder.json')):
+            return
+        try:
+            out = self._import(self.auto_import_dir, apply=True)
+        except Exception as e:
+            logging.warning("%s: auto import failed: %s", self.name, e)
+            return
+        logging.info("%s: auto import\n%s", self.name, "\n".join(out))
+        self.gcode.respond_info(
+            "%s: imported the stock firmware's calibration (%s); run"
+            " SAVE_CONFIG to keep it" % (self.name, self.auto_import_dir))
 
     cmd_FF_IMPORT_FIRMWARE_CONFIG_help = (
         "Import firmwareExe's extruder/test/zoffset.json into [ff_tool n] /"
@@ -123,11 +154,19 @@ class FFLegacy:
     def cmd_FF_IMPORT_FIRMWARE_CONFIG(self, gcmd):
         directory = gcmd.get('DIR', FIRMWARE_CONFIG_DIR)
         apply = gcmd.get_int('APPLY', 1, minval=0, maxval=1)
+        try:
+            out = self._import(directory, apply)
+        except ValueError as e:
+            raise gcmd.error(str(e))
+        gcmd.respond_info("\n".join(out))
+        logging.info("%s: %s", self.name, "\n".join(out))
+
+    def _import(self, directory, apply):
         fw = FFFirmwareConfig(directory)
         out = ["import from %s" % directory]
         out += ["  ! %s" % e for e in fw.errors]
         if 'extruder' not in fw.files:
-            raise gcmd.error("%s: extruder.json could not be read (%s)"
+            raise ValueError("%s: extruder.json could not be read (%s)"
                              % (self.name, "; ".join(fw.errors)))
 
         configfile = self.printer.lookup_object('configfile')
@@ -219,8 +258,7 @@ class FFLegacy:
             out += ["  " + l for l in snippet]
         if apply and staged:
             out.append("Then run SAVE_CONFIG to persist the staged values.")
-        gcmd.respond_info("\n".join(out))
-        logging.info("%s: %s", self.name, "\n".join(out))
+        return out
 
 
 def load_config(config):
