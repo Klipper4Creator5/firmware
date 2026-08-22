@@ -1,92 +1,135 @@
 # creator5-custom-firmware
 #
-#   make build PROFILE=probe     build one profile's USB package
-#   make test                    full suite (fixture-based, no stock firmware)
-#   make uninstall-pkg           build the revert package
-#   make shell                   a shell in the reproducible build container
+# Nothing runs on your machine except Docker. Every target below executes
+# inside the pinned build image (docker/Dockerfile.build); the docker socket
+# is mounted through so the simulation targets can start sibling containers.
+#
+#   make probe                  build the stage-0 package (changes nothing)
+#   make test                   full brick-safety suite
+#   make shell                  interactive shell in the build container
+#
+# Escape hatch: LOCAL=1 make <target> runs the scripts directly on the host.
 
 PROFILE ?= probe
-SHELL   := /bin/bash
 DOCKER  ?= docker
 IMAGE   ?= creator5-fw-build
+LOCAL   ?=
+
+DOCKER_SOCK := /var/run/docker.sock
+
+# The repo is mounted AT ITS REAL HOST PATH, not at /src. The test targets
+# start sibling containers through the mounted docker socket, and those are
+# created by the host daemon -- which resolves -v paths on the HOST. If the
+# build container saw the repo as /src it would ask the daemon to mount a
+# /src that does not exist there, and the sibling would get empty
+# directories. Keeping the path identical on both sides avoids that entirely.
+ifeq ($(LOCAL),)
+  RUN = $(DOCKER) run --rm -i \
+          -v "$(CURDIR)":"$(CURDIR)" -w "$(CURDIR)" \
+          -v $(DOCKER_SOCK):$(DOCKER_SOCK) \
+          -e PROFILE -e REAL_PKG -e SIM_IMAGE \
+          $(IMAGE)
+  RUNTTY = $(subst --rm -i,--rm -it,$(RUN))
+else
+  RUN =
+  RUNTTY =
+endif
 
 .DEFAULT_GOAL := help
-.PHONY: help build probe ssh web full helix all-profiles unpack patch pack \
-        verify uninstall-pkg test test-lint test-install test-roundtrip \
-        test-ui test-abi image shell clean distclean
+.PHONY: help image shell build probe ssh web full helix all-profiles \
+        rootfs uninstall-pkg verify test test-lint test-install \
+        test-roundtrip test-ui test-ash test-abi clean distclean
 
 help:
-	@echo 'creator5-custom-firmware'
+	@echo 'creator5-custom-firmware -- everything runs in Docker'
 	@echo
-	@echo '  make build PROFILE=<p>   build a package   (p: probe ssh web full helix)'
-	@echo '  make probe|ssh|web|full|helix'
-	@echo '  make all-profiles        build every profile'
-	@echo '  make uninstall-pkg       build the revert package'
+	@echo 'Build (flash these in order -- see docs/hardware-testing.md):'
+	@echo '  make probe        stage 0  changes nothing, reports back on a USB stick'
+	@echo '  make ssh          stage 1  root password only'
+	@echo '  make web          stage 2  + Mainsail / moonraker'
+	@echo '  make full         stage 3  + forked Klipper, toolchanger'
+	@echo '  make helix        stage 4  + HelixScreen as the UI'
+	@echo '  make all-profiles'
+	@echo '  make uninstall-pkg    build this FIRST, keep it on a spare stick'
 	@echo
-	@echo '  make test                run the whole suite'
-	@echo '  make test-lint           brick-risk lint only'
-	@echo '  make test-install        install simulation only'
-	@echo '  make test-roundtrip      install + uninstall round trip'
-	@echo '  make test-ui             UI selection / fallback'
-	@echo '  make test-abi            MIPS ELF ABI checks'
+	@echo 'Test:'
+	@echo '  make test             everything below'
+	@echo '  make test-lint        brick-risk lint'
+	@echo '  make test-install     run the installer against a fake printer'
+	@echo '  make test-roundtrip   install -> uninstall -> back to stock'
+	@echo '  make test-ui          UI selection, crash fallback, SAFE-MODE'
+	@echo '  make test-ash         parse the payload with the printer own busybox'
+	@echo '  make test-abi         MIPS ELF ABI checks'
 	@echo
-	@echo '  make image / make shell  reproducible build container'
-	@echo '  make clean / distclean'
+	@echo 'Other:'
+	@echo '  make rootfs       extract the real printer rootfs (enables test-ash)'
+	@echo '  make image        build the build container'
+	@echo '  make shell        shell inside it'
+	@echo '  make clean | distclean'
 	@echo
-	@echo 'Flash order matters -- see docs/hardware-testing.md'
+	@echo 'LOCAL=1 make <target> runs on the host instead of in Docker.'
+
+image:
+	@$(DOCKER) build -q -t $(IMAGE) -f docker/Dockerfile.build docker >/dev/null && echo "image $(IMAGE) ready"
 
 config.env:
 	@echo 'no config.env -- copy the example and edit the paths:'; \
 	 echo '    cp config.env.example config.env'; exit 1
 
-build: config.env
-	@PROFILE=$(PROFILE) ./bin/build.sh
-
-probe ssh web full helix: config.env
-	@PROFILE=$@ ./bin/build.sh
-
-all-profiles: config.env
-	@for p in probe ssh web full helix; do \
-	   echo "=== $$p ==="; PROFILE=$$p ./bin/build.sh || exit 1; done
-
-unpack patch pack verify: config.env
-	@PROFILE=$(PROFILE) ./bin/$@.sh
-
-uninstall-pkg: config.env
-	@PROFILE=$(PROFILE) ./bin/unpack.sh >/dev/null
-	@PROFILE=$(PROFILE) ./bin/make-uninstall.sh
-
-test:
-	@./test/run-tests.sh
-
-test-lint:
-	@./test/lint-danger.sh payload payload/init.d
-
-test-install:
-	@pkg=$$(ls -1 work/out/Creator5Pro-*.tgz 2>/dev/null | grep -v uninstall | head -1); \
-	 [ -n "$$pkg" ] || { echo 'build a package first: make build'; exit 1; }; \
-	 ./test/sim-install.sh "$$pkg"
-
-test-roundtrip:
-	@m=$$(ls -1 work/out/Creator5Pro-*.tgz 2>/dev/null | grep -v uninstall | head -1); \
-	 u=work/out/Creator5Pro-uninstall.tgz; \
-	 [ -n "$$m" ] && [ -f "$$u" ] || { echo 'need: make build && make uninstall-pkg'; exit 1; }; \
-	 ./test/sim-roundtrip.sh "$$m" "$$u"
-
-test-ui:
-	@./test/sim-ui-fallback.sh
-
-test-abi:
-	@./test/test-abi.sh
-
-image:
-	$(DOCKER) build -t $(IMAGE) -f docker/Dockerfile.build docker
-
 shell: image
-	$(DOCKER) run --rm -it -v "$$PWD:/src" -w /src $(IMAGE) bash
+	@$(RUNTTY) bash
+
+build: image config.env
+	@PROFILE=$(PROFILE) $(RUN) ./bin/build.sh
+
+probe ssh web full helix: image config.env
+	@PROFILE=$@ $(RUN) ./bin/build.sh
+
+all-profiles: image config.env
+	@for p in probe ssh web full helix; do \
+	   echo "=== $$p ==="; PROFILE=$$p $(RUN) ./bin/build.sh || exit 1; done
+
+rootfs: image config.env
+	@$(RUN) ./bin/unpack.sh >/dev/null
+	@$(RUN) ./bin/extract-rootfs.sh
+
+uninstall-pkg: image config.env
+	@$(RUN) ./bin/unpack.sh >/dev/null
+	@$(RUN) ./bin/make-uninstall.sh
+
+verify: image
+	@$(RUN) ./bin/verify.sh
+
+test: image
+	@$(RUN) ./test/run-tests.sh
+
+test-lint: image
+	@$(RUN) ./test/lint-danger.sh payload payload/init.d
+
+test-ash: image
+	@$(RUN) ./test/test-ash-conformance.sh
+
+test-abi: image
+	@$(RUN) ./test/test-abi.sh
+
+test-ui: image
+	@$(RUN) ./test/sim-ui-fallback.sh
+
+test-install: image
+	@$(RUN) sh -c 'pkg=$$(ls -1 work/out/Creator5Pro-*.tgz 2>/dev/null | grep -v uninstall | head -1); \
+	   [ -n "$$pkg" ] || { echo "build a package first: make probe"; exit 1; }; \
+	   ./test/sim-install.sh "$$pkg"'
+
+test-roundtrip: image
+	@$(RUN) sh -c 'm=$$(ls -1 work/out/Creator5Pro-*.tgz 2>/dev/null | grep -v uninstall | head -1); \
+	   u=work/out/Creator5Pro-uninstall.tgz; \
+	   [ -n "$$m" ] && [ -f "$$u" ] || { echo "need: make build && make uninstall-pkg"; exit 1; }; \
+	   ./test/sim-roundtrip.sh "$$m" "$$u"'
 
 clean:
-	rm -rf work/stage work/out work/uninst work/uninst-sw work/modpayload
+	@rm -rf work/stage work/out work/uninst work/uninst-sw work/modpayload
+	@echo cleaned
 
-distclean: clean
-	rm -rf work
+distclean:
+	@rm -rf work
+	@echo "removed work/ (including the extracted rootfs)"

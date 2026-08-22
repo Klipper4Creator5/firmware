@@ -11,6 +11,10 @@ make probe                           # stage 0: changes nothing, reports back
 make test                            # full brick-safety suite
 ```
 
+**Nothing runs on your machine except Docker.** Every make target executes
+inside a pinned build image; the docker socket is mounted through so the test
+targets can start sibling containers. `LOCAL=1 make <target>` opts out.
+
 > **Unofficial and unaffiliated with FlashForge.** It voids your warranty and
 > you are responsible for your machine. Nothing here has been run on hardware
 > yet — see [Status](#status).
@@ -66,7 +70,8 @@ a check in `make test`:
 | **The installer wipes the software dir first** | `ls \| grep -v temp \| xargs rm -rf` runs *before* `run.sh`, so the previous `firmwareExe` is already gone. An uninstall package must **ship** the genuine binary; it cannot back one up. |
 | **Binaries must be nan2008** | The Ingenic X2000 kernel returns `ENOEXEC` for legacy-NaN MIPS. Debian's `gcc-mipsel-linux-gnu` cannot produce a usable binary — its libc is legacy-NaN. |
 
-**And one pleasant surprise:** ssh needs no work at all. The stock rootfs
+**And one pleasant surprise, found by unpacking `rootfs.squashfs` out of the
+kernel component:** ssh needs no work at all. The stock rootfs
 already ships `/usr/sbin/dropbear` and an enabled `/etc/init.d/S50dropbear`,
 so port 22 is *already open* on a stock printer. There is simply no published
 root password. Setting `ROOT_PW_HASH` is the whole feature.
@@ -107,6 +112,7 @@ the whole pipeline runs in CI on a clean machine.
 | `test-install` | **Runs the installer for real** in a container with a fake printer rootfs, then asserts the printer would still boot: UI present and executable, touchscreen driver intact, boot scripts unmodified, user `printer.cfg` preserved, re-install idempotent |
 | `test-roundtrip` | Installs the mod, then the uninstall package, and asserts the machine is back to stock |
 | `test-ui` | Drives the UI selection logic: helix missing, crash-loop, SAFE-MODE latch and release, **and the no-UI-at-all case** |
+| `test-ash` | Parses every on-printer script with the **printer's own busybox 1.31.1 ash**, extracted from the stock `rootfs.squashfs` and run under `qemu-mipsel` — a parse error in `firmwareExe` means a blank screen |
 | `test-abi` | Every shipped MIPS binary is `nan2008`/`mips32r2`/`o32`, and executes under `qemu-mipsel` |
 
 These are not theoretical. Writing them caught four real bugs before any
@@ -124,9 +130,13 @@ hardware was involved:
 
 ## Requirements
 
-`bash`, `openssl`, `tar`, `xz`, `unzip`, `python3`, `binutils`, and Docker for
-the simulations. `make image && make shell` gives a pinned container with all
-of it.
+Docker. That is the whole list — the build image carries `openssl`, `tar`,
+`xz`, `unzip`, `python3`, `binutils`, `squashfs-tools` and `qemu-user-static`,
+and every target runs inside it. `make shell` drops you into it.
+
+`make rootfs` extracts the printer's genuine root filesystem from the stock
+package's `kernel-*.tar.xz` (it contains `rootfs.squashfs`) and enables
+`make test-ash`. It is never committed — it is FlashForge's firmware.
 
 ---
 
