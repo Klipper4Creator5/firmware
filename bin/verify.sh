@@ -5,7 +5,9 @@
 set -uo pipefail
 . "$(dirname "$0")/common.sh"
 
-PKG="${1:-$(ls -1 work/out/Creator5Pro-*.tgz 2>/dev/null | head -n1)}"
+# Default to the package for the model currently selected, not a hardcoded
+# one -- otherwise a two-model release verifies the same file twice.
+PKG="${1:-$(ls -1 "work/out/${TARGET_MACHINE:-Creator5Pro}"-*.tgz 2>/dev/null | head -n1)}"
 [ -f "${PKG:-}" ] || { echo "no package; run ./pack.sh" >&2; exit 1; }
 echo "verifying $PKG"; echo
 
@@ -138,15 +140,24 @@ else
 fi
 
 # 9 --------------------------------------------------------------- USB names
+# The filename prefix must match the model, because app_startup.sh globs for
+# it: the Pro looks for /mnt/Creator5Pro-*.tgz, the non-Pro for
+# /mnt/Creator5-*.tgz. It must ALSO match the gate inside, or the printer
+# picks the file up and then refuses it.
 BN=$(basename "$PKG")
 case "$BN" in
-    Creator5Pro-*.tgz) ok "filename matches the Pro's glob (/mnt/Creator5Pro-*.tgz)" ;;
-    Creator5-*.tgz)    ok "filename matches the non-Pro's glob (/mnt/Creator5-*.tgz)" ;;
-    *) bad "filename '$BN' matches no glob -- app_startup.sh will ignore it" ;;
+    Creator5Pro-*.tgz) FN_MACHINE=Creator5Pro ;;
+    Creator5-*.tgz)    FN_MACHINE=Creator5 ;;
+    *) FN_MACHINE=""; bad "filename '$BN' matches no glob -- app_startup.sh will ignore it" ;;
 esac
-[ -f "$(dirname "$PKG")/Creator5-$(echo "$BN" | sed 's/^Creator5Pro-//')" ] \
-    && ok "companion non-Pro package exists" \
-    || warn "only one model's filename built"
+if [ -n "$FN_MACHINE" ]; then
+    if [ -z "$PKG_MACHINE" ] || [ "$FN_MACHINE" = "$PKG_MACHINE" ]; then
+        ok "filename prefix matches the model gate ($FN_MACHINE)"
+    else
+        bad "filename says $FN_MACHINE but the gate inside says $PKG_MACHINE"
+        bad "  the printer would pick this file up and then refuse it"
+    fi
+fi
 
 echo
 if [ "$FAIL" = 0 ]; then echo "ALL CHECKS PASSED -- safe to copy to USB"; else echo "FAILURES ABOVE -- do not install"; exit 1; fi

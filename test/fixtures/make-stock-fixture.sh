@@ -13,17 +13,27 @@ set -euo pipefail
 OUT="${1:?usage: make-stock-fixture.sh <output-dir>}"
 KEY='FFP0331&*%root'
 VER="${FIXTURE_SW_VER:-1.9.7}"
+# Real packages carry a model gate; the fixture must too, or the model checks
+# have nothing to test against.
+MACHINE="${FIXTURE_MACHINE:-Creator5Pro}"
+case "$MACHINE" in
+    Creator5Pro) PID=0029 ;;
+    Creator5)    PID=0028 ;;
+    *) echo "FIXTURE_MACHINE must be Creator5 or Creator5Pro" >&2; exit 1 ;;
+esac
 
 rm -rf "$OUT"; mkdir -p "$OUT/sw/klipper/klippy/chelper" "$OUT/sw/klipper/extras" \
                         "$OUT/sw/klipper/kinematics" "$OUT/sw/klipper/config" "$OUT/outer"
 
 # --- a stand-in for app_startup.sh with the same hook points ----------------
-cat > "$OUT/sw/app_startup.sh" <<'A'
+cat > "$OUT/sw/app_startup.sh" <<A
 #!/bin/sh
 # FIXTURE stand-in for /usr/prog/app_startup.sh
 WORK_DIR=/usr/prog
-MACHINE=Creator5Pro
-PID=0029
+MACHINE=$MACHINE
+PID=$PID
+A
+cat >> "$OUT/sw/app_startup.sh" <<'A' 
 
 if [ ! -d /usr/prog/etc ]; then
         cp -rf /etc /usr/prog/
@@ -118,10 +128,14 @@ head -c 4096 /dev/urandom > "$OUT/outer/end.img"
 head -c 2048 /dev/urandom > "$OUT/outer/play"
 
 # --- a stand-in outer installer with the same component contract ------------
-cat > "$OUT/outer/runFirmwareExe.sh" <<'A'
+cat > "$OUT/outer/runFirmwareExe.sh" <<A
 #!/bin/sh
 # FIXTURE stand-in for the outer runFirmwareExe.sh
 set -x
+MACHINE=$MACHINE
+PID=$PID
+A
+cat >> "$OUT/outer/runFirmwareExe.sh" <<'A'
 WORK_DIR=`dirname $0`
 RUN_DIR="/usr/prog/PROGRAM"
 [ "`uname -m`" != "mips" ] && echo "arch check skipped in fixture"
@@ -150,6 +164,6 @@ chmod +x "$OUT/outer/runFirmwareExe.sh"
 
 # --- wrap it the way the printer expects ------------------------------------
 tar -cf - -C "$OUT/outer" . | openssl des3 -salt -md md5 -k "$KEY" 2>/dev/null \
-    > "$OUT/Creator5Pro-stock-fixture.tgz"
+    > "$OUT/${MACHINE}-stock-fixture.tgz"
 rm -rf "$OUT/sw" "$OUT/outer"
-echo "fixture package: $OUT/Creator5Pro-stock-fixture.tgz"
+echo "fixture package: $OUT/${MACHINE}-stock-fixture.tgz ($MACHINE/$PID)"

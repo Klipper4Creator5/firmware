@@ -101,9 +101,27 @@ make all-profiles
 spare stick. Flashing it restores every file the mod touches; the payload
 under `/usr/data/mod` survives but is inert. `make test-recovery` proves it.
 
-**Model gate:** every package refuses to install on the other model
-(`Creator5`/`0028` vs `Creator5Pro`/`0029`). Set `TARGET_MACHINE` in
-`config.env` and `make verify` will catch a mismatch before you flash.
+### Two models, two packages
+
+Creator 5 and Creator 5 Pro are **not interchangeable**. Each stock package
+carries a `MACHINE=`/`PID=` gate that refuses to install on the other model,
+and — the part that actually matters — they ship **different `firmwareExe`
+binaries**. A package built for one model would hand the other the wrong
+firmware, so each must be built from its own stock package.
+
+```sh
+make release PROFILE=web     # builds BOTH into dist/
+MODEL=Creator5 make web      # just the non-Pro
+```
+
+| Model | MACHINE | PID | USB filename the printer looks for |
+|---|---|---|---|
+| Creator 5 | `Creator5` | `0028` | `/mnt/Creator5-*.tgz` |
+| Creator 5 Pro | `Creator5Pro` | `0029` | `/mnt/Creator5Pro-*.tgz` |
+
+Set `TARGET_MACHINE` in `config.env`; `make verify` fails on a mismatch, and
+`make test-model` asserts each package is gated correctly and carries its own
+model's firmware.
 
 ---
 
@@ -119,6 +137,7 @@ the whole pipeline runs in CI on a clean machine.
 | `test-install` | **Runs the installer for real** in a container with a fake printer rootfs, then asserts the printer would still boot: UI present and executable, touchscreen driver intact, boot scripts unmodified, user `printer.cfg` preserved, re-install idempotent |
 | `test-recovery` | Installs the mod, then flashes the **stock** package, and asserts the machine is genuinely back to stock and the leftover payload is inert |
 | `test-ui` | Drives the UI selection logic: helix missing, crash-loop, SAFE-MODE latch and release, **and the no-UI-at-all case** |
+| `test-model` | Each package's filename prefix matches the gate inside, the PID matches the model, and the two models ship **different** `firmwareExe` binaries |
 | `test-ash` | Parses every on-printer script with the **printer's own busybox 1.31.1 ash**, extracted from the stock `rootfs.squashfs` and run under `qemu-mipsel` — a parse error in `firmwareExe` means a blank screen |
 | `test-abi` | Every shipped MIPS binary is `nan2008`/`mips32r2`/`o32`, and executes under `qemu-mipsel` |
 
