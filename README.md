@@ -207,6 +207,13 @@ tool is mounted, is added on every later grab of that tool, and persists.
 
 ## Safety
 
+* **`G28` docks a mounted tool before homing Z.** Z homes on the
+  carriage's eddy sensor, whose trigger height is ~3.2 mm below the nozzle
+  tip — with a head on, the nozzle hits the plate first. The `G28`
+  wrapper in `ff-toolchange.cfg` homes X/Y (endstops at 0, away from the
+  docks), runs `TOOLCHANGE_PARK`, then homes as asked; `G28 X`/`G28 Y`
+  alone are untouched. If the dock sensors can't say whether a head is on,
+  Z homing is refused.
 * **Prints refuse to start while uncalibrated.** `START_PRINT` runs
   `_FF_REQUIRE_CALIBRATION` first, and the Mainsail entry point (the
   `SDCARD_PRINT_FILE` wrapper) checks `printer.ff_toolchange.print_offset_ready`:
@@ -384,16 +391,22 @@ module.
   drives the fork's `e_stop` probe objects directly — a macro renders its
   whole template before executing and cannot poll.
 
+## Input shaper
+
+`SHAPER_CALIBRATE`, `TEST_RESONANCES` and `MEASURE_AXES_NOISE` are wrapped
+(`ff-toolchange.cfg`): they home if needed and grab a head first when the
+carriage is empty, so the measured moving mass is the real one (the app's
+`grabVibration`). Works the same from Mainsail, HelixScreen or the console;
+the original parameters pass through. Which head: `variable_shaper_tool`
+in `[gcode_macro _FF_SHAPER_PREP]` (default T0). The tool stays mounted
+afterwards; `TOOLCHANGE_PARK` docks it.
+
 ## Roadmap
 
 Fool-proofing, in rough priority order:
 
 * **Run this branch on hardware.** Calibration sequence, import and the
   safety gates are mock-tested only.
-* **Forbid `G28` while a tool is mounted.** Homing Z runs on the eddy
-  probe's frame; with a tool in the head the nozzle rams into the plate.
-  The module should refuse (or auto-park first) instead of trusting the
-  operator.
 * **Z-height / clearance check after picking a tool**, before leaving the
   dock area — catch a bad grab early instead of dragging or breaking the
   tool on the way out.

@@ -666,15 +666,18 @@ class FFToolchange:
             if speed > 0.:
                 self._run('G1 F%.3f' % speed)
 
-    def _ensure_homed(self):
+    def _ensure_homed(self, axes='xyz'):
+        """Docking is an X/Y motion only (the docks ride on the gantry), so
+        a release needs just 'xy' -- that is what lets the G28 wrapper in
+        ff-toolchange.cfg dock a mounted tool before homing Z."""
         toolhead = self.printer.lookup_object('toolhead')
         homed = toolhead.get_status(self.reactor.monotonic())['homed_axes']
-        if not all(a in homed for a in 'xyz'):
+        if not all(a in homed for a in axes):
             if not self.auto_home:
                 raise FFToolchangeError(
                     "printer is not homed -- run G28 first "
                     "(or set auto_home: True in [ff_toolchange])")
-            self._run('G28')
+            self._run('G28 ' + ' '.join(axes.upper()))
 
     # ---------------- grab ----------------
 
@@ -1237,7 +1240,7 @@ class FFToolchange:
             gcmd.respond_info("no tool mounted (%s)" % why)
             return
         try:
-            self._ensure_homed()
+            self._ensure_homed('xy')
             self._release(current)
         except FFToolchangeError as e:
             raise gcmd.error(str(e))
