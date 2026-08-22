@@ -86,16 +86,13 @@ DIFF=$(diff -rq "$TMP/sw-before" work/software 2>&1 | grep -vE 'run\.sh|md5sum\.
 if [ -z "$DIFF" ]; then pass "probe touches only run.sh (adds the report step)"
 else fail "probe modified more than run.sh"; echo "$DIFF" | sed 's/^/       /'; fi
 
-hdr "uninstall round trip"
+hdr "recovery: a stock package reverts the mod"
 export PROFILE=full
 run ./bin/unpack.sh
 run ./bin/patch.sh
 run ./bin/pack.sh
-MODPKG=$(ls -1 work/out/Creator5Pro-*.tgz | grep -v uninstall | head -n1)
-run ./bin/make-uninstall.sh
-UNI=work/out/Creator5Pro-uninstall.tgz
-run ./bin/verify.sh "$UNI"
-sub "install -> uninstall -> stock" ./test/sim-roundtrip.sh "$MODPKG" "$UNI"
+MODPKG=$(ls -1 work/out/Creator5Pro-*.tgz | head -n1)
+sub "install mod -> flash stock -> back to stock" ./test/sim-roundtrip.sh "$MODPKG" "$FIXTURE"
 
 hdr "UI selection and fallback"
 sub "ui fallback" ./test/sim-ui-fallback.sh

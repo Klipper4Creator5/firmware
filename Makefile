@@ -23,9 +23,15 @@ DOCKER_SOCK := /var/run/docker.sock
 # build container saw the repo as /src it would ask the daemon to mount a
 # /src that does not exist there, and the sibling would get empty
 # directories. Keeping the path identical on both sides avoids that entirely.
+# config.env usually points at a stock package OUTSIDE this repo, so the
+# directory holding it must be mounted too. Override when yours lives
+# elsewhere:  make ASSET_ROOT=/path/to/parent probe
+ASSET_ROOT ?= $(firstword $(wildcard /mnt/c /Users /home))
+
 ifeq ($(LOCAL),)
   RUN = $(DOCKER) run --rm -i \
           -v "$(CURDIR)":"$(CURDIR)" -w "$(CURDIR)" \
+          $(if $(ASSET_ROOT),-v "$(ASSET_ROOT)":"$(ASSET_ROOT)",) \
           -v $(DOCKER_SOCK):$(DOCKER_SOCK) \
           -e PROFILE -e REAL_PKG -e SIM_IMAGE \
           $(IMAGE)
@@ -37,8 +43,8 @@ endif
 
 .DEFAULT_GOAL := help
 .PHONY: help image shell build probe ssh web full helix all-profiles \
-        rootfs uninstall-pkg verify test test-lint test-install \
-        test-roundtrip test-ui test-ash test-abi clean distclean
+        rootfs verify test test-lint test-install \
+        test-recovery test-ui test-ash test-abi clean distclean
 
 help:
 	@echo 'creator5-custom-firmware -- everything runs in Docker'
@@ -50,13 +56,15 @@ help:
 	@echo '  make full         stage 3  + forked Klipper, toolchanger'
 	@echo '  make helix        stage 4  + HelixScreen as the UI'
 	@echo '  make all-profiles'
-	@echo '  make uninstall-pkg    build this FIRST, keep it on a spare stick'
+	@echo
+	@echo 'Recovery: keep a copy of the STOCK FlashForge .tgz on a spare stick.'
+	@echo 'Flashing it restores every file the mod touches (see make test-recovery).'
 	@echo
 	@echo 'Test:'
 	@echo '  make test             everything below'
 	@echo '  make test-lint        brick-risk lint'
 	@echo '  make test-install     run the installer against a fake printer'
-	@echo '  make test-roundtrip   install -> uninstall -> back to stock'
+	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo '  make test-ui          UI selection, crash fallback, SAFE-MODE'
 	@echo '  make test-ash         parse the payload with the printer own busybox'
 	@echo '  make test-abi         MIPS ELF ABI checks'
@@ -93,10 +101,6 @@ rootfs: image config.env
 	@$(RUN) ./bin/unpack.sh >/dev/null
 	@$(RUN) ./bin/extract-rootfs.sh
 
-uninstall-pkg: image config.env
-	@$(RUN) ./bin/unpack.sh >/dev/null
-	@$(RUN) ./bin/make-uninstall.sh
-
 verify: image
 	@$(RUN) ./bin/verify.sh
 
@@ -120,11 +124,13 @@ test-install: image
 	   [ -n "$$pkg" ] || { echo "build a package first: make probe"; exit 1; }; \
 	   ./test/sim-install.sh "$$pkg"'
 
-test-roundtrip: image
-	@$(RUN) sh -c 'm=$$(ls -1 work/out/Creator5Pro-*.tgz 2>/dev/null | grep -v uninstall | head -1); \
-	   u=work/out/Creator5Pro-uninstall.tgz; \
-	   [ -n "$$m" ] && [ -f "$$u" ] || { echo "need: make build && make uninstall-pkg"; exit 1; }; \
-	   ./test/sim-roundtrip.sh "$$m" "$$u"'
+# Recovery = flash the stock package you already have. This proves it works.
+test-recovery: image config.env
+	@$(RUN) sh -c '. ./config.env; \
+	   m=$$(ls -1 work/out/Creator5Pro-*.tgz 2>/dev/null | head -1); \
+	   [ -n "$$m" ] || { echo "build a package first: make full"; exit 1; }; \
+	   [ -f "$$STOCK_TGZ" ] || { echo "STOCK_TGZ not found: $$STOCK_TGZ"; exit 1; }; \
+	   ./test/sim-roundtrip.sh "$$m" "$$STOCK_TGZ"'
 
 clean:
 	@rm -rf work/stage work/out work/uninst work/uninst-sw work/modpayload

@@ -10,10 +10,37 @@ recoverable.**
 
 ---
 
+## Step zero: check the model gate
+
+Every package carries a gate. Its `runFirmwareExe.sh` has `MACHINE=` / `PID=`
+baked in, and compares them against the values `app_startup.sh` passes from
+the firmware already on the printer. A mismatch is **refused** with
+"Firmware does not match machine type" — it will not install, and it is not a
+valid recovery image either.
+
+| Model | MACHINE | PID |
+|---|---|---|
+| Creator 5 | `Creator5` | `0028` |
+| Creator 5 Pro | `Creator5Pro` | `0029` |
+
+Find yours in Settings → About, or in
+`/usr/data/firmwareRes/config/general.json` (`machineName`), and set
+`TARGET_MACHINE` in `config.env`. Then:
+
+```sh
+make full && make verify
+```
+
+`verify.sh` fails loudly on a mismatch. **You must start from a stock package
+built for your own model** — the mod inherits the gate from whatever package
+you unpack.
+
 ## Before the first flash
 
-- [ ] Build the uninstall stick and keep it physically separate:
-      `make uninstall-pkg` → put `Creator5*-uninstall.tgz` on a spare USB stick.
+- [ ] Put a copy of the **stock FlashForge package for your model** on a spare
+      USB stick and keep it physically separate. That is your recovery image:
+      flashing it restores every file the mod touches (proven by
+      `make test-recovery`). Check it is the right model first — see above.
 - [ ] Note your printer's serial number (Settings → About). The factory image
       restores a placeholder serial and you may need to put yours back.
 - [ ] Confirm you can reach the printer's IP.
@@ -155,8 +182,8 @@ If ssh is gone too, flash the uninstall stick.
 | Symptom | Do this |
 |---|---|
 | Printer boots, screen blank | ssh in; `touch /usr/data/mod/SAFE-MODE`; reboot |
-| No ssh, no screen | flash the uninstall stick |
-| Uninstall stick does not help | flash a stock FlashForge package |
+| No ssh, no screen | flash the stock package for your model |
+| Recovery stick does not help | try a newer stock FlashForge package for your model |
 | Still broken | factory package (`Creator5Pro-factory-*.tgz` **plus** the separate `Creator5Pro-factory.tar.xz` on the same stick; needs 800 MB free) |
 
 The mod never creates a mount point named like a mod, specifically so that
