@@ -100,6 +100,9 @@ sub "install -> uninstall -> stock" ./test/sim-roundtrip.sh "$MODPKG" "$UNI"
 hdr "UI selection and fallback"
 sub "ui fallback" ./test/sim-ui-fallback.sh
 
+hdr "busybox ash conformance (printer's own shell)"
+sub "ash conformance" ./test/test-ash-conformance.sh
+
 hdr "MIPS ABI"
 sub "abi" ./test/test-abi.sh
 

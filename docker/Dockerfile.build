@@ -1,17 +1,17 @@
-# Reproducible build environment.
+# The only thing that runs on your machine is Docker itself.
 #
-# The packaging depends on exact tool behaviour (openssl DES3 with MD5 key
-# derivation, GNU tar member ordering, md5sum output format), so pinning the
-# image keeps a package built on a laptop byte-comparable with one built in
-# CI. It is also what `make shell` drops you into.
+# Every make target executes inside this image: the build scripts, the tests,
+# and the install simulations. The docker CLI is included so the simulation
+# targets can start sibling containers through the mounted socket, and
+# qemu-user-static so the printer's real MIPS userland can be executed.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
  && apt-get update && apt-get install -y --no-install-recommends \
       bash coreutils tar xz-utils gzip openssl unzip curl ca-certificates \
-      python3 binutils file findutils grep sed gawk make git \
-      squashfs-tools \
+      python3 binutils file findutils grep sed gawk make git diffutils procps \
+      squashfs-tools qemu-user-static docker.io \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

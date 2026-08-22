@@ -17,7 +17,9 @@ recoverable.**
 - [ ] Note your printer's serial number (Settings → About). The factory image
       restores a placeholder serial and you may need to put yours back.
 - [ ] Confirm you can reach the printer's IP.
-- [ ] `make test` passes locally.
+- [ ] `make test` passes (78 checks).
+- [ ] `make rootfs && make test-ash` passes — this parses every script that
+      will run on the printer using the printer's own busybox ash.
 
 Two USB sticks, FAT32, both packages at the **root** of the stick (not in a
 folder). Ship both filenames (`Creator5-*` and `Creator5Pro-*`): the Pro's
