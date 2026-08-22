@@ -172,6 +172,14 @@ class FFToolOffset:
         # Checked only when station_z is known. 0 disables.
         self.gap_min = config.getfloat('gap_min', 1.5)
         self.gap_max = config.getfloat('gap_max', 5.0)
+        # Plate check (empty carriage, before any nozzle descends): the
+        # station Z must land within plate_z_tolerance of the calibrated
+        # station_z, and a sideways probe must find the circle's edge. With
+        # the build plate still on, the Z probe stops high on the sheet (or
+        # never triggers) and there is no edge. 0 disables the check.
+        self.plate_check = config.getboolean('plate_check', True)
+        self.plate_z_tolerance = config.getfloat('plate_z_tolerance', 0.8,
+                                                 above=0.)
 
         # Station position measured with the empty carriage
         # (STATION_CALIBRATE), autosaved here as station_x/y/z.
@@ -319,6 +327,69 @@ class FFToolOffset:
                 " cannot tell a build plate from thin air. Take the PEI sheet"
                 " off, then repeat with PLATE_REMOVED=1." % self.name)
 
+    def _plate_check(self, gcmd):
+        """Empty-carriage look at the station before anything descends with
+        a nozzle -- PLATE_REMOVED=1 is only a promise. The station's sensor
+        sees the circle's edge when nothing covers it; with the build plate
+        on, the Z probe lands on the sheet (or never triggers) and the
+        sideways probe finds no edge. Raises FFToolOffsetError either way,
+        so nothing is damaged and nothing is saved. Runs inside
+        _with_accel_guard."""
+        cyl_x, cyl_y = self._cylinder()
+        expected = self.station[2] if self.station is not None else None
+        z_t = self._z_target_for(self.z_target, expected)
+        self._run('SET_GCODE_OFFSET X=0 Y=0 Z=0 MOVE=0 MOVE_SPEED=600')
+        self._run('M400')
+        self._run('G1 Z%.3f F%d' % (self.z_start, FEED_PASS1))
+        self._run('G1 X%.3f Y%.3f F%d' % (cyl_x, cyl_y, FEED_POSITION))
+        self._run('SET_VELOCITY_LIMIT ACCEL=%.0f' % self.probe_accel)
+        self._run('M400')
+        hint = (" -- is the build plate still on? Nothing has moved with"
+                " a nozzle. Remove the plate, or plate_check: False in"
+                " [ff_tool_offset] if you are sure.")
+        try:
+            zp = self._estop(gcmd, 'Z', z_t)
+        except FFToolOffsetError as e:
+            raise FFToolOffsetError("plate check: station Z probe failed"
+                                    " (%s)%s" % (e, hint))
+        gcmd.respond_info("  plate check: station Z %.3f" % zp)
+        if expected is not None and zp > expected + self.plate_z_tolerance:
+            raise FFToolOffsetError(
+                "plate check: station Z %.3f is %.2f mm above the"
+                " calibrated %.3f%s" % (zp, zp - expected, expected, hint))
+        self._run('G1 X%.3f Y%.3f F%d' % (cyl_x, cyl_y, FEED_PASS1))
+        self._run('G1 Z%.3f F%d' % (zp + self.z_clear, FEED_PASS1))
+        self._run('M400')
+        try:
+            px = self._estop(gcmd, 'X', cyl_x + self.probe_travel)
+        except FFToolOffsetError as e:
+            raise FFToolOffsetError(
+                "plate check: no circle edge within %.0f mm of the start"
+                " point (%s)%s" % (self.probe_travel, e, hint))
+        self._run('G1 X%.3f F%d' % (cyl_x, FEED_PASS1))
+        self._run('G1 Z%.3f F%d' % (self.z_start, FEED_PASS1))
+        self._run('M400')
+        gcmd.respond_info("  plate check: circle edge at X %.3f (%+.2f from"
+                          " the start point) -- plate is off" % (px, px - cyl_x))
+
+    def _run_plate_check(self, gcmd):
+        """Park whatever is mounted, then _plate_check. Shared prologue of
+        both calibration commands; PLATE_CHECK=0 on the command skips it."""
+        if not gcmd.get_int('PLATE_CHECK', 1 if self.plate_check else 0,
+                            minval=0, maxval=1):
+            return
+        if self.toolchange is not None:
+            cur = self.toolchange.get_status(self.reactor.monotonic())
+            if cur.get('current_tool', -1) != -1:
+                self._run('TOOLCHANGE_PARK')
+                self._wait_moves()
+            cur = self.toolchange.get_status(self.reactor.monotonic())
+            if cur.get('current_tool', -1) != -1 or not cur.get('state_ok'):
+                raise gcmd.error(
+                    "%s: carriage is not verifiably empty (%s) -- cannot run"
+                    " the plate check" % (self.name, cur.get('state_reason')))
+        self._with_accel_guard(gcmd, lambda: self._plate_check(gcmd))
+
     def _two_pass(self, gcmd, x0, y0, z_target_2, expected_z=None):
         """moveCylinderPos + both passes. Returns (cx2, cy2, zP2).
 
@@ -408,7 +479,8 @@ class FFToolOffset:
 
     cmd_TOOL_OFFSET_CALIBRATE_help = (
         "Measure a tool's nozzle position against the station "
-        "(TOOL=<0..3|ALL> PLATE_REMOVED=1 [GRAB=1] [RELEASE=0] [SAVE=1])")
+        "(TOOL=<0..3|ALL> PLATE_REMOVED=1 [GRAB=1] [RELEASE=0] [SAVE=1]"
+        " [PLATE_CHECK=1])")
 
     def cmd_TOOL_OFFSET_CALIBRATE(self, gcmd):
         raw = gcmd.get('TOOL')
@@ -433,6 +505,7 @@ class FFToolOffset:
                              " GRAB=0 RELEASE=0." % self.name)
         self._require_plate_removed(gcmd)
         self._check_homed(gcmd)
+        self._run_plate_check(gcmd)
         cyl_x, cyl_y = self._cylinder()
         x0, y0 = cyl_x - self.nozzle_x_shift, cyl_y
 
@@ -491,7 +564,7 @@ class FFToolOffset:
 
     cmd_STATION_CALIBRATE_help = (
         "Measure the station position with an EMPTY carriage "
-        "(station_x/y/z) (PLATE_REMOVED=1 [PARK=1] [SAVE=1])")
+        "(station_x/y/z) (PLATE_REMOVED=1 [PARK=1] [SAVE=1] [PLATE_CHECK=1])")
 
     def cmd_STATION_CALIBRATE(self, gcmd):
         park = gcmd.get_int('PARK', 1, minval=0, maxval=1)
@@ -512,6 +585,7 @@ class FFToolOffset:
         elif park:
             raise gcmd.error("%s: [ff_toolchange] not loaded -- park the tool"
                              " by hand and pass PARK=0." % self.name)
+        self._run_plate_check(gcmd)
         cyl_x, cyl_y = self._cylinder()
         gcmd.respond_info("station calibration, start %.3f, %.3f"
                           % (cyl_x, cyl_y))

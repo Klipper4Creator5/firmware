@@ -176,8 +176,12 @@ The nozzle XY/Z offset calibration is the touchscreen's own sequence
 [`docs/notes/45-tool-offset-calibration.md`](docs/notes/45-tool-offset-calibration.md)
 and [`46-offset-calibration-recovered.md`](docs/notes/46-offset-calibration-recovered.md)),
 constants included. **Take the PEI sheet off first** — the calibration
-station sits below the bed plane and the Z probe cannot tell a build plate
-from air. Home, then:
+station sits below the bed plane. `PLATE_REMOVED=1` is your promise; both
+commands also verify it: with the empty carriage they probe the station Z
+(must be within 0.8 mm of the calibrated `station_z`) and sweep sideways
+for the circle's edge — a plate left on lands the Z probe high and has no
+edge, and the command refuses before any nozzle descends (`PLATE_CHECK=0`
+or `plate_check: False` skips it). Home, then:
 
 ```gcode
 STATION_CALIBRATE PLATE_REMOVED=1              ; empty carriage, no tool mounted
