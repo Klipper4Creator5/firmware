@@ -32,6 +32,16 @@ STOCK_SW_VER=$(basename "$SW_TARBALL" | sed 's/^software-//; s/\.tar\.xz$//')
 echo ">> extracting software component $STOCK_SW_VER"
 tar -xf "$SW_TARBALL" -C work/software
 
+# Every package carries a model gate. runFirmwareExe.sh compares the MACHINE
+# and PID it was built for against the ones app_startup.sh passes in (which
+# come from the firmware already on the printer) and REFUSES to install on a
+# mismatch. Record it so verify.sh can check it against your printer.
+PKG_MACHINE=$(sed -n 's/^MACHINE=//p' work/outer/runFirmwareExe.sh | head -n1)
+PKG_PID=$(sed -n 's/^PID=//p' work/outer/runFirmwareExe.sh | head -n1)
+echo "${PKG_MACHINE:-unknown}" > work/.pkg_machine
+echo "${PKG_PID:-unknown}"     > work/.pkg_pid
+echo ">> package installs on: ${PKG_MACHINE:-unknown} (PID ${PKG_PID:-unknown})"
+
 echo "$STOCK_SW_VER" > work/.stock_sw_ver
 echo "$SRC"          > work/.source_pkg
 

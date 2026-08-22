@@ -95,8 +95,15 @@ recoverable. Full procedure with go/no-go checks:
 ```sh
 make probe            # or: make build PROFILE=probe
 make all-profiles
-make uninstall-pkg    # build this FIRST and keep it on a spare stick
 ```
+
+**Recovery** is the stock FlashForge package for your model — keep a copy on a
+spare stick. Flashing it restores every file the mod touches; the payload
+under `/usr/data/mod` survives but is inert. `make test-recovery` proves it.
+
+**Model gate:** every package refuses to install on the other model
+(`Creator5`/`0028` vs `Creator5Pro`/`0029`). Set `TARGET_MACHINE` in
+`config.env` and `make verify` will catch a mismatch before you flash.
 
 ---
 
@@ -110,7 +117,7 @@ the whole pipeline runs in CI on a clean machine.
 |---|---|
 | `test-lint` | Scans on-printer scripts for brick patterns: raw block-device writes, `rm -rf` of top-level paths, unguarded `rm -rf $VAR/`, missing backups |
 | `test-install` | **Runs the installer for real** in a container with a fake printer rootfs, then asserts the printer would still boot: UI present and executable, touchscreen driver intact, boot scripts unmodified, user `printer.cfg` preserved, re-install idempotent |
-| `test-roundtrip` | Installs the mod, then the uninstall package, and asserts the machine is back to stock |
+| `test-recovery` | Installs the mod, then flashes the **stock** package, and asserts the machine is genuinely back to stock and the leftover payload is inert |
 | `test-ui` | Drives the UI selection logic: helix missing, crash-loop, SAFE-MODE latch and release, **and the no-UI-at-all case** |
 | `test-ash` | Parses every on-printer script with the **printer's own busybox 1.31.1 ash**, extracted from the stock `rootfs.squashfs` and run under `qemu-mipsel` — a parse error in `firmwareExe` means a blank screen |
 | `test-abi` | Every shipped MIPS binary is `nan2008`/`mips32r2`/`o32`, and executes under `qemu-mipsel` |

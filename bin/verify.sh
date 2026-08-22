@@ -114,6 +114,29 @@ else
     warn "no mod.tar.xz -- scripts only"
 fi
 
+# 8b ------------------------------------------------------- MODEL GATE
+# The most easily missed failure: a package built from the wrong model's
+# firmware refuses to install, and a package built from the RIGHT model but
+# flashed to the wrong one would install the wrong binaries.
+PKG_MACHINE=$(sed -n 's/^MACHINE=//p' "$T/runFirmwareExe.sh" 2>/dev/null | head -n1)
+PKG_PID=$(sed -n 's/^PID=//p' "$T/runFirmwareExe.sh" 2>/dev/null | head -n1)
+if [ -n "$PKG_MACHINE" ]; then
+    echo "         package installs on: $PKG_MACHINE (PID $PKG_PID)"
+    if [ -n "${TARGET_MACHINE:-}" ]; then
+        if [ "$PKG_MACHINE" = "$TARGET_MACHINE" ]; then
+            ok "model gate matches TARGET_MACHINE=$TARGET_MACHINE"
+        else
+            bad "MODEL MISMATCH: package is for '$PKG_MACHINE' but TARGET_MACHINE='$TARGET_MACHINE'"
+            bad "  this package will be REFUSED by your printer (\"Firmware does not match machine type\")"
+            bad "  you need a stock package built for $TARGET_MACHINE to start from"
+        fi
+    else
+        warn "TARGET_MACHINE not set in config.env -- cannot check this against your printer"
+    fi
+else
+    warn "no MACHINE= gate found in runFirmwareExe.sh"
+fi
+
 # 9 --------------------------------------------------------------- USB names
 BN=$(basename "$PKG")
 case "$BN" in
