@@ -30,7 +30,7 @@ documented in the file headers.
 | [`config/ff-legacy.cfg`](config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — include only for the import step, then remove |
 | [`config/ff-print-macros.cfg`](config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the calibration gate |
 | [`config/ff-filament.cfg`](config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
-| [`config/ff-runout.cfg`](config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163); `ff_toolchange` arms only the mounted tool's sensors |
+| [`config/ff-runout.cfg`](config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163), optionally after printing through the PTFE buffer (`runout_distance`); `ff_toolchange` arms only the mounted tool's sensors |
 | [`orca/`](orca/) | OrcaSlicer printer profile | Machine start/end G-code, change-filament G-code, example project |
 | [`docs/notes/`](docs/notes/) | (reference only) | Condensed reverse-engineering notes: what the stock app actually does, with binary addresses |
 
@@ -287,6 +287,16 @@ outside a print. `TOOLCHANGE_STATUS` shows which sensors are armed;
 `FF_RUNOUT_ARM [TOOL=n]` / `FF_RUNOUT_DISARM` do it by hand. Clog pausing
 can be made report-only, as the app's `plugCheck` toggle did:
 `SET_GCODE_VARIABLE MACRO=_FF_RUNOUT_CFG VARIABLE=clog_pause VALUE=0`.
+
+The runout switch is upstream of the extruder gear with a long PTFE run in
+between (~600 mm here), so when it opens the head still holds that much
+printable filament; the app paused at once and wasted it. Set
+`variable_runout_distance` in `[gcode_macro _FF_RUNOUT_CFG]` to the
+measured switch-to-gear length minus a margin (e.g. 500) and the print
+carries on, a 1 s watcher counts the mounted tool's extrusion and pauses
+with E0162 once that much has been used — extrusion by other tools in
+between does not count, a manual `PAUSE` freezes the countdown. 0 (the
+default) pauses immediately.
 No endless-spool: another tool is another head, not another spool of the
 same material. Untested on hardware: whether the motion sensors
 (`detection_length 50`, `event_delay 3`) stay quiet through `LOAD_FILAMENT`.
