@@ -1,0 +1,36 @@
+#!/bin/sh
+# nginx (Mainsail) + moonraker.
+#
+# Both binaries already ship on stock firmware -- FlashForge simply comments
+# them out of /usr/prog/klipper/start.sh. We run nginx on our OWN prefix so
+# their config is never modified and MOD_WEB=0 restores stock behaviour.
+MODDIR=/usr/data/mod
+[ -f $MODDIR/mod.conf ] && . $MODDIR/mod.conf
+NGINX=/usr/prog/nginx/sbin/nginx
+NGX_PID=$MODDIR/nginx/logs/nginx.pid
+
+start() {
+    [ "${MOD_WEB:-1}" = "1" ] || { echo "web: disabled in mod.conf"; return 0; }
+    if [ -x "$NGINX" ] && [ -f $MODDIR/nginx/nginx.conf ]; then
+        mkdir -p $MODDIR/nginx/logs $MODDIR/nginx/tmp
+        $NGINX -p $MODDIR/nginx -c $MODDIR/nginx/nginx.conf \
+            && echo "nginx: started" || echo "nginx: FAILED"
+    else
+        echo "nginx: not available"
+    fi
+    if [ -x /usr/prog/klipper/moonrakerDaemon ]; then
+        /usr/prog/klipper/moonrakerDaemon start && echo "moonraker: started"
+    fi
+}
+stop() {
+    [ -f "$NGX_PID" ] && kill `cat $NGX_PID` 2>/dev/null
+    [ -x /usr/prog/klipper/moonrakerDaemon ] && /usr/prog/klipper/moonrakerDaemon stop
+    echo "web: stopped"
+}
+case "$1" in
+    start|'') start ;;
+    stop)     stop ;;
+    restart)  stop; sleep 2; start ;;
+    status)   [ -f "$NGX_PID" ] && echo "nginx: running" || echo "nginx: not running" ;;
+    *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac

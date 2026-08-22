@@ -1,0 +1,75 @@
+#!/bin/sh
+# /usr/prog/PROGRAM/software/firmwareExe  -- REPLACED by the mod.
+#
+# The stock boot chain is:
+#     busybox init -> /etc/init.d/rcS -> S99factory_test_shell
+#         -> /usr/prog/app_startup.sh -> firmwareExe
+# and firmwareExe itself is what launches "/usr/prog/klipper/start.sh &".
+#
+# Because everything funnels through this one path, replacing this binary
+# with a script is the cleanest possible integration point: app_startup.sh,
+# rcS and the whole init chain stay 100% STOCK and are never patched.
+#
+# The original binary is preserved next to us as firmwareExe.stock and is
+# still the default UI; nothing is lost by installing the mod.
+#
+# Two further properties we get for free:
+#   * app_startup.sh's own watchdog greps `ps` for "firmwareExe" 5s after
+#     launch. This script keeps that name (it IS $0) and stays in the
+#     FOREGROUND, so the stock watchdog supervises the mod correctly.
+#   * If this script is ever removed, app_startup.sh restores a firmwareExe
+#     from the newest version directory -- the stock recovery path still works.
+
+MODDIR=/usr/data/mod
+SELFDIR=`dirname "$0"`
+STOCK_UI="$SELFDIR/firmwareExe.stock"
+
+[ -f $MODDIR/mod.conf ] && . $MODDIR/mod.conf
+mkdir -p /usr/data/logs
+exec >>/usr/data/logs/mod-boot.log 2>&1
+echo "=== mod firmwareExe `date 2>/dev/null` (UI=${MOD_UI:-stock}) ==="
+
+# ---- services ------------------------------------------------------------
+# init.d-style scripts, run in filename order. One failing service must never
+# stop the rest: Klipper has to come up even if the web stack is broken.
+if [ -d $MODDIR/init.d ]; then
+    for s in $MODDIR/init.d/S*; do
+        [ -x "$s" ] || continue
+        echo "--- `basename $s` ---"
+        "$s" start || echo "`basename $s`: returned $?"
+    done
+fi
+
+# ---- the UI, in the foreground so the stock watchdog can see us ----------
+# S80ui already handled SAFE-MODE, crash counting and fallback selection and
+# wrote its verdict here.
+UI_CHOICE=`cat $MODDIR/.ui-choice 2>/dev/null || echo stock`
+echo "ui: running $UI_CHOICE in the foreground"
+
+case "$UI_CHOICE" in
+    helix)
+        HELIX_DATA_DIR=$MODDIR/helixscreen
+        HELIX_LOG_DEST=file
+        HELIX_LOG_FILE=/usr/data/logs/helixscreen.log
+        export HELIX_DATA_DIR HELIX_LOG_DEST HELIX_LOG_FILE
+        if [ -x $MODDIR/helixscreen/bin/helix-launcher.sh ]; then
+            $MODDIR/helixscreen/bin/helix-launcher.sh
+        else
+            $MODDIR/helixscreen/bin/helix-screen
+        fi
+        ;;
+    *)
+        if [ -x "$STOCK_UI" ]; then
+            exec "$STOCK_UI"
+        else
+            echo "ui: firmwareExe.stock missing -- staying alive headless so ssh keeps working"
+            while true; do sleep 3600; done
+        fi
+        ;;
+esac
+
+# If the UI exits we do NOT exit: dropping out of this script makes
+# app_startup.sh think the UI died and re-exec us, which would restart every
+# service. Hold the process instead; ssh and Mainsail remain available.
+echo "ui: $UI_CHOICE exited -- holding process so services stay up"
+while true; do sleep 3600; done
