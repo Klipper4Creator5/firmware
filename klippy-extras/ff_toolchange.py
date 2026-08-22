@@ -240,6 +240,24 @@ class FFToolchange:
         # default here is to abort and let the user home deliberately.
         self.auto_home = config.getboolean('auto_home', False)
 
+        # Runout / clog sensors. firmwareExe (setFilamentWheelManager
+        # @0x79b060) keeps only the MOUNTED tool's filament_motion_sensor
+        # enabled -- all four off, then RESET + ENABLE=1 for the current
+        # channel -- and pauses on the mounted channel's switch sensor from
+        # its print-engine loop (serialPrint @0x7a0d4c). Here both kinds are
+        # armed for the mounted tool on every grab and disarmed on release;
+        # what a runout DOES is decided by the sensors' runout_gcode
+        # (config/ff-runout.cfg: _FF_RUNOUT). Names are <prefix><tool>;
+        # an empty prefix, or no section with that prefix at all, turns
+        # that kind off.
+        self.runout_switch_prefix = config.get('runout_switch_prefix',
+                                               'fd_ex').strip()
+        self.runout_motion_prefix = config.get('runout_motion_prefix',
+                                               'fm_ex').strip()
+        self.runout_switch = []     # full object names, resolved at connect
+        self.runout_motion = []
+        self.armed_tool = -1
+
         self.gcode.register_command(
             'TOOLCHANGE', self.cmd_TOOLCHANGE, desc=self.cmd_TOOLCHANGE_help)
         for i in range(EXTRUDER_COUNT):
@@ -268,6 +286,12 @@ class FFToolchange:
             desc=self.cmd_INITIALIZE_TOOLCHANGER_help)
         self.gcode.register_command(
             'ASSIGN_TOOL', self.cmd_ASSIGN_TOOL, desc=self.cmd_ASSIGN_TOOL_help)
+        self.gcode.register_command(
+            'FF_RUNOUT_ARM', self.cmd_FF_RUNOUT_ARM,
+            desc=self.cmd_FF_RUNOUT_ARM_help)
+        self.gcode.register_command(
+            'FF_RUNOUT_DISARM', self.cmd_FF_RUNOUT_DISARM,
+            desc=self.cmd_FF_RUNOUT_DISARM_help)
 
         self.printer.register_event_handler('klippy:connect',
                                             self._handle_connect)
@@ -363,12 +387,43 @@ class FFToolchange:
             if cmd.upper() not in macros:
                 missing.append("gcode_macro %s" % cmd)
 
+        self.runout_switch = self._resolve_runout_sensors(
+            'filament_switch_sensor', self.runout_switch_prefix, missing)
+        self.runout_motion = self._resolve_runout_sensors(
+            'filament_motion_sensor', self.runout_motion_prefix, missing)
+
         if missing:
             raise self.printer.config_error(
                 "%s: configured objects not found: %s"
                 % (self.name, ", ".join(missing)))
 
+    def _resolve_runout_sensors(self, module, prefix, missing):
+        """[] when the kind is off (empty prefix / no such sections);
+        all four names when complete; a config error when only some exist."""
+        if not prefix:
+            return []
+        names = ['%s %s%d' % (module, prefix, i)
+                 for i in range(EXTRUDER_COUNT)]
+        found = [n for n in names
+                 if self.printer.lookup_object(n, None) is not None]
+        if not found:
+            logging.info("%s: no [%s %s*] sections -- runout arming off",
+                         self.name, module, prefix)
+            return []
+        missing.extend(n for n in names if n not in found)
+        return names
+
     def _handle_ready(self):
+        # Mirror the sensors to whatever is on the carriage after a
+        # restart (the app re-arms at print start only; arming outside a
+        # print is harmless -- _FF_RUNOUT ignores it unless printing).
+        tool, _why = self._current_tool_or_none()
+        if tool is None or tool < 0:
+            self._disarm_runout()
+        else:
+            # No RESET here: the motion sensors' own klippy:ready handler
+            # (which may run after ours) already starts them fresh.
+            self._arm_runout(tool, reset=False)
         missing = self.uncalibrated_tools()
         if missing:
             self.gcode.respond_info(
@@ -429,6 +484,62 @@ class FFToolchange:
     def _grab_sensor(self, eventtime=None):
         """CommMgr::getGrabSensorStatus -- is anything currently grabbed?"""
         return any(self._sensor(n, eventtime) for n in self.grab_sensors)
+
+    # ---------------- runout / clog sensor arming ----------------
+
+    def _set_sensor_enabled(self, objname, enable):
+        # Both sensor kinds keep their flag in RunoutHelper.sensor_enabled
+        # (filament_switch_sensor.py); set it directly so this also works
+        # from klippy:ready, with the gcode command as fallback.
+        obj = self.printer.lookup_object(objname, None)
+        helper = getattr(obj, 'runout_helper', None)
+        if helper is not None and hasattr(helper, 'sensor_enabled'):
+            helper.sensor_enabled = 1 if enable else 0
+        elif obj is not None:
+            self._run('SET_FILAMENT_SENSOR SENSOR=%s ENABLE=%d'
+                      % (objname.split(None, 1)[1], 1 if enable else 0))
+
+    def _reset_motion_sensor(self, objname):
+        # The app's RESET_FILAMENT_SENSOR before ENABLE=1: move the runout
+        # position ahead of the extruder so a sensor that sat disabled while
+        # its extruder moved does not fire the moment it is enabled.
+        obj = self.printer.lookup_object(objname, None)
+        if obj is not None and hasattr(obj, '_update_filament_runout_pos'):
+            obj._update_filament_runout_pos()
+        elif obj is not None:
+            self._run('RESET_FILAMENT_SENSOR SENSOR=%s'
+                      % objname.split(None, 1)[1])
+
+    def _arm_runout(self, tool, reset=True):
+        """setFilamentWheelManager(tool, true): every sensor off, then
+        only the mounted tool's on (motion sensor reset first)."""
+        if tool < 0 or tool >= EXTRUDER_COUNT:
+            self._disarm_runout()
+            return
+        for group in (self.runout_switch, self.runout_motion):
+            for i, name in enumerate(group):
+                if i != tool:
+                    self._set_sensor_enabled(name, False)
+        if self.runout_motion:
+            if reset:
+                self._reset_motion_sensor(self.runout_motion[tool])
+            self._set_sensor_enabled(self.runout_motion[tool], True)
+        if self.runout_switch:
+            self._set_sensor_enabled(self.runout_switch[tool], True)
+        self.armed_tool = tool
+
+    def _disarm_runout(self):
+        """setFilamentWheelManager(_, false): everything off."""
+        for group in (self.runout_switch, self.runout_motion):
+            for name in group:
+                self._set_sensor_enabled(name, False)
+        self.armed_tool = -1
+
+    def _armed_sensors(self):
+        if self.armed_tool < 0:
+            return []
+        return [g[self.armed_tool] for g in (self.runout_switch,
+                                             self.runout_motion) if g]
 
     # ---------------- which tool is mounted ----------------
     #
@@ -628,6 +739,10 @@ class FFToolchange:
             self._run('ACTIVATE_EXTRUDER EXTRUDER=%s'
                       % self._extruder_name(tool))
             self._apply_tool_diff_offsets(tool)
+            # Tool is on the carriage and verified: its runout / clog
+            # sensors become the live ones (the app does this 3 s later
+            # from a thread; here the grab moves are already complete).
+            self._arm_runout(tool)
 
     # ---------------- release ----------------
 
@@ -648,6 +763,11 @@ class FFToolchange:
         counter); we stop at three rather than energise the motor with no one
         watching."""
         dx, dy = self._dock(tool)
+
+        # Sensors off first (changeExtruderChannel @0x79750c disarms before
+        # the head swap): nothing the carriage does at the dock may fire a
+        # runout.
+        self._disarm_runout()
 
         # Precheck: this tool's dock must read EMPTY (the tool is on the
         # carriage). 20 x 50 ms; no motion at all on failure.
@@ -763,6 +883,7 @@ class FFToolchange:
                 self._run('ACTIVATE_EXTRUDER EXTRUDER=%s'
                           % self._extruder_name(tool))
                 self._apply_tool_diff_offsets(tool)
+                self._arm_runout(tool)
             # Keep the fork's channel state coherent: bare M104/M109 get
             # " T<channel>" appended and SET_PRESSURE_ADVANCE is rewritten to
             # pa_value_t<channel> (virtual_sdcard.py:543 / :479).
@@ -1003,6 +1124,31 @@ class FFToolchange:
             " here; remap in the slicer (the fork's"
             " SDCARD_SET_GCODE_EX_USED_BASE table is the future home)")
 
+    cmd_FF_RUNOUT_ARM_help = ("Enable the mounted tool's runout/clog sensors"
+                              " (and disable the others); TOOL= overrides")
+
+    def cmd_FF_RUNOUT_ARM(self, gcmd):
+        tool = gcmd.get_int('TOOL', -1)
+        if tool < 0:
+            tool, why = self._current_tool_or_none()
+            if tool is None or tool < 0:
+                raise gcmd.error("FF_RUNOUT_ARM: no tool mounted (%s)" % why)
+        elif tool >= EXTRUDER_COUNT:
+            raise gcmd.error("FF_RUNOUT_ARM: TOOL must be 0..%d"
+                             % (EXTRUDER_COUNT - 1))
+        if not (self.runout_switch or self.runout_motion):
+            gcmd.respond_info("FF_RUNOUT_ARM: no runout sensors configured")
+            return
+        self._arm_runout(tool)
+        gcmd.respond_info("runout sensors armed for T%d: %s"
+                          % (tool, ", ".join(self._armed_sensors())))
+
+    cmd_FF_RUNOUT_DISARM_help = "Disable every runout/clog sensor"
+
+    def cmd_FF_RUNOUT_DISARM(self, gcmd):
+        self._disarm_runout()
+        gcmd.respond_info("runout sensors disarmed")
+
     cmd_TOOLCHANGE_STATUS_help = "Report toolchanger sensor state"
 
     def cmd_TOOLCHANGE_STATUS(self, gcmd):
@@ -1013,6 +1159,9 @@ class FFToolchange:
         else:
             lines = ["current_tool=%d  (%s)" % (tool, why)]
         lines.append("  (derived from the dock sensors; nothing is stored)")
+        if self.runout_switch or self.runout_motion:
+            lines.append("  runout sensors armed: %s"
+                         % (", ".join(self._armed_sensors()) or "none"))
         for i, n in enumerate(self.dock_sensors):
             try:
                 lines.append("  T%d in dock (%s): %s"
@@ -1091,7 +1240,16 @@ class FFToolchange:
                 'station_z': self._station_z(),
                 # True when every tool and the station are calibrated, i.e.
                 # a print's Z frame can be established for any tool.
-                'print_offset_ready': self.print_offset_ready()}
+                'print_offset_ready': self.print_offset_ready(),
+                # Tools currently sitting in their docks (dock switch
+                # pressed). A tool is available for a print when it is
+                # docked or is the mounted one (_FF_REQUIRE_TOOLS).
+                'docked_tools': [i for i in range(EXTRUDER_COUNT)
+                                 if self._in_location(i, eventtime)],
+                # Tool whose runout/clog sensors are enabled (-1 = none)
+                # and those sensors' object names.
+                'runout_armed': self.armed_tool,
+                'runout_sensors': self._armed_sensors()}
 
 
 def load_config(config):

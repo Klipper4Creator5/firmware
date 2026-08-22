@@ -4,8 +4,10 @@ M106 P2 S0 ; Center_Fresch_Air_Input_Fan_for_PLA30%_(80_0-255)
 ;M191 S0 -- chamber temp: NOT a klipper command in this fork (the app intercepts M191); harmless but noisy, left commented
 M106 S0 ; Model_Fan_(Heat_Break_Cooler_80-255)100%=255
 M106 P3 S0 ; Filter_Unit_Fan_0-255(ABS=255)
-M104 S[nozzle_temperature_initial_layer] T[initial_extruder] ; preheat in parallel
-START_PRINT BED=[bed_temperature_initial_layer_single] TOOL=[initial_extruder] NOZZLE=[nozzle_temperature_initial_layer] LAYER=[layer_height] LEVEL=0
+M104 S[nozzle_temperature_initial_layer] T[initial_extruder] ; preheat in parallel (the clean re-sets it)
+; TOOLS = every extruder the file uses (presence gate + pre-print nozzle clean),
+; TEMPS = each tool's first-layer temperature, indexed by tool (0 = unused).
+START_PRINT BED=[bed_temperature_initial_layer_single] TOOL=[initial_extruder] NOZZLE=[nozzle_temperature_initial_layer] LAYER=[layer_height] LEVEL=0 TOOLS={if is_extruder_used[0]}0,{endif}{if is_extruder_used[1]}1,{endif}{if is_extruder_used[2]}2,{endif}{if is_extruder_used[3]}3{endif} TEMPS={if is_extruder_used[0]}{nozzle_temperature_initial_layer[0]}{else}0{endif},{if is_extruder_used[1]}{nozzle_temperature_initial_layer[1]}{else}0{endif},{if is_extruder_used[2]}{nozzle_temperature_initial_layer[2]}{else}0{endif},{if is_extruder_used[3]}{nozzle_temperature_initial_layer[3]}{else}0{endif} CLEAN=1
 G90
 M83
 M109 S[nozzle_temperature_initial_layer] T[initial_extruder]

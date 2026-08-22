@@ -30,6 +30,7 @@ documented in the file headers.
 | [`config/ff-legacy.cfg`](config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — include only for the import step, then remove |
 | [`config/ff-print-macros.cfg`](config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the calibration gate |
 | [`config/ff-filament.cfg`](config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
+| [`config/ff-runout.cfg`](config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163); `ff_toolchange` arms only the mounted tool's sensors |
 | [`orca/`](orca/) | OrcaSlicer printer profile | Machine start/end G-code, change-filament G-code, example project |
 | [`docs/notes/`](docs/notes/) | (reference only) | Condensed reverse-engineering notes: what the stock app actually does, with binary addresses |
 
@@ -84,7 +85,8 @@ scp klippy-extras/ff_tool.py klippy-extras/ff_toolchange.py \
 
 # 2. the config files (data partition — survives OTA)
 scp config/ff-toolchange.cfg config/ff-tool-offset.cfg \
-    config/ff-print-macros.cfg config/ff-filament.cfg config/ff-legacy.cfg \
+    config/ff-print-macros.cfg config/ff-filament.cfg config/ff-runout.cfg \
+    config/ff-legacy.cfg \
     pwned@PRINTER:/usr/data/config/
 ```
 
@@ -95,8 +97,9 @@ scp config/ff-toolchange.cfg config/ff-tool-offset.cfg \
 ```ini
 [include ff-toolchange.cfg]
 [include ff-tool-offset.cfg]
-[include ff-print-macros.cfg]
 [include ff-filament.cfg]
+[include ff-print-macros.cfg]  ; after ff-filament.cfg (the nozzle clean uses it)
+[include ff-runout.cfg]        ; after printer.base.cfg (overrides its sensor sections)
 [include ff-legacy.cfg]        ; temporary — only for step 5
 ```
 
@@ -218,6 +221,12 @@ tool is mounted, is added on every later grab of that tool, and persists.
 * A `T<n>` on an unhomed machine aborts instead of homing silently
   (`auto_home: False`) — a remote G28 with a tool mounted rams the nozzle
   into whatever is on the bed.
+* **Missing tools are caught before anything moves.** `START_PRINT TOOLS=…`
+  runs `_FF_REQUIRE_TOOLS`: every tool the file uses must be sitting in its
+  dock (switch pressed) or be the mounted one, else the job is refused with
+  the list of what is missing (the app's E0165 — which only checked the
+  first tool and let the others fail mid-print at their grab).
+* **Runout and clogs pause the print.** See [Runout / clog](#runout--clog).
 
 ## Filament load / unload
 
@@ -246,6 +255,32 @@ PURGE TOOL=1 PURGE_TEMP=220 LENGTH=50  ; app's clearNozzlePrint purge
 * All geometry, feeds, the temperature table and the per-tool chute nudges
   are variables of `[gcode_macro _FF_FILAMENT]`.
 
+## Runout / clog
+
+The stock config ships all eight filament sensors with `pause_on_runout:
+False` and a `runout_gcode` that only prints `wheel runout:Tn` — the
+touchscreen app did the rest (polled the mounted channel's switch sensor
+from its print loop, kept only the mounted tool's motion sensor enabled).
+Without the app nothing would happen. `config/ff-runout.cfg` restates the
+sensor sections (Klipper merges repeated sections, later options win — the
+stock `printer.filament.cfg` stays untouched and OTA-safe) so that
+`runout_gcode` calls `_FF_RUNOUT`, and `ff_toolchange` arms the mounted
+tool's two sensors on every grab, disarms everything on release, and
+re-arms on `RESUME` (the app's `setFilamentWheelManager`).
+
+Flow: sensor fires while an SD print is running and the sensor belongs to
+the mounted tool → `PAUSE`, `E0162 filament runout` / `E0163 clog` on the
+display and console → fix the filament → `LOAD_FILAMENT TOOL=n` (its paused
+path is the app's in-print feed: 100 mm, then 5 mm back) → `RESUME`.
+Sensors of tools that are not mounted never fire, and nothing fires
+outside a print. `TOOLCHANGE_STATUS` shows which sensors are armed;
+`FF_RUNOUT_ARM [TOOL=n]` / `FF_RUNOUT_DISARM` do it by hand. Clog pausing
+can be made report-only, as the app's `plugCheck` toggle did:
+`SET_GCODE_VARIABLE MACRO=_FF_RUNOUT_CFG VARIABLE=clog_pause VALUE=0`.
+No endless-spool: another tool is another head, not another spool of the
+same material. Untested on hardware: whether the motion sensors
+(`detection_length 50`, `event_delay 3`) stay quiet through `LOAD_FILAMENT`.
+
 ## OrcaSlicer setup
 
 In the printer profile:
@@ -262,14 +297,22 @@ In the printer profile:
 Or skip the copy-pasting: open
 [`orca/creator-mainsail.3mf`](orca/creator-mainsail.3mf) in OrcaSlicer —
 an example project with the "Mainsail - Flashforge Creator 5 Pro 0.4
-nozzle" printer profile already carrying all three G-code blocks above.
+nozzle" printer profile already carrying all three G-code blocks above
+(its start G-code predates `TOOLS=`/`TEMPS=` — paste the current
+`machine-start-gcode.txt` over it to get the presence gate and nozzle clean).
 
 Re-slice anything sliced with older start G-code — old files won't call
 `TOOLCHANGE_SET_PRINT_OFFSET` and will print ~3.2 mm low.
 
-`START_PRINT` options: `LEVEL=1` probes a fresh mesh (recommended for the
-first print), `SOAK=<seconds>` overrides the bed heat soak (default 30,
-`SOAK=0` skips; progress is reported in the console).
+`START_PRINT` options: `TOOLS=0,2` every tool the file uses (Orca:
+`is_extruder_used[n]`, as in the snippet) — presence gate and pre-print
+nozzle clean; `TEMPS=220,0,240,0` per-tool clean temperature (0 = use
+`NOZZLE=`); `CLEAN=0` skips the clean (default on: each used tool is grabbed,
+heated, purged 50 mm at the chute with the part fan on, wiped at the
+station, cooled by 100 °C and docked while the bed heats — the app's
+`clearNozzlePrint`); `LEVEL=1` probes a fresh mesh (recommended for the
+first print); `SOAK=<seconds>` dwells after the bed reaches target (the app
+waits 5 min; default 0).
 
 ### Why `T[next_extruder] ; ff-toolchange` and not just `T[next_extruder]`
 

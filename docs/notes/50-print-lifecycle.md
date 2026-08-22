@@ -20,8 +20,12 @@ CommMgr::serialPrint @0x79c8e0         -> the 37 KB engine thread
 2. `G28` (full home); abort on failure
 3. `SET_GCODE_OFFSET X=0 Y=0 MOVE=1 MOVE_SPEED=600`
 4. two probe touch checks (app-internal `checkProbeZValue`)
-5. heat bed + chamber; dock whatever tool is held; per-tool presence check (E0165)
-6. `SET_IDLE_TIMEOUT TIMEOUT=1800000`; nozzle clean/purge
+5. heat bed + chamber; dock whatever tool is held; presence check of the file's first
+   tool (E0165) — ported as `_FF_REQUIRE_TOOLS` for every tool in `TOOLS=`
+6. `SET_IDLE_TIMEOUT TIMEOUT=1800000`; eddy probe at (265, 4.8); nozzle clean of every tool
+   the file uses (purge at the chute, wipe at (266.5, 13.8), cool by 100 °C, release) —
+   ported as `_FF_NOZZLE_CLEAN`, see [`50a`](50a-nozzle-clean-recovered.md) /
+   [`50b`](50b-nozzle-clean-port.md)
 7. bed+chamber soak wait (keepBedTempPrint = 5 min), then **`G28 Z` re-home**
 8. per-print leveling toggle: ON → `BED_MESH_CALIBRATE` at ACCEL=2000 then
    `BED_MESH_PROFILE LOAD=default`; OFF → `BED_MESH_PROFILE LOAD=MESH_DATA`
@@ -66,6 +70,8 @@ bed presentation drop `G1 Z150/200/256.8 F1800` by current-Z thresholds 100/150;
 - no dmesg/meminfo dumps, no drop_caches shell calls
 - idle timeout after resume back to 864000, not 600000
 - pause park: +10 mm clamped to 256 (app's exact formula unrecovered)
+- tool gate covers all of TOOLS, not just the first tool; nozzle clean uses slicer
+  temperatures (TEMPS=) and the fixed purge_z instead of a fresh eddy probe
 - CANCEL_PRINT override adds our cleanup only for Mainsail-started jobs (tracked by
   the SDCARD_PRINT_FILE wrapper) — the touchscreen's own cancel does its own cleanup
   and must not be doubled.
