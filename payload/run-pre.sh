@@ -2,7 +2,7 @@
 # /usr/prog. This ordering matters: back up the files while they are still
 # the STOCK ones. Backing up after the copy would capture our own modified
 # files and make the uninstall package a no-op.
-MODDIR=/usr/data/mod
+MODDIR=/usr/data/anvil
 case "$MODDIR" in
     /usr/data/?*) ;;
     *) echo "refusing to run: MODDIR='$MODDIR' is not under /usr/data"; exit 0 ;;
@@ -24,13 +24,14 @@ mkdir -p "$MODDIR" "$BACKUP"
   # The stock outer installer runs
   #     cd /usr/prog/PROGRAM/software && ls | grep -v temp | xargs rm -rf
   # BEFORE it executes this run.sh, so the old binary is already gone by the
-  # time we get control. That is also why an uninstall package must SHIP the
-  # genuine binary rather than rely on a backup -- see bin/make-uninstall.sh.
+  # time we get control. That is also why uninstalling means flashing the
+  # STOCK package again: it is the only thing that still carries the genuine
+  # binary. See docs/hardware-testing.md and `make test-recovery`.
 
   # Record which backup is the pristine one: only the first install sees
   # genuinely stock files, so never let a later re-flash overwrite it.
   if [ ! -d "$MODDIR/backup/stock" ]; then
       cp -a "$BACKUP" "$MODDIR/backup/stock" && echo "kept pristine copy at backup/stock"
   fi
-} >> /usr/data/mod-install.log 2>&1
+} >> /usr/data/anvil-install.log 2>&1
 sync

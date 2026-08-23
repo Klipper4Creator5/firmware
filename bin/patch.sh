@@ -10,37 +10,37 @@ SW=work/software
 echo "profile: $PROFILE -- ${PROFILE_DESC:-}"
 echo
 
-MARK_BEGIN="# >>> c5mod begin >>>"
-MARK_END="# <<< c5mod end <<<"
+MARK_BEGIN="# >>> anvil begin >>>"
+MARK_END="# <<< anvil end <<<"
 
 say() { printf '>> %s\n' "$*"; }
 skip() { printf '   (skip) %s\n' "$*"; }
 
 # Everything we add to the printer lives under this one directory on the DATA
 # partition, so a FlashForge OTA cannot delete it.
-MODDIR=/usr/data/mod
+MODDIR=/usr/data/anvil
 # The mod payload is built OUTSIDE the software component on purpose. The
 # software component is extracted to /usr/prog/PROGRAM/software/<ver>/ -- the
 # firmware partition, of which the installer keeps two versions. Mainsail and
 # HelixScreen are ~100MB and would overflow it. They ride in the outer package
 # instead, land in /usr/data/update/ (data partition), and are moved to
-# /usr/data/mod from there.
+# /usr/data/anvil from there.
 MP=work/modpayload
 rm -rf "$MP" "$SW/mod"   # $SW/mod: leftover from an older layout
 mkdir -p "$MP/bin" "$MP/nginx" "$MP/www" "$MP/config"
 
 # ---------------------------------------------------------------------------
-# MOD_APPLY=0 (the "probe" profile): reinstall the stock component untouched
+# BUILD_APPLY=0 (the "probe" profile): reinstall the stock component untouched
 # and add only a diagnostic report. Nothing on the printer changes.
 # ---------------------------------------------------------------------------
-if [ "${MOD_APPLY:-1}" = "0" ]; then
-    say "MOD_APPLY=0 -- stock component left byte-for-byte unmodified"
-    if [ "${MOD_REPORT:-1}" = "1" ]; then
+if [ "${BUILD_APPLY:-1}" = "0" ]; then
+    say "BUILD_APPLY=0 -- stock component left byte-for-byte unmodified"
+    if [ "${BUILD_REPORT:-0}" = "1" ]; then
         say "adding diagnostic report step"
         python3 - "$SW/run.sh" payload/report.sh <<'PY2'
 import sys, re
 run, extra = sys.argv[1], sys.argv[2]
-B, E = "# >>> c5mod begin >>>", "# <<< c5mod end <<<"
+B, E = "# >>> anvil begin >>>", "# <<< anvil end <<<"
 s = open(run, encoding='utf-8', errors='surrogateescape').read()
 s = re.sub(re.escape(B) + r".*?" + re.escape(E) + r"\n?", "", s, flags=re.S)
 block = open(extra, encoding='utf-8').read()
@@ -59,7 +59,7 @@ PY2
 fi
 
 # ---------------------------------------------------------------- 1. Klipper
-if [ "${MOD_KLIPPER:-fork}" = "fork" ] && [ -d "${KLIPPER_FORK:-}/klippy" ]; then
+if [ "${BUILD_KLIPPER:-fork}" = "fork" ] && [ -d "${KLIPPER_FORK:-}/klippy" ]; then
     say "Klipper: installing fork tree from $KLIPPER_FORK"
     # Stock ships only a handful of klippy files as an overlay; the fork is a
     # different Klipper generation (v0.13 vs v0.12), so ship the WHOLE tree.
@@ -95,7 +95,7 @@ else
 fi
 
 # ----------------------------------------------------------- 2. Toolchanger
-if [ "${MOD_TOOLCHANGE:-1}" = "1" ] && [ -d "${TOOLCHANGE:-}/klippy-extras" ]; then
+if [ "${BUILD_TOOLCHANGE:-1}" = "1" ] && [ -d "${TOOLCHANGE:-}/klippy-extras" ]; then
     say "Toolchange: ff_*.py + configs from $TOOLCHANGE"
     mkdir -p "$SW/klipper/extras"
     cp -f "$TOOLCHANGE"/klippy-extras/ff_*.py "$SW/klipper/extras/"
@@ -107,7 +107,7 @@ else
 fi
 
 # -------------------------------------------------------------- 3. Mainsail
-if [ "${MOD_MAINSAIL:-1}" = "1" ] && [ -n "${MAINSAIL_ZIP:-}" ] && [ -f "$MAINSAIL_ZIP" ]; then
+if [ "${BUILD_MAINSAIL:-1}" = "1" ] && [ -n "${MAINSAIL_ZIP:-}" ] && [ -f "$MAINSAIL_ZIP" ]; then
     say "Mainsail: unpacking $(basename "$MAINSAIL_ZIP")"
     mkdir -p "$MP/www/mainsail"
     unzip -q -o "$MAINSAIL_ZIP" -d "$MP/www/mainsail"
@@ -119,7 +119,7 @@ fi
 [ -f assets/moonraker.conf ] && cp -f assets/moonraker.conf "$MP/config/moonraker.conf"
 
 # ----------------------------------------------------------- 4. HelixScreen
-if [ "${MOD_HELIX:-1}" = "1" ] && [ -n "${HELIX_TGZ:-}" ] && [ -f "$HELIX_TGZ" ]; then
+if [ "${BUILD_HELIX:-1}" = "1" ] && [ -n "${HELIX_TGZ:-}" ] && [ -f "$HELIX_TGZ" ]; then
     say "HelixScreen: unpacking $(basename "$HELIX_TGZ")"
     mkdir -p "$MP/helixscreen"
     tar -xzf "$HELIX_TGZ" -C "$MP" # yields mod/helixscreen/
@@ -197,15 +197,25 @@ chmod +x "$MP/init.d"/S*
 sed -e "s/^MOD_UI=.*/MOD_UI=${MOD_UI:-stock}/" \
     -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
     -e "s/^MOD_SSH=.*/MOD_SSH=${MOD_SSH:-1}/" \
-    payload/mod.conf > "$MP/mod.conf"
+    payload/anvil.conf > "$MP/anvil.conf"
 
 # --------------------------------------------------- 10. run.sh install step
 say "run.sh: injecting mod install blocks (pre + post)"
-python3 - "$SW/run.sh" payload/run-pre.sh payload/run-append.sh <<'PY'
+# The diagnostic report is a DEBUG payload: report.sh copies /etc, passwd and
+# shadow onto the USB stick. Only the probe profile turns it on -- see
+# profiles/*.env. It rides at the end of the post block rather than in one of
+# its own, so there is still exactly one injected region to strip on re-run.
+POST=work/.run-post.sh
+cat payload/run-append.sh > "$POST"
+if [ "${BUILD_REPORT:-0}" = "1" ]; then
+    say "run.sh: including the diagnostic report step (BUILD_REPORT=1)"
+    cat payload/report.sh >> "$POST"
+fi
+python3 - "$SW/run.sh" payload/run-pre.sh "$POST" <<'PY'
 import sys, re
 run, pre_f, post_f = sys.argv[1], sys.argv[2], sys.argv[3]
-B1, E1 = "# >>> c5mod pre >>>",  "# <<< c5mod pre <<<"
-B2, E2 = "# >>> c5mod begin >>>", "# <<< c5mod end <<<"
+B1, E1 = "# >>> anvil pre >>>",  "# <<< anvil pre <<<"
+B2, E2 = "# >>> anvil begin >>>", "# <<< anvil end <<<"
 src = open(run, encoding='utf-8', errors='surrogateescape').read()
 # idempotent: strip any previous injection
 for b, e in ((B1, E1), (B2, E2)):
@@ -230,9 +240,10 @@ print("   post-block inserted before exit")
 open(run, 'w', encoding='utf-8', errors='surrogateescape').write(src)
 PY
 chmod +x "$SW/run.sh"
+rm -f "$POST"
 
 echo
 echo "Patched."
 echo "  software component: $(du -sh "$SW" | cut -f1)  (-> /usr/prog, firmware partition)"
-echo "  mod payload:        $(du -sh "$MP" | cut -f1)  (-> /usr/data/mod, data partition)"
+echo "  mod payload:        $(du -sh "$MP" | cut -f1)  (-> /usr/data/anvil, data partition)"
 echo "Now run ./pack.sh"

@@ -1,9 +1,14 @@
 name: ci
 
 # The stock FlashForge firmware is proprietary and ~93MB, so it is never in
-# the repo. Every job below runs against a synthetic fixture that reproduces
-# the package STRUCTURE (see test/fixtures/make-stock-fixture.sh), which is
-# enough to exercise the entire pipeline and every brick-safety check.
+# the repo. The `test` job runs against a synthetic fixture that reproduces
+# the package STRUCTURE (see test/fixtures/make-stock-fixture.sh) -- enough
+# for the static and packaging checks, but NOT enough to prove a package will
+# not brick a printer.
+#
+# That proof needs the printer's real rootfs, and so it needs the stock
+# package. The `printer-sim` job below runs it whenever the STOCK_URL_*
+# secrets are set, and `release.yml` requires it outright.
 on:
   push:
     branches: [ main, master ]
@@ -61,3 +66,84 @@ jobs:
         # Skips cleanly when no MIPS binaries are present (they are build
         # artifacts and are never committed).
         run: ./test/test-abi.sh
+
+  # Does the repo have access to the stock firmware? Secrets cannot be read
+  # from a job-level `if`, so decide it in a step and fan out from there.
+  have-firmware:
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.check.outputs.available }}
+    steps:
+      - id: check
+        env:
+          PRO: ${{ secrets.STOCK_URL_CREATOR5PRO }}
+        run: |
+          if [ -n "$PRO" ]; then echo "available=true" >> "$GITHUB_OUTPUT"
+          else echo "available=false" >> "$GITHUB_OUTPUT"; fi
+
+  # The real check: install the package into a replica of the printer -- the
+  # actual rootfs.squashfs under qemu-mipsel, on the printer's own busybox --
+  # and assert the machine still boots.
+  printer-sim:
+    needs: have-firmware
+    if: needs.have-firmware.outputs.available == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the stock firmware
+        env:
+          PRO:     ${{ secrets.STOCK_URL_CREATOR5PRO }}
+          STD:     ${{ secrets.STOCK_URL_CREATOR5 }}
+          PRO_SHA: ${{ secrets.STOCK_SHA256_CREATOR5PRO }}
+        run: |
+          set -euo pipefail
+          mkdir -p stock
+          curl -fsSL "$PRO" -o stock/Creator5Pro-stock.tgz
+          [ -z "${STD:-}" ] || curl -fsSL "$STD" -o stock/Creator5-stock.tgz
+          [ -z "${PRO_SHA:-}" ] || echo "$PRO_SHA  stock/Creator5Pro-stock.tgz" | sha256sum -c -
+
+      - name: Write test.env (the replica's /usr/prog)
+        env:
+          FACTORY: ${{ secrets.FACTORY_URL }}
+        run: |
+          set -euo pipefail
+          if [ -n "${FACTORY:-}" ]; then
+            curl -fsSL "$FACTORY" -o stock/factory.tar.xz
+            echo "PROG_DUMP=\"$PWD/stock/factory.tar.xz\"" > test.env
+          else
+            echo "::warning::no FACTORY_URL secret -- the replica has no real /usr/prog and will refuse to run"
+            : > test.env
+          fi
+
+      - name: Write config.env
+        run: |
+          cat > config.env <<CFG
+          MOD_NAME=anvil
+          MOD_VER=ci
+          SW_VER=""
+          TARGET_MACHINE=Creator5Pro
+          STOCK_TGZ_CREATOR5PRO="$PWD/stock/Creator5Pro-stock.tgz"
+          STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
+          STOCK_TGZ=""
+          KLIPPER_FORK=""
+          TOOLCHANGE=""
+          HELIX_TGZ=""
+          MAINSAIL_ZIP=""
+          DEFAULT_PROFILE=probe
+          MOD_UI=stock
+          ROOT_PW_HASH='\$6\$ci\$abcdefghijklmnopqrstuvwxyz'
+          FF_KEY='FFP0331&*%root'
+          CFG
+
+      - name: Extract the printer rootfs
+        run: make rootfs ASSET_ROOT=$PWD
+
+      - name: Brick-safety suite on the printer replica
+        run: |
+          docker build -q -t creator5-fw-build -f docker/Dockerfile.build docker
+          docker run --rm \
+            -v "$PWD":"$PWD" -w "$PWD" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e REQUIRE_PRINTER_SIM=1 \
+            creator5-fw-build ./test/run-tests.sh

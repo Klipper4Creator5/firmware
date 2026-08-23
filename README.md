@@ -1,194 +1,121 @@
 # creator5-custom-firmware
 
-Build custom firmware for the FlashForge **Creator 5 / Creator 5 Pro**: take
-the stock update package, modify it, pack it back up, copy it to a USB stick.
-The printer installs it by itself on the next power-on — no jailbreak, no ssh,
-no opening the case.
+Custom firmware for the FlashForge **Creator 5** and **Creator 5 Pro**.
 
-```sh
-cp config.env.example config.env     # point it at your stock package
-make probe                           # stage 0: changes nothing, reports back
-make test                            # full brick-safety suite
-```
-
-**Nothing runs on your machine except Docker.** Every make target executes
-inside a pinned build image; the docker socket is mounted through so the test
-targets can start sibling containers. `LOCAL=1 make <target>` opts out.
+It installs the way a normal FlashForge update does: copy one file to a USB
+stick, plug it in, power the printer on. No jailbreak, no soldering, no
+opening the case, no ssh needed to get started — the printer's own updater
+does the work.
 
 > **Unofficial and unaffiliated with FlashForge.** It voids your warranty and
-> you are responsible for your machine. Nothing here has been run on hardware
-> yet — see [Status](#status).
+> you are responsible for your machine. Nothing here has been installed on a
+> printer yet — see [Status](#status) before you flash anything.
 
 ---
 
-## How it works
+## What you get
 
-We reuse FlashForge's own updater rather than writing a parallel one. The
-stock chain, recovered from `app_startup.sh`, the `unTar` binary and the
-rootfs image:
-
-```
-busybox init → /etc/init.d/rcS → S99factory_test_shell
-             → /usr/prog/app_startup.sh
-                 ├─ mounts /dev/sda* on /mnt, globs Creator5Pro-*.tgz
-                 ├─ /usr/prog/bin/unTar  (des3 decrypt → /usr/data/update)
-                 └─ runFirmwareExe.sh Creator5Pro 0029
-                        └─ per component: extract → md5 gate → run.sh
-             → firmwareExe  ← the UI, and what starts Klipper
-```
-
-The mod's entire integration point is **one file**: it replaces
-`/usr/prog/PROGRAM/software/firmwareExe` with a shell script. Because
-everything funnels through that binary, `app_startup.sh`, `rcS` and the whole
-init chain stay **completely stock and unpatched**. The genuine binary is kept
-beside it as `firmwareExe.stock` and remains the default UI.
-
-Services are ordinary init.d-style scripts in `/usr/data/mod/init.d/`, run in
-filename order and individually restartable over ssh:
-
-```
-S60web       nginx (Mainsail) + moonraker
-S70klipper   Klipper
-S80ui        decides which UI runs; owns SAFE-MODE
-```
-
-Everything the mod installs lives under `/usr/data/mod` on the **data**
-partition, which a FlashForge OTA cannot delete.
-
----
-
-## Five things the stock firmware does that will surprise you
-
-Each of these silently breaks a package or a printer, and each is enforced by
-a check in `make test`:
-
-| | Reality |
+| | |
 |---|---|
-| **`*.tar.xz` is not xz** | The components are plain tar archives carrying an `.xz` name. The installer runs a bare `tar -xvf`, so a genuinely xz-compressed file does not install. |
-| **`.tgz` is not gzip** | DES3-encrypted plain tar. The key is hardcoded in the printer's own `unTar` binary. Modern OpenSSL needs `-md md5` to match its OpenSSL 1.0.2. |
-| **Nothing in init starts Klipper** | `firmwareExe` runs `/usr/prog/klipper/start.sh`. Replace the UI without accounting for this and the printer boots to a working screen that cannot move or heat. |
-| **The installer wipes the software dir first** | `ls \| grep -v temp \| xargs rm -rf` runs *before* `run.sh`, so the previous `firmwareExe` is already gone. An uninstall package must **ship** the genuine binary; it cannot back one up. |
-| **Binaries must be nan2008** | The Ingenic X2000 kernel returns `ENOEXEC` for legacy-NaN MIPS. Debian's `gcc-mipsel-linux-gnu` cannot produce a usable binary — its libc is legacy-NaN. |
+| **Mainsail in your browser** | The full Klipper web interface at `http://<printer-ip>/` — upload gcode, watch the print, tune on the fly. Moonraker comes with it, so anything that speaks the Klipper API works. |
+| **A shell on your printer** | ssh as root. Dropbear is already running on stock firmware; this simply gives you a password you know. |
+| **Real toolchanger Klipper** | A current Klipper with proper tool-change support, replacing the 0.12-era tree FlashForge ships. |
+| **A modern touchscreen UI** | HelixScreen instead of the stock interface — optional, and the stock UI is kept on disk as a fallback. |
+| **Nothing you cannot undo** | Flashing the stock FlashForge package puts every file back. |
 
-**And one pleasant surprise, found by unpacking `rootfs.squashfs` out of the
-kernel component:** ssh needs no work at all. The stock rootfs
-already ships `/usr/sbin/dropbear` and an enabled `/etc/init.d/S50dropbear`,
-so port 22 is *already open* on a stock printer. There is simply no published
-root password. Setting `ROOT_PW_HASH` is the whole feature.
+Your printer keeps working as a printer throughout: the stock screen, the
+stock boot process and the stock recovery path are all left in place until you
+choose a stage that replaces them.
 
 ---
 
-## Profiles: a ladder, not a menu
+## Which file do I need
 
-Each profile is a rung. Flash them in order — every rung makes the next one
-recoverable. Full procedure with go/no-go checks:
-**[docs/hardware-testing.md](docs/hardware-testing.md)**.
+**Creator 5 and Creator 5 Pro are not interchangeable.** Each package is built
+for one model and the printer refuses a package meant for the other, so pick
+the file whose name matches your machine:
 
-| Profile | What it changes | Why this rung |
+| Your printer | The file |
+|---|---|
+| Creator 5 | `Creator5-anvil-<date>.tgz` |
+| Creator 5 Pro | `Creator5Pro-anvil-<date>.tgz` |
+
+Not sure which you have? On the printer: **Settings → About**.
+
+---
+
+## How to flash
+
+1. **Format a USB stick as FAT32.** Not exFAT, not NTFS.
+2. **Copy the file for your model to the root of the stick.** Not in a folder.
+   Leave the name exactly as it is — the printer looks for that pattern.
+3. **Power the printer off.**
+4. **Plug the stick in and power the printer on.** It finds the package by
+   itself, shows the update screen and installs. This takes a few minutes.
+5. **Wait for it to reboot on its own**, then pull the stick.
+
+Afterwards, `http://<printer-ip>/` gets you Mainsail. The install log is on
+the printer at `/usr/data/anvil-install.log`.
+
+### Flash them in this order
+
+The releases are rungs on a ladder, not a menu. Each one makes the next one
+recoverable, so start at the bottom even if you only want the top:
+
+| Stage | What it changes | Why start here |
 |---|---|---|
-| `probe` | **nothing** | Proves the chain works on your unit and reports partition sizes, the init layout and the stock nginx config back onto the USB stick |
-| `ssh` | root password | Gives you a recovery channel before anything risky |
-| `web` | + Mainsail/moonraker | Uncomments what stock already ships; Klipper untouched |
-| `full` | + forked Klipper, toolchanger | First rung that changes how the machine moves |
-| `helix` | + HelixScreen as the UI | First rung where the stock UI stops driving the screen |
+| **probe** | **nothing at all** | Proves the whole update chain works on *your* machine, and writes a report back onto the USB stick. Costs you five minutes and rules out a bad stick, a wrong model or a broken download. |
+| **ssh** | a root password | Gives you a way in before anything risky happens. |
+| **web** | + Mainsail and moonraker | Turns on a web stack FlashForge already ships but leaves switched off. Printing behaviour is unchanged. |
+| **full** | + toolchanger Klipper | The first stage that changes how the machine moves. |
+| **helix** | + HelixScreen as the UI | The first stage where the stock screen stops driving the display. |
 
-```sh
-make probe            # or: make build PROFILE=probe
-make all-profiles
-```
-
-**Recovery** is the stock FlashForge package for your model — keep a copy on a
-spare stick. Flashing it restores every file the mod touches; the payload
-under `/usr/data/mod` survives but is inert. `make test-recovery` proves it.
-
-### Two models, two packages
-
-Creator 5 and Creator 5 Pro are **not interchangeable**. Each stock package
-carries a `MACHINE=`/`PID=` gate that refuses to install on the other model,
-and — the part that actually matters — they ship **different `firmwareExe`
-binaries**. A package built for one model would hand the other the wrong
-firmware, so each must be built from its own stock package.
-
-```sh
-make release PROFILE=web     # builds BOTH into dist/
-MODEL=Creator5 make web      # just the non-Pro
-```
-
-| Model | MACHINE | PID | USB filename the printer looks for |
-|---|---|---|---|
-| Creator 5 | `Creator5` | `0028` | `/mnt/Creator5-*.tgz` |
-| Creator 5 Pro | `Creator5Pro` | `0029` | `/mnt/Creator5Pro-*.tgz` |
-
-Set `TARGET_MACHINE` in `config.env`; `make verify` fails on a mismatch, and
-`make test-model` asserts each package is gated correctly and carries its own
-model's firmware.
+The go/no-go checks for each rung — what to look at, and what means stop — are
+in **[docs/hardware-testing.md](docs/hardware-testing.md)**. Read it before
+the first flash.
 
 ---
 
-## Testing: how we know it does not brick
+## If something goes wrong
 
-`make test` needs no printer and no proprietary firmware — a synthetic fixture
-(`test/fixtures/make-stock-fixture.sh`) reproduces the package *structure*, so
-the whole pipeline runs in CI on a clean machine.
+**Keep a copy of the stock FlashForge package for your model on a spare USB
+stick before you start.** That stick is the undo button: flashing it restores
+every file this firmware touches. It is a normal FlashForge update, so it
+installs the same way — stick in, power on.
 
-| Test | What it does |
-|---|---|
-| `test-lint` | Scans on-printer scripts for brick patterns: raw block-device writes, `rm -rf` of top-level paths, unguarded `rm -rf $VAR/`, missing backups |
-| `test-install` | **Runs the installer for real** in a container with a fake printer rootfs, then asserts the printer would still boot: UI present and executable, touchscreen driver intact, boot scripts unmodified, user `printer.cfg` preserved, re-install idempotent |
-| `test-recovery` | Installs the mod, then flashes the **stock** package, and asserts the machine is genuinely back to stock and the leftover payload is inert |
-| `test-ui` | Drives the UI selection logic: helix missing, crash-loop, SAFE-MODE latch and release, **and the no-UI-at-all case** |
-| `test-model` | Each package's filename prefix matches the gate inside, the PID matches the model, and the two models ship **different** `firmwareExe` binaries |
-| `test-ash` | Parses every on-printer script with the **printer's own busybox 1.31.1 ash**, extracted from the stock `rootfs.squashfs` and run under `qemu-mipsel` — a parse error in `firmwareExe` means a blank screen |
-| `test-abi` | Every shipped MIPS binary is `nan2008`/`mips32r2`/`o32`, and executes under `qemu-mipsel` |
+A few things are deliberately built in so a bad stage cannot cost you the
+machine:
 
-These are not theoretical. Writing them caught four real bugs before any
-hardware was involved:
+* **The screen always comes back.** If the new UI cannot start or crashes
+  repeatedly, the printer latches SAFE-MODE and boots the stock interface.
+* **ssh stays up** even when the screen does not, so you can get in and look.
+* **Your `printer.cfg` is never overwritten.** A config that already exists is
+  left alone and the new one lands beside it as `.mod-new`.
+* **The kernel and the motion board are never touched** by a normal package.
 
-- backups were taken *after* the stock `run.sh` had already overwritten the
-  files, so the uninstall package would have restored the modified versions
-- the uninstall package shipped no `firmwareExe`, so uninstalling would have
-  left a blank screen
-- `rm -rf $MODDIR/bin` with an unset `MODDIR` expands to `rm -rf /bin`
-- a crashed UI is a *zombie*, and `kill -0` succeeds on a zombie — the crash
-  detector called a dead UI healthy
-
----
-
-## Requirements
-
-Docker. That is the whole list — the build image carries `openssl`, `tar`,
-`xz`, `unzip`, `python3`, `binutils`, `squashfs-tools` and `qemu-user-static`,
-and every target runs inside it. `make shell` drops you into it.
-
-`make rootfs` extracts the printer's genuine root filesystem from the stock
-package's `kernel-*.tar.xz` (it contains `rootfs.squashfs`) and enables
-`make test-ash`. It is never committed — it is FlashForge's firmware.
-
----
-
-## Layout
-
-```
-bin/            unpack → patch → pack, plus verify / make-uninstall
-payload/        what runs ON the printer (POSIX sh, busybox ash)
-  firmwareExe     the wrapper that replaces the stock binary
-  init.d/         S60web, S70klipper, S80ui
-  run-pre.sh      backups, injected at the TOP of the stock run.sh
-  run-append.sh   payload install, injected before its exit
-  report.sh       the stage-0 diagnostic report
-profiles/       the ladder
-assets/         nginx.conf, moonraker.conf
-test/           the suite above + the synthetic fixture
-docs/           hardware-testing.md
-```
+More detail, including what to do when the printer will not boot at all:
+[docs/hardware-testing.md](docs/hardware-testing.md).
 
 ---
 
 ## Status
 
-The build pipeline and the full test suite pass on a development machine
-(75 checks). **No package has been installed on a printer yet.** The Klipper
-`creator5` branch this builds on is itself documented as not yet run on
-hardware.
+**No package has been installed on a real printer yet.** The build pipeline
+and the full test suite pass, including installing into a replica of the
+printer — its real filesystem, running its real binaries — but a simulation is
+not a machine.
 
-Start at stage 0, and build the uninstall stick before you start.
+Start at stage 0 (`probe`), and have the stock package on a spare stick before
+you begin.
+
+---
+
+## Documentation
+
+| | |
+|---|---|
+| [docs/hardware-testing.md](docs/hardware-testing.md) | The flash ladder, stage by stage, with the checks that say go or stop |
+| [docs/how-it-works.md](docs/how-it-works.md) | How the mod hooks into the stock firmware, and what the stock firmware does that surprises people |
+| [docs/building.md](docs/building.md) | Building your own packages from a stock FlashForge one |
+| [docs/testing.md](docs/testing.md) | The test suite, and how we know a package does not brick a printer |
+| [docs/printer-replica.md](docs/printer-replica.md) | The printer replica: what is authentic, what is not |

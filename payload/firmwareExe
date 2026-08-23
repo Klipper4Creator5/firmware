@@ -20,13 +20,13 @@
 #   * If this script is ever removed, app_startup.sh restores a firmwareExe
 #     from the newest version directory -- the stock recovery path still works.
 
-MODDIR=/usr/data/mod
+MODDIR=/usr/data/anvil
 SELFDIR=`dirname "$0"`
 STOCK_UI="$SELFDIR/firmwareExe.stock"
 
-[ -f $MODDIR/mod.conf ] && . $MODDIR/mod.conf
+[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 mkdir -p /usr/data/logs
-exec >>/usr/data/logs/mod-boot.log 2>&1
+exec >>/usr/data/logs/anvil-boot.log 2>&1
 echo "=== mod firmwareExe `date 2>/dev/null` (UI=${MOD_UI:-stock}) ==="
 
 # ---- services ------------------------------------------------------------

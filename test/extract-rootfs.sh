@@ -12,7 +12,7 @@
 #
 # Never committed: it is FlashForge's proprietary firmware.
 set -euo pipefail
-. "$(dirname "$0")/common.sh"
+. "$(dirname "$0")/../bin/common.sh"
 
 command -v unsquashfs >/dev/null 2>&1 || { echo "need squashfs-tools (the build image has it)" >&2; exit 1; }
 

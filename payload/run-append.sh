@@ -1,18 +1,18 @@
 # Runs near the END of the stock run.sh, after it has installed its own
 # files. Backups already happened in the pre-block at the top.
-MODDIR=/usr/data/mod
+MODDIR=/usr/data/anvil
 case "$MODDIR" in
     /usr/data/?*) ;;
     *) echo "refusing to run: MODDIR='$MODDIR' is not under /usr/data"; exit 0 ;;
 esac
-exec >>/usr/data/mod-install.log 2>&1
+exec >>/usr/data/anvil-install.log 2>&1
 
 # ---- the mod payload -------------------------------------------------------
-# Shipped as mod.tar.xz in the OUTER package, so it is already sitting on the
+# Shipped as anvil.tar.xz in the OUTER package, so it is already sitting on the
 # data partition next to us (/usr/data/update). Never unpacked into /usr/prog:
 # the firmware partition has no room for ~100MB of web UI.
 MODTAR=""
-for c in /usr/data/update/mod.tar.xz /mnt/mod.tar.xz $WORK_DIR/mod.tar.xz; do
+for c in /usr/data/update/anvil.tar.xz /mnt/anvil.tar.xz $WORK_DIR/anvil.tar.xz; do
     [ -f "$c" ] && { MODTAR="$c"; break; }
 done
 
@@ -25,7 +25,7 @@ if [ -n "$MODTAR" ]; then
         echo "!! not enough space on /usr/data -- skipping mod payload"
     else
         # Keep user-editable state; replace everything we own.
-        [ -f $MODDIR/mod.conf ] && cp -f $MODDIR/mod.conf /tmp/mod.conf.keep
+        [ -f $MODDIR/anvil.conf ] && cp -f $MODDIR/anvil.conf /tmp/anvil.conf.keep
         rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen $MODDIR/config
         mkdir -p $MODDIR
         # Try xz first (FlashForge's own factory installer uses `xz -dc`, so
@@ -38,12 +38,12 @@ if [ -n "$MODTAR" ]; then
         else
             echo "!! could not extract $MODTAR"
         fi
-        [ -f /tmp/mod.conf.keep ] && mv -f /tmp/mod.conf.keep $MODDIR/mod.conf
-        chmod a+x $MODDIR/boot.sh $MODDIR/bin/* 2>/dev/null
+        [ -f /tmp/anvil.conf.keep ] && mv -f /tmp/anvil.conf.keep $MODDIR/anvil.conf
+        chmod a+x $MODDIR/bin/* 2>/dev/null
         echo "mod payload installed"
     fi
 else
-    echo "!! no mod.tar.xz found -- scripts only, no Mainsail/HelixScreen"
+    echo "!! no anvil.tar.xz found -- scripts only, no Mainsail/HelixScreen"
 fi
 sync
 

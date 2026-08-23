@@ -1,9 +1,11 @@
 # Hardware testing: the flash ladder
 
-CI proves the package is well-formed and that the installer does not brick a
-*simulated* printer. It cannot prove anything about your actual machine. This
-is the on-hardware procedure, ordered so that each step is recoverable using
-what the previous step established.
+CI installs the package into a replica of the printer -- the real
+`rootfs.squashfs` running under qemu-mipsel, on the printer's own busybox and
+`unTar` (see [printer-replica.md](printer-replica.md)) -- and proves the
+machine would still boot. What it cannot do is drive the screen, the MCUs, the
+toolchanger or a print. This is the on-hardware procedure, ordered so that each
+step is recoverable using what the previous step established.
 
 **Rule: never skip a rung. Each one exists because it makes the next one
 recoverable.**
@@ -68,10 +70,10 @@ Flash it, wait for the reboot, pull the stick and read:
 
 | File on the stick | What it tells you |
 |---|---|
-| `c5mod-report.txt` | free space, partitions, installed versions, init layout, whether nginx/moonraker really exist |
-| `c5mod-stock-etc.tar` | the whole `/etc`, so the init chain can be studied offline |
-| `c5mod-stock-nginx.conf` | the stock nginx config (not shipped in any update package) |
-| `c5mod-stock-bootscripts.tar` | `app_startup.sh`, `start.sh`, `passwd`, `shadow` as they exist on YOUR unit |
+| `anvil-report.txt` | free space, partitions, installed versions, init layout, whether nginx/moonraker really exist |
+| `anvil-stock-etc.tar` | the whole `/etc`, so the init chain can be studied offline |
+| `anvil-stock-nginx.conf` | the stock nginx config (not shipped in any update package) |
+| `anvil-stock-bootscripts.tar` | `app_startup.sh`, `start.sh`, `passwd`, `shadow` as they exist on YOUR unit |
 
 **Go/no-go:** the report exists and the printer boots normally.
 If the stick comes back empty, the package never installed — nothing was
@@ -174,11 +176,11 @@ the safety net before flashing:
 **Recovering from a bad UI, in increasing severity:**
 ```sh
 ssh root@PRINTER
-/usr/data/mod/init.d/S80ui status        # what did it choose, and why
-touch /usr/data/mod/SAFE-MODE            # force the stock UI on next boot
+/usr/data/anvil/init.d/S80ui status        # what did it choose, and why
+touch /usr/data/anvil/SAFE-MODE            # force the stock UI on next boot
 reboot
 ```
-If ssh is gone too, flash the uninstall stick.
+If ssh is gone too, flash the stock FlashForge package for your model.
 
 ---
 
@@ -186,7 +188,7 @@ If ssh is gone too, flash the uninstall stick.
 
 | Symptom | Do this |
 |---|---|
-| Printer boots, screen blank | ssh in; `touch /usr/data/mod/SAFE-MODE`; reboot |
+| Printer boots, screen blank | ssh in; `touch /usr/data/anvil/SAFE-MODE`; reboot |
 | No ssh, no screen | flash the stock package for your model |
 | Recovery stick does not help | try a newer stock FlashForge package for your model |
 | Still broken | factory package (`Creator5Pro-factory-*.tgz` **plus** the separate `Creator5Pro-factory.tar.xz` on the same stick; needs 800 MB free) |
@@ -197,8 +199,8 @@ FlashForge's factory-restore package — which refuses to run when
 
 **Logs worth reading, all on the data partition and all surviving a reboot:**
 ```
-/usr/data/mod-install.log      what the installer did
-/usr/data/logs/mod-boot.log    services + UI choice at each boot
+/usr/data/anvil-install.log      what the installer did
+/usr/data/logs/anvil-boot.log    services + UI choice at each boot
 /usr/data/logs/printer.log     klipper
 /usr/data/logs/helixscreen.log helixscreen
 ```

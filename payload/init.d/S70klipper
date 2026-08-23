@@ -13,8 +13,8 @@
 # Double-start guard: when MOD_UI=stock, firmwareExe still starts Klipper
 # itself, so we must not race it. We only start Klipper if it is not already
 # running, and start.sh carries the same guard.
-MODDIR=/usr/data/mod
-[ -f $MODDIR/mod.conf ] && . $MODDIR/mod.conf
+MODDIR=/usr/data/anvil
+[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 
 klippy_running() {
     [ -S /tmp/uds ] && return 0

@@ -1,0 +1,94 @@
+# A Creator 5 / Creator 5 Pro you can `docker run`.
+#
+# It fetches the firmware itself, so the build context is just the harness
+# scripts and nothing proprietary has to be staged on disk first:
+#
+#   * the stock OTA package -> decrypt -> kernel component -> rootfs.squashfs,
+#     which is the printer's real root filesystem
+#   * the factory image     -> /usr/prog and /usr/data, the real partitions
+#
+# Everything executed inside is the printer's own MIPS userland running under
+# qemu-mipsel. See docs/printer-replica.md.
+#
+# Built by test/build-printer-image.sh, which supplies the URLs per model.
+#
+# CONTAINS PROPRIETARY FLASHFORGE FIRMWARE.
+
+# ----------------------------------------------------------------- fetch ----
+# A throwaway stage: the 88MB package and the 182MB compressed factory image
+# never reach a layer of the final image, and the unpack that would otherwise
+# cost 90 seconds on every test run happens once, here.
+FROM debian:bookworm-slim AS fetch
+
+RUN apt-get update -qq \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+        curl ca-certificates xz-utils openssl squashfs-tools \
+ && rm -rf /var/lib/apt/lists/*
+
+ARG STOCK_URL
+ARG FACTORY_URL
+# The package key, hardcoded in /usr/prog/bin/unTar on the printer.
+ARG FF_KEY='FFP0331&*%root'
+
+# The root filesystem. Three things about the stock package matter here: it is
+# DES3 with -md md5 (the printer's OpenSSL is 1.0.2d, which derived keys with
+# MD5), the components inside are plain tar despite the .tar.xz names, and the
+# kernel one carries rootfs.squashfs.
+RUN set -eu; \
+    curl -fsSL "$STOCK_URL" -o /stock.tgz; \
+    mkdir -p /outer; \
+    openssl des3 -d -k "$FF_KEY" -salt -md md5 -in /stock.tgz | tar -xf - -C /outer; \
+    mkdir -p /kern; \
+    tar -xf /outer/kernel-*.tar.xz -C /kern; \
+    SQ="$(find /kern -name 'rootfs.squashfs*' | head -n1)"; \
+    test -n "$SQ"; \
+    unsquashfs -q -d /rootfs "$SQ"; \
+    test -x /rootfs/bin/busybox; \
+    rm -rf /stock.tgz /outer /kern
+
+# The two writable partitions, named the way assemble.sh bind-mounts them:
+#   /parts/prog -> /usr/prog   ("usershare")
+#   /parts/data -> /usr/data   ("userdata")
+# A factory image is rooted at usr/, so strip that level off. The last two
+# tests are the point of the whole exercise: a real python3 and a real
+# OpenSSL 1.0.2d mean a real /usr/prog rather than an approximation of one.
+RUN set -eu; \
+    mkdir -p /parts; \
+    curl -fsSL "$FACTORY_URL" -o /factory.tar.xz; \
+    tar -xJf /factory.tar.xz -C /parts --strip-components=1 usr/prog usr/data; \
+    rm -f /factory.tar.xz; \
+    test -x /parts/prog/Python-3.8.2/bin/python3; \
+    test -x /parts/prog/openssl-1.0.2d/bin/openssl
+
+# ----------------------------------------------------------------- image ----
+FROM debian:bookworm-slim
+
+RUN apt-get update -qq \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+        qemu-user-static rsync xz-utils openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=fetch /rootfs/ /rootfs/
+COPY --from=fetch /parts/  /parts/
+
+# The harness: binfmt registration, mount layout, prog checks, entrypoint.
+# Build context is test/printer.
+COPY . /opt/printer/
+RUN chmod +x /opt/printer/*.sh
+
+ENV ROOTFS=/rootfs
+
+# One image serves both models: rootfs.squashfs is identical in the Creator 5
+# and Creator 5 Pro packages, and /usr/prog comes from the Pro factory image
+# because that is the only one published. Which model the replica actually IS
+# is decided by the stock package a test installs into it.
+ARG FW_VERSION=unknown
+LABEL org.opencontainers.image.title="FlashForge Creator 5 printer replica" \
+      org.opencontainers.image.description="The printer's real userland (MIPS32r2 o32 nan2008, busybox 1.31.1, glibc 2.33) under qemu-mipsel, for testing firmware packages without a printer" \
+      com.flashforge.model="Creator5,Creator5Pro" \
+      com.flashforge.prog-partition="Creator5Pro factory image" \
+      com.flashforge.firmware="$FW_VERSION"
+
+# --privileged is required: the entrypoint registers a binfmt_misc handler for
+# the printer's MIPS binaries and builds the machine's mount layout.
+ENTRYPOINT ["/opt/printer/entrypoint.sh"]

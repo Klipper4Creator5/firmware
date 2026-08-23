@@ -76,7 +76,7 @@ if [ -f "$T/sw/app_startup.sh" ]; then
     grep -q 'gt9xx_touch.ko' "$T/sw/app_startup.sh" \
         && ok "touchscreen driver still loaded at boot" \
         || bad "gt9xx_touch.ko insmod missing -- no touchscreen"
-    grep -qE 'firmwareExe|boot.sh' "$T/sw/app_startup.sh" \
+    grep -q 'firmwareExe' "$T/sw/app_startup.sh" \
         && ok "a UI is launched at boot" \
         || bad "nothing launches a UI -- printer boots to a blank screen"
 fi
@@ -99,12 +99,12 @@ if [ -f "$T/sw/klipper/chelper.tar" ]; then
 fi
 
 # 8 ------------------------------------------------------------ mod payload
-if [ -f "$T/mod.tar.xz" ]; then
-    if xz -t "$T/mod.tar.xz" 2>/dev/null; then ok "mod.tar.xz is valid xz"
-    elif tar -tf "$T/mod.tar.xz" >/dev/null 2>&1; then ok "mod.tar.xz is a plain tar"
-    else bad "mod.tar.xz is neither valid xz nor tar"; fi
+if [ -f "$T/anvil.tar.xz" ]; then
+    if xz -t "$T/anvil.tar.xz" 2>/dev/null; then ok "anvil.tar.xz is valid xz"
+    elif tar -tf "$T/anvil.tar.xz" >/dev/null 2>&1; then ok "anvil.tar.xz is a plain tar"
+    else bad "anvil.tar.xz is neither valid xz nor tar"; fi
 
-    LIST=$(xz -dc "$T/mod.tar.xz" 2>/dev/null | tar -tf - 2>/dev/null || tar -tf "$T/mod.tar.xz" 2>/dev/null)
+    LIST=$(xz -dc "$T/anvil.tar.xz" 2>/dev/null | tar -tf - 2>/dev/null || tar -tf "$T/anvil.tar.xz" 2>/dev/null)
     echo "$LIST" | grep -q 'init.d/S80ui' && ok "mod payload has the service scripts" \
                                           || bad "mod payload missing init.d services"
     echo "$LIST" | grep -q 'init.d/S70klipper' && ok "mod payload owns Klipper startup" \
@@ -113,7 +113,7 @@ if [ -f "$T/mod.tar.xz" ]; then
     echo "$LIST" | grep -q 'helixscreen/bin/helix-screen' && ok "HelixScreen present" || warn "no HelixScreen in payload"
     echo "$LIST" | grep -q 'bin/dropbear'  && ok "dropbear present" || warn "no dropbear -- ssh will not start"
 else
-    warn "no mod.tar.xz -- scripts only"
+    warn "no anvil.tar.xz -- scripts only"
 fi
 
 # 8b ------------------------------------------------------- MODEL GATE
@@ -157,6 +157,32 @@ if [ -n "$FN_MACHINE" ]; then
         bad "filename says $FN_MACHINE but the gate inside says $PKG_MACHINE"
         bad "  the printer would pick this file up and then refuse it"
     fi
+fi
+
+# 10 --------------------------------------------------- the ship boundary
+# Only payload/ and assets/ may end up on a printer; bin/, test/, docker/ and
+# profiles/ are host-side. Nothing enforces that except this check.
+#
+# It compares by CONTENT, not by name: a name blacklist would trip over any
+# file Mainsail or HelixScreen happens to call common.sh, while a byte-for-byte
+# match against a host-lane file is exactly the thing we are trying to catch.
+mkdir -p "$T/ship"
+tar -xf "$T"/software-*.tar.xz -C "$T/ship" 2>/dev/null || true
+if [ -f "$T/anvil.tar.xz" ]; then
+    mkdir -p "$T/ship/.anvil"
+    xz -dc "$T/anvil.tar.xz" 2>/dev/null | tar -xf - -C "$T/ship/.anvil" 2>/dev/null \
+        || tar -xf "$T/anvil.tar.xz" -C "$T/ship/.anvil" 2>/dev/null || true
+fi
+find bin test docker profiles -type f 2>/dev/null | xargs -r md5sum 2>/dev/null \
+    | awk '{print $1}' | sort -u > "$T/host.md5"
+find "$T/ship" -type f 2>/dev/null | xargs -r md5sum 2>/dev/null > "$T/ship.md5"
+LEAK=$(awk 'NR==FNR{h[$1];next} $1 in h {print}' "$T/host.md5" "$T/ship.md5" \
+       | sed "s|$T/ship/||")
+if [ -z "$LEAK" ]; then
+    ok "package carries nothing from bin/, test/, docker/ or profiles/"
+else
+    bad "host-side files leaked into the package:"
+    echo "$LEAK" | head -10 | sed 's/^/          /'
 fi
 
 echo

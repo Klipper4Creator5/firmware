@@ -12,7 +12,12 @@ ok()   { printf '  \033[32mOK\033[0m     %s\n' "$1"; }
 TARGETS=("$@")
 [ ${#TARGETS[@]} -gt 0 ] || TARGETS=(payload bin/../payload)
 
-FILES=$(find "${TARGETS[@]}" -type f \( -name '*.sh' -o -name 'run.sh' \) 2>/dev/null | sort -u)
+# firmwareExe and the init.d/S* scripts have no .sh suffix, and an earlier
+# version of this glob therefore never scanned them -- the UI wrapper and every
+# service script went unchecked. They run on the printer, so they are scanned.
+FILES=$(find "${TARGETS[@]}" -type f \
+            \( -name '*.sh' -o -name 'run.sh' -o -name 'firmwareExe' \
+               -o -name 'S[0-9][0-9]*' \) 2>/dev/null | sort -u)
 [ -n "$FILES" ] || { echo "no scripts found in ${TARGETS[*]}"; exit 1; }
 
 echo "scanning $(echo "$FILES" | wc -l) script(s) for brick risks"
@@ -37,21 +42,42 @@ while IFS= read -r f; do
         grep -nE 'rm[[:space:]]+-[a-zA-Z]*r[a-zA-Z]*[[:space:]]+\$[A-Za-z_]+/' "$f" | head -3 | sed 's/^/            /'
     fi
     # Replacing the init/boot chain without restoring a UI
-    if grep -q 'app_startup.sh' "$f" && ! grep -qE 'firmwareExe|boot\.sh|helix' "$f"; then
-        warn "$f" "touches app_startup.sh but never mentions a UI launcher"
+    # Only MODIFYING app_startup.sh is a risk; report.sh merely cats it.
+    if grep -nE '(cp|mv|install|tee|sed[[:space:]]+-i|>>?[[:space:]]*)[^|;]*app_startup\.sh' "$f" >/dev/null \
+       && ! grep -qE 'firmwareExe|helix' "$f"; then
+        warn "$f" "modifies app_startup.sh but never mentions a UI launcher"
     fi
 done <<< "$FILES"
 
 # --- the boot chain must always end with something on screen ----------------
-if [ -f payload/boot.sh ]; then
-    if grep -q 'firmwareExe' payload/boot.sh; then
-        ok "boot.sh falls back to the stock UI"
-    else
-        bad "payload/boot.sh" "no stock-UI fallback -- a missing HelixScreen means a blank screen"
-    fi
-    if grep -qE 'exit[[:space:]]+1|set -e' payload/boot.sh; then
-        warn "payload/boot.sh" "an early exit here can leave the printer with no UI"
-    fi
+# This used to be guarded on `[ -f payload/boot.sh ]`. boot.sh was replaced by
+# the firmwareExe wrapper long ago, so the guard was false and the whole check
+# silently passed on every run. It is now pinned to the files that exist, and
+# their absence is itself a failure.
+UIW=payload/firmwareExe
+if [ ! -f "$UIW" ]; then
+    bad "payload/firmwareExe" "missing -- nothing replaces the stock UI binary"
+else
+    grep -q 'firmwareExe.stock' "$UIW" \
+        && ok "firmwareExe falls back to the stock UI" \
+        || bad "$UIW" "no stock-UI fallback -- a missing HelixScreen means a blank screen"
+    grep -qE '^[[:space:]]*set -e' "$UIW" \
+        && warn "$UIW" "an early exit here can leave the printer with no UI" \
+        || ok "$UIW has no bare 'set -e'"
+    # It must hold the foreground: app_startup.sh greps ps for firmwareExe and
+    # re-execs us if we exit, which would restart every service underneath.
+    grep -q 'sleep 3600' "$UIW" \
+        && ok "firmwareExe holds the process when the UI exits" \
+        || bad "$UIW" "returns when the UI exits -- app_startup.sh restarts everything"
+fi
+
+UISEL=payload/init.d/S80ui
+if [ ! -f "$UISEL" ]; then
+    bad "payload/init.d/S80ui" "missing -- nothing chooses the UI or latches SAFE-MODE"
+else
+    grep -q 'SAFE-MODE' "$UISEL" \
+        && ok "S80ui latches SAFE-MODE on a crash loop" \
+        || bad "$UISEL" "no SAFE-MODE latch -- a crash-looping UI cannot be recovered"
 fi
 
 # --- the installer must not hard-fail into a boot loop ----------------------
@@ -65,14 +91,26 @@ for f in payload/run-append.sh payload/report.sh; do
 done
 
 # --- every stock file we replace must be backed up first --------------------
-if [ -f payload/run-append.sh ]; then
-    for target in app_startup.sh start.sh passwd shadow; do
-        if grep -q "$target" payload/run-append.sh; then
-            grep -q 'BACKUP' payload/run-append.sh \
-                && ok "backup step present before replacing $target" \
-                || bad "payload/run-append.sh" "replaces $target with no backup"
-        fi
+# The backups moved to run-pre.sh, which runs at the TOP of run.sh while the
+# files are still stock. This check used to read run-append.sh, where none of
+# these names appear any more, so it matched nothing and reported nothing.
+# app_startup.sh is deliberately absent: the mod replaces firmwareExe instead
+# and never touches the stock boot scripts.
+PRE=payload/run-pre.sh
+if [ ! -f "$PRE" ]; then
+    bad "payload/run-pre.sh" "missing -- the stock files are replaced with no backup"
+else
+    grep -q 'BACKUP' "$PRE" \
+        && ok "run-pre.sh has a backup step" \
+        || bad "$PRE" "no BACKUP step"
+    for target in start.sh passwd shadow; do
+        grep -q "$target" "$PRE" \
+            && ok "backup covers $target" \
+            || bad "$PRE" "$target is replaced but never backed up"
     done
+    grep -q 'backup/stock' "$PRE" \
+        && ok "pristine backup/stock kept from the first install" \
+        || warn "$PRE" "no pristine copy -- a re-flash overwrites the only stock backup"
 fi
 
 echo

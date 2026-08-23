@@ -1,5 +1,7 @@
 work/
 config.env
+test.env
 assets/mainsail.zip
 assets/mips/
 build-tmp/
+dist/

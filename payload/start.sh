@@ -3,7 +3,7 @@
 #
 # Kept as close to stock as possible. The web stack is NOT started here even
 # though stock has the (commented-out) lines for it -- that is the job of
-# /usr/data/mod/init.d/S60web, so there is exactly one place that starts
+# /usr/data/anvil/init.d/S60web, so there is exactly one place that starts
 # nginx and moonraker and one place to restart them from over ssh.
 #
 # The only change from stock: klipper_pri.sh is actually invoked. FlashForge

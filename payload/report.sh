@@ -5,9 +5,9 @@
 # Read this BEFORE flashing anything that modifies the machine: it tells you
 # the real partition sizes, what is already installed, and whether the whole
 # decrypt -> md5 -> run.sh chain works on your unit.
-REPORT=/mnt/c5mod-report.txt
+REPORT=/mnt/anvil-report.txt
 {
-    echo "=== c5mod report ==="
+    echo "=== anvil report ==="
     echo "date:    `date 2>/dev/null`"
     echo "machine: `uname -a`"
     echo "args:    $*"
@@ -74,12 +74,12 @@ sync
 
 # Copy the stock nginx conf out too -- we need it verbatim to build a correct
 # Mainsail vhost, and it is not in any update package.
-cp -f /usr/prog/nginx/conf/nginx.conf /mnt/c5mod-stock-nginx.conf 2>/dev/null
+cp -f /usr/prog/nginx/conf/nginx.conf /mnt/anvil-stock-nginx.conf 2>/dev/null
 # The whole /etc, so the init layout can be studied offline instead of
 # guessed at. It is a few hundred KB and answers the init.d-vs-custom
 # question definitively.
-tar -cf /mnt/c5mod-stock-etc.tar /etc 2>/dev/null
-tar -cf /mnt/c5mod-stock-bootscripts.tar \
+tar -cf /mnt/anvil-stock-etc.tar /etc 2>/dev/null
+tar -cf /mnt/anvil-stock-bootscripts.tar \
     /usr/prog/app_startup.sh /usr/prog/klipper/start.sh \
     /usr/prog/etc/passwd /usr/prog/etc/shadow 2>/dev/null
 sync
