@@ -13,16 +13,91 @@
 # Double-start guard: when MOD_UI=stock, firmwareExe still starts Klipper
 # itself, so we must not race it. We only start Klipper if it is not already
 # running, and start.sh carries the same guard.
+#
+# WHY IT ALSO SUPERVISES -- the heater board (mcu 'eheaterboard' on
+# /dev/ttyS4) is frequently not answering yet when klippy first opens the
+# port. Klipper polls it for 90s (connect_uart) and then gives up with "MCU
+# error during connect". klippy does NOT exit and does NOT retry on its own:
+# _connect() sets the error state, returns, and fires FlashForge's own
+# klippy:notify_mcu_error event over /tmp/uds. On stock, firmwareExe is the
+# API client listening for that event, and it restarts the firmware -- which
+# is why the stock UI needs two or three attempts before every board is
+# found. Nothing in the mod plays that role, so klippy would sit in the error
+# state forever with no heaters. Restarting klippy achieves what the stock
+# retry achieves: reopening the port toggles DTR/RTS and the board comes up.
+#
+# This is NOT a missing GPIO poke. firmwareExe drives exactly two GPIOs:
+# PB07 (wifi module power, via cmd_gpio) and 34/35 (NRST/BOOT0 of the
+# /dev/ttyS3 board), and the latter pair is touched only by AppUpdateThread
+# when the user flashes MCU firmware from the DeviceOTA screen. Neither runs
+# during a normal boot -- and if a reset line were pulsed at startup, stock
+# would connect on the first attempt rather than the third.
 MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 
+KLIPPER_TRIES=${MOD_KLIPPER_TRIES:-6}
+PRINTER_LOG=/usr/data/logs/printer.log
+
+klippy_proc() {
+    if command -v pgrep >/dev/null 2>&1; then
+        pgrep -f 'klippy\.py' >/dev/null 2>&1
+    else
+        ps 2>/dev/null | grep 'klippy.py' | grep -v grep >/dev/null
+    fi
+}
+
 klippy_running() {
     [ -S /tmp/uds ] && return 0
-    if command -v pgrep >/dev/null 2>&1; then
-        pgrep -f 'klippy\.py' >/dev/null 2>&1 && return 0
-    else
-        ps 2>/dev/null | grep 'klippy.py' | grep -v grep >/dev/null && return 0
-    fi
+    klippy_proc && return 0
+    return 1
+}
+
+# The two outcomes klippy actually writes to printer.log. There is no
+# "Printer is ready" line to look for -- _set_state() does not log -- but a
+# healthy klippy emits a "Stats <n>:" line every second.
+klippy_verdict() {
+    tail -n +$(($1 + 1)) "$PRINTER_LOG" 2>/dev/null | awk '
+        /MCU error during connect/ { print "error"; exit }
+        /Stats [0-9]/              { print "ready"; exit }'
+}
+
+supervise() {
+    n=1
+    while [ $n -le $KLIPPER_TRIES ]; do
+        mark=`wc -l < "$PRINTER_LOG" 2>/dev/null || echo 0`
+        # A failed connect takes ~90s to be reported, so wait out more than
+        # that before concluding anything.
+        w=0
+        verdict=""
+        while [ $w -lt 30 ]; do
+            sleep 5
+            w=$((w + 1))
+            verdict=`klippy_verdict "$mark"`
+            [ -n "$verdict" ] && break
+        done
+        case "$verdict" in
+            ready)
+                echo "klipper: ready (attempt $n)"
+                return 0
+                ;;
+            "")
+                # Neither marker showed up. Something other than an MCU
+                # connect is going on; restarting would only hide it.
+                echo "klipper: no verdict after attempt $n -- leaving it alone"
+                return 0
+                ;;
+        esac
+        echo "klipper: MCU connect failed (attempt $n/$KLIPPER_TRIES) -- restarting"
+        [ -x /usr/prog/klipper/klipperDaemon ] && /usr/prog/klipper/klipperDaemon stop
+        g=0
+        while klippy_proc && [ $g -lt 15 ]; do sleep 1; g=$((g + 1)); done
+        # start.sh bails out if the socket is still there, so clear a stale
+        # one -- but only once klippy is definitely gone.
+        klippy_proc || rm -f /tmp/uds
+        /usr/prog/klipper/start.sh
+        n=$((n + 1))
+    done
+    echo "klipper: still no MCU after $KLIPPER_TRIES attempts -- giving up"
     return 1
 }
 
@@ -32,8 +107,9 @@ start() {
         return 0
     fi
     if [ "${MOD_UI:-stock}" = "stock" ]; then
-        # firmwareExe will start it. Give it a moment, then only step in if
-        # it did not, so a stock-UI machine behaves exactly like stock.
+        # firmwareExe will start it, and it does its own retrying. Give it a
+        # moment, then only step in if it did not, so a stock-UI machine
+        # behaves exactly like stock.
         sleep 15
         if klippy_running; then
             echo "klipper: started by firmwareExe (stock path)"
@@ -44,6 +120,8 @@ start() {
     [ -x /usr/prog/klipper/start.sh ] || { echo "klipper: start.sh missing"; return 1; }
     /usr/prog/klipper/start.sh &
     echo "klipper: start.sh launched"
+    # In the background: boot must not wait minutes for the heater board.
+    supervise &
 }
 stop() {
     [ -x /usr/prog/klipper/klipperDaemon ] && /usr/prog/klipper/klipperDaemon stop
