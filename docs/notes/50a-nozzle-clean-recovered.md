@@ -3,7 +3,7 @@
 Recovered 2026-08-22 from the MIPS code of `BuildPage::clearNozzlePrint` @0x9f46f4,
 `clearNozzleCheckTemp` @0x9f6ce0, `clearNozzleProbez` @0x9f4020 and the presence check in
 `prepareForEddy` @0x9f1068 (the Ghidra bodies are 36-byte stubs, cut at the first `ErrorBak`
-constructor). Port: `_FF_NOZZLE_CLEAN` / `_FF_REQUIRE_TOOLS` in `config/ff-print-macros.cfg`,
+constructor). Port: `_FF_NOZZLE_CLEAN` / `_FF_REQUIRE_TOOLS` in `payload/klipper/config/ff-print-macros.cfg`,
 see [`50b-nozzle-clean-port.md`](50b-nozzle-clean-port.md).
 
 ## Where it sits in the prepare flow (prepareForEddy)

@@ -1,4 +1,6 @@
-# FlashForge Creator 5 Pro — native toolchanger for Klipper/Mainsail
+# The toolchanger mod
+
+FlashForge Creator 5 Pro — native toolchanger for Klipper/Mainsail.
 
 <a href="https://buymeacoffee.com/monstrofil"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-monstrofil-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a>
 
@@ -9,30 +11,30 @@ stock `firmwareExe` binary (addresses referenced in the source comments),
 with some behaviour improved along the way — deliberate divergences are
 documented in the file headers.
 
-> **Branch `klipper-vanilla` — not yet run on hardware.** Everything on
-> this branch has been exercised against a mock Klipper harness only. The
-> `main` branch keeps the previous design, which reads calibration live
-> from firmwareExe's JSON and has been used on a real printer. Here all
-> per-unit numbers live in ordinary Klipper config, and the touchscreen's
-> nozzle-offset calibration is reimplemented as Klipper commands.
+> **Not yet run on hardware.** Everything here has been exercised against
+> a mock Klipper harness only. The design it replaced read calibration live
+> from firmwareExe's JSON and had been used on a real printer; in this one
+> all per-unit numbers live in ordinary Klipper config, and the
+> touchscreen's nozzle-offset calibration is reimplemented as Klipper
+> commands. See [hardware-testing.md](hardware-testing.md) before flashing.
 
 ## What's in here
 
 | File | Goes to (on the printer) | What it does |
 |---|---|---|
-| [`klippy-extras/ff_toolchange.py`](klippy-extras/ff_toolchange.py) | `/usr/prog/klipper/klippy/extras/` | The toolchanger: `T0..T3`, dock/grab state machine with sensor polling and retries, per-tool G-code offsets (the absolute ~3.2 mm bed-frame Z is applied at every grab), `TOOLCHANGE_SET_PRINT_OFFSET` (the print-start thermal/bed/layer Z terms), `TOOL_Z_ADJUST` (per-tool persistent babystep), `TOOLCHANGE_STATUS`, `TOOLCHANGE_PARK` |
-| [`helixscreen/flashforge_creator5_pro.json`](helixscreen/flashforge_creator5_pro.json) | HelixScreen `config/printer_database.d/` | Printer-database entry so HelixScreen auto-detects the Creator 5 Pro as a tool changer |
-| [`klippy-extras/ff_tool.py`](klippy-extras/ff_tool.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_tool n]` — one section per tool; `dock_x/dock_y`, `nozzle_x/y/z` and `z_adjust` are all autosaved (import or calibration + `SAVE_CONFIG`) |
-| [`klippy-extras/ff_tool_offset.py`](klippy-extras/ff_tool_offset.py) | `/usr/prog/klipper/klippy/extras/` | `TOOL_OFFSET_CALIBRATE` / `STATION_CALIBRATE` / `TOOL_OFFSET_STATUS` — the touchscreen's nozzle XY/Z offset calibration, recovered from the binary and reimplemented in Klipper |
-| [`klippy-extras/ff_legacy.py`](klippy-extras/ff_legacy.py) | `/usr/prog/klipper/klippy/extras/` | `FF_IMPORT_FIRMWARE_CONFIG` — one-shot import of the factory/touchscreen JSON into Klipper config. Needed once, at install |
-| [`config/ff-toolchange.cfg`](config/ff-toolchange.cfg) | `/usr/data/config/` | empty `[ff_tool 0..3]` sections (the per-unit dock/nozzle data is autosaved, nothing unit-specific ships), `[ff_toolchange]` feeds/geometry, `SDCARD_PRINT_FILE` wrapper |
-| [`config/ff-tool-offset.cfg`](config/ff-tool-offset.cfg) | `/usr/data/config/` | `[ff_tool_offset]` — probe geometry and guards for the calibration commands |
-| [`config/ff-legacy.cfg`](config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — include only for the import step, then remove |
-| [`config/ff-print-macros.cfg`](config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the calibration gate |
-| [`config/ff-filament.cfg`](config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
-| [`config/ff-runout.cfg`](config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163), optionally after printing through the PTFE buffer (`runout_distance`); `ff_toolchange` arms only the mounted tool's sensors |
-| [`orca/`](orca/) | OrcaSlicer printer profile | Machine start/end G-code, change-filament G-code, example project |
-| [`docs/notes/`](docs/notes/) | (reference only) | Condensed reverse-engineering notes: what the stock app actually does, with binary addresses |
+| [`payload/klipper/extras/ff_toolchange.py`](../payload/klipper/extras/ff_toolchange.py) | `/usr/prog/klipper/klippy/extras/` | The toolchanger: `T0..T3`, dock/grab state machine with sensor polling and retries, per-tool G-code offsets (the absolute ~3.2 mm bed-frame Z is applied at every grab), `TOOLCHANGE_SET_PRINT_OFFSET` (the print-start thermal/bed/layer Z terms), `TOOL_Z_ADJUST` (per-tool persistent babystep), `TOOLCHANGE_STATUS`, `TOOLCHANGE_PARK` |
+| [`payload/helixscreen/printer_database.d/flashforge_creator5_pro.json`](../payload/helixscreen/printer_database.d/flashforge_creator5_pro.json) | HelixScreen `config/printer_database.d/` | Printer-database entry so HelixScreen auto-detects the Creator 5 Pro as a tool changer |
+| [`payload/klipper/extras/ff_tool.py`](../payload/klipper/extras/ff_tool.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_tool n]` — one section per tool; `dock_x/dock_y`, `nozzle_x/y/z` and `z_adjust` are all autosaved (import or calibration + `SAVE_CONFIG`) |
+| [`payload/klipper/extras/ff_tool_offset.py`](../payload/klipper/extras/ff_tool_offset.py) | `/usr/prog/klipper/klippy/extras/` | `TOOL_OFFSET_CALIBRATE` / `STATION_CALIBRATE` / `TOOL_OFFSET_STATUS` — the touchscreen's nozzle XY/Z offset calibration, recovered from the binary and reimplemented in Klipper |
+| [`payload/klipper/extras/ff_legacy.py`](../payload/klipper/extras/ff_legacy.py) | `/usr/prog/klipper/klippy/extras/` | `FF_IMPORT_FIRMWARE_CONFIG` — one-shot import of the factory/touchscreen JSON into Klipper config. Needed once, at install |
+| [`payload/klipper/config/ff-toolchange.cfg`](../payload/klipper/config/ff-toolchange.cfg) | `/usr/data/config/` | empty `[ff_tool 0..3]` sections (the per-unit dock/nozzle data is autosaved, nothing unit-specific ships), `[ff_toolchange]` feeds/geometry, `SDCARD_PRINT_FILE` wrapper |
+| [`payload/klipper/config/ff-tool-offset.cfg`](../payload/klipper/config/ff-tool-offset.cfg) | `/usr/data/config/` | `[ff_tool_offset]` — probe geometry and guards for the calibration commands |
+| [`payload/klipper/config/ff-legacy.cfg`](../payload/klipper/config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — include only for the import step, then remove |
+| [`payload/klipper/config/ff-print-macros.cfg`](../payload/klipper/config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the calibration gate |
+| [`payload/klipper/config/ff-filament.cfg`](../payload/klipper/config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
+| [`payload/klipper/config/ff-runout.cfg`](../payload/klipper/config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163), optionally after printing through the PTFE buffer (`runout_distance`); `ff_toolchange` arms only the mounted tool's sensors |
+| [`assets/orca/`](../assets/orca/) | OrcaSlicer printer profile | Machine start/end G-code, change-filament G-code, example project |
+| [`docs/notes/`](notes/) | (reference only) | Condensed reverse-engineering notes: what the stock app actually does, with binary addresses |
 
 ## ⚠️ Use at your own risk
 
@@ -74,7 +76,11 @@ and stay next to the machine until you trust it.
   re-run step 1 after every firmware update. The `#*#` block in
   `printer.cfg` is on the data partition and survives.
 
-## Install
+## Install by hand
+
+A package built from this repo installs all of this for you — see
+[building.md](building.md). What follows is the manual route, for dropping a
+single edited file onto a printer that is already modded.
 
 On the printer (ssh as `pwned` — this assumes a jailbroken printer; how to
 get root/ssh access is covered in the community
@@ -82,14 +88,11 @@ get root/ssh access is covered in the community
 
 ```sh
 # 1. the klippy extras (firmware partition — may need remount rw)
-scp klippy-extras/ff_tool.py klippy-extras/ff_toolchange.py \
-    klippy-extras/ff_tool_offset.py klippy-extras/ff_legacy.py \
+scp payload/klipper/extras/ff_*.py \
     pwned@PRINTER:/usr/prog/klipper/klippy/extras/
 
 # 2. the config files (data partition — survives OTA)
-scp config/ff-toolchange.cfg config/ff-tool-offset.cfg \
-    config/ff-print-macros.cfg config/ff-filament.cfg config/ff-runout.cfg \
-    config/ff-legacy.cfg \
+scp payload/klipper/config/ff-*.cfg \
     pwned@PRINTER:/usr/data/config/
 ```
 
@@ -173,8 +176,8 @@ want the touchscreen's numbers.
 
 The nozzle XY/Z offset calibration is the touchscreen's own sequence
 (`testEddyExtruderOffsetForwardTwoCheck`, recovered from the binary — see
-[`docs/notes/45-tool-offset-calibration.md`](docs/notes/45-tool-offset-calibration.md)
-and [`46-offset-calibration-recovered.md`](docs/notes/46-offset-calibration-recovered.md)),
+[`docs/notes/45-tool-offset-calibration.md`](notes/45-tool-offset-calibration.md)
+and [`46-offset-calibration-recovered.md`](notes/46-offset-calibration-recovered.md)),
 constants included. **Take the PEI sheet off first** — the calibration
 station sits below the bed plane. `PLATE_REMOVED=1` is your promise; both
 commands also verify it: with the empty carriage they probe the station Z
@@ -245,8 +248,8 @@ tool is mounted, is added on every later grab of that tool, and persists.
 
 ## Filament load / unload
 
-`config/ff-filament.cfg` reproduces the touchscreen's FilamentLoad page
-(recovered from the binary — [`docs/notes/47-filament-load-recovered.md`](docs/notes/47-filament-load-recovered.md)):
+`payload/klipper/config/ff-filament.cfg` reproduces the touchscreen's FilamentLoad page
+(recovered from the binary — [`docs/notes/47-filament-load-recovered.md`](notes/47-filament-load-recovered.md)):
 each tool has its own direct-drive extruder, so loading means *grab the tool,
 drive it to the purge chute at the back right (X275 Y254), heat to material
 temperature + 30, push 150 + 145 mm at F240, park the tool, heater off*.
@@ -282,7 +285,7 @@ The stock config ships all eight filament sensors with `pause_on_runout:
 False` and a `runout_gcode` that only prints `wheel runout:Tn` — the
 touchscreen app did the rest (polled the mounted channel's switch sensor
 from its print loop, kept only the mounted tool's motion sensor enabled).
-Without the app nothing would happen. `config/ff-runout.cfg` restates the
+Without the app nothing would happen. `payload/klipper/config/ff-runout.cfg` restates the
 sensor sections (Klipper merges repeated sections, later options win — the
 stock `printer.filament.cfg` stays untouched and OTA-safe) so that
 `runout_gcode` calls `_FF_RUNOUT`, and `ff_toolchange` arms the mounted
@@ -317,16 +320,16 @@ same material. Untested on hardware: whether the motion sensors
 In the printer profile:
 
 * **Machine start G-code**: contents of
-  [`orca/machine-start-gcode.txt`](orca/machine-start-gcode.txt)
+  [`assets/orca/machine-start-gcode.txt`](../assets/orca/machine-start-gcode.txt)
 * **Machine end G-code**: contents of
-  [`orca/machine-end-gcode.txt`](orca/machine-end-gcode.txt)
+  [`assets/orca/machine-end-gcode.txt`](../assets/orca/machine-end-gcode.txt)
 * **Change filament G-code**: contents of
-  [`orca/change-filament-gcode.txt`](orca/change-filament-gcode.txt) —
+  [`assets/orca/change-filament-gcode.txt`](../assets/orca/change-filament-gcode.txt) —
   `T[next_extruder] ; ff-toolchange`, where the trailing comment is
   load-bearing (see below)
 
 Or skip the copy-pasting: open
-[`orca/creator-mainsail.3mf`](orca/creator-mainsail.3mf) in OrcaSlicer —
+[`assets/orca/creator-mainsail.3mf`](../assets/orca/creator-mainsail.3mf) in OrcaSlicer —
 an example project with the "Mainsail - Flashforge Creator 5 Pro 0.4
 nozzle" printer profile already carrying all three G-code blocks above
 (its start G-code predates `TOOLS=`/`TEMPS=` — paste the current
@@ -458,20 +461,20 @@ commands are wrapped so they grab a head first (see [Input shaper](#input-shaper
 [HelixScreen](https://github.com/prestonbrown/helixscreen) then runs its Tool
 Changer backend: tool slots in the sidebar and print status, per-tool
 temperatures and offsets, Spoolman per tool, the plain single-extruder runout
-dialog. Drop `helixscreen/flashforge_creator5_pro.json` into HelixScreen's
+dialog. Drop `payload/helixscreen/printer_database.d/flashforge_creator5_pro.json` into HelixScreen's
 `config/printer_database.d/` for auto-detection (`ams_type: tool_changer`,
 `z_offset_calibration_strategy: firmware_managed`). Its default Load/Unload buttons only mount/unmount the tool (`SELECT_TOOL` /
 `UNSELECT_TOOL`); to actually feed or pull filament assign `LOAD_FILAMENT`,
-`UNLOAD_FILAMENT` and `PURGE` from [`config/ff-filament.cfg`](config/ff-filament.cfg)
+`UNLOAD_FILAMENT` and `PURGE` from [`payload/klipper/config/ff-filament.cfg`](../payload/klipper/config/ff-filament.cfg)
 in Settings → Macro Buttons — a user-assigned macro outranks the backend, and
 the parameter dialog picks up `TOOL` / `TEMP` / `PURGE_TEMP` from the macros.
 
 ## Reverse-engineering notes
 
 Condensed notes from the `firmwareExe` analysis — recovered sequences, binary
-addresses, JSON semantics — live in [`docs/notes/`](docs/notes/):
+addresses, JSON semantics — live in [`docs/notes/`](notes/):
 architecture overview, the Klipper-fork delta (including the `Tn` interception),
-[who decides what — app vs Klipper](docs/notes/25-app-vs-klipper-ownership.md)
+[who decides what — app vs Klipper](notes/25-app-vs-klipper-ownership.md)
 (heaters, runout, doors, calibration; which "features" are dead code),
 the verified grab/release sequences, the offset model, the recovered
 nozzle-offset calibration and its Klipper port, and the full print

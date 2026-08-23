@@ -12,12 +12,12 @@ per-tool sections, modelled on `[bed_mesh <profile>]` / klipper-toolchanger's `[
 
 | file | role |
 |---|---|
-| `klippy-extras/ff_tool.py` | `[ff_tool n]`: `dock_x/dock_y` hand-written; `nozzle_x/y/z` (measured) and `z_adjust` (user per-tool Z correction, `TOOL_Z_ADJUST`) autosaved |
-| `klippy-extras/ff_tool_offset.py` | `TOOL_OFFSET_CALIBRATE`, `STATION_CALIBRATE`, `TOOL_OFFSET_STATUS`; `[ff_tool_offset]` holds `station_x/y/z` (autosaved) + probe geometry |
-| `klippy-extras/ff_toolchange.py` | takes docks/offsets from the `ff_tool` objects; `refresh_offsets()`; `_station_z()`; JSON reader and `TOOLCHANGE_RELOAD` removed |
-| `klippy-extras/ff_legacy.py` | `FF_IMPORT_FIRMWARE_CONFIG [DIR=] [APPLY=1]` — one-shot import of extruder/test/zoffset.json |
-| `config/ff-toolchange.cfg` | `[ff_tool 0..3]` with this unit's docks + `[ff_toolchange]` |
-| `config/ff-tool-offset.cfg`, `config/ff-legacy.cfg` | sections for the other two extras |
+| `payload/klipper/extras/ff_tool.py` | `[ff_tool n]`: `dock_x/dock_y` hand-written; `nozzle_x/y/z` (measured) and `z_adjust` (user per-tool Z correction, `TOOL_Z_ADJUST`) autosaved |
+| `payload/klipper/extras/ff_tool_offset.py` | `TOOL_OFFSET_CALIBRATE`, `STATION_CALIBRATE`, `TOOL_OFFSET_STATUS`; `[ff_tool_offset]` holds `station_x/y/z` (autosaved) + probe geometry |
+| `payload/klipper/extras/ff_toolchange.py` | takes docks/offsets from the `ff_tool` objects; `refresh_offsets()`; `_station_z()`; JSON reader and `TOOLCHANGE_RELOAD` removed |
+| `payload/klipper/extras/ff_legacy.py` | `FF_IMPORT_FIRMWARE_CONFIG [DIR=] [APPLY=1]` — one-shot import of extruder/test/zoffset.json |
+| `payload/klipper/config/ff-toolchange.cfg` | `[ff_tool 0..3]` with this unit's docks + `[ff_toolchange]` |
+| `payload/klipper/config/ff-tool-offset.cfg`, `payload/klipper/config/ff-legacy.cfg` | sections for the other two extras |
 
 ## Storage layout
 
@@ -47,7 +47,7 @@ dock_y: 106.336197                          #*# nozzle_y = 211.986710
 ## Install / first run
 
 ```
-cp klippy-extras/ff_tool.py ff_toolchange.py ff_tool_offset.py ff_legacy.py /usr/prog/klipper/klippy/extras/
+cp payload/klipper/extras/ff_*.py /usr/prog/klipper/klippy/extras/
 # printer.cfg, after [virtual_sdcard]:
 #   [include ff-toolchange.cfg]  [include ff-tool-offset.cfg]  [include ff-legacy.cfg]
 RESTART

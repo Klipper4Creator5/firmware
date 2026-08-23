@@ -1,7 +1,7 @@
 # Print lifecycle, address-verified
 
 Everything below lives in the APP, not in Klipper: the fork ships only bare
-`[pause_resume]` and `[virtual_sdcard]`. `config/ff-print-macros.cfg` reproduces the
+`[pause_resume]` and `[virtual_sdcard]`. `payload/klipper/config/ff-print-macros.cfg` reproduces the
 sequences for Mainsail-started prints.
 
 ## Flow map (touchscreen print)

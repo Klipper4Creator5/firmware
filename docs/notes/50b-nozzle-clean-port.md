@@ -1,9 +1,9 @@
 # Pre-print nozzle clean and tool gate — Klipper port
 
 Source of truth: [`50a-nozzle-clean-recovered.md`](50a-nozzle-clean-recovered.md).
-Port: `config/ff-print-macros.cfg` — `_FF_REQUIRE_TOOLS`, `_FF_NOZZLE_CLEAN`, and the
+Port: `payload/klipper/config/ff-print-macros.cfg` — `_FF_REQUIRE_TOOLS`, `_FF_NOZZLE_CLEAN`, and the
 `TOOLS=` / `TEMPS=` / `CLEAN=` / `SOAK=` parameters of `START_PRINT`; tunables
-`clean_*` in `[gcode_macro _FF_FILAMENT]` (`config/ff-filament.cfg`);
+`clean_*` in `[gcode_macro _FF_FILAMENT]` (`payload/klipper/config/ff-filament.cfg`);
 `docked_tools` in `printer.ff_toolchange` status.
 
 ## START_PRINT now
@@ -60,7 +60,7 @@ temperature per extruder is the same information from the other side.
 
 ## OrcaSlicer
 
-`orca/machine-start-gcode.txt` builds TOOLS/TEMPS from `is_extruder_used[n]` and
+`assets/orca/machine-start-gcode.txt` builds TOOLS/TEMPS from `is_extruder_used[n]` and
 `nozzle_temperature_initial_layer[n]`. Verify once in your Orca version that
 `is_extruder_used` resolves (it is a PrusaSlicer-lineage placeholder); fall back to
 `TOOLS=[initial_extruder]` if the G-code export complains.
