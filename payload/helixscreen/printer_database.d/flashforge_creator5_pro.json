@@ -7,21 +7,74 @@
       "image": "generic-corexy.png",
       "ams_type": "tool_changer",
       "z_offset_calibration_strategy": "firmware_managed",
-      "notes": "4-tool toolchanger driven by the ff_toolchange Klipper extras (github: creator5-toolchange). The toolchanger/tool objects come from ff_toolchanger_compat; per-tool Z is managed by TOOL_Z_ADJUST and the print-start offset by TOOLCHANGE_SET_PRINT_OFFSET, so HelixScreen's probe-based Z-offset flow does not apply.",
+      "notes": "4-tool toolchanger driven by the ff_toolchange Klipper extras (github: creator5-toolchange). The toolchanger/tool objects come from ff_toolchanger_compat; per-tool Z is managed by TOOL_Z_ADJUST and the print-start offset by TOOLCHANGE_SET_PRINT_OFFSET, so HelixScreen's probe-based Z-offset flow does not apply. Distinguished from the non-Pro only by the chamber heater: the two machines are otherwise the same hardware, and the stock firmwareExe builds differ in nothing else.",
       "heuristics": [
         {
           "type": "object_exists",
           "field": "printer_objects",
           "pattern": "ff_toolchange",
           "confidence": 98,
-          "reason": "Creator 5 Pro native toolchanger extra"
+          "reason": "Creator 5 native toolchanger extra"
+        },
+        {
+          "type": "object_exists",
+          "field": "printer_objects",
+          "pattern": "heater_generic chamber_heater",
+          "confidence": 95,
+          "reason": "Chamber heating element -- only the Pro has one"
         },
         {
           "type": "object_exists",
           "field": "printer_objects",
           "pattern": "ff_tool_offset",
           "confidence": 90,
-          "reason": "Creator 5 Pro nozzle-offset calibration extra"
+          "reason": "Creator 5 nozzle-offset calibration extra"
+        },
+        {
+          "type": "object_exists",
+          "field": "printer_objects",
+          "pattern": "e_stop X",
+          "confidence": 60,
+          "reason": "FlashForge fork station sensor wrapper"
+        },
+        {
+          "type": "hostname_match",
+          "field": "hostname",
+          "pattern": "creator",
+          "confidence": 40,
+          "reason": "Hostname hint"
+        }
+      ]
+    },
+    {
+      "id": "flashforge_creator5",
+      "name": "FlashForge Creator 5",
+      "manufacturer": "FlashForge",
+      "image": "generic-corexy.png",
+      "ams_type": "tool_changer",
+      "z_offset_calibration_strategy": "firmware_managed",
+      "notes": "The plain Creator 5: same 4-tool toolchanger as the Pro, but no chamber heating element. Its printer.chamber.cfg declares [temperature_sensor chamber] where the Pro declares [heater_generic chamber_heater], so the chamber temperature still reads and nothing can command heat. The two entries are identical apart from that one heuristic, which is what separates them.",
+      "heuristics": [
+        {
+          "type": "object_exists",
+          "field": "printer_objects",
+          "pattern": "ff_toolchange",
+          "confidence": 98,
+          "reason": "Creator 5 native toolchanger extra"
+        },
+        {
+          "type": "object_exists",
+          "field": "printer_objects",
+          "pattern": "temperature_sensor chamber",
+          "confidence": 95,
+          "reason": "Chamber thermistor with no heater -- the non-Pro build"
+        },
+        {
+          "type": "object_exists",
+          "field": "printer_objects",
+          "pattern": "ff_tool_offset",
+          "confidence": 90,
+          "reason": "Creator 5 nozzle-offset calibration extra"
         },
         {
           "type": "object_exists",
