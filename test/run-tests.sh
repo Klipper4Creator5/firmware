@@ -180,6 +180,9 @@ else
         hdr "MIPS ABI"
         sub "abi" ./test/test-abi.sh
 
+        hdr "chelper symbols match klippy"
+        sub "chelper" python3 ./test/test-chelper.py
+
         hdr "UI selection and fallback (on the printer's shell)"
         sub "ui fallback" ./test/sim-ui-fallback.sh
 

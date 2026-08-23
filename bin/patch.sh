@@ -72,6 +72,14 @@ if [ "${BUILD_KLIPPER:-fork}" = "fork" ] && [ -d "${KLIPPER_FORK:-}/klippy" ]; t
     # c_helper.so must be MIPS32r2 / nan2008 / o32 or klippy dies on import.
     CH="$KLIPPER_FORK/klippy/chelper/c_helper.so"
     if [ -f "$CH" ]; then
+        # The ABI is necessary but not sufficient: a .so with the right ABI
+        # and older sources than the klippy tree beside it installs, boots and
+        # then dies at connect, because cffi resolves symbols lazily. Check
+        # the symbols too, here, where it is still a build failure.
+        if ! python3 test/test-chelper.py "$KLIPPER_FORK"; then
+            echo "   !! c_helper.so does not match klippy -- rebuild it" >&2
+            exit 1
+        fi
         if readelf -h "$CH" 2>/dev/null | grep -q nan2008; then
             say "Klipper: c_helper.so is nan2008 MIPS32r2 -- good"
             mkdir -p work/.chelper/chelper

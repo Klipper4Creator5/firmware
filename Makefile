@@ -65,7 +65,7 @@ endif
 .PHONY: help image shell build vendor probe default all-profiles \
         rootfs verify test test-lint test-install test-applets \
         printer-image printer-image-push \
-        test-recovery test-ui test-ash test-abi test-model release clean distclean
+        test-recovery test-ui test-ash test-abi test-chelper test-model release clean distclean
 
 help:
 	@echo 'creator5-custom-firmware -- everything runs in Docker'
@@ -93,6 +93,7 @@ help:
 	@echo '  make test-applets     every command the payload uses exists on the printer'
 	@echo '  make test-ash         parse the payload with the printer own busybox'
 	@echo '  make test-abi         MIPS ELF ABI checks'
+	@echo '  make test-chelper     c_helper.so exports everything klippy declares'
 	@echo
 	@echo 'test-install, test-recovery, test-ui and test-ash run inside a replica'
 	@echo 'of the printer: the real rootfs.squashfs under qemu-mipsel, with'
@@ -209,6 +210,9 @@ test-ash: image
 
 test-abi: image
 	@$(RUN) ./test/test-abi.sh
+
+test-chelper: image
+	@$(RUN) python3 ./test/test-chelper.py
 
 test-applets: image
 	@$(RUN) python3 ./test/test-applets.py
