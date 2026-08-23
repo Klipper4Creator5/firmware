@@ -95,13 +95,15 @@ else
 fi
 
 # ----------------------------------------------------------- 2. Toolchanger
-if [ "${BUILD_TOOLCHANGE:-1}" = "1" ] && [ -d "${TOOLCHANGE:-}/klippy-extras" ]; then
-    say "Toolchange: ff_*.py + configs from $TOOLCHANGE"
+# Lives in this repo under payload/klipper/ -- it used to be the separate
+# creator5-toolchange checkout, pointed at by TOOLCHANGE= in config.env.
+if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
+    say "Toolchange: ff_*.py + configs"
     mkdir -p "$SW/klipper/extras"
-    cp -f "$TOOLCHANGE"/klippy-extras/ff_*.py "$SW/klipper/extras/"
+    cp -f payload/klipper/extras/ff_*.py "$SW/klipper/extras/"
     # .cfg files belong on the data partition; run.sh installs them without
     # clobbering a config the user already tuned.
-    cp -f "$TOOLCHANGE"/config/ff-*.cfg "$MP/config/"
+    cp -f payload/klipper/config/ff-*.cfg "$MP/config/"
 else
     skip "Toolchange"
 fi
@@ -129,11 +131,9 @@ if [ "${BUILD_HELIX:-1}" = "1" ]; then
     mkdir -p "$MP/helixscreen"
     tar -xzf "$HELIX_TGZ" -C "$MP" # yields mod/helixscreen/
     # Printer-database entry so it detects the Creator 5 Pro as a tool changer
-    if [ -f "${TOOLCHANGE:-}/helixscreen/flashforge_creator5_pro.json" ]; then
-        mkdir -p "$MP/helixscreen/config/printer_database.d"
-        cp -f "$TOOLCHANGE/helixscreen/flashforge_creator5_pro.json" \
-              "$MP/helixscreen/config/printer_database.d/"
-    fi
+    mkdir -p "$MP/helixscreen/config/printer_database.d"
+    cp -f payload/helixscreen/printer_database.d/*.json \
+          "$MP/helixscreen/config/printer_database.d/"
     [ -f assets/hooks-creator5.sh ] && \
         cp -f assets/hooks-creator5.sh "$MP/helixscreen/assets/config/platform/"
     du -sh "$MP/helixscreen" | awk '{print "   "$1}'
@@ -203,6 +203,7 @@ chmod +x "$MP/init.d"/S*
 sed -e "s/^MOD_UI=.*/MOD_UI=${MOD_UI:-stock}/" \
     -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
     -e "s/^MOD_SSH=.*/MOD_SSH=${MOD_SSH:-1}/" \
+    -e "s/^MOD_WIFI=.*/MOD_WIFI=${MOD_WIFI:-1}/" \
     payload/anvil.conf > "$MP/anvil.conf"
 
 # --------------------------------------------------- 10. run.sh install step

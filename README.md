@@ -117,3 +117,5 @@ begin.
 | [docs/building.md](docs/building.md) | Building your own packages from a stock FlashForge one |
 | [docs/testing.md](docs/testing.md) | The test suite, and how we know a package does not brick a printer |
 | [docs/printer-replica.md](docs/printer-replica.md) | The printer replica: what is authentic, what is not |
+| [docs/toolchange.md](docs/toolchange.md) | The toolchanger mod: the `ff_*` Klipper extras, the `ff-*.cfg` configs, and the Z offsets to get right before you print |
+| [docs/notes/](docs/notes/) | Reverse-engineering notes on the stock firmware, behind the toolchanger work |

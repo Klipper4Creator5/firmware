@@ -132,7 +132,6 @@ jobs:
           STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
           STOCK_TGZ=""
           KLIPPER_FORK=""
-          TOOLCHANGE=""
           DEFAULT_PROFILE=probe
           MOD_UI=stock
           ROOT_PW_HASH='\$6\$ci\$abcdefghijklmnopqrstuvwxyz'

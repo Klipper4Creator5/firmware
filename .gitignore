@@ -5,3 +5,7 @@ vendor/
 assets/mips/
 build-tmp/
 dist/
+
+# Python bytecode from editing the klippy extras in payload/klipper/extras/
+__pycache__/
+*.pyc

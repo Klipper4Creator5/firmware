@@ -114,8 +114,9 @@ enabled `/etc/init.d/S50dropbear` — port 22 is already open on a stock
 printer, there is simply no published password. That shell is your recovery
 channel, so confirm it before you touch anything else.
 
-**Before flashing**, re-read the warnings in `creator5-toolchange/README.md`
-about Z offsets. A wrong offset drives the nozzle into the plate.
+**Before flashing**, re-read the warnings about Z offsets in
+[docs/toolchange.md](toolchange.md). A wrong offset drives the nozzle into
+the plate.
 
 Understand the safety net first, because the stock UI is no longer driving the
 screen:
