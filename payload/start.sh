@@ -6,8 +6,12 @@
 # /usr/data/anvil/init.d/S60web, so there is exactly one place that starts
 # nginx and moonraker and one place to restart them from over ssh.
 #
-# The only change from stock: klipper_pri.sh is actually invoked. FlashForge
-# ships that script but never calls it, so klippy runs at normal priority.
+# Two changes from stock:
+#   * klipper_pri.sh is actually invoked. FlashForge ships that script but
+#     never calls it, so klippy runs at normal priority.
+#   * ff-mcu-bringup.py hands the heat and level boards over from their
+#     bootloaders. Stock never needed it here because firmwareExe did all
+#     three boards itself; replacing firmwareExe left two of them stranded.
 
 cmd_mcu write_firmware /usr/prog/libmcu-bare.bin
 cmd_mcu bootup
@@ -26,6 +30,19 @@ if [ -S /tmp/uds ]; then
     exit 0
 fi
 
+# MCU bring-up. Each of these boards answers Klipper only after its
+# bootloader is told to start the application:
+#
+#   /dev/ttyS2  mcu           cmd_mcu bootup, above
+#   /dev/ttyS4  eheaterboard  ff-mcu-bringup.py   <- was nobody's job
+#   /dev/ttyS5  eboard        checkEboard
+#   /dev/ttyS7  levelboard    ff-mcu-bringup.py   <- was nobody's job
+#
+# This runs on every klippy start, including the restarts S70klipper issues
+# when a board missed its window. python3 is on PATH from the export above.
+if [ -x /usr/data/anvil/bin/ff-mcu-bringup.py ]; then
+    python3 /usr/data/anvil/bin/ff-mcu-bringup.py
+fi
 /usr/prog/klipper/checkEboard
 /usr/prog/klipper/klipperDaemon start
 

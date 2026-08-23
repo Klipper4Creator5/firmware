@@ -96,9 +96,11 @@ scp payload/klipper/config/ff-*.cfg \
     pwned@PRINTER:/usr/data/config/
 ```
 
-3. Append to `/usr/data/config/printer.cfg` (order matters — must come
-   AFTER `[virtual_sdcard]` is defined; do **not** put these in
-   `printer.override.cfg`, which is included first):
+3. Append to `/usr/data/config/printer.cfg`. **All of these are required** —
+   they are not optional drop-ins, and without them Klipper comes up as a
+   plain printer with no toolchanger. Order matters: they must come AFTER
+   `[virtual_sdcard]` is defined, and must **not** go in
+   `printer.override.cfg`, which is included first:
 
 ```ini
 [include ff-toolchange.cfg]
