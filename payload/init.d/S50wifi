@@ -1,0 +1,122 @@
+#!/bin/sh
+# WiFi.
+#
+# WHY THIS EXISTS -- the same trap as Klipper, and for the same reason:
+# nothing in /etc/init.d brings up wlan0. FlashForge's firmwareExe owns the
+# whole network stack. `strings firmwareExe` shows it running "ifconfig wlan0
+# up", driving wpa_supplicant/wpa_cli against /usr/prog/wifi/wpa_supplicant.conf
+# and then "udhcpc -i wlan0". app_startup.sh only insmods the 8821cu driver;
+# it never configures the interface.
+#
+# So the moment HelixScreen replaces firmwareExe the printer boots with NO
+# network at all: no ssh, no Mainsail, no moonraker. Which also means no way
+# to diagnose it. Hence this runs before S60web and S70klipper.
+#
+# BUT IT MUST NOT MAKE THEM WAIT. firmwareExe runs the S* scripts one at a
+# time in the foreground. Everything interesting here is a wait on hardware:
+# up to 15s for wlan0 to register after the 8821cu insmod, up to 20s more for
+# the AP to associate. Inline, that is ~20s with no Klipper, no Mainsail and
+# no UI whenever the AP is out of range or the password is stale -- i.e. the
+# longest delay lands on exactly the machines with no network, where you most
+# need ssh to diagnose and where waiting buys nothing. So the waiting happens
+# in a background subshell and start() returns at once: the rule firmwareExe
+# already states for a service that fails, applied to one that is merely slow.
+# The trade is that "wifi:" lines land in the boot log after the later
+# services' lines, out of order.
+#
+# The saved networks live in /usr/prog/wifi/wpa_supplicant.conf on the
+# firmware partition -- we never ship or touch that file, so whatever the
+# stock UI saved is still there. It sets ctrl_interface=DIR=/var/run/wpa_supplicant,
+# which is also one of the paths HelixScreen probes for a control socket, so
+# its WiFi panel drives this very daemon (and update_config=1 lets it save new
+# networks back).
+MODDIR=/usr/data/anvil
+[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
+
+IFACE=wlan0
+WIFI_CONF=/usr/prog/wifi/wpa_supplicant.conf
+CTRL_DIR=/var/run/wpa_supplicant
+
+supplicant_running() {
+    ps 2>/dev/null | grep wpa_supplicant | grep -v grep >/dev/null 2>&1
+}
+
+# The part that waits. Detached from the boot sequence, so nothing reads its
+# exit code -- it reports through the boot log only.
+connect() {
+    # app_startup.sh insmods 8821cu just before us, but the interface takes a
+    # moment to register.
+    i=0
+    while [ $i -lt 15 ]; do
+        [ -d /sys/class/net/$IFACE ] && break
+        sleep 1
+        i=$((i + 1))
+    done
+    if [ ! -d /sys/class/net/$IFACE ]; then
+        echo "wifi: $IFACE never appeared -- is 8821cu.ko loaded?"
+        return 1
+    fi
+
+    /sbin/ifconfig $IFACE up 2>/dev/null
+    mkdir -p $CTRL_DIR
+
+    # -B backgrounds it. Try nl80211 first and fall back to wext: the 8821cu
+    # is a Realtek USB part and which one it registers varies by build.
+    if /usr/sbin/wpa_supplicant -B -i $IFACE -c "$WIFI_CONF" -D nl80211,wext; then
+        echo "wifi: wpa_supplicant started"
+    else
+        echo "wifi: wpa_supplicant failed to start"
+        return 1
+    fi
+
+    # Give association a chance before asking for a lease.
+    i=0
+    while [ $i -lt 20 ]; do
+        /usr/sbin/wpa_cli -i $IFACE status 2>/dev/null | grep -q '^wpa_state=COMPLETED' && break
+        sleep 1
+        i=$((i + 1))
+    done
+    /sbin/udhcpc -i $IFACE -b -t 5 >/dev/null 2>&1 &
+    echo "wifi: udhcpc requesting a lease on $IFACE"
+}
+
+start() {
+    if [ "${MOD_WIFI:-1}" != "1" ]; then
+        echo "wifi: disabled by MOD_WIFI"
+        return 0
+    fi
+    # When the stock UI owns the screen it also owns the network, exactly as
+    # on unmodified firmware. Racing it would fight over the interface.
+    if [ "${MOD_UI:-stock}" = "stock" ]; then
+        echo "wifi: stock UI owns the network -- leaving it alone"
+        return 0
+    fi
+    if supplicant_running; then
+        echo "wifi: wpa_supplicant already running"
+        return 0
+    fi
+    [ -f "$WIFI_CONF" ] || { echo "wifi: no $WIFI_CONF -- nothing to connect to"; return 1; }
+
+    # Everything above was instant. Everything below waits on hardware, so it
+    # goes to the background and the boot carries on to S60web/S70klipper.
+    connect &
+    echo "wifi: bringing up $IFACE in the background"
+    return 0
+}
+
+stop() {
+    killall udhcpc 2>/dev/null
+    killall wpa_supplicant 2>/dev/null
+    echo "wifi: stopped"
+}
+
+case "$1" in
+    start|'') start ;;
+    stop)     stop ;;
+    restart)  stop; sleep 2; start ;;
+    status)
+        supplicant_running && echo "wifi: wpa_supplicant running" || echo "wifi: not running"
+        /sbin/ifconfig $IFACE 2>/dev/null | grep -E 'inet |UP'
+        ;;
+    *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
