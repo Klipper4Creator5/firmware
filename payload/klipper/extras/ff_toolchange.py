@@ -1278,7 +1278,7 @@ class FFToolchange:
                 'print_offset_ready': self.print_offset_ready(),
                 # Tools currently sitting in their docks (dock switch
                 # pressed). A tool is available for a print when it is
-                # docked or is the mounted one (_FF_REQUIRE_TOOLS).
+                # docked or is the mounted one (_FF_PREFLIGHT).
                 'docked_tools': [i for i in range(EXTRUDER_COUNT)
                                  if self._in_location(i, eventtime)],
                 # Tool whose runout/clog sensors are enabled (-1 = none)
