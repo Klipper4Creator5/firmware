@@ -27,20 +27,18 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             openssl xz-utils unzip binutils file squashfs-tools
 
-      - name: Shell syntax + brick-risk lint
-        run: |
-          for f in bin/*.sh payload/*.sh payload/init.d/S* test/*.sh test/fixtures/*.sh; do
-            [ -f "$f" ] || continue
-            sh -n "$f" || bash -n "$f" || { echo "syntax error in $f"; exit 1; }
-          done
-          ./test/lint-danger.sh payload payload/init.d
-
+      # Syntax and the brick lint are the first thing run-tests.sh does, so
+      # they are not repeated here.
       - name: shellcheck
         run: |
           sudo apt-get install -y shellcheck
-          # payload scripts run under busybox ash on the printer
+          # Errors are a gate. These used to end in `|| true`, which meant
+          # shellcheck could report anything it liked and the job stayed green.
+          # payload scripts run under busybox ash on the printer.
+          shellcheck -s sh   -S error payload/*.sh payload/init.d/S* payload/firmwareExe
+          shellcheck -s bash -S error bin/*.sh test/*.sh
+          # Warnings are advisory: printed, not enforced.
           shellcheck -s sh -S warning payload/*.sh payload/init.d/S* payload/firmwareExe || true
-          shellcheck -s bash -S error bin/*.sh || true
 
       - name: Full test suite (fixture-based)
         run: ./test/run-tests.sh
@@ -58,10 +56,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install qemu-user-static + binutils
+      - name: Install binutils
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-user-static binutils file
+          sudo apt-get install -y --no-install-recommends binutils file
       - name: MIPS ABI checks
         # Skips cleanly when no MIPS binaries are present (they are build
         # artifacts and are never committed).
@@ -106,15 +104,22 @@ jobs:
       - name: Write test.env (the replica's /usr/prog)
         env:
           FACTORY: ${{ secrets.FACTORY_URL }}
+          # Optional repository variable: a prebuilt replica image, e.g.
+          # monstrofil/creator5-printer:latest. It carries the factory
+          # partitions AND the stock package already installed, which is about
+          # a minute of setup saved on every replica case.
+          PRINTER_IMAGE: ${{ vars.PRINTER_IMAGE }}
         run: |
           set -euo pipefail
+          : > test.env
           if [ -n "${FACTORY:-}" ]; then
             curl -fsSL "$FACTORY" -o stock/factory.tar.xz
-            echo "PROG_DUMP=\"$PWD/stock/factory.tar.xz\"" > test.env
-          else
-            echo "::warning::no FACTORY_URL secret -- the replica has no real /usr/prog and will refuse to run"
-            : > test.env
+            echo "PROG_DUMP=\"$PWD/stock/factory.tar.xz\"" >> test.env
+          elif [ -z "${PRINTER_IMAGE:-}" ]; then
+            echo "::warning::no FACTORY_URL secret and no PRINTER_IMAGE variable -- the replica has no real /usr/prog and will refuse to run"
           fi
+          [ -z "${PRINTER_IMAGE:-}" ] || echo "PRINTER_IMAGE=\"$PRINTER_IMAGE\"" >> test.env
+          cat test.env
 
       - name: Write config.env
         run: |
@@ -128,8 +133,6 @@ jobs:
           STOCK_TGZ=""
           KLIPPER_FORK=""
           TOOLCHANGE=""
-          HELIX_TGZ=""
-          MAINSAIL_ZIP=""
           DEFAULT_PROFILE=probe
           MOD_UI=stock
           ROOT_PW_HASH='\$6\$ci\$abcdefghijklmnopqrstuvwxyz'
@@ -139,6 +142,9 @@ jobs:
       - name: Extract the printer rootfs
         run: make rootfs ASSET_ROOT=$PWD
 
+      # The replica starts sibling containers through the docker socket and
+      # needs loop devices for the simulated USB stick; both work on a stock
+      # ubuntu-latest runner.
       - name: Brick-safety suite on the printer replica
         run: |
           docker build -q -t creator5-fw-build -f docker/Dockerfile.build docker

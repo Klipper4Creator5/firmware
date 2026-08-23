@@ -44,6 +44,32 @@ for c in insmod rmmod modprobe reboot poweroff halt cmd_mcu; do
     done
 done
 
+# app_startup.sh mounts the stick with `-o,codepage=936,iocharset=utf8`. The
+# printer's kernel has nls_cp936 built in; a container kernel almost never
+# does, and the mount then fails with EINVAL -- which would make the boot
+# script skip the update and the test pass for the wrong reason. Try the real
+# options first and only fall back if the kernel rejects them, so a host that
+# CAN do cp936 runs the genuine call.
+if [ "${USB_STICK:-0}" = 1 ]; then
+    rm -f "$SRC/bin/mount"
+    cat > "$SRC/bin/mount" <<'MOUNTSH'
+#!/bin/sh
+/bin/busybox mount "$@" 2>/tmp/mount.err && exit 0
+N=$#; i=0; S=0
+while [ $i -lt $N ]; do
+    a="$1"; shift
+    case "$a" in *codepage=*) a=$(echo "$a" | sed 's/codepage=[0-9]*//g'); S=1 ;; esac
+    set -- "$@" "$a"
+    i=$((i+1))
+done
+[ "$S" = 1 ] || { cat /tmp/mount.err >&2; exit 1; }
+echo "[sim] mount: kernel has no nls_cp936, retried without codepage=" >> /tmp/sim-neutered.log
+exec /bin/busybox mount "$@"
+MOUNTSH
+    chmod +x "$SRC/bin/mount"
+    MOUNT_WRAPPED=1
+fi
+
 # --- mount it the way the printer mounts it -----------------------------------
 mount --bind $SRC $R
 mount -o remount,bind,ro $R           # squashfs is read-only
@@ -76,6 +102,21 @@ for n in null zero full random urandom tty; do
 done
 : > $R/dev/fb0                        # `cat start.img > /dev/fb0` must work
 
+# ---- the USB stick as a real block device ------------------------------------
+# USB_STICK=1 makes /dev/sda1 a genuine FAT filesystem on a loop device, so
+# app_startup.sh can run VERBATIM: its own `mount -t vfat /dev/sda1 /mnt` is
+# what puts the package in front of the installer. Without this the boot script
+# finds no block device, skips the whole update block, and the end-to-end test
+# would be testing nothing.
+if [ "${USB_STICK:-0}" = 1 ]; then
+    [ -e /dev/loop-control ] || mknod /dev/loop-control c 10 237 2>/dev/null || true
+    LOOP=$(losetup -f --show /stick.img) || {
+        echo "assemble: cannot attach /stick.img to a loop device" >&2; exit 1; }
+    MAJ=$(stat -c %t "$LOOP"); MIN=$(stat -c %T "$LOOP")
+    mknod "$R/dev/sda1" b "$((0x$MAJ))" "$((0x$MIN))"
+    echo "$LOOP" > /stick.loop
+fi
+
 # Start the record of everything that is not authentic. seed-prog.sh appends
 # to it; entrypoint.sh prints the count on every run.
 mkdir -p $R/usr/prog
@@ -83,6 +124,9 @@ mkdir -p $R/usr/prog
 for f in $NEUTERED; do
     echo "$f (neutered: would act on the host kernel)" >> $R/usr/prog/.SIMULATED
 done
+[ "${MOUNT_WRAPPED:-0}" = 1 ] && \
+    echo '/bin/mount (wrapped: falls back when the host kernel has no nls_cp936)' \
+        >> $R/usr/prog/.SIMULATED
 
 # The rest of the prog partition is seeded by seed-prog.sh, which
 # entrypoint.sh runs after any real /usr/prog dump has been unpacked.

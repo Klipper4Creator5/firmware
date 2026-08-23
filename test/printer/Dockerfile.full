@@ -66,6 +66,7 @@ FROM debian:bookworm-slim
 RUN apt-get update -qq \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
         qemu-user-static rsync xz-utils openssl ca-certificates \
+        dosfstools mount \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=fetch /rootfs/ /rootfs/

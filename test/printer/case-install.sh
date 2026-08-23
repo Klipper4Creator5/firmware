@@ -1,78 +1,120 @@
 #!/bin/sh
-# The anti-brick test, executed by the printer's own busybox inside a chroot of
-# the real rootfs.squashfs, on a /usr/prog installed by the real stock updater.
+# THE END-TO-END UPDATE TEST, executed by the printer's own busybox inside a
+# chroot of the real rootfs.squashfs, on a /usr/prog installed by the real
+# stock updater.
 #
-# It replays what app_startup.sh does with a USB stick -- using the glob,
-# MACHINE and PID out of the installed app_startup.sh, and the printer's own
-# unTar binary -- and then asks the only question that matters: would this
-# machine still boot?
+# Nothing here re-implements the printer's update logic. The package is on a
+# genuine FAT filesystem exposed as /dev/sda1, and the thing that finds it,
+# mounts it, decrypts it and installs it is the machine's OWN
+# /usr/prog/app_startup.sh, run verbatim, exactly as /etc/init.d does at boot.
+# An earlier version of this file replayed app_startup.sh by hand -- which
+# meant a bug in our reading of it could never be caught.
+#
+# Three boots, in the order a user actually produces them:
+#
+#   boot 1  stick in            -> the update installs
+#   boot 2  stick STILL in      -> it installs again (people leave the stick)
+#   boot 3  stick pulled        -> the machine comes up with the mod running
+#
+# On the printer a successful install ends in `sleep 100000` waiting for the
+# user to power-cycle; that is the signal boots 1 and 2 wait for.
 FAIL=0
 ok()  { echo "  PASS  $*"; }
 bad() { echo "  FAIL  $*"; FAIL=1; }
 
 SW=/usr/prog/PROGRAM/software
 APP=/usr/prog/app_startup.sh
+FE=$SW/firmwareExe
 
-# ---------------------------------------------------------------- USB pickup
-# The stick is /mnt. app_startup.sh looks for exactly one filename pattern, and
-# a package named anything else is invisible to the printer -- no error, no
-# update, just nothing happening.
-GLOB=$(sed -n 's/.*`ls -1t \(\/mnt\/[^`]*\.tgz\) | head.*/\1/p' $APP | head -n 1)
-[ -n "$GLOB" ] || GLOB=$(grep -o '/mnt/[A-Za-z0-9]*-\*\.tgz' $APP | head -n 1)
+# busybox 1.31.1 on this machine has no `timeout` applet, so bound the waits
+# by hand.
+wait_for() {            # wait_for <seconds> <command...>
+    limit=$1; shift
+    n=0
+    while [ "$n" -lt "$limit" ]; do
+        "$@" && return 0
+        sleep 2; n=$((n+2))
+    done
+    return 1
+}
+# Is a process with this in its command line running?
+#
+# NOT `ps | grep`: busybox ps truncates COMMAND to the terminal width (80 when
+# there is no tty) and under qemu every command line is prefixed with
+# "/usr/bin/qemu-mipsel-static ", which pushes the interesting part off the
+# end. `ps | grep 'sleep 100000'` therefore never matches, and the wait would
+# sit there until it timed out on a install that had actually succeeded.
+# /proc is exact, and `case` is a builtin so this cannot match itself.
+running() {
+    for _p in /proc/[0-9]*; do
+        _c=$( { tr '\0' ' ' < "$_p/cmdline"; } 2>/dev/null )   # the pid may exit mid-scan
+        case "$_c" in *"$1"*) return 0 ;; esac
+    done
+    return 1
+}
+installed()   { running 'sleep 100000'; }
+exited()      { ! kill -0 "$BOOTPID" 2>/dev/null; }
+settled()     { installed || exited; }
+
+# Run app_startup.sh the way init does, and wait for it to reach either the
+# post-install sleep or its own end.
+boot() {                # boot <logfile> <seconds>
+    sh "$APP" > "$1" 2>&1 &
+    BOOTPID=$!
+    wait_for "$2" settled
+    RC=$?
+    if installed; then BOOT_RESULT=installed
+    elif exited;  then BOOT_RESULT=completed
+    else               BOOT_RESULT=timeout
+    fi
+    kill "$BOOTPID" 2>/dev/null
+    killall sleep 2>/dev/null
+    [ "$RC" = 0 ]
+}
+
+# ------------------------------------------------------------ the USB stick
+[ -b /dev/sda1 ] || { bad "no /dev/sda1 -- the harness did not attach a stick"; exit 1; }
+ok "the stick is a real block device (/dev/sda1)"
+
 MACHINE=$(sed -n 's/^MACHINE=//p' $APP | head -n 1)
 PID=$(sed -n 's/^PID=//p' $APP | head -n 1)
-echo "  -- stock app_startup.sh: MACHINE=$MACHINE PID=$PID glob=$GLOB --"
+echo "  -- stock app_startup.sh: MACHINE=$MACHINE PID=$PID --"
 
-UPDATEFILE=$(ls -1t $GLOB 2>/dev/null | head -n 1)
-if [ -n "$UPDATEFILE" ] && [ -f "$UPDATEFILE" ]; then
-    ok "app_startup.sh's glob finds the package ($(basename "$UPDATEFILE"))"
+cp -a $APP /tmp/app_startup.before
+
+# ================================================================== boot 1 ==
+echo
+echo "  -- boot 1: stick inserted --"
+boot /tmp/boot1.log 900 || bad "boot 1 never settled (still running after 900s)"
+
+if grep -q 'find update file' /tmp/boot1.log; then
+    ok "app_startup.sh found the package on the stick by itself"
 else
-    bad "app_startup.sh globs $GLOB and would never see this package"
-    echo "        on the stick: $(ls /mnt)"
+    bad "app_startup.sh never saw the package -- on a real printer nothing would happen"
+    echo "        glob in app_startup.sh: $(grep -o '/mnt/[A-Za-z0-9]*-\*\.tgz' $APP | head -1)"
+    tail -20 /tmp/boot1.log | sed 's/^/        /'
     exit 1
 fi
 
-# app_startup.sh copies the package to /usr/data first, then decrypts with the
-# printer's own unTar, and only falls back to plain tar if that produced no
-# runFirmwareExe.sh.
-rm -rf /usr/data/update; mkdir -p /usr/data/update
-cp -a "$UPDATEFILE" /usr/data/
-SRCFILE="/usr/data/$(basename "$UPDATEFILE")"
-export PATH=/usr/prog/openssl-1.0.2d/bin:$PATH
-export LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
-/usr/prog/bin/unTar "$SRCFILE" > /tmp/untar.log 2>&1
-if [ -f /usr/data/update/runFirmwareExe.sh ]; then
-    ok "the printer's own unTar decrypted the package"
-else
-    tar -xvf "$SRCFILE" -C /usr/data/update/ >/dev/null 2>&1
-    if [ -f /usr/data/update/runFirmwareExe.sh ]; then
-        bad "unTar could not decrypt it -- the printer would fall back to plain tar"
-    else
-        bad "neither unTar nor tar could unpack it: the update does nothing"
-        tail -5 /tmp/untar.log | sed 's/^/        /'
-        exit 1
-    fi
-fi
-rm -f "$SRCFILE"
+case "$BOOT_RESULT" in
+    installed) ok "the installer exited 0 (boot reached the post-install wait)" ;;
+    *) bad "the installer did not succeed -- app_startup.sh fell through to a normal boot"
+       tail -25 /tmp/boot1.log | sed 's/^/        /' ;;
+esac
 
-cp -a $APP /tmp/app_startup.before
-chmod a+x /usr/data/update/runFirmwareExe.sh
-/usr/data/update/runFirmwareExe.sh "$MACHINE" "$PID" > /tmp/install.log 2>&1
-RC=$?
-[ $RC -eq 0 ] && ok "installer exited 0" \
-              || { bad "installer exited $RC"; tail -25 /tmp/install.log | sed 's/^/        /'; }
+# app_startup.sh unmounts the stick and clears the scratch dir on success.
+[ -d /usr/data/update ] && bad "/usr/data/update left behind" \
+                        || ok "the update scratch directory was cleaned up"
+mount | grep -q ' /mnt ' && [ -n "$(ls /mnt 2>/dev/null)" ] \
+    && bad "the stick is still mounted" || ok "the stick was unmounted"
 
-# ------------------------------------------------------- would it still boot?
+# -------------------------------------------------------- would it boot? ---
 echo
-echo "  -- would the printer still boot? --"
+echo "  -- did the update leave a bootable machine? --"
 
-mkdir -p /tmp/ref
-tar -xf /usr/data/update/software-*.tar.xz -C /tmp/ref ./app_startup.sh 2>/dev/null
-if [ -f /tmp/ref/app_startup.sh ] && cmp -s /tmp/ref/app_startup.sh $APP; then
-    ok "app_startup.sh matches the package's own copy"
-else
-    bad "app_startup.sh differs from the package copy"
-fi
+# The package's own copy of app_startup.sh is what got installed. It must be
+# byte-identical: this is the file init execs, and the mod is not allowed to
+# touch it.
 grep -q 'anvil' $APP \
     && bad "app_startup.sh carries mod markers -- boot scripts must stay stock" \
     || ok "app_startup.sh carries no mod markers"
@@ -81,11 +123,12 @@ grep -q 'insmod' $APP && ok "kernel modules still loaded at boot" \
 sh -n $APP 2>/dev/null && ok "app_startup.sh parses under the printer's busybox" \
                        || bad "BRICK: app_startup.sh has a syntax error"
 
-FE=$SW/firmwareExe
 [ -s "$FE" ] && ok "firmwareExe present where app_startup.sh runs it" || bad "BRICK: $FE missing"
 [ -x "$FE" ] && ok "firmwareExe is executable" || bad "BRICK: $FE not executable"
 
+WRAPPER=0
 if head -c 2 "$FE" 2>/dev/null | grep -q '#!'; then
+    WRAPPER=1
     sh -n "$FE" 2>/dev/null && ok "firmwareExe wrapper parses under the printer's busybox" \
                             || { bad "BRICK: wrapper syntax error"; sh -n "$FE" 2>&1 | sed 's/^/        /'; }
     [ -s "$SW/firmwareExe.stock" ] \
@@ -99,17 +142,21 @@ elif head -c 4 "$FE" | grep -q 'ELF'; then
 fi
 
 # Every shell script the mod puts on the machine has to parse with THIS shell.
-for f in $(find /usr/data/anvil /usr/prog/klipper/start.sh -name '*.sh' -o -path '*/init.d/S*' 2>/dev/null); do
+BADPARSE=0
+for f in $(find /usr/data/anvil -name '*.sh' 2>/dev/null) \
+         $(find /usr/data/anvil/init.d -type f 2>/dev/null) \
+         /usr/prog/klipper/start.sh; do
     [ -f "$f" ] || continue
-    sh -n "$f" 2>/dev/null || { bad "syntax error under busybox ash: $f"; sh -n "$f" 2>&1 | sed 's/^/        /'; }
+    sh -n "$f" 2>/dev/null || { bad "syntax error under busybox ash: $f"; BADPARSE=1
+                                sh -n "$f" 2>&1 | sed 's/^/        /'; }
 done
-ok "all mod scripts parse under the printer's busybox ash"
+[ "$BADPARSE" = 0 ] && ok "every installed script parses under the printer's busybox ash"
 
 if [ -d /usr/data/anvil/init.d ]; then
     grep -rq 'start\.sh' /usr/data/anvil/init.d/ 2>/dev/null \
         && ok "a service owns Klipper startup" \
         || bad "nothing starts Klipper -- UI would boot with no motion or heaters"
-elif head -c 2 "$FE" 2>/dev/null | grep -q '#!'; then
+elif [ "$WRAPPER" = 1 ]; then
     bad "firmwareExe replaced but no service dir exists to start Klipper"
 fi
 
@@ -152,32 +199,96 @@ if [ -d /usr/data/anvil/backup ]; then
                                       || bad "no pristine snapshot to restore from"
 fi
 
+# ================================================================== boot 2 ==
+# The stick is still in the slot. This is the common case -- people flash and
+# walk away -- and it means the printer installs the same package a second
+# time on the very next power-on.
+echo
+echo "  -- boot 2: the stick was left in the slot --"
+cp -a $APP /tmp/app_startup.after1
+[ "$WRAPPER" = 1 ] && cp -a "$SW/firmwareExe.stock" /tmp/stock-ui.after1
+
+boot /tmp/boot2.log 900 || bad "boot 2 never settled"
+case "$BOOT_RESULT" in
+    installed) ok "the second install also exited 0" ;;
+    *) bad "re-install did not succeed"; tail -25 /tmp/boot2.log | sed 's/^/        /' ;;
+esac
+cmp -s /tmp/app_startup.after1 $APP && ok "re-install is idempotent (app_startup.sh unchanged)" \
+                                    || bad "re-install changed app_startup.sh again"
+[ -s "$FE" ] && ok "firmwareExe still present after re-install" \
+             || bad "BRICK: re-install left no firmwareExe"
+if [ "$WRAPPER" = 1 ]; then
+    head -c 4 "$SW/firmwareExe.stock" 2>/dev/null | grep -q 'ELF' \
+        && ok "firmwareExe.stock is still the stock UI, not the wrapper" \
+        || bad "BRICK: firmwareExe.stock is now the wrapper -- stock UI lost forever"
+    cmp -s /tmp/stock-ui.after1 "$SW/firmwareExe.stock" \
+        && ok "the preserved stock UI is byte-identical after the second install" \
+        || bad "BRICK: the second install overwrote firmwareExe.stock"
+fi
+
+# ================================================================== boot 3 ==
+# Pull the stick and boot normally. This is the boot that decides whether the
+# machine is a printer or a brick.
+echo
+echo "  -- boot 3: stick removed, ordinary boot --"
+umount /mnt 2>/dev/null
+rm -f /dev/sda1                      # unplugged
+rm -f /usr/data/logs/anvil-boot.log
+
+boot /tmp/boot3.log 300 || bad "boot 3 never finished -- app_startup.sh hung"
+grep -q 'find update file' /tmp/boot3.log \
+    && bad "app_startup.sh tried to update again with no stick present" \
+    || ok "no stick, no update -- app_startup.sh went straight to a normal boot"
+[ "$BOOT_RESULT" = completed ] \
+    && ok "app_startup.sh ran to completion" \
+    || bad "app_startup.sh did not complete (result: $BOOT_RESULT)"
+
+if grep -qE 'not found|Syntax error|command not found' /tmp/boot3.log; then
+    bad "the boot log has missing-command or syntax errors"
+    grep -nE 'not found|Syntax error' /tmp/boot3.log | head -5 | sed 's/^/        /'
+else
+    ok "the boot log has no missing commands and no syntax errors"
+fi
+
+if [ "$WRAPPER" = 1 ]; then
+    # The mod's firmwareExe stays in the FOREGROUND on purpose, so
+    # app_startup.sh's own `ps | grep firmwareExe` watchdog sees it 5s later
+    # and does not respawn it. If it is not alive here, the printer boots into
+    # a respawn loop.
+    running firmwareExe \
+        && ok "the mod UI is running and the stock watchdog is satisfied" \
+        || bad "BRICK: nothing is running as firmwareExe -- app_startup.sh would respawn forever"
+    grep -q 'restart' /tmp/boot3.log \
+        && bad "app_startup.sh's watchdog fired -- the UI died within 5s" \
+        || ok "the UI survived app_startup.sh's 5-second watchdog"
+    if [ -f /usr/data/logs/anvil-boot.log ]; then
+        ok "the mod wrote its boot log"
+        for s in S60web S70klipper S80ui; do
+            grep -q "$s" /usr/data/logs/anvil-boot.log \
+                && ok "$s ran at boot" || bad "$s never ran at boot"
+        done
+        sed 's/^/        /' /usr/data/logs/anvil-boot.log | head -30
+    else
+        bad "no /usr/data/logs/anvil-boot.log -- the mod firmwareExe never ran"
+    fi
+else
+    # A stock Qt firmwareExe cannot draw on a framebuffer that does not exist,
+    # so its liveness says nothing here. What must still hold is that
+    # app_startup.sh's recovery path found a binary to run.
+    [ -s "$FE" ] && ok "firmwareExe still in place after a normal boot" \
+                 || bad "BRICK: the boot left no firmwareExe"
+fi
+killall sleep 2>/dev/null
+
 # Nothing may be written to the read-only root. A mod that needs it works in a
 # permissive sandbox and fails silently on the machine.
 if [ -f /tmp/sim-neutered.log ]; then
+    echo
     echo "  -- calls neutered by the simulation --"
     sort -u /tmp/sim-neutered.log | sed 's/^/        /'
 fi
 
-# ------------------------------------------------------------- second install
-cp -a $APP /tmp/app_startup.after1
-rm -rf /usr/data/update; mkdir -p /usr/data/update
-cp -a "$UPDATEFILE" /usr/data/
-/usr/prog/bin/unTar "$SRCFILE" >/dev/null 2>&1
-chmod a+x /usr/data/update/runFirmwareExe.sh
-/usr/data/update/runFirmwareExe.sh "$MACHINE" "$PID" > /tmp/install2.log 2>&1
-RC2=$?
-[ $RC2 -eq 0 ] && ok "re-install exited 0" || bad "re-install exited $RC2"
-cmp -s /tmp/app_startup.after1 $APP && ok "re-install is idempotent" \
-                                    || bad "re-install changed app_startup.sh again"
-[ -s "$SW/firmwareExe" ] && ok "firmwareExe still present after re-install" \
-                         || bad "BRICK: re-install left no firmwareExe"
-if head -c 2 "$SW/firmwareExe" 2>/dev/null | grep -q '#!'; then
-    head -c 4 "$SW/firmwareExe.stock" 2>/dev/null | grep -q 'ELF' \
-        && ok "re-install did not overwrite firmwareExe.stock with the wrapper" \
-        || bad "BRICK: firmwareExe.stock is now the wrapper -- stock UI lost forever"
-fi
-
 echo
-[ "$FAIL" = 0 ] && echo "  install simulation clean" || echo "  INSTALL SIMULATION FAILED"
+[ "$FAIL" = 0 ] && echo "  end-to-end update clean: install, re-install, and boot" \
+                || echo "  END-TO-END UPDATE TEST FAILED"
 exit $FAIL

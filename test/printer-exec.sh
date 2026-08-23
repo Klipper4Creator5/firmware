@@ -11,6 +11,10 @@
 # genuine klipper tree, unTar, app_startup.sh and firmwareExe rather than
 # hand-written fakes.
 #
+# USB_STICK=1 puts the packages on a real FAT filesystem exposed as /dev/sda1
+# instead of dropping them into /mnt, so the case script can let the printer's
+# own app_startup.sh discover and mount them. Required by case-install.sh.
+#
 # PROG_DUMP=<tar or dir> supplies a real /usr/prog taken off a printer
 # (`tar -cf /mnt/prog.tar /usr/prog` over ssh). With one, the replica has no
 # invented files left at all.
@@ -18,10 +22,17 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CASE="${1:?usage: printer-exec.sh <case-script> [name=pkg.tgz ...]}"; shift
 
+# A skip here is a test that did not run. That is fine on a laptop and fatal
+# in a release, so REQUIRE_PRINTER_SIM=1 turns every skip into a failure.
+skip() {
+    if [ "${REQUIRE_PRINTER_SIM:-0}" = 1 ]; then echo "  FAIL: $*" >&2; exit 1; fi
+    echo "  SKIP: $*"; exit 0
+}
+
 DOCKER=docker
 command -v docker >/dev/null 2>&1 || DOCKER=docker.exe
-command -v $DOCKER >/dev/null 2>&1 || { echo "  SKIP: docker not available"; exit 0; }
-$DOCKER info >/dev/null 2>&1 || { echo "  SKIP: docker daemon not running"; exit 0; }
+command -v $DOCKER >/dev/null 2>&1 || skip "docker not available"
+$DOCKER info >/dev/null 2>&1 || skip "docker daemon not running"
 
 # PRINTER_IMAGE names a prebuilt image that already carries the firmware --
 # rootfs, /usr/prog and /usr/data baked in by test/build-printer-image.sh. With
@@ -30,11 +41,17 @@ IMAGE="${PRINTER_IMAGE:-}"
 PREBUILT=1
 if [ -z "$IMAGE" ]; then
     PREBUILT=0
+    # Say why this is about to be slow. Unpacking the factory image is ~22s
+    # and installing the stock baseline is ~37s, on EVERY case; the published
+    # image has both done already and starts in under a second.
+    echo "  printer-sim: PRINTER_IMAGE is not set, so the replica is being built" >&2
+    echo "               locally -- about a minute of setup per test case. Set" >&2
+    echo "               PRINTER_IMAGE=monstrofil/creator5-printer:latest in" >&2
+    echo "               test.env to skip it." >&2
     IMAGE=creator5-printer-sim
     if [ ! -d "$ROOT/work/rootfs/bin" ]; then
-        echo "  SKIP: no printer rootfs -- run 'make rootfs' first (needs the stock"
-        echo "        package), or set PRINTER_IMAGE to a prebuilt printer image"
-        exit 0
+        skip "no printer rootfs -- run 'make rootfs' first (needs the stock package),
+        or set PRINTER_IMAGE to a prebuilt printer image"
     fi
     # Always rebuild: it is a cache hit in about a second, and a stale image
     # silently testing yesterday's harness is not a trade worth making.
@@ -45,7 +62,9 @@ fi
 # Stage every input inside the repo: the docker daemon resolves bind-mount
 # paths on the host, and the repo is the one directory guaranteed to exist
 # there under the same name.
-STAGE="$ROOT/work/.sim"
+# Per-process, so two suites running at once cannot delete each other's
+# staged packages half way through a run.
+STAGE="$ROOT/work/.sim-$$"
 rm -rf "$STAGE"; mkdir -p "$STAGE/pkgs"
 trap 'rm -rf "$STAGE"' EXIT      # the staged packages are ~80MB each
 cp "$CASE" "$STAGE/case.sh"
@@ -88,4 +107,5 @@ $DOCKER run --rm -i --privileged \
     -e "PKGS=$PKGS" \
     -e "PROG_DUMP=$DUMP_ARG" $DUMP_MOUNT \
     -e "PROG_MB=${PROG_MB:-}" -e "DATA_MB=${DATA_MB:-}" -e "SIM_VERBOSE=${SIM_VERBOSE:-0}" \
+    -e "USB_STICK=${USB_STICK:-0}" \
     "$IMAGE" /case.sh

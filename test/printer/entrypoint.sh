@@ -18,6 +18,29 @@ R=/printer
 FF_KEY="${FF_KEY:-FFP0331&*%root}"
 
 /opt/printer/binfmt.sh
+
+# USB_STICK=1 -- build a real FAT filesystem out of the packages before the
+# machine is assembled, so app_startup.sh can find and mount it itself. See
+# assemble.sh for the loop device, and case-boot.sh for what uses it.
+if [ "${USB_STICK:-0}" = 1 ]; then
+    SZ=64
+    for spec in ${PKGS:-}; do
+        f="${spec#*=}"
+        [ -f "$f" ] || { echo "entrypoint: $f is not there -- nothing to put on the stick" >&2; exit 1; }
+        SZ=$((SZ + $(du -m "$f" | cut -f1)))
+    done
+    dd if=/dev/zero of=/stick.img bs=1M count=$SZ status=none
+    mkfs.vfat -n CREATOR5 /stick.img >/dev/null
+    mkdir -p /stick
+    mount -o loop /stick.img /stick
+    for spec in ${PKGS:-}; do
+        name="${spec%%=*}"; path="${spec#*=}"
+        cp "$path" "/stick/$name"
+    done
+    ls -l /stick | sed 's/^/printer-sim: stick: /'
+    umount /stick
+fi
+
 /opt/printer/assemble.sh
 
 # A real /usr/prog, if we were given one. It goes in before anything else so
@@ -58,7 +81,22 @@ echo "printer-sim: $ID  (real rootfs, qemu-mipsel)"
 
 # The stock package goes on first: that is the only authentic source for
 # /usr/prog/klipper, firmwareExe, unTar, app_startup.sh and friends.
-if [ -n "${BASE_PKG:-}" ] && [ -f "$BASE_PKG" ]; then
+# Already baked into the image? test/build-printer-image.sh installs the stock
+# package once at build time and records its md5 here, because doing it per run
+# costs 37 seconds of qemu and real `sleep` calls for a result that is
+# identical every time.
+BASELINE_SKIP=0
+if [ -n "${BASE_PKG:-}" ] && [ -f "$BASE_PKG" ] && [ "${FORCE_BASELINE:-0}" != 1 ]; then
+    HAVE="$(cat $R/usr/prog/.BASELINE 2>/dev/null || true)"
+    if [ -n "$HAVE" ] && [ "$HAVE" = "$(md5sum "$BASE_PKG" | cut -d' ' -f1)" ]; then
+        echo "printer-sim: stock baseline already in the image ($HAVE)"
+        BASELINE_SKIP=1
+    elif [ -n "$HAVE" ]; then
+        echo "printer-sim: image was baked with a different package ($HAVE) -- reinstalling"
+    fi
+fi
+
+if [ -n "${BASE_PKG:-}" ] && [ -f "$BASE_PKG" ] && [ "$BASELINE_SKIP" = 0 ]; then
     mkdir -p $R/mnt/base
     openssl des3 -d -k "$FF_KEY" -salt -md md5 -in "$BASE_PKG" | tar -xf - -C $R/mnt/base
     # kernel-* rewrites eMMC partitions and control-* flashes MCUs over
@@ -85,11 +123,15 @@ if [ -d /payload ]; then
     cp -a /payload/. $R/tmp/payload/
 fi
 
-# The USB stick.
-for spec in ${PKGS:-}; do
-    name="${spec%%=*}"; path="${spec#*=}"
-    cp "$path" "$R/mnt/$name"
-done
+# The USB stick. In USB_STICK mode it is already a FAT filesystem on
+# /dev/sda1 and the boot script mounts it itself; here we would only be
+# handing the case script a shortcut it must not have.
+if [ "${USB_STICK:-0}" != 1 ]; then
+    for spec in ${PKGS:-}; do
+        name="${spec%%=*}"; path="${spec#*=}"
+        cp "$path" "$R/mnt/$name"
+    done
+fi
 
 # Say out loud what is not authentic, every run. A simulation that hides its
 # own substitutions is how a test ends up proving nothing.

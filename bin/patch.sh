@@ -107,7 +107,11 @@ else
 fi
 
 # -------------------------------------------------------------- 3. Mainsail
-if [ "${BUILD_MAINSAIL:-1}" = "1" ] && [ -n "${MAINSAIL_ZIP:-}" ] && [ -f "$MAINSAIL_ZIP" ]; then
+if [ "${BUILD_MAINSAIL:-1}" = "1" ]; then
+    # The profile asked for Mainsail, so a missing file is a broken build, not
+    # a reason to ship a package with an empty web root. bin/fetch-assets.sh
+    # should have put it here.
+    [ -f "${MAINSAIL_ZIP:-}" ] || { echo "BUILD_MAINSAIL=1 but no Mainsail zip at '${MAINSAIL_ZIP:-}' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
     say "Mainsail: unpacking $(basename "$MAINSAIL_ZIP")"
     mkdir -p "$MP/www/mainsail"
     unzip -q -o "$MAINSAIL_ZIP" -d "$MP/www/mainsail"
@@ -119,7 +123,8 @@ fi
 [ -f assets/moonraker.conf ] && cp -f assets/moonraker.conf "$MP/config/moonraker.conf"
 
 # ----------------------------------------------------------- 4. HelixScreen
-if [ "${BUILD_HELIX:-1}" = "1" ] && [ -n "${HELIX_TGZ:-}" ] && [ -f "$HELIX_TGZ" ]; then
+if [ "${BUILD_HELIX:-1}" = "1" ]; then
+    [ -f "${HELIX_TGZ:-}" ] || { echo "BUILD_HELIX=1 but no HelixScreen tarball at '${HELIX_TGZ:-}' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
     say "HelixScreen: unpacking $(basename "$HELIX_TGZ")"
     mkdir -p "$MP/helixscreen"
     tar -xzf "$HELIX_TGZ" -C "$MP" # yields mod/helixscreen/
@@ -149,8 +154,9 @@ if [ "${MOD_SSH:-1}" = "1" ]; then
     if [ -n "${ROOT_PW_HASH:-}" ]; then
         say "SSH: stock dropbear is already running; setting a known root password"
     else
-        echo "   !! MOD_SSH=1 but ROOT_PW_HASH is empty -- you will not be able to log in." >&2
-        echo "      Generate one with:  openssl passwd -6 'yourpassword'" >&2
+        say "SSH: no ROOT_PW_HASH -- the installer will pick a random root password"
+        say "     and write it to anvil-password.txt on the USB stick."
+        say "     Set ROOT_PW_HASH to choose your own instead."
     fi
 else
     skip "SSH"
@@ -206,7 +212,17 @@ say "run.sh: injecting mod install blocks (pre + post)"
 # profiles/*.env. It rides at the end of the post block rather than in one of
 # its own, so there is still exactly one injected region to strip on re-run.
 POST=work/.run-post.sh
-cat payload/run-append.sh > "$POST"
+# 1 only when ssh is on and nothing was baked in: a package is one file that
+# many people flash, so a baked-in default would be the same password on every
+# printer. The installer picks a random per-machine one instead and writes it
+# onto the USB stick it was flashed from.
+if [ "${MOD_SSH:-1}" = "1" ] && [ -z "${ROOT_PW_HASH:-}" ]; then
+    PW_AUTO=1
+else
+    PW_AUTO=0
+fi
+sed -e "s/^MOD_PW_AUTO=.*/MOD_PW_AUTO=$PW_AUTO/" \
+    payload/run-append.sh > "$POST"
 if [ "${BUILD_REPORT:-0}" = "1" ]; then
     say "run.sh: including the diagnostic report step (BUILD_REPORT=1)"
     cat payload/report.sh >> "$POST"

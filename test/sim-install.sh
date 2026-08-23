@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Install the package into a replica of the printer and assert it would boot.
+# End-to-end update test: put the package on a USB stick in a replica of the
+# printer and let the machine install it the way it really does.
 #
 # The replica is the real extracted rootfs.squashfs running under qemu-mipsel,
-# with /usr/prog installed by the stock updater itself. Every command in the
-# test -- the shell, tar, md5sum, expr, the unTar binary -- is the printer's.
-# See test/printer-exec.sh.
+# with /usr/prog installed by the stock updater itself. The package sits on a
+# genuine FAT filesystem at /dev/sda1 and the printer's own app_startup.sh
+# finds it, mounts it, decrypts it and runs the installer -- three boots, the
+# last one with the stick pulled. Every command involved is the printer's.
+# See test/printer/case-install.sh and test/printer-exec.sh.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PKG="${1:?usage: sim-install.sh <package.tgz>}"
@@ -20,10 +23,11 @@ case "$(basename "$PKG_ABS")" in
     *)             BASE="${STOCK_TGZ:-}"             ;;
 esac
 if [ -z "$BASE" ] || [ ! -f "$BASE" ]; then
-    echo "  SKIP: no stock package configured for $(basename "$PKG_ABS") -- set STOCK_TGZ_* in config.env"
-    exit 0
+    M="no stock package configured for $(basename "$PKG_ABS") -- set STOCK_TGZ_* in config.env"
+    [ "${REQUIRE_PRINTER_SIM:-0}" = 1 ] && { echo "  FAIL: $M" >&2; exit 1; }
+    echo "  SKIP: $M"; exit 0
 fi
 
-BASE_PKG="$BASE" exec "$ROOT/test/printer-exec.sh" \
+USB_STICK=1 BASE_PKG="$BASE" exec "$ROOT/test/printer-exec.sh" \
     "$ROOT/test/printer/case-install.sh" \
     "$(basename "$PKG_ABS")=$PKG_ABS"

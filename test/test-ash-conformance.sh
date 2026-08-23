@@ -7,39 +7,47 @@
 # so a construct that busybox rejects is caught before it ever reaches the
 # machine -- where a parse error in firmwareExe means a blank screen.
 #
-# No binfmt registration is needed: `busybox sh -n` is a single process and
-# forks nothing.
+# No binfmt registration and no chroot are needed: `busybox sh -n` is a single
+# process and forks nothing, so plain `qemu-mipsel-static -L` is enough.
 #
-# Needs work/rootfs (test/extract-rootfs.sh). Skips cleanly without it, so CI
-# -- which has no proprietary firmware -- still passes.
+# It runs inside the printer replica image, which already carries
+# qemu-user-static -- and, when PRINTER_IMAGE is set, the rootfs too. The
+# earlier version started a bare debian container and apt-installed qemu on
+# every single run, which made a local syntax check depend on the network.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE="${SIM_IMAGE:-debian:bookworm-slim}"
 RFS="$ROOT/work/rootfs"
 
 DOCKER=docker
 command -v docker >/dev/null 2>&1 || DOCKER=docker.exe
 command -v $DOCKER >/dev/null 2>&1 || { echo "  SKIP: docker not available"; exit 0; }
 $DOCKER info >/dev/null 2>&1 || { echo "  SKIP: docker daemon not running"; exit 0; }
-[ -f "$RFS/bin/busybox" ] || {
-    echo "  SKIP: no work/rootfs -- run 'make rootfs' to extract the real one"
-    exit 0
-}
 
-$DOCKER run --rm -i \
-    -v "$RFS:/pr:ro" \
+IMAGE="${PRINTER_IMAGE:-}"
+MOUNT=()
+if [ -n "$IMAGE" ]; then
+    :                                   # the image carries /rootfs itself
+elif [ -f "$RFS/bin/busybox" ]; then
+    IMAGE=creator5-printer-sim
+    MOUNT=(-v "$RFS:/rootfs:ro")
+    $DOCKER build -q -t "$IMAGE" -f "$ROOT/test/printer/Dockerfile" "$ROOT/test/printer" >/dev/null \
+        || { echo "  FAIL: could not build $IMAGE"; exit 1; }
+else
+    echo "  SKIP: no printer rootfs -- run 'make rootfs' (needs the stock package),"
+    echo "        or set PRINTER_IMAGE to a prebuilt printer image"
+    exit 0
+fi
+
+$DOCKER run --rm -i --entrypoint sh \
+    "${MOUNT[@]}" \
     -v "$ROOT/payload:/payload:ro" \
-    "$IMAGE" sh -s <<'INNER'
+    "$IMAGE" -s <<'INNER'
 set -u
 FAIL=0
 ok()  { printf '  \033[32mPASS\033[0m  %s\n' "$*"; }
 bad() { printf '  \033[31mFAIL\033[0m  %s\n' "$*"; FAIL=1; }
 
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq >/dev/null 2>&1
-apt-get install -y -qq qemu-user-static >/dev/null 2>&1
-
-ASH="qemu-mipsel-static -L /pr /pr/bin/busybox"
+ASH="qemu-mipsel-static -L /rootfs /rootfs/bin/busybox"
 
 V=$($ASH 2>&1 | head -1)
 echo "  using: $(echo "$V" | cut -c1-46)"
@@ -61,17 +69,10 @@ for f in /payload/firmwareExe /payload/start.sh /payload/run-pre.sh \
 done
 
 echo
-echo "  -- applet flags the payload depends on --"
-# The stock installer uses `md5sum -s -c`, which GNU coreutils spells
-# --status. Confirm the printer's busybox really accepts -s.
-if $ASH md5sum -s -c /dev/null 2>/dev/null; then
-    ok "busybox md5sum accepts -s (used by the stock installer's gate)"
-else
-    echo "        (md5sum -s on empty input is inconclusive; not a failure)"
-fi
+echo "  -- applet behaviour the payload and the stock installer depend on --"
 $ASH ps >/dev/null 2>&1 && ok "busybox ps available (UI liveness check)" \
                         || bad "no busybox ps -- the UI liveness check degrades"
-$ASH head -c 2 /pr/bin/busybox >/dev/null 2>&1 \
+$ASH head -c 2 /rootfs/bin/busybox >/dev/null 2>&1 \
     && ok "busybox head -c available (used to detect our wrapper script)" \
     || bad "busybox head -c missing"
 
@@ -84,6 +85,12 @@ SUB=$($ASH sh -c 'v=software-1.9.7.tar.xz; echo ${v:9:5}' 2>/dev/null)
 [ "$SUB" = "1.9.7" ] \
     && ok "busybox ash supports \${var:off:len} (the stock installer needs it)" \
     || bad "busybox ash lacks bash-compat substrings -- the STOCK installer would fail too"
+
+# The payload has no `timeout` anywhere for a reason: this busybox has no such
+# applet. Assert the absence, so nobody 'fixes' a script by adding one.
+$ASH timeout 1 true >/dev/null 2>&1 \
+    && echo "        (this busybox DOES have timeout -- test/applets.allow can be relaxed)" \
+    || ok "no timeout applet, as expected (the payload must not use one)"
 
 echo
 [ "$FAIL" = 0 ] && echo "  payload is busybox-ash clean" || echo "  ASH CONFORMANCE FAILED"

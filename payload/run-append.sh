@@ -1,6 +1,8 @@
 # Runs near the END of the stock run.sh, after it has installed its own
 # files. Backups already happened in the pre-block at the top.
 MODDIR=/usr/data/anvil
+# Set by bin/patch.sh: 1 when MOD_SSH=1 but no ROOT_PW_HASH was baked in.
+MOD_PW_AUTO=0
 case "$MODDIR" in
     /usr/data/?*) ;;
     *) echo "refusing to run: MODDIR='$MODDIR' is not under /usr/data"; exit 0 ;;
@@ -77,6 +79,56 @@ sync
 # Stale bytecode from the previous Klipper generation is a silent import-time
 # landmine; the stock run.sh only clears four of the __pycache__ dirs.
 find /usr/prog/klipper/klippy -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
+sync
+
+# ---- root password, chosen here when none was baked in ---------------------
+# The normal path is ROOT_PW_HASH at build time: patch.sh writes that hash
+# straight into the shadow file the package ships. When it is empty the
+# package cannot carry a password -- one file is flashed by many people, so
+# any baked-in default would be the SAME password on every printer. Pick a
+# random one here instead, on the machine, and write it onto the USB stick we
+# are being flashed from. Every printer gets a different password and it is
+# never guessable from anything printed on the case.
+#
+# ORDER MATTERS: the password goes onto the stick and is read back BEFORE the
+# printer starts accepting it. A password that was set but never landed on the
+# stick is a locked-out printer, so if the write fails we change nothing at
+# all and say so.
+if [ "$MOD_PW_AUTO" = "1" ]; then
+    PW=`tr -dc A-Za-z0-9 < /dev/urandom 2>/dev/null | head -c 14`
+    H=""
+    [ -n "$PW" ] && H=`mkpasswd -m sha512 "$PW" 2>/dev/null`
+    case "$H" in
+    '$6$'*)
+        PWFILE=/mnt/anvil-password.txt
+        {   echo "anvil -- the root password for this printer"
+            echo
+            echo "    ssh root@<printer-ip>"
+            echo "    password: $PW"
+            echo
+            echo "Save it somewhere safe and delete this file."
+            echo "To change it, run  passwd  on the printer."
+        } > $PWFILE 2>/dev/null
+        sync
+        # Read it back off the stick: proves the write survived, not just that
+        # the shell accepted the redirect.
+        if grep -q "password: $PW" $PWFILE 2>/dev/null; then
+            # /etc is a bind mount of /usr/prog/etc, so this IS the live file
+            # dropbear authenticates against.
+            awk -v h="$H" 'BEGIN{FS=OFS=":"} $1=="root"{$2=h} {print}' \
+                /usr/prog/etc/shadow > /usr/prog/etc/shadow.new &&
+                mv -f /usr/prog/etc/shadow.new /usr/prog/etc/shadow
+            chmod 600 /usr/prog/etc/shadow
+            echo "root password set (random -- see anvil-password.txt on the USB stick)"
+        else
+            rm -f $PWFILE 2>/dev/null
+            echo "!! could not write the password to the USB stick"
+            echo "!! root password left unchanged -- no ssh login"
+        fi
+        ;;
+    *)  echo "!! could not generate a password hash -- root password unchanged" ;;
+    esac
+fi
 sync
 
 # ---- ssh host keys, once at install time -----------------------------------

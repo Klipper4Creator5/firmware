@@ -49,9 +49,23 @@ silently fails; a mod that depended on one would pass a permissive sandbox and
 fail on the machine.
 
 `/dev` is a tmpfs holding only `null`, `zero`, `random`, `urandom`, `tty` and
-a regular file for `fb0` (the installer does `cat start.img > /dev/fb0`).
-There are **no block devices**, and `/sys` is mounted read-only, so nothing
-inside the replica can reach a real disk.
+a regular file for `fb0` (the installer does `cat start.img > /dev/fb0`), and
+`/sys` is mounted read-only.
+
+The one block device is the USB stick. With `USB_STICK=1` the harness formats
+a FAT filesystem, copies the packages into it, attaches it to a loop device
+and exposes it as `/dev/sda1` — the name `app_startup.sh` looks for. That is
+what lets the end-to-end test run the boot script *verbatim* instead of
+re-implementing it: the printer mounts the stick itself, globs for its own
+filename pattern, and decides on its own whether there is an update. Nothing
+that could reach an eMMC partition (`mmcblk*`) exists, so a stray write still
+has nowhere to go.
+
+`app_startup.sh` mounts the stick with `-o,codepage=936,iocharset=utf8`. The
+printer's kernel has `nls_cp936` built in; container kernels usually do not,
+so `/bin/mount` is wrapped to try the genuine options first and retry without
+`codepage=` only if the kernel rejects them. The retry is recorded in
+`/usr/prog/.SIMULATED` and in the neutered-calls log the test prints.
 
 ## The one-byte reason this did not work before
 
@@ -75,9 +89,8 @@ into the printer's filesystem.
 
 ## Getting rid of the stubs entirely
 
-`/usr/prog` is a factory image that no update package contains. Three things
-can supply it, in descending order of authenticity, and the replica takes the
-best one available:
+`/usr/prog` is a factory image that no update package contains. Two things
+supply it, and there is no third:
 
 1. **`PROG_DUMP`** — a real `/usr/prog` off a printer, used verbatim:
 
@@ -93,9 +106,13 @@ best one available:
    binary runs under qemu. This is the single highest-value artefact you can
    hand the test suite.
 
-2. **FlashForge's own installer**, run inside the replica.
+2. **FlashForge's own installer**, run inside the replica, which installs the
+   parts an update package does carry on top of it.
 
-3. **Stubs**, for whatever neither of those provides.
+There used to be a third: stubs, for whatever neither of those provided. They
+are gone. A green run that came from a hand-written `python3` and an OpenSSL 3
+pretending to be 1.0.2d is reassurance, not evidence — `test/printer/seed-prog.sh`
+now hard-fails when the prog partition is not real.
 
 A full-filesystem factory image works too, and one is published:
 
@@ -125,14 +142,11 @@ contains. The replica gets as close as the packages allow:
   `klipper_pri.sh`, `unTar`, `wakeup_level`, `firmwareExe`, `passwd`,
   `shadow`, `modules/`, `PROGRAM/{software,library}/<version>/`, plus
   `ffmpeg-402` and the `firmwareRes` image set from the library component.
-* **Genuine, with `PROG_DUMP` set**: everything else on the prog partition —
+* **Genuine, from the factory image**: everything else on the prog partition —
   `klipperDaemon`, `moonrakerDaemon`, `checkEboard`, `nginx`, `python3`,
   `moonraker`, the stock `nginx.conf`, and the printer's OpenSSL 1.0.2d.
-* **Stubbed, only without a dump**: those same files, plus a
-  `/usr/prog/openssl-1.0.2d/bin/openssl` that is OpenSSL 3 pinned to
-  `-md md5`. `unTar` runs `openssl des3 -d -k … -salt` with no `-md` and
-  relies on OpenSSL 1.0.2's MD5 key derivation, so pinning makes the replica
-  accept exactly the packages the printer accepts.
+* **Not present at all**: stubs. Without a real prog partition the replica
+  refuses to start rather than substitute one.
 * **Neutered, always**: `insmod`, `rmmod`, `modprobe`, `reboot`, `poweroff`,
   `halt` and `cmd_mcu`. The first six would act on the host kernel; `cmd_mcu`
   is called by klipper's `start.sh` as `cmd_mcu write_firmware`, and the
@@ -167,7 +181,7 @@ logged instead.
 
 * Nothing here drives the screen, the MCUs, the toolchanger or a real print.
   The replica proves the *install* is safe and the machine would *boot*; the
-  hardware ladder in `docs/hardware-testing.md` is still how you find out
+  hardware procedure in `docs/hardware-testing.md` is still how you find out
   whether it *prints*.
 * `firmwareExe` is a 20MB Qt binary that wants a framebuffer. It is checked
   for presence, executability and ELF-ness, never run.

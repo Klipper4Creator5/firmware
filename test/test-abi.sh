@@ -3,9 +3,11 @@
 # X2000 kernel returns ENOEXEC for legacy-NaN executables. A wrong-ABI binary
 # is not a warning on this printer -- it simply will not run.
 #
-# Two levels:
-#   1. static  -- read the ELF header flags (always runs)
-#   2. dynamic -- actually execute it under qemu-mipsel (needs qemu-user-static)
+# This reads the ELF header flags. It used to also try executing each binary
+# under qemu-mipsel and call that a second level of checking, but the test was
+# `qemu "$f" -h || [ $? -lt 126 ]` -- which accepts almost every exit status
+# and so could only fail if qemu itself was missing. Running the binaries for
+# real is what the printer replica does; see test/sim-install.sh.
 #
 #   ./test/test-abi.sh [dir|file]...
 set -uo pipefail
@@ -59,25 +61,6 @@ while IFS= read -r f; do
     echo "$FLAGS" | grep -q 'o32' \
         || bad "$(basename "$f"): not o32 ABI. Flags: $FLAGS"
 done <<< "$FILES"
-
-# --- dynamic: does it actually run? -----------------------------------------
-QEMU=""
-for q in qemu-mipsel-static qemu-mipsel; do command -v $q >/dev/null 2>&1 && { QEMU=$q; break; }; done
-if [ -z "$QEMU" ]; then
-    note "qemu-mipsel not installed -- skipping execution test"
-    note "  apt-get install qemu-user-static  (CI does this)"
-else
-    while IFS= read -r f; do
-        [ -x "$f" ] || continue
-        case "$(basename "$f")" in *.so) continue ;; esac
-        readelf -h "$f" 2>/dev/null | grep -q 'MIPS' || continue
-        if $QEMU "$f" -h >/dev/null 2>&1 || [ $? -lt 126 ]; then
-            ok "$(basename "$f"): executes under $QEMU"
-        else
-            bad "$(basename "$f"): will not execute under $QEMU"
-        fi
-    done <<< "$FILES"
-fi
 
 echo
 [ "$FAIL" = 0 ] && echo "  ABI checks passed ($CHECKED binaries)" || echo "  ABI CHECKS FAILED"
