@@ -30,7 +30,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFGDIR = os.path.join(ROOT, "payload", "klipper", "config")
 DB = os.path.join(ROOT, "payload", "helixscreen", "printer_database.d",
-                  "flashforge_creator5_pro.json")
+                  "flashforge_creator5.json")
 MODELS = {"Creator5Pro": ("creator5pro", "flashforge_creator5_pro"),
           "Creator5": ("creator5", "flashforge_creator5")}
 SECTION = re.compile(r"^\[([^\]]+)\]\s*$")

@@ -23,7 +23,7 @@ documented in the file headers.
 | File | Goes to (on the printer) | What it does |
 |---|---|---|
 | [`payload/klipper/extras/ff_toolchange.py`](../payload/klipper/extras/ff_toolchange.py) | `/usr/prog/klipper/klippy/extras/` | The toolchanger: `T0..T3`, dock/grab state machine with sensor polling and retries, per-tool G-code offsets (the absolute ~3.2 mm bed-frame Z is applied at every grab), `TOOLCHANGE_SET_PRINT_OFFSET` (the print-start thermal/bed/layer Z terms), `TOOL_Z_ADJUST` (per-tool persistent babystep), `TOOLCHANGE_STATUS`, `TOOLCHANGE_PARK` |
-| [`payload/helixscreen/printer_database.d/flashforge_creator5_pro.json`](../payload/helixscreen/printer_database.d/flashforge_creator5_pro.json) | HelixScreen `config/printer_database.d/` | Printer-database entry so HelixScreen auto-detects the Creator 5 Pro as a tool changer |
+| [`payload/helixscreen/printer_database.d/flashforge_creator5.json`](../payload/helixscreen/printer_database.d/flashforge_creator5.json) | HelixScreen `config/printer_database.d/` | Printer-database entry so HelixScreen auto-detects both Creator 5 models as tool changers (the Pro and the non-Pro differ only by the chamber heater) |
 | [`payload/klipper/extras/ff_tool.py`](../payload/klipper/extras/ff_tool.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_tool n]` — one section per tool; `dock_x/dock_y`, `nozzle_x/y/z` and `z_adjust` are all autosaved (import or calibration + `SAVE_CONFIG`) |
 | [`payload/klipper/extras/ff_tool_offset.py`](../payload/klipper/extras/ff_tool_offset.py) | `/usr/prog/klipper/klippy/extras/` | `TOOL_OFFSET_CALIBRATE` / `STATION_CALIBRATE` / `TOOL_OFFSET_STATUS` — the touchscreen's nozzle XY/Z offset calibration, recovered from the binary and reimplemented in Klipper |
 | [`payload/klipper/extras/ff_legacy.py`](../payload/klipper/extras/ff_legacy.py) | `/usr/prog/klipper/klippy/extras/` | `FF_IMPORT_FIRMWARE_CONFIG` — one-shot import of the factory/touchscreen JSON into Klipper config. Needed once, at install |
@@ -440,7 +440,7 @@ commands are wrapped so they grab a head first (see [Input shaper](#input-shaper
 [HelixScreen](https://github.com/prestonbrown/helixscreen) then runs its Tool
 Changer backend: tool slots in the sidebar and print status, per-tool
 temperatures and offsets, Spoolman per tool, the plain single-extruder runout
-dialog. Drop `payload/helixscreen/printer_database.d/flashforge_creator5_pro.json` into HelixScreen's
+dialog. Drop `payload/helixscreen/printer_database.d/flashforge_creator5.json` into HelixScreen's
 `config/printer_database.d/` for auto-detection (`ams_type: tool_changer`,
 `z_offset_calibration_strategy: firmware_managed`). Its default Load/Unload buttons only mount/unmount the tool (`SELECT_TOOL` /
 `UNSELECT_TOOL`); to actually feed or pull filament assign `LOAD_FILAMENT`,
