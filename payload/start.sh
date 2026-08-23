@@ -39,9 +39,20 @@ fi
 #   /dev/ttyS7  levelboard    ff-mcu-bringup.py   <- was nobody's job
 #
 # This runs on every klippy start, including the restarts S70klipper issues
-# when a board missed its window. python3 is on PATH from the export above.
+# when a board missed its window.
+#
+# Call the interpreter by absolute path. PATH is exported above and the base
+# rootfs ships no other python3, so a bare `python3` would resolve -- but this
+# is the one step Klipper cannot start without, so do not depend on a lookup.
+# LD_LIBRARY_PATH still matters: this interpreter does not start without it,
+# which is exactly how moonrakerDaemon used to fail.
+FF_PY=/usr/prog/Python-3.8.2/bin/python3
+[ -x "$FF_PY" ] || FF_PY=python3
 if [ -x /usr/data/anvil/bin/ff-mcu-bringup.py ]; then
-    python3 /usr/data/anvil/bin/ff-mcu-bringup.py
+    "$FF_PY" /usr/data/anvil/bin/ff-mcu-bringup.py \
+        || echo "start.sh: MCU bring-up reported a problem ($?)"
+else
+    echo "start.sh: ff-mcu-bringup.py missing -- ttyS4/ttyS7 not brought up"
 fi
 /usr/prog/klipper/checkEboard
 /usr/prog/klipper/klipperDaemon start

@@ -186,6 +186,9 @@ else
         hdr "klipper macros parse"
         sub "macros" python3 ./test/test-macros.py
 
+        hdr "MCU bring-up runs on the printer's own Python"
+        sub "mcu bring-up" ./test/sim-mcu-bringup.sh
+
         hdr "UI selection and fallback (on the printer's shell)"
         sub "ui fallback" ./test/sim-ui-fallback.sh
 

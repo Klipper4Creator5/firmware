@@ -65,7 +65,7 @@ endif
 .PHONY: help image shell build vendor probe default all-profiles \
         rootfs verify test test-lint test-install test-applets \
         printer-image printer-image-push \
-        test-recovery test-ui test-ash test-abi test-chelper test-macros test-model release clean distclean
+        test-recovery test-ui test-mcu test-ash test-abi test-chelper test-macros test-model release clean distclean
 
 help:
 	@echo 'creator5-custom-firmware -- everything runs in Docker'
@@ -89,6 +89,7 @@ help:
 	@echo '  make test-install     end-to-end: USB stick -> update -> reboot'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo '  make test-ui          UI selection, crash fallback, SAFE-MODE'
+	@echo '  make test-mcu         ff-mcu-bringup.py runs on the printer own python'
 	@echo '  make test-model       both models gated + firmware correct'
 	@echo '  make test-applets     every command the payload uses exists on the printer'
 	@echo '  make test-ash         parse the payload with the printer own busybox'
@@ -96,8 +97,8 @@ help:
 	@echo '  make test-chelper     c_helper.so exports everything klippy declares'
 	@echo '  make test-macros      the ff-*.cfg gcode macros parse as Jinja'
 	@echo
-	@echo 'test-install, test-recovery, test-ui and test-ash run inside a replica'
-	@echo 'of the printer: the real rootfs.squashfs under qemu-mipsel, with'
+	@echo 'test-install, test-recovery, test-ui, test-mcu and test-ash run inside'
+	@echo 'a replica of the printer: the real rootfs.squashfs under qemu-mipsel, with'
 	@echo '/usr/prog installed by FlashForge own updater. test-install goes the'
 	@echo 'whole way -- the package sits on a real FAT filesystem at /dev/sda1'
 	@echo 'and the printer own app_startup.sh finds it, installs it, and boots.'
@@ -223,6 +224,9 @@ test-applets: image
 
 test-ui: image
 	@$(RUNSIM) ./test/sim-ui-fallback.sh
+
+test-mcu: image
+	@$(RUNSIM) ./test/sim-mcu-bringup.sh
 
 # Packages land in dist/ after `make release` and in work/out after a single
 # build (pack.sh clears work/out each run, so only the last model survives
