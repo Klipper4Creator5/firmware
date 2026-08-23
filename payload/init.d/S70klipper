@@ -26,12 +26,12 @@
 # state forever with no heaters. Restarting klippy achieves what the stock
 # retry achieves: reopening the port toggles DTR/RTS and the board comes up.
 #
-# This is NOT a missing GPIO poke. firmwareExe drives exactly two GPIOs:
-# PB07 (wifi module power, via cmd_gpio) and 34/35 (NRST/BOOT0 of the
-# /dev/ttyS3 board), and the latter pair is touched only by AppUpdateThread
-# when the user flashes MCU firmware from the DeviceOTA screen. Neither runs
-# during a normal boot -- and if a reset line were pulsed at startup, stock
-# would connect on the first attempt rather than the third.
+# The retry is the safety net. mcu_bringup() below is the actual fix.
+#
+# It is not a GPIO poke: firmwareExe drives only PB07 (wifi module power) and
+# gpios 34/35, and that pair is the NRST/BOOT0 of the /dev/ttyS3 board, driven
+# only by AppUpdateThread when flashing MCU firmware from the DeviceOTA
+# screen. Neither runs on a normal boot.
 MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 
@@ -59,6 +59,54 @@ klippy_verdict() {
     tail -n +$(($1 + 1)) "$PRINTER_LOG" 2>/dev/null | awk '
         /MCU error during connect/ { print "error"; exit }
         /Stats [0-9]/              { print "ready"; exit }'
+}
+
+# --------------------------------------------------------- MCU bring-up
+# Three boards answer Klipper only after a bootloader handshake: the board
+# sends "Ready", the host replies 'A', the board acks with 0x06 and jumps to
+# its application. On stock, firmwareExe does this for all three -- its
+# bootSerialHeatMcu / bootSerialMainEboardMcu / bootSerialLevelBoardMcu print
+# "Heat mcu: ...", "Eboard mcu: ...", "Levelboard mcu: ...". Nothing in the
+# mod replaced that, and start.sh alone covers only two of the four:
+#
+#   /dev/ttyS2  mcu           cmd_mcu bootup, in start.sh      ok
+#   /dev/ttyS5  eboard        checkEboard, in start.sh         ok
+#   /dev/ttyS4  eheaterboard  NOBODY   <-- why klippy could not connect
+#   /dev/ttyS7  levelboard    NOBODY
+#
+# checkEboard is precisely the routine we need, but it takes no arguments and
+# hard-codes "/dev/ttyS5" -- the only /dev string in the binary. So rather
+# than reimplement a bootloader handshake, copy the printer's own binary and
+# change that single byte. Nothing is shipped and nothing is redistributed:
+# the binary is already on the machine and the copies live in /tmp.
+#
+# Harmless against a board that is already running: with nothing to read it
+# logs "serial ready end: 0", sends no ACK, and exits after about 2s.
+mcu_poke() {
+    src=/usr/prog/klipper/checkEboard
+    [ -x "$src" ] || { echo "klipper: no checkEboard -- skipping ttyS$1"; return 1; }
+    [ -c /dev/ttyS$1 ] || { echo "klipper: /dev/ttyS$1 missing -- skipping"; return 1; }
+    off=`grep -abo '/dev/ttyS5' "$src" 2>/dev/null | head -n 1 | cut -d: -f1`
+    case "$off" in
+        ''|*[!0-9]*)
+            echo "klipper: no device string in checkEboard -- skipping ttyS$1"
+            return 1
+            ;;
+    esac
+    dst=/tmp/anvil-checkS$1
+    cp -f "$src" "$dst" || return 1
+    # +9 is the last character of "/dev/ttyS5", so only the digit changes.
+    printf '%s' "$1" | dd of="$dst" bs=1 seek=$((off + 9)) conv=notrunc 2>/dev/null
+    chmod +x "$dst"
+    "$dst"
+    echo "klipper: ttyS$1 bring-up done"
+}
+
+# ttyS2 and ttyS5 are already handled inside start.sh.
+mcu_bringup() {
+    for p in 4 7; do
+        mcu_poke $p
+    done
 }
 
 supervise() {
@@ -94,6 +142,7 @@ supervise() {
         # start.sh bails out if the socket is still there, so clear a stale
         # one -- but only once klippy is definitely gone.
         klippy_proc || rm -f /tmp/uds
+        mcu_bringup
         /usr/prog/klipper/start.sh
         n=$((n + 1))
     done
@@ -118,8 +167,11 @@ start() {
         echo "klipper: firmwareExe did not start it -- starting directly"
     fi
     [ -x /usr/prog/klipper/start.sh ] || { echo "klipper: start.sh missing"; return 1; }
-    /usr/prog/klipper/start.sh &
-    echo "klipper: start.sh launched"
+    # The handshake must finish before klippy opens the ports, and it costs
+    # ~2s per board, so the whole sequence goes to the background together --
+    # boot must not stall behind it.
+    { mcu_bringup; /usr/prog/klipper/start.sh; } &
+    echo "klipper: MCU bring-up + start.sh launched"
     # In the background: boot must not wait minutes for the heater board.
     supervise &
 }
