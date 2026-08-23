@@ -1,0 +1,22 @@
+# Chamber for the plain Creator 5 (PID 0028).
+#
+# This machine has a chamber thermistor but NO heating element -- that is the
+# single functional difference between the two stock firmwareExe builds (the
+# Pro's carries "SET_HEATER_TEMPERATURE HEATER=chamber_heater" in
+# CommMgr::heatManager case 5 and this model's does not).
+#
+# So the sensor is declared and the heater is not. Nothing can then command a
+# heater that does not exist: SET_HEATER_TEMPERATURE, M141/M191 and
+# PID_CALIBRATE all fail on an unknown heater instead of quietly setting a
+# target that never rises. verify_heater is moot for the same reason -- it is
+# the only module that shuts klippy down for a heater that is not heating.
+#
+# Same pin, sensor type and bounds as the Pro's heater section, so the reading
+# and its range checks are unchanged. min_temp is FlashForge's: deliberately
+# far below anything real, which is how one config survives a model whose
+# chamber hardware is partly absent.
+[temperature_sensor chamber]
+sensor_type:Generic 3950
+sensor_pin:PC1
+min_temp:-100
+max_temp:80

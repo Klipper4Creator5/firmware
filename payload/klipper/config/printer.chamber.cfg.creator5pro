@@ -1,0 +1,29 @@
+# Chamber heater for the Creator 5 Pro (PID 0029) -- both sections exactly as
+# FlashForge ships them in printer.base.cfg.
+#
+# Note that the verify_heater values below are decorative: FlashForge patched
+# extras/verify_heater.py to hardcode chamber_heater to hysteresis 5,
+# check_gain_time 900, max_error 100, heating_gain 5 after reading the config.
+# Changing them here has no effect.
+
+[heater_generic chamber_heater]
+gcode_id: C
+heater_pin:PE13
+max_power:0.8
+sensor_type:Generic 3950
+sensor_pin:PC1
+# smooth_time:30
+# max_delta: 0.1
+control:pid
+pid_Kp: 57.53
+pid_Ki: 0.147
+pid_Kd: 5624.309
+#pwm_cycle_time:
+min_temp:-100
+max_temp:80
+
+[verify_heater chamber_heater]
+max_error: 100
+heating_gain: 0.1
+check_gain_time: 2400
+hysteresis: 5
