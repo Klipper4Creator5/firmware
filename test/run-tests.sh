@@ -104,31 +104,18 @@ KLIPPER_FORK=""
 HELIX_TGZ="$FXASSETS/helixscreen.tar.gz"
 MAINSAIL_ZIP="$FXASSETS/mainsail.zip"
 BUSYBOX_BIN=""
-DEFAULT_PROFILE=probe
 TARGET_MACHINE=Creator5Pro
 ROOT_PW_HASH='\$6\$ci\$abcdefghijklmnopqrstuvwxyz'
 FF_KEY='FFP0331&*%root'
 CFG
 export CONFIG_ENV="$FIXTURE_CFG"
 
-for PROF in probe default; do
-    hdr "profile: $PROF"
-    export PROFILE="$PROF"
-    run ./bin/unpack.sh
-    run ./bin/patch.sh
-    run ./bin/pack.sh
-    PKG=$(ls -1 work/out/Creator5Pro-*.tgz 2>/dev/null | head -n1)
-    if [ -n "$PKG" ]; then run ./bin/verify.sh "$PKG"; else fail "no package produced for $PROF"; fi
-done
-
-hdr "the probe profile must change nothing"
-export PROFILE=probe
-./bin/unpack.sh >/dev/null 2>&1
-cp -r work/software "$TMP/sw-before"
-./bin/patch.sh >/dev/null 2>&1
-DIFF=$(diff -rq "$TMP/sw-before" work/software 2>&1 | grep -vE 'run\.sh|md5sum\.list' || true)
-if [ -z "$DIFF" ]; then pass "probe touches only run.sh (adds the report step)"
-else fail "probe modified more than run.sh"; echo "$DIFF" | sed 's/^/       /'; fi
+hdr "build on the fixture"
+run ./bin/unpack.sh
+run ./bin/patch.sh
+run ./bin/pack.sh
+PKG=$(ls -1 work/out/Creator5Pro-*.tgz 2>/dev/null | head -n1)
+if [ -n "$PKG" ]; then run ./bin/verify.sh "$PKG"; else fail "no package produced"; fi
 
 hdr "model gates"
 sub "model gate" ./test/test-model-gate.sh
@@ -136,7 +123,7 @@ sub "model gate" ./test/test-model-gate.sh
 # ============================================================ the replica ====
 # Back to the real config for the replica half: it needs the actual stock
 # package, which no fixture can stand in for.
-unset CONFIG_ENV PROFILE TARGET_MACHINE
+unset CONFIG_ENV TARGET_MACHINE
 
 # Throw away everything the fixture half built. bin/ hardcodes work/, so those
 # packages land in the same work/out that a real build uses -- and a 380KB
@@ -188,22 +175,22 @@ else
         hdr "chamber heater is gated by model"
         sub "chamber gate" python3 ./test/test-chamber.py
 
+        hdr "our printer.base.cfg is still FlashForge's"
+        sub "base cfg" python3 ./test/test-base-cfg.py
+
         hdr "MCU bring-up runs on the printer's own Python"
         sub "mcu bring-up" ./test/sim-mcu-bringup.sh
 
         hdr "UI decision and crash protection (on the printer's shell)"
         sub "ui safety" ./test/sim-ui-fallback.sh
 
-        for PROF in probe default; do
-            hdr "end-to-end update on the printer replica: $PROF"
-            export PROFILE="$PROF"
-            run ./bin/unpack.sh
-            run ./bin/patch.sh
-            run ./bin/pack.sh
-            P=$(ls -1 work/out/*-*.tgz 2>/dev/null | head -n1)
-            if [ -n "$P" ]; then sub "boot -> install -> re-install -> boot ($PROF)" ./test/sim-install.sh "$P"
-            else fail "no package produced for $PROF"; fi
-        done
+        hdr "end-to-end update on the printer replica"
+        run ./bin/unpack.sh
+        run ./bin/patch.sh
+        run ./bin/pack.sh
+        P=$(ls -1 work/out/*-*.tgz 2>/dev/null | head -n1)
+        if [ -n "$P" ]; then sub "boot -> install -> re-install -> boot" ./test/sim-install.sh "$P"
+        else fail "no package produced"; fi
 
         hdr "recovery: a stock package reverts the mod"
         P=$(ls -1 work/out/*-*.tgz 2>/dev/null | head -n1)

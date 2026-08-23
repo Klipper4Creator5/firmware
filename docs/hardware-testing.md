@@ -6,13 +6,13 @@ CI installs the package into a replica of the printer -- the real
 machine would still boot. What it cannot do is drive the screen, the MCUs, the
 toolchanger or a print. This is the on-hardware procedure.
 
-There are two flashes: `probe`, which changes nothing and proves the update
-chain works on your machine, and `default`, which is the firmware.
+There is one flash: the firmware package for your model.
 
-**Rule: do the probe first, and have the stock package on a spare stick before
-you flash the firmware.** The probe costs five minutes and rules out a bad
-stick, the wrong model or a truncated download — the three failures that are
-annoying on a probe and frightening on a real flash.
+**Rule: have the stock FlashForge package for your model on a spare stick
+before you flash anything.** Flashing it back is the uninstall, and it is the
+only recovery step that needs nothing but a USB port — no ssh, no screen. It
+is proven by `make test-recovery`, which installs the mod into the printer
+replica and then flashes the stock package over it.
 
 ---
 
@@ -38,8 +38,8 @@ Find yours in Settings → About, or in
 `TARGET_MACHINE` in `config.env`. Then:
 
 ```sh
-make default && make verify        # one model
-make release PROFILE=default       # both, into dist/
+make build && make verify          # one model
+make release                       # both, into dist/
 ```
 
 `verify.sh` fails loudly on a mismatch. **You must start from a stock package
@@ -65,33 +65,7 @@ boot script globs `Creator5Pro-*.tgz`, the non-Pro globs `Creator5-*.tgz`.
 
 ---
 
-## Stage 0 — probe (`make probe`)
-
-**Changes nothing.** Reinstalls the stock software component byte-for-byte and
-writes a diagnostic report to the USB stick.
-
-Flash it, wait for the reboot, pull the stick and read:
-
-| File on the stick | What it tells you |
-|---|---|
-| `anvil-report.txt` | free space, partitions, installed versions, init layout, whether nginx/moonraker really exist |
-| `anvil-stock-etc.tar` | the whole `/etc`, so the init chain can be studied offline |
-| `anvil-stock-nginx.conf` | the stock nginx config (not shipped in any update package) |
-| `anvil-stock-bootscripts.tar` | `app_startup.sh`, `start.sh`, `passwd`, `shadow` as they exist on YOUR unit |
-
-**Go/no-go:** the report exists and the printer boots normally.
-If the stick comes back empty, the package never installed — nothing was
-changed, and you have learned that before risking anything.
-
-**Check in the report:**
-- free space on `/usr/data` is comfortably above the size of your full package
-- `moonrakerDmn: yes` and `nginx binary: yes`
-- the `INIT SYSTEM` block matches expectations (busybox init, `/etc/init.d/rcS`,
-  `S50dropbear` present)
-
----
-
-## Stage 1 — the firmware (`make default`)
+## The flash (`make build`)
 
 One flash brings up everything: a root password you know, Mainsail and
 moonraker, the forked Klipper with the toolchanger extras, and HelixScreen on

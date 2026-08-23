@@ -6,12 +6,11 @@ it, it does not replace it. Everything else is Docker.
 ```sh
 cp config.env.example config.env     # what to build, and what ships
 $EDITOR config.env                   # point it at your stock package
-make probe                           # pre-flight: changes nothing, reports back
-make default                         # the firmware
+make build                           # the firmware
 ```
 
-The package lands in `work/out/`. `make release PROFILE=<p>` builds both
-models into `dist/`.
+The package lands in `work/out/`. `make release` builds both models into
+`dist/`.
 
 ## Requirements
 
@@ -41,31 +40,27 @@ MCU/board firmware are left untouched — MCU flashing is the riskiest thing in
 a package and there is no reason to run it for a userspace mod. `FULL=1 make
 <target>` carries all four.
 
-## Profiles
+## One build
 
-There are two, and only two. `profiles/*.env` set the `BUILD_*` flags:
+There is one package: the forked Klipper with toolchanger support,
+Mainsail/Moonraker, ssh, and HelixScreen as the UI. `bin/common.sh` defaults
+the `BUILD_*` flags to exactly that, and `config.env` can override any of
+them if you want a piece left out.
 
-| Profile | Klipper | Mainsail | HelixScreen | ssh | Report |
-|---|---|---|---|---|---|
-| `probe` | stock | – | – | – | ✓ |
-| `default` | fork | ✓ | ✓ (as the UI) | ✓ | – |
-
-`probe` is a pre-flight check: it reinstalls the stock software byte-for-byte
-and writes a diagnostic report to the USB stick, proving the update chain
-works on *your* machine before anything changes. `default` is the firmware.
-
-There used to be five profiles — `ssh`, `web`, `full` and `helix` climbing one
-feature at a time. They are collapsed into `default`: the intermediate rungs
-each needed their own flash-and-verify cycle, and the recovery story is the
-same at every rung (flash the stock package), so the extra loops bought
-caution nobody was spending.
+There used to be a `profiles/` directory choosing between builds — five of
+them at one point (`ssh`, `web`, `full`, `helix`) climbing one feature at a
+time, then two (`probe`, `default`). The intermediate rungs each cost their
+own flash-and-verify cycle while the recovery story stayed the same at every
+one of them (flash the stock package), so they bought caution nobody was
+spending; the last of them, `probe`, changed nothing on the printer and only
+wrote a diagnostic report to the USB stick, which was a bring-up aid rather
+than something to keep shipping. With one build left, the selection layer went
+with them.
 
 ```sh
-make probe                        # pre-flight
-make default                      # the firmware
-make all-profiles                 # both
-make release PROFILE=default      # both models, into dist/
-MODEL=Creator5 make default       # just the non-Pro
+make build                        # the firmware
+make release                      # both models, into dist/
+MODEL=Creator5 make build         # just the non-Pro
 ```
 
 ## Two kinds of flag
@@ -73,17 +68,12 @@ MODEL=Creator5 make default       # just the non-Pro
 This distinction is the one to keep straight:
 
 * **`BUILD_*`** decides what goes *into* a package. Read at build time only,
-  owned by `profiles/*.env`, never present on the printer.
-  (`BUILD_APPLY`, `BUILD_REPORT`, `BUILD_KLIPPER`, `BUILD_TOOLCHANGE`,
-  `BUILD_MAINSAIL`, `BUILD_HELIX`.)
+  defaulted in `bin/common.sh`, never present on the printer.
+  (`BUILD_KLIPPER`, `BUILD_TOOLCHANGE`, `BUILD_MAINSAIL`, `BUILD_HELIX`.)
 * **`MOD_*`** are runtime switches. They are written into
   `/usr/data/anvil/anvil.conf`, which the printer re-reads at every boot, so
   they can be changed over ssh afterwards and survive a mod update.
   (`MOD_WEB`, `MOD_SSH`, `MOD_WIFI`.)
-
-`BUILD_REPORT` is the diagnostic report, and it is a debug payload:
-`payload/report.sh` copies `/etc`, `passwd` and `shadow` onto the USB stick.
-Only the `probe` profile turns it on.
 
 ## Third-party pieces are downloaded, not vendored
 
@@ -108,8 +98,8 @@ Setting `MAINSAIL_ZIP` or `HELIX_TGZ` in `config.env` overrides the download
 and builds against your own local copy. An explicit path is used as-is and is
 never checksummed.
 
-If a profile asks for Mainsail or HelixScreen and the file is not there, the
-build fails. It used to skip silently, which shipped a package with an empty
+If the build asks for Mainsail or HelixScreen and the file is not there, it
+fails. It used to skip silently, which shipped a package with an empty
 web root and no way to notice.
 
 ## The root password
@@ -156,7 +146,6 @@ payload/        POSIX sh, busybox ash -- runs ON the printer
   anvil.conf      runtime switches, preserved across mod updates
   run-pre.sh      backups, injected at the TOP of the stock run.sh
   run-append.sh   payload install, injected before its exit
-  report.sh       the pre-flight diagnostic (BUILD_REPORT=1 -- probe only)
 assets/         nginx.conf, moonraker.conf
 ```
 
@@ -164,7 +153,6 @@ assets/         nginx.conf, moonraker.conf
 
 ```
 bin/            fetch-assets -> unpack -> patch -> pack, plus verify
-profiles/       probe and default
 versions.env    pinned Mainsail / HelixScreen versions + sha256
 vendor/         where fetch-assets.sh caches them (gitignored)
 config.env      your paths, the root password hash, the model
@@ -185,8 +173,8 @@ docs/           the documentation
 
 Two things keep the boundary from eroding: only `payload/` and `assets/` are
 ever copied into a package by `patch.sh`, and `make verify` fails if a built
-package contains any file byte-identical to one in `bin/`, `test/`, `docker/`
-or `profiles/`.
+package contains any file byte-identical to one in `bin/`, `test/` or
+`docker/`.
 
 ## Rebuilding chelper
 

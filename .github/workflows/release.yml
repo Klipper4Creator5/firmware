@@ -25,12 +25,6 @@ on:
   push:
     tags: [ 'v*' ]
   workflow_dispatch:
-    inputs:
-      profile:
-        description: 'Profile to build'
-        default: default
-        type: choice
-        options: [ default, probe ]
 
 permissions:
   contents: write
@@ -38,8 +32,6 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      PROFILE: ${{ inputs.profile || 'default' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -107,7 +99,6 @@ jobs:
           STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
           STOCK_TGZ=""
           KLIPPER_FORK=""
-          DEFAULT_PROFILE=$PROFILE
           ROOT_PW_HASH='${{ secrets.ROOT_PW_HASH }}'
           FF_KEY='FFP0331&*%root'
           CFG
@@ -125,7 +116,7 @@ jobs:
             creator5-fw-build ./test/run-tests.sh
 
       - name: Build both models
-        run: make release PROFILE=$PROFILE ASSET_ROOT=$PWD
+        run: make release ASSET_ROOT=$PWD
 
       - name: End-to-end update test on the packages that will actually ship
         # The suite above tested a package built from the same tree; this

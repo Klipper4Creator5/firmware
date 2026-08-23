@@ -160,8 +160,8 @@ if [ -n "$FN_MACHINE" ]; then
 fi
 
 # 10 --------------------------------------------------- the ship boundary
-# Only payload/ and assets/ may end up on a printer; bin/, test/, docker/ and
-# profiles/ are host-side. Nothing enforces that except this check.
+# Only payload/ and assets/ may end up on a printer; bin/, test/ and docker/
+# are host-side. Nothing enforces that except this check.
 #
 # It compares by CONTENT, not by name: a name blacklist would trip over any
 # file Mainsail or HelixScreen happens to call common.sh, while a byte-for-byte
@@ -173,13 +173,13 @@ if [ -f "$T/anvil.tar.xz" ]; then
     xz -dc "$T/anvil.tar.xz" 2>/dev/null | tar -xf - -C "$T/ship/.anvil" 2>/dev/null \
         || tar -xf "$T/anvil.tar.xz" -C "$T/ship/.anvil" 2>/dev/null || true
 fi
-find bin test docker profiles -type f 2>/dev/null | xargs -r md5sum 2>/dev/null \
+find bin test docker -type f 2>/dev/null | xargs -r md5sum 2>/dev/null \
     | awk '{print $1}' | sort -u > "$T/host.md5"
 find "$T/ship" -type f 2>/dev/null | xargs -r md5sum 2>/dev/null > "$T/ship.md5"
 LEAK=$(awk 'NR==FNR{h[$1];next} $1 in h {print}' "$T/host.md5" "$T/ship.md5" \
        | sed "s|$T/ship/||")
 if [ -z "$LEAK" ]; then
-    ok "package carries nothing from bin/, test/, docker/ or profiles/"
+    ok "package carries nothing from bin/, test/ or docker/"
 else
     bad "host-side files leaked into the package:"
     echo "$LEAK" | head -10 | sed 's/^/          /'

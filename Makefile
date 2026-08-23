@@ -4,14 +4,12 @@
 # inside the pinned build image (docker/Dockerfile.build); the docker socket
 # is mounted through so the simulation targets can start sibling containers.
 #
-#   make probe                  build the pre-flight package (changes nothing)
-#   make default                build the firmware package
+#   make build                  build the firmware package
 #   make test                   full brick-safety suite
 #   make shell                  interactive shell in the build container
 #
 # Escape hatch: LOCAL=1 make <target> runs the scripts directly on the host.
 
-PROFILE ?= default
 # Packages carry only the software component by default: the stock installer
 # skips absent components, so the kernel and the MCU/board firmware are left
 # alone. FULL=1 carries all four (and reflashes the MCU).
@@ -31,7 +29,7 @@ DOCKER_SOCK := /var/run/docker.sock
 # directories. Keeping the path identical on both sides avoids that entirely.
 # config.env usually points at a stock package OUTSIDE this repo, so the
 # directory holding it must be mounted too. Override when yours lives
-# elsewhere:  make ASSET_ROOT=/path/to/parent default
+# elsewhere:  make ASSET_ROOT=/path/to/parent build
 ASSET_ROOT ?= $(firstword $(wildcard /mnt/c /Users /home))
 
 # Two runners, because the two lanes need different things:
@@ -45,7 +43,7 @@ ASSET_ROOT ?= $(firstword $(wildcard /mnt/c /Users /home))
 DOCKER_BASE = $(DOCKER) run --rm -i \
           -v "$(CURDIR)":"$(CURDIR)" -w "$(CURDIR)" \
           $(if $(ASSET_ROOT),-v "$(ASSET_ROOT)":"$(ASSET_ROOT)",) \
-          -e PROFILE -e MODEL -e TARGET_MACHINE -e CONFIG_ENV -e ALLOW_STALE_CHELPER
+          -e MODEL -e TARGET_MACHINE -e CONFIG_ENV -e ALLOW_STALE_CHELPER
 
 ifeq ($(LOCAL),)
   RUN    = $(DOCKER_BASE) $(IMAGE)
@@ -62,23 +60,21 @@ else
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help image shell build vendor probe default all-profiles \
+.PHONY: help image shell build vendor \
         rootfs verify test test-lint test-install test-applets \
         printer-image printer-image-push \
-        test-recovery test-ui test-mcu test-ash test-abi test-chelper test-macros test-chamber test-model release clean distclean
+        test-recovery test-ui test-mcu test-ash test-abi test-chelper test-macros test-chamber test-basecfg test-model release clean distclean
 
 help:
 	@echo 'creator5-custom-firmware -- everything runs in Docker'
 	@echo
-	@echo 'Build (flash these in order -- see docs/hardware-testing.md):'
-	@echo '  make probe        pre-flight  changes nothing, reports back on a USB stick'
-	@echo '  make default      the firmware  Klipper fork, toolchanger, Mainsail,'
+	@echo 'Build (see docs/hardware-testing.md before you flash):'
+	@echo '  make build        the firmware  Klipper fork, toolchanger, Mainsail,'
 	@echo '                                  ssh and HelixScreen'
-	@echo '  make all-profiles'
-	@echo '  make release PROFILE=<p>   build BOTH models into dist/'
+	@echo '  make release      build BOTH models into dist/'
 	@echo
 	@echo 'Models: packages are model-specific and refuse to install on the'
-	@echo 'other one. MODEL=Creator5 make default  builds the non-Pro variant.'
+	@echo 'other one. MODEL=Creator5 make build  builds the non-Pro variant.'
 	@echo
 	@echo 'Recovery: keep a copy of the STOCK FlashForge .tgz on a spare stick.'
 	@echo 'Flashing it restores every file the mod touches (see make test-recovery).'
@@ -97,6 +93,7 @@ help:
 	@echo '  make test-chelper     c_helper.so exports everything klippy declares'
 	@echo '  make test-macros      the ff-*.cfg gcode macros parse as Jinja'
 	@echo '  make test-chamber     the chamber heater is off on the Creator 5'
+	@echo '  make test-basecfg     our printer.base.cfg still matches the stock one'
 	@echo
 	@echo 'test-install, test-recovery, test-ui, test-mcu and test-ash run inside'
 	@echo 'a replica of the printer: the real rootfs.squashfs under qemu-mipsel, with'
@@ -131,33 +128,26 @@ shell: image
 	@$(RUNTTY) bash
 
 # ===========================================================================
-#  BUILD LANE -- produces the package you flash. Reads config.env + profiles/,
-#  ships payload/ and assets/, and touches nothing under test/.
+#  BUILD LANE -- produces the package you flash. Reads config.env, ships
+#  payload/ and assets/, and touches nothing under test/.
 # ===========================================================================
 
 # Mainsail and HelixScreen are not vendored in the repo. bin/build.sh fetches
-# whatever the profile needs; this target pre-fetches everything, and is a
+# what the build needs; this target pre-fetches everything, and is a
 # no-op once vendor/ holds files with the sha256 that versions.env pins.
 vendor: image config.env
 	@$(RUN) ./bin/fetch-assets.sh --all
 
 build: image config.env
-	@PROFILE=$(PROFILE) $(RUN) ./bin/build.sh $(PACKARGS)
-
-probe default: image config.env
-	@PROFILE=$@ $(RUN) ./bin/build.sh $(PACKARGS)
-
-all-profiles: image config.env
-	@for p in probe default; do \
-	   echo "=== $$p ==="; PROFILE=$$p $(RUN) ./bin/build.sh || exit 1; done
+	@$(RUN) ./bin/build.sh $(PACKARGS)
 
 # One package per model, collected in dist/. They cannot share content: the
 # two stock packages ship different firmwareExe binaries.
 release: image config.env
 	@rm -rf dist && mkdir -p dist
 	@for m in Creator5Pro Creator5; do \
-	   echo "=== $$m / $(PROFILE) ==="; \
-	   MODEL=$$m PROFILE=$(PROFILE) $(RUN) ./bin/build.sh $(PACKARGS) || exit 1; \
+	   echo "=== $$m ==="; \
+	   MODEL=$$m $(RUN) ./bin/build.sh $(PACKARGS) || exit 1; \
 	   MODEL=$$m $(RUN) ./bin/verify.sh || exit 1; \
 	   cp work/out/$$m-*.tgz dist/ || exit 1; \
 	 done
@@ -223,6 +213,9 @@ test-macros: image
 test-chamber: image
 	@$(RUN) python3 ./test/test-chamber.py
 
+test-basecfg: image
+	@$(RUN) python3 ./test/test-base-cfg.py
+
 test-applets: image
 	@$(RUN) python3 ./test/test-applets.py
 
@@ -237,22 +230,21 @@ test-mcu: image
 # there). Look in both.
 test-install: image
 	@$(RUNSIM) bash -c 'pkg=$$(ls -1 dist/$(or $(MODEL),Creator5Pro)-*.tgz work/out/$(or $(MODEL),Creator5Pro)-*.tgz 2>/dev/null | head -1); \
-	   [ -n "$$pkg" ] || { echo "build a package first: make default (or make release)"; exit 1; }; \
+	   [ -n "$$pkg" ] || { echo "build a package first: make build (or make release)"; exit 1; }; \
 	   echo "package: $$pkg"; ./test/sim-install.sh "$$pkg"'
 
 # Recovery = flash the stock package you already have. This proves it works.
 #
 # It builds its own package rather than reusing whatever is lying around: the
-# test is meaningless against a profile that does not replace the UI, and
-# `probe` deliberately does not. RECOVERY_PROFILE=<p> to test another one.
-RECOVERY_PROFILE ?= default
+# test is only meaningful against a package that really does replace the UI,
+# and whatever is in work/out may be anything.
 test-recovery: image config.env
-	@MODEL=$(or $(MODEL),Creator5Pro) PROFILE=$(RECOVERY_PROFILE) $(RUNSIM) bash -c '. ./bin/common.sh; \
+	@MODEL=$(or $(MODEL),Creator5Pro) $(RUNSIM) bash -c '. ./bin/common.sh; \
 	   ./bin/build.sh $(PACKARGS) >/dev/null || exit 1; \
 	   m=$$(ls -1 work/out/$$TARGET_MACHINE-*.tgz 2>/dev/null | head -1); \
 	   [ -n "$$m" ] || { echo "no package built for $$TARGET_MACHINE"; exit 1; }; \
 	   [ -f "$$STOCK_TGZ" ] || { echo "no stock package for $$TARGET_MACHINE"; exit 1; }; \
-	   echo "mod:   $$m ($(RECOVERY_PROFILE))"; echo "stock: $$STOCK_TGZ"; \
+	   echo "mod:   $$m"; echo "stock: $$STOCK_TGZ"; \
 	   ./test/sim-roundtrip.sh "$$m" "$$STOCK_TGZ"'
 
 clean:

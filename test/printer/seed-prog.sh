@@ -32,7 +32,7 @@ mkdir -p $R/usr/prog/PROGRAM/software $R/usr/prog/PROGRAM/library \
 
 [ -f $R/usr/prog/.SIMULATED ] || : > $R/usr/prog/.SIMULATED
 if [ -z "${PROG_MB:-}" ] || [ -z "${DATA_MB:-}" ]; then
-    echo '/usr/prog and /usr/data sizes (unbounded: set PROG_MB/DATA_MB from the probe report)' \
+    echo '/usr/prog and /usr/data sizes (unbounded: set PROG_MB/DATA_MB from df -h on the printer)' \
         >> $R/usr/prog/.SIMULATED
 fi
 

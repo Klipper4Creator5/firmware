@@ -78,17 +78,16 @@ say where it goes — `run-tests.sh` stamps every header with elapsed seconds:
 
 ```
 == brick-risk lint ==                                    [0s]
-== profile: probe / default (on the fixture) ==          [1s]
+== build on the fixture ==                               [1s]
 == extracting the printer rootfs ==                     [16s]
 == applets / ash / ABI / UI safety ==                   [18s]
-== end-to-end update on the replica: probe ==           [28s]
-== end-to-end update on the replica: default ==        [111s]
+== end-to-end update on the replica ==                 [111s]
 == recovery: a stock package reverts the mod ==        [250s]
                                                        [326s]
 ```
 
-What is left is real work: two full package builds (the `default` payload is
-55MB through `xz`) and three replica runs. If it needs to get faster again,
+What is left is real work: two full package builds (the payload is 55MB
+through `xz`) and two replica runs. If it needs to get faster again,
 that is where to look — not in the harness.
 
 ## What was dropped, and why

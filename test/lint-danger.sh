@@ -42,7 +42,6 @@ while IFS= read -r f; do
         grep -nE 'rm[[:space:]]+-[a-zA-Z]*r[a-zA-Z]*[[:space:]]+\$[A-Za-z_]+/' "$f" | head -3 | sed 's/^/            /'
     fi
     # Replacing the init/boot chain without restoring a UI
-    # Only MODIFYING app_startup.sh is a risk; report.sh merely cats it.
     if grep -nE '(cp|mv|install|tee|sed[[:space:]]+-i|>>?[[:space:]]*)[^|;]*app_startup\.sh' "$f" >/dev/null \
        && ! grep -qE 'firmwareExe|helix' "$f"; then
         warn "$f" "modifies app_startup.sh but never mentions a UI launcher"
@@ -84,7 +83,7 @@ else
 fi
 
 # --- the installer must not hard-fail into a boot loop ----------------------
-for f in payload/run-append.sh payload/report.sh; do
+for f in payload/run-append.sh; do
     [ -f "$f" ] || continue
     if grep -qE '^[[:space:]]*set -e' "$f"; then
         bad "$f" "'set -e' in an installer fragment aborts run.sh mid-way, leaving a half-installed system"

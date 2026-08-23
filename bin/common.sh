@@ -1,10 +1,5 @@
 # Sourced by every script in bin/. Resolves the repo root, loads config.env
-# and the selected profile, and exports the feature flags.
-#
-# Profile selection, in order of precedence:
-#   PROFILE=probe ./bin/build.sh    environment
-#   ./bin/build.sh --profile probe  argument (parsed by the caller)
-#   PROFILE in config.env           default
+# and exports the feature flags.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 cd "$ROOT"
 
@@ -21,14 +16,27 @@ fi
 # shellcheck disable=SC1090
 . "$CONFIG_ENV"
 
-PROFILE="${PROFILE:-${DEFAULT_PROFILE:-default}}"
-if [ -f "profiles/$PROFILE.env" ]; then
-    # shellcheck disable=SC1090
-    . "profiles/$PROFILE.env"
-else
-    echo "unknown profile '$PROFILE' (have: $(ls profiles/*.env 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.env$//' | tr '\n' ' '))" >&2
-    exit 1
-fi
+# WHAT GOES INTO THE PACKAGE. There is exactly one build -- the firmware:
+# forked Klipper with toolchanger support, Mainsail/Moonraker, ssh, and
+# HelixScreen driving the touchscreen in place of FlashForge's UI.
+#
+# These used to live in profiles/*.env, chosen by a PROFILE variable, back
+# when a second "changes nothing, writes a report" package existed alongside
+# this one. With one build left the indirection bought nothing but a layer to
+# read through, so the flags are plain defaults here and config.env -- sourced
+# above -- still overrides any of them.
+#
+# FlashForge's firmwareExe is REPLACED, not kept: HelixScreen is the only UI.
+# If it crash-loops, S80ui latches SAFE-MODE after 3 failed boots and the
+# printer boots headless instead of looping. ssh and Mainsail are your
+# recovery path if the screen is dark, and a USB stick with the STOCK
+# FlashForge package on it is the uninstall (proven by `make test-recovery`).
+BUILD_KLIPPER="${BUILD_KLIPPER:-fork}"
+BUILD_TOOLCHANGE="${BUILD_TOOLCHANGE:-1}"
+BUILD_MAINSAIL="${BUILD_MAINSAIL:-1}"
+BUILD_HELIX="${BUILD_HELIX:-1}"
+MOD_SSH="${MOD_SSH:-1}"
+MOD_WEB="${MOD_WEB:-1}"
 
 # Third-party payload pieces (Mainsail, HelixScreen). They are downloaded on
 # demand rather than vendored, so the repo carries no binaries and no binary

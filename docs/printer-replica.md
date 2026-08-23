@@ -187,7 +187,7 @@ logged instead.
   for presence, executability and ELF-ness, never run.
 * Timing-dependent boot races are not modelled.
 * Partition sizes are unbounded unless you set `PROG_MB` and `DATA_MB` (in `test.env`) from
-  the `df -h` block in the stage-0 probe report. Until then an install that
+  what `df -h` reports on the printer itself. Until then an install that
   runs the data partition out of space passes here and fails on the machine.
   The replica says so in `/usr/prog/.SIMULATED`.
 

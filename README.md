@@ -74,10 +74,10 @@ Not sure which you have? On the printer: **Settings → About**.
 Afterwards, `http://<printer-ip>/` gets you Mainsail. The install log is on
 the printer at `/usr/data/anvil-install.log`.
 
-### Before you do
+### Two things to do first
 
-One file per model, one flash — but do two things first, because they are the
-cheap version of every problem people hit:
+One file per model, one flash — but do these before you start, because they
+are the cheap version of every problem people hit:
 
 * **Check the model.** A `Creator5Pro-` package will not install on a Creator 5
   and vice versa; the printer refuses it outright, which is annoying rather

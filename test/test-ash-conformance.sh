@@ -57,7 +57,7 @@ echo "  using: $(echo "$V" | cut -c1-46)"
 
 echo
 for f in /payload/firmwareExe /payload/start.sh /payload/run-pre.sh \
-         /payload/run-append.sh /payload/report.sh /payload/init.d/S*; do
+         /payload/run-append.sh /payload/init.d/S*; do
     [ -f "$f" ] || continue
     n=$(basename "$f")
     if $ASH sh -n "$f" 2>/tmp/err; then

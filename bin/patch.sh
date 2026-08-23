@@ -7,9 +7,6 @@ set -euo pipefail
 SW=work/software
 [ -d "$SW" ] || { echo "run bin/unpack.sh first" >&2; exit 1; }
 
-echo "profile: $PROFILE -- ${PROFILE_DESC:-}"
-echo
-
 MARK_BEGIN="# >>> anvil begin >>>"
 MARK_END="# <<< anvil end <<<"
 
@@ -28,35 +25,6 @@ MODDIR=/usr/data/anvil
 MP=work/modpayload
 rm -rf "$MP" "$SW/mod"   # $SW/mod: leftover from an older layout
 mkdir -p "$MP/bin" "$MP/nginx" "$MP/www" "$MP/config"
-
-# ---------------------------------------------------------------------------
-# BUILD_APPLY=0 (the "probe" profile): reinstall the stock component untouched
-# and add only a diagnostic report. Nothing on the printer changes.
-# ---------------------------------------------------------------------------
-if [ "${BUILD_APPLY:-1}" = "0" ]; then
-    say "BUILD_APPLY=0 -- stock component left byte-for-byte unmodified"
-    if [ "${BUILD_REPORT:-0}" = "1" ]; then
-        say "adding diagnostic report step"
-        python3 - "$SW/run.sh" payload/report.sh <<'PY2'
-import sys, re
-run, extra = sys.argv[1], sys.argv[2]
-B, E = "# >>> anvil begin >>>", "# <<< anvil end <<<"
-s = open(run, encoding='utf-8', errors='surrogateescape').read()
-s = re.sub(re.escape(B) + r".*?" + re.escape(E) + r"\n?", "", s, flags=re.S)
-block = open(extra, encoding='utf-8').read()
-m = list(re.finditer(r"^exit 0\s*$", s, flags=re.M))
-i = m[-1].start() if m else len(s)
-s = s[:i] + B + "\n" + block + E + "\n\n" + s[i:]
-open(run, 'w', encoding='utf-8', errors='surrogateescape').write(s)
-PY2
-    fi
-    rm -rf "$MP"
-    echo
-    echo "Patched (probe profile -- no changes to the printer)."
-    echo "  software component: $(du -sh "$SW" | cut -f1)"
-    echo "Now run bin/pack.sh"
-    exit 0
-fi
 
 # ---------------------------------------------------------------- 1. Klipper
 if [ "${BUILD_KLIPPER:-fork}" = "fork" ] && [ -d "${KLIPPER_FORK:-}/klippy" ]; then
@@ -126,22 +94,34 @@ if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     # .cfg files belong on the data partition; run.sh installs them without
     # clobbering a config the user already tuned.
     cp -f payload/klipper/config/ff-*.cfg "$MP/config/"
+    # Our printer.base.cfg is FlashForge's with the chamber block replaced by
+    # [include printer.chamber.cfg] -- Klipper can override an option but
+    # cannot un-declare a section, and the plain Creator 5 has no chamber
+    # heating element, so its heater has to be absent rather than neutralised.
+    # test/test-base-cfg.py reconstructs the stock file from ours plus the
+    # Pro's chamber file and fails if FlashForge's has changed.
+    cp -f payload/klipper/config/printer.base.cfg "$SW/klipper/config/printer.base.cfg"
+
     # Anything that differs between models exists once per model, named
     # <file>.creator5 / <file>.creator5pro, and the matching one is installed
     # under its real name. Nothing is edited: the suffixed file IS the
-    # difference. The suffixed names do not match the ff-*.cfg glob above, so
-    # a variant cannot leak into the wrong package.
+    # difference. printer.*.cfg belongs beside printer.base.cfg on the program
+    # partition; ff-*.cfg belongs on the data partition with the rest.
     SUFFIX=$(printf '%s' "$TARGET_MACHINE" | tr 'A-Z' 'a-z')
     for variant in payload/klipper/config/*."$SUFFIX"; do
         [ -e "$variant" ] || continue
-        cp -f "$variant" "$MP/config/$(basename "$variant" ".$SUFFIX")"
-        say "Model: $(basename "$variant" ".$SUFFIX") for $TARGET_MACHINE"
+        base=$(basename "$variant" ".$SUFFIX")
+        case "$base" in
+            printer.*) dest="$SW/klipper/config/$base" ;;
+            *)         dest="$MP/config/$base" ;;
+        esac
+        cp -f "$variant" "$dest"
+        say "Model: $base for $TARGET_MACHINE"
     done
-    # ff-model.cfg is what tells ff-chamber.cfg whether this machine has a
-    # chamber heater. Missing, every macro that reads it fails at runtime, so
-    # this is a broken build rather than a silent default.
-    [ -f "$MP/config/ff-model.cfg" ] \
-        || { echo "no ff-model.cfg.$SUFFIX for TARGET_MACHINE=$TARGET_MACHINE" >&2; exit 1; }
+    # printer.base.cfg includes it unconditionally, so without it klippy will
+    # not start at all. A broken build, not a silent default.
+    [ -f "$SW/klipper/config/printer.chamber.cfg" ] \
+        || { echo "no printer.chamber.cfg.$SUFFIX for TARGET_MACHINE=$TARGET_MACHINE" >&2; exit 1; }
 else
     skip "Toolchange"
 fi
@@ -241,16 +221,13 @@ mkdir -p "$MP/init.d"
 cp -f payload/init.d/S* "$MP/init.d/"
 chmod +x "$MP/init.d"/S*
 sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
+    -e "s/^MOD_CAM=.*/MOD_CAM=${MOD_CAM:-1}/" \
     -e "s/^MOD_SSH=.*/MOD_SSH=${MOD_SSH:-1}/" \
     -e "s/^MOD_WIFI=.*/MOD_WIFI=${MOD_WIFI:-1}/" \
     payload/anvil.conf > "$MP/anvil.conf"
 
 # --------------------------------------------------- 10. run.sh install step
 say "run.sh: injecting mod install blocks (pre + post)"
-# The diagnostic report is a DEBUG payload: report.sh copies /etc, passwd and
-# shadow onto the USB stick. Only the probe profile turns it on -- see
-# profiles/*.env. It rides at the end of the post block rather than in one of
-# its own, so there is still exactly one injected region to strip on re-run.
 POST=work/.run-post.sh
 # 1 only when ssh is on and nothing was baked in: a package is one file that
 # many people flash, so a baked-in default would be the same password on every
@@ -263,10 +240,6 @@ else
 fi
 sed -e "s/^MOD_PW_AUTO=.*/MOD_PW_AUTO=$PW_AUTO/" \
     payload/run-append.sh > "$POST"
-if [ "${BUILD_REPORT:-0}" = "1" ]; then
-    say "run.sh: including the diagnostic report step (BUILD_REPORT=1)"
-    cat payload/report.sh >> "$POST"
-fi
 python3 - "$SW/run.sh" payload/run-pre.sh "$POST" <<'PY'
 import sys, re
 run, pre_f, post_f = sys.argv[1], sys.argv[2], sys.argv[3]

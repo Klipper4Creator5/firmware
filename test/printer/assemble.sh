@@ -83,9 +83,9 @@ mount -t tmpfs tmpfs $R/run
 # the suite fail on a small runner.
 #
 # Their SIZES are NOT modelled unless you say what they are. The real numbers
-# come off the machine in the stage-0 probe report (`df -h`); until
-# PROG_MB/DATA_MB are set from it these are unbounded, and an install that
-# runs the machine out of space passes here and fails there.
+# come off the machine (`df -h` over ssh); until PROG_MB/DATA_MB are set from
+# it these are unbounded, and an install that runs the machine out of space
+# passes here and fails there.
 mkdir -p /parts/prog /parts/data
 if [ -n "${PROG_MB:-}" ]; then mount -t tmpfs tmpfs $R/usr/prog -o size=${PROG_MB}m
 else mount --bind /parts/prog $R/usr/prog; fi                      # "usershare"
