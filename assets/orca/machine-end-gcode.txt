@@ -1,3 +1,10 @@
+; FlashForge's STOCK Creator 5 machine end G-code, unmodified. Reference only
+; -- nothing to paste, an untouched profile already emits this.
+;
+; It is one move. No heaters off, no M84, no park: after the last layer the
+; hotends, the bed, the motors and the mounted tool would all stay live. The
+; touchscreen app ran its own exit sequence; FF_AFTER_PRINT_END now does,
+; triggered when the job leaves the printing state.
 ;end_gcode
-END_PRINT
+G1 X150 Y150 E-1.2 F12000
 ;end_gcode end

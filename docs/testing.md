@@ -111,6 +111,22 @@ Tests that cannot fail are worse than no tests, because they read as coverage:
   of every run, so the last gate before publishing could not fail. It now
   stops on the first failure and runs with `REQUIRE_PRINTER_SIM=1`, which
   turns a skip into a failure too.
+- **`test-printer-db`'s re-implementation of PrinterDetector's scoring
+  formula.** It mirrored `printer_detector.cpp` line for line, so if the
+  HelixScreen fork changed its formula the test kept passing while reality
+  changed. The invariants that remain (entries identical apart from the
+  chamber heuristic, one positive-confidence discriminator each, each
+  discriminating object on exactly one model) force the right entry to win
+  under any scoring where an extra match never hurts -- without modelling
+  anyone's arithmetic.
+- **The hand-rolled bashism grep in `run-tests.sh`.** It knew five constructs;
+  `shellcheck -s dash` knows the whole SC3xxx family and now stands in its
+  place (the authoritative check is still `test-ash`, on the printer's own
+  busybox). The same pass gave every replica launcher one shared
+  `test/sim-image.sh` for the docker plumbing, which also fixed two `make
+  test-ash` bugs: it ran without the docker socket (so it always silently
+  skipped), and it never read `test.env`, so it ignored `PRINTER_IMAGE` and
+  rebuilt the local sim image every run.
 
 ## Bugs these caught
 

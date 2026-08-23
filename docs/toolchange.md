@@ -323,12 +323,24 @@ same material. Untested on hardware: whether the motion sensors
 
 ## OrcaSlicer setup
 
-In the printer profile:
+**Leave the profile stock.** An untouched FlashForge Orca profile works as
+shipped: nothing to paste into Machine start or end G-code, and files sliced
+before the mod keep printing. `[ff_print]` wraps `SDCARD_PRINT_FILE`/`M23`,
+reads the bed, nozzle, initial tool and first-layer height out of the file
+itself, and runs `START_PRINT` before the file's first line -- which the stock
+block needs, because it has no `G28` (its first motion, `G1 Z5 F2400`, assumes
+a homed machine) and no `M190` (nothing waits for the bed). At the other end
+its `;end_gcode` is a single move that turns nothing off, so
+`FF_AFTER_PRINT_END` runs the exit sequence when the job leaves the printing
+state.
 
-* **Machine start G-code**: contents of
-  [`assets/orca/machine-start-gcode.txt`](../assets/orca/machine-start-gcode.txt)
-* **Machine end G-code**: contents of
-  [`assets/orca/machine-end-gcode.txt`](../assets/orca/machine-end-gcode.txt)
+[`assets/orca/`](../assets/orca/) holds copies of both stock blocks for
+reference -- what the mod expects, not something to paste.
+
+To drive the sequence from the slicer instead, put an explicit `START_PRINT`
+call in Machine start G-code and set
+`SET_GCODE_VARIABLE MACRO=FF_BEFORE_PRINT_START VARIABLE=prepare VALUE=0`
+so the machine is not prepared twice.
 
 Leave **Change filament G-code** empty. With no custom block Orca emits its
 own bare `Tn` at each tool change, which reaches `ff_toolchange.py` directly.
@@ -339,13 +351,15 @@ Files already sliced with the old marker keep printing correctly — the G-code
 parser discards the comment and `T2` arrives either way, so no re-slice is
 needed for that.
 
-Re-slice anything sliced with older start G-code — old files won't call
-`TOOLCHANGE_SET_PRINT_OFFSET` and will print ~3.2 mm low.
+No re-slicing is needed: `[ff_print]` applies the print Z offset for any file,
+including ones sliced before the mod existed.
 
-`START_PRINT` options: `TOOLS=0,2` every tool the file uses (Orca:
-`is_extruder_used[n]`, as in the snippet) — presence gate and pre-print
-nozzle clean; `TEMPS=220,0,240,0` per-tool clean temperature (0 = use
-`NOZZLE=`); `CLEAN=0` skips the clean (default on: each used tool is grabbed,
+`START_PRINT` options, for the explicit path: `TOOLS=0:220,2:240` every tool
+the file uses with its clean temperature (Orca: `is_extruder_used[n]`; a bare
+`TOOLS=0,2` also works and falls back to `NOZZLE=`) — presence gate and
+pre-print
+nozzle clean; without explicit temperatures each tool is cleaned at the
+temperature its `_FF_FILAMENT.tool_material` maps to; `CLEAN=0` skips the clean (default on: each used tool is grabbed,
 heated, purged 50 mm at the chute with the part fan on, wiped at the
 station, cooled by 100 °C and docked while the bed heats — the app's
 `clearNozzlePrint`); `LEVEL=1` probes a fresh mesh (recommended for the
