@@ -10,7 +10,7 @@
 # No binfmt registration is needed: `busybox sh -n` is a single process and
 # forks nothing.
 #
-# Needs work/rootfs (bin/extract-rootfs.sh). Skips cleanly without it, so CI
+# Needs work/rootfs (test/extract-rootfs.sh). Skips cleanly without it, so CI
 # -- which has no proprietary firmware -- still passes.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -74,6 +74,16 @@ $ASH ps >/dev/null 2>&1 && ok "busybox ps available (UI liveness check)" \
 $ASH head -c 2 /pr/bin/busybox >/dev/null 2>&1 \
     && ok "busybox head -c available (used to detect our wrapper script)" \
     || bad "busybox head -c missing"
+
+# FlashForge's own runFirmwareExe.sh slices the version out of a filename with
+# ${file_name:${#start_head}:${version_length}} -- a bash-compat expansion that
+# dash rejects. The stock installer only works because this busybox was built
+# with ASH_BASH_COMPAT. If a future firmware ships a busybox without it, the
+# stock updater breaks and so does ours.
+SUB=$($ASH sh -c 'v=software-1.9.7.tar.xz; echo ${v:9:5}' 2>/dev/null)
+[ "$SUB" = "1.9.7" ] \
+    && ok "busybox ash supports \${var:off:len} (the stock installer needs it)" \
+    || bad "busybox ash lacks bash-compat substrings -- the STOCK installer would fail too"
 
 echo
 [ "$FAIL" = 0 ] && echo "  payload is busybox-ash clean" || echo "  ASH CONFORMANCE FAILED"

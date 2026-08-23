@@ -1,0 +1,150 @@
+name: release
+
+# A release is blocked on the printer replica passing.
+#
+# The replica is the printer's real rootfs.squashfs, chrooted under
+# qemu-mipsel, with /usr/prog installed by FlashForge's own updater. The
+# installer under test runs on the printer's busybox, tar, md5sum and unTar --
+# not on Debian stand-ins. If that fails, nothing ships.
+#
+# The stock FlashForge packages are proprietary and ~93MB each, so they are
+# never in the repo. Point these repository secrets at them (pre-signed URLs,
+# a private release asset, an S3 object -- anything curl can fetch):
+#
+#   STOCK_URL_CREATOR5PRO     required
+#   STOCK_URL_CREATOR5        required
+#   FACTORY_URL               required -- the factory image, which is the
+#                             replica's real /usr/prog and /usr/data
+#   STOCK_SHA256_CREATOR5PRO  optional but recommended
+#   STOCK_SHA256_CREATOR5     optional but recommended
+#
+# Without them the job FAILS. It does not skip: a release that skipped the
+# only test that can catch a brick is worse than no release.
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Profile to build'
+        default: full
+        type: choice
+        options: [ probe, ssh, web, full, helix ]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      PROFILE: ${{ inputs.profile || 'full' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the stock packages are configured
+        env:
+          PRO: ${{ secrets.STOCK_URL_CREATOR5PRO }}
+          STD: ${{ secrets.STOCK_URL_CREATOR5 }}
+          FACTORY: ${{ secrets.FACTORY_URL }}
+        run: |
+          missing=
+          [ -n "$PRO" ] || missing="$missing STOCK_URL_CREATOR5PRO"
+          [ -n "$STD" ] || missing="$missing STOCK_URL_CREATOR5"
+          [ -n "$FACTORY" ] || missing="$missing FACTORY_URL"
+          if [ -n "$missing" ]; then
+            echo "::error::missing secrets:$missing"
+            echo "The printer replica cannot run without the stock packages, and"
+            echo "a release is not allowed to skip it. See the comment at the top"
+            echo "of .github/workflows/release.yml."
+            exit 1
+          fi
+
+      - name: Fetch the stock firmware
+        env:
+          PRO:     ${{ secrets.STOCK_URL_CREATOR5PRO }}
+          STD:     ${{ secrets.STOCK_URL_CREATOR5 }}
+          PRO_SHA: ${{ secrets.STOCK_SHA256_CREATOR5PRO }}
+          STD_SHA: ${{ secrets.STOCK_SHA256_CREATOR5 }}
+        run: |
+          set -euo pipefail
+          mkdir -p stock
+          curl -fsSL "$PRO" -o stock/Creator5Pro-stock.tgz
+          curl -fsSL "$STD" -o stock/Creator5-stock.tgz
+          [ -z "$PRO_SHA" ] || echo "$PRO_SHA  stock/Creator5Pro-stock.tgz" | sha256sum -c -
+          [ -z "$STD_SHA" ] || echo "$STD_SHA  stock/Creator5-stock.tgz"    | sha256sum -c -
+          ls -lh stock
+
+      - name: Write test.env (the replica's /usr/prog)
+        env:
+          FACTORY: ${{ secrets.FACTORY_URL }}
+        run: |
+          set -euo pipefail
+          curl -fsSL "$FACTORY" -o stock/factory.tar.xz
+          echo "PROG_DUMP=\"$PWD/stock/factory.tar.xz\"" > test.env
+
+      - name: Write config.env
+        run: |
+          cat > config.env <<CFG
+          MOD_NAME=anvil
+          # Tags are release dates: v20260823. A manual run has no tag -- and
+          # GITHUB_REF_NAME would be the branch there -- so leave it empty and
+          # let the build stamp today's UTC date itself.
+          MOD_VER=$(case "$GITHUB_REF" in refs/tags/*) echo "${GITHUB_REF_NAME#v}";; *) echo "";; esac)
+          SW_VER=""
+          TARGET_MACHINE=Creator5Pro
+          STOCK_TGZ_CREATOR5PRO="$PWD/stock/Creator5Pro-stock.tgz"
+          STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
+          STOCK_TGZ=""
+          KLIPPER_FORK=""
+          TOOLCHANGE=""
+          HELIX_TGZ=""
+          MAINSAIL_ZIP=""
+          DEFAULT_PROFILE=$PROFILE
+          MOD_UI=stock
+          ROOT_PW_HASH='${{ secrets.ROOT_PW_HASH }}'
+          FF_KEY='FFP0331&*%root'
+          CFG
+
+      - name: Extract the printer rootfs
+        run: make rootfs ASSET_ROOT=$PWD
+
+      - name: Brick-safety suite, replica required
+        run: |
+          docker build -q -t creator5-fw-build -f docker/Dockerfile.build docker
+          docker run --rm \
+            -v "$PWD":"$PWD" -w "$PWD" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e REQUIRE_PRINTER_SIM=1 \
+            creator5-fw-build ./test/run-tests.sh
+
+      - name: Build both models
+        run: make release PROFILE=$PROFILE ASSET_ROOT=$PWD
+
+      - name: Install simulation on the packages that will actually ship
+        run: |
+          for p in dist/*.tgz; do
+            echo "=== $p ==="
+            ./test/sim-install.sh "$p"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-packages
+          path: dist/*.tgz
+          retention-days: 30
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tgz
+          body: |
+            Copy the file matching YOUR printer to the root of a FAT32 USB
+            stick and power the machine on. A `Creator5Pro-` package will not
+            install on a Creator 5 and vice versa.
+
+            Every package here was installed into a replica of the printer --
+            the real rootfs running under qemu-mipsel -- and the machine was
+            checked to still boot afterwards.

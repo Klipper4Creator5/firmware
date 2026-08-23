@@ -1,0 +1,22 @@
+# Command words the payload may use that are not busybox applets in the
+# printer's rootfs. Each one must be justified: either the mod ships it, or a
+# firmware package installs it onto /usr/prog.
+#
+# Anything added here without one of those two reasons is a boot failure
+# waiting to happen -- test/test-applets.sh exists to force this review.
+
+# shipped by the mod under /usr/data/anvil
+helix-screen
+helix-launcher.sh
+
+# installed on /usr/prog by FlashForge's own packages
+klipperDaemon
+moonrakerDaemon
+checkEboard
+nginx
+python3
+unTar
+wakeup_level
+
+# mod-internal scripts, invoked by absolute path from /usr/data/anvil
+anvil.conf

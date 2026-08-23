@@ -4,13 +4,13 @@
 # Both binaries already ship on stock firmware -- FlashForge simply comments
 # them out of /usr/prog/klipper/start.sh. We run nginx on our OWN prefix so
 # their config is never modified and MOD_WEB=0 restores stock behaviour.
-MODDIR=/usr/data/mod
-[ -f $MODDIR/mod.conf ] && . $MODDIR/mod.conf
+MODDIR=/usr/data/anvil
+[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 NGINX=/usr/prog/nginx/sbin/nginx
 NGX_PID=$MODDIR/nginx/logs/nginx.pid
 
 start() {
-    [ "${MOD_WEB:-1}" = "1" ] || { echo "web: disabled in mod.conf"; return 0; }
+    [ "${MOD_WEB:-1}" = "1" ] || { echo "web: disabled in anvil.conf"; return 0; }
     if [ -x "$NGINX" ] && [ -f $MODDIR/nginx/nginx.conf ]; then
         mkdir -p $MODDIR/nginx/logs $MODDIR/nginx/tmp
         $NGINX -p $MODDIR/nginx -c $MODDIR/nginx/nginx.conf \

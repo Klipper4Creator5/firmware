@@ -15,9 +15,9 @@
 #     happens here.
 #   * A UI that crash-loops latches SAFE-MODE after MAX_UI_FAILURES boots and
 #     the printer falls back to the stock UI.
-#   * Delete /usr/data/mod/SAFE-MODE (over ssh) to try the new UI again.
-MODDIR=/usr/data/mod
-[ -f $MODDIR/mod.conf ] && . $MODDIR/mod.conf
+#   * Delete /usr/data/anvil/SAFE-MODE (over ssh) to try the new UI again.
+MODDIR=/usr/data/anvil
+[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 MAX_UI_FAILURES="${MOD_MAX_UI_FAILURES:-3}"
 FAILFILE=$MODDIR/ui-failures
 SAFEFILE=$MODDIR/SAFE-MODE

@@ -1,0 +1,89 @@
+#!/bin/sh
+# Build a working replica of the printer's filesystem at /printer.
+#
+# Layout mirrors the machine (see /etc/init.d/S09mount_mmc_prog,
+# S21mount_mmc_ext4 and /etc/fstab inside the real rootfs):
+#
+#   /            rootfs.squashfs  -- READ-ONLY, exactly like the printer
+#   /usr/prog    ext4 "usershare" partition   (rw)
+#   /usr/data    ext4 "userdata"  partition   (rw)
+#   /tmp /run    tmpfs
+#   /mnt         the USB stick the user plugs in
+#
+# Mounting / read-only is deliberate: on the printer a write to /bin or /etc
+# silently fails, and a mod that depended on one would pass a permissive
+# simulation and brick the machine.
+set -e
+
+SRC=/printer-src        # the squashfs contents
+R=/printer              # the assembled machine
+ROOTFS=${ROOTFS:-/rootfs}
+
+[ -d "$ROOTFS/bin" ] || { echo "assemble: no rootfs at $ROOTFS (run 'make rootfs')" >&2; exit 1; }
+
+rm -rf $SRC; mkdir -p $SRC $R
+rsync -a --exclude=/proc/ --exclude=/sys/ "$ROOTFS/" $SRC/
+mkdir -p $SRC/proc $SRC/sys $SRC/tmp $SRC/run $SRC/dev $SRC/mnt \
+         $SRC/usr/prog $SRC/usr/data
+
+# These would act on the host kernel, or drive real hardware. Neuter them
+# while the tree is still writable, and record every substitution. cmd_mcu is
+# in this list because klipper's start.sh calls `cmd_mcu write_firmware` --
+# neutering the genuine binary is honest, whereas shadowing it with a stub
+# earlier in PATH would depend on PATH order and hide the real one.
+NEUTERED=""
+for c in insmod rmmod modprobe reboot poweroff halt cmd_mcu; do
+    for d in sbin usr/sbin bin usr/bin; do
+        [ -e "$SRC/$d/$c" ] || continue
+        # These are symlinks into busybox. Writing through one would overwrite
+        # the multi-call binary itself and destroy the whole userland.
+        rm -f "$SRC/$d/$c"
+        printf '#!/bin/sh\n# SIMULATED stub\necho "[sim] %s $*" >> /tmp/sim-neutered.log\nexit 0\n' "$c" > "$SRC/$d/$c"
+        chmod +x "$SRC/$d/$c"
+        NEUTERED="$NEUTERED /$d/$c"
+    done
+done
+
+# --- mount it the way the printer mounts it -----------------------------------
+mount --bind $SRC $R
+mount -o remount,bind,ro $R           # squashfs is read-only
+
+mount -t proc  proc  $R/proc
+mount -t sysfs sys   $R/sys -o ro 2>/dev/null || true
+mount -t tmpfs tmpfs $R/tmp -o mode=1777
+mount -t tmpfs tmpfs $R/run
+# The two ext4 partitions. They are disk-backed rather than tmpfs because a
+# real /usr/prog is ~830MB and holding that in RAM is a needless way to make
+# the suite fail on a small runner.
+#
+# Their SIZES are NOT modelled unless you say what they are. The real numbers
+# come off the machine in the stage-0 probe report (`df -h`); until
+# PROG_MB/DATA_MB are set from it these are unbounded, and an install that
+# runs the machine out of space passes here and fails there.
+mkdir -p /parts/prog /parts/data
+if [ -n "${PROG_MB:-}" ]; then mount -t tmpfs tmpfs $R/usr/prog -o size=${PROG_MB}m
+else mount --bind /parts/prog $R/usr/prog; fi                      # "usershare"
+if [ -n "${DATA_MB:-}" ]; then mount -t tmpfs tmpfs $R/usr/data -o size=${DATA_MB}m
+else mount --bind /parts/data $R/usr/data; fi                      # "userdata"
+mount -t tmpfs tmpfs $R/mnt           # the USB stick
+
+mount -t tmpfs tmpfs $R/dev
+mkdir -p $R/dev/pts $R/dev/shm
+mount -t devpts devpts $R/dev/pts 2>/dev/null || true
+mount -t tmpfs  tmpfs  $R/dev/shm
+for n in null zero full random urandom tty; do
+    : > $R/dev/$n; mount --bind /dev/$n $R/dev/$n 2>/dev/null || rm -f $R/dev/$n
+done
+: > $R/dev/fb0                        # `cat start.img > /dev/fb0` must work
+
+# Start the record of everything that is not authentic. seed-prog.sh appends
+# to it; entrypoint.sh prints the count on every run.
+mkdir -p $R/usr/prog
+: > $R/usr/prog/.SIMULATED
+for f in $NEUTERED; do
+    echo "$f (neutered: would act on the host kernel)" >> $R/usr/prog/.SIMULATED
+done
+
+# The rest of the prog partition is seeded by seed-prog.sh, which
+# entrypoint.sh runs after any real /usr/prog dump has been unpacked.
+exit 0

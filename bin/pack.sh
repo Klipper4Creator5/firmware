@@ -1,17 +1,28 @@
 #!/usr/bin/env bash
 # 3/3 -- repack work/software back into an installable USB package.
 #
-#   ./pack.sh              full package (keeps kernel/control/library)
-#   ./pack.sh --slim       software component only (~26MB, fast to write/test)
+#   ./pack.sh              software component only (DEFAULT, ~28MB)
+#   ./pack.sh --full       also carry kernel / control / library
 #   ./pack.sh --plain      no encryption: emits runFirmwareExe.sh + payload
 #                          for the /mnt/runFirmwareExe.sh dev path
+#
+# Slim is the default because the stock installer skips any component that is
+# absent: every update_<name> guards on `ls -1t <name>-*.tar.xz` and returns
+# early when it fails. So shipping only the component we actually modified
+# leaves the kernel, the rootfs image and the MCU/board firmware completely
+# untouched -- MCU flashing is the riskiest thing in the package and there is
+# no reason to run it to install a userspace mod.
+#
+# (start.img, end.img and play are still shipped: runFirmwareExe.sh uses those
+# unconditionally.)
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 
-SLIM=0; PLAIN=0
+SLIM=1; PLAIN=0
 for a in "$@"; do
     case "$a" in
-        --slim)  SLIM=1 ;;
+        --full)  SLIM=0 ;;
+        --slim)  SLIM=1 ;;   # accepted for compatibility; now the default
         --plain) PLAIN=1 ;;
         *) echo "unknown option: $a" >&2; exit 1 ;;
     esac
@@ -57,9 +68,9 @@ ls -lh "work/stage/software-$OUT_VER.tar.xz" | awk '{print "   "$5}'
 if [ -d work/modpayload ]; then
     # This one IS really xz: we extract it ourselves with `xz -dc`, and
     # FlashForge's factory installer proves xz exists on the printer.
-    echo ">> compressing mod.tar.xz (Mainsail / HelixScreen / bin)"
-    tar -cf - -C work/modpayload . | xz -T0 -6 > work/stage/mod.tar.xz
-    ls -lh work/stage/mod.tar.xz | awk '{print "   "$5}'
+    echo ">> compressing anvil.tar.xz (Mainsail / HelixScreen / bin)"
+    tar -cf - -C work/modpayload . | xz -T0 -6 > work/stage/anvil.tar.xz
+    ls -lh work/stage/anvil.tar.xz | awk '{print "   "$5}'
 fi
 
 # FlashForge's own installer, reused verbatim -- it already does the whole
@@ -70,9 +81,13 @@ for f in start.img end.img play; do
     [ -f "work/outer/$f" ] && cp -f "work/outer/$f" work/stage/
 done
 if [ "$SLIM" = "0" ]; then
+    echo ">> --full: also carrying kernel / control / library"
+    echo "   (this reflashes the kernel and the MCU/board firmware)"
     for f in work/outer/kernel-*.tar.xz work/outer/control-*.tar.xz work/outer/library-*.tar.xz; do
         [ -f "$f" ] && cp -f "$f" work/stage/
     done
+else
+    echo ">> slim: software component only -- kernel, rootfs and MCU untouched"
 fi
 echo ">> outer payload:"
 ls -la work/stage | sed 's/^/   /'
@@ -80,7 +95,8 @@ ls -la work/stage | sed 's/^/   /'
 # ---------------------------------------------------------------------------
 # 4. emit
 # ---------------------------------------------------------------------------
-BASE="${MOD_NAME:-mod}-${MOD_VER:-1.0.0}"
+# MOD_VER is the release date; common.sh defaults it to today (UTC).
+BASE="${MOD_NAME:-anvil}-${MOD_VER:?}"
 
 if [ "$PLAIN" = "1" ]; then
     # app_startup.sh also honours a bare /mnt/runFirmwareExe.sh -- no crypto,
@@ -123,5 +139,5 @@ else
         | tar -tvf - | sed 's/^/   /'
     echo
     echo "Copy it to the root of a FAT32 USB stick, plug it in, power on."
-    echo "Install log afterwards: /usr/data/mod-install.log"
+    echo "Install log afterwards: /usr/data/anvil-install.log"
 fi
