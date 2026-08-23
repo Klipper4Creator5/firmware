@@ -1,14 +1,18 @@
-# Hardware testing: the flash ladder
+# Hardware testing
 
 CI installs the package into a replica of the printer -- the real
 `rootfs.squashfs` running under qemu-mipsel, on the printer's own busybox and
 `unTar` (see [printer-replica.md](printer-replica.md)) -- and proves the
 machine would still boot. What it cannot do is drive the screen, the MCUs, the
-toolchanger or a print. This is the on-hardware procedure, ordered so that each
-step is recoverable using what the previous step established.
+toolchanger or a print. This is the on-hardware procedure.
 
-**Rule: never skip a rung. Each one exists because it makes the next one
-recoverable.**
+There are two flashes: `probe`, which changes nothing and proves the update
+chain works on your machine, and `default`, which is the firmware.
+
+**Rule: do the probe first, and have the stock package on a spare stick before
+you flash the firmware.** The probe costs five minutes and rules out a bad
+stick, the wrong model or a truncated download — the three failures that are
+annoying on a probe and frightening on a real flash.
 
 ---
 
@@ -34,8 +38,8 @@ Find yours in Settings → About, or in
 `TARGET_MACHINE` in `config.env`. Then:
 
 ```sh
-make full && make verify        # one model
-make release PROFILE=full       # both, into dist/
+make default && make verify        # one model
+make release PROFILE=default       # both, into dist/
 ```
 
 `verify.sh` fails loudly on a mismatch. **You must start from a stock package
@@ -51,7 +55,7 @@ you unpack.
 - [ ] Note your printer's serial number (Settings → About). The factory image
       restores a placeholder serial and you may need to put yours back.
 - [ ] Confirm you can reach the printer's IP.
-- [ ] `make test` passes (78 checks).
+- [ ] `make test` passes.
 - [ ] `make rootfs && make test-ash` passes — this parses every script that
       will run on the printer using the printer's own busybox ash.
 
@@ -87,76 +91,34 @@ changed, and you have learned that before risking anything.
 
 ---
 
-## Stage 1 — ssh (`make ssh`)
+## Stage 1 — the firmware (`make default`)
 
-Sets a root password you know. **Nothing else changes.**
+One flash brings up everything: a root password you know, Mainsail and
+moonraker, the forked Klipper with the toolchanger extras, and HelixScreen on
+the touchscreen in place of FlashForge's UI.
 
-This works because the stock rootfs already ships `/usr/sbin/dropbear` and an
-enabled `/etc/init.d/S50dropbear` — port 22 is already open on a stock
-printer, there is simply no published password.
+**The root password is generated on the printer.** Nothing is baked into the
+package: the installer picks a random one, sets it, and writes it to
+`anvil-password.txt` on the USB stick you flashed from. Pull the stick after
+the flash and read it — then save the password somewhere safe and delete the
+file. If the stick is not writable no password is set at all, and the install
+log says so.
 
-Set one first:
+To choose your own instead, set it before you build:
 ```sh
 openssl passwd -6 'your-password'      # paste into ROOT_PW_HASH in config.env
 ```
 
-**Go/no-go:**
-```sh
-ssh root@PRINTER
-```
-- [ ] you get a shell
-- [ ] the printer still prints normally
+ssh works because the stock rootfs already ships `/usr/sbin/dropbear` and an
+enabled `/etc/init.d/S50dropbear` — port 22 is already open on a stock
+printer, there is simply no published password. That shell is your recovery
+channel, so confirm it before you touch anything else.
 
-From here on you have a real recovery channel, which is what makes every
-later stage safe.
-
----
-
-## Stage 2 — web (`make web`)
-
-Starts nginx (Mainsail on :80) and moonraker (:7125). Klipper and the
-touchscreen stay stock, so printing behaviour is unchanged.
-
-**Go/no-go:**
-- [ ] `http://PRINTER/` loads Mainsail
-- [ ] Mainsail shows the printer as **ready** (not "Klipper reports: ERROR")
-- [ ] the touchscreen still works
-- [ ] a small test print completes from the touchscreen
-
-If Mainsail loads but Klipper errors, stop here and read
-`/usr/data/logs/printer.log` over ssh. Do not continue.
-
----
-
-## Stage 3 — full (`make full`)
-
-Replaces the Klipper tree with the fork and installs the toolchanger extras.
-**This is the first stage that changes how the machine moves.**
-
-Before flashing, re-read the warnings in `creator5-toolchange/README.md`
+**Before flashing**, re-read the warnings in `creator5-toolchange/README.md`
 about Z offsets. A wrong offset drives the nozzle into the plate.
 
-**Go/no-go — with the emergency stop within reach:**
-- [ ] Klipper starts (`ssh root@PRINTER 'grep -i error /usr/data/logs/printer.log | tail'`)
-- [ ] `TOOLCHANGE_STATUS` responds in the Mainsail console
-- [ ] home all axes — watch the first Z move
-- [ ] one tool change, by hand, at temperature
-- [ ] a single-tool test print
-- [ ] a multi-tool test print
-
-The `.cfg` includes are **not** wired up automatically — a tuned `printer.cfg`
-is never modified. New files arrive as `*.mod-new`. Add the includes by hand
-in the order given in the toolchanger README, then run
-`FF_IMPORT_FIRMWARE_CONFIG` once.
-
----
-
-## Stage 4 — helix (`make helix`)
-
-HelixScreen replaces FlashForge's `firmwareExe` as the touchscreen UI.
-
-This is the stage where the stock UI stops driving the screen, so understand
-the safety net before flashing:
+Understand the safety net first, because the stock UI is no longer driving the
+screen:
 
 - The genuine binary is kept on disk as `firmwareExe.stock` and is the
   fallback. Nothing is deleted.
@@ -167,11 +129,33 @@ the safety net before flashing:
 - If the UI dies repeatedly, `SAFE-MODE` latches after 3 boots and the printer
   falls back to the stock UI on its own.
 
-**Go/no-go:**
+**Go/no-go, in this order — with the emergency stop within reach:**
+
+Access first, so that everything below is diagnosable:
+- [ ] `ssh root@PRINTER` gets you a shell (password from `anvil-password.txt` on the stick)
+- [ ] `http://PRINTER/` loads Mainsail
+- [ ] Mainsail shows the printer as **ready**, not "Klipper reports: ERROR"
+
+If Mainsail loads but Klipper errors, stop here and read
+`/usr/data/logs/printer.log` over ssh. Do not go on to motion.
+
+Then the screen:
 - [ ] HelixScreen appears on the touchscreen
-- [ ] Klipper is running (Mainsail says ready) — this is the one people miss
+- [ ] Klipper is still running — this is the one people miss
 - [ ] heaters and motion respond from the touchscreen
-- [ ] a test print from the touchscreen
+
+Then motion, which is the part that can damage the machine:
+- [ ] `ssh root@PRINTER 'grep -i error /usr/data/logs/printer.log | tail'` is clean
+- [ ] `TOOLCHANGE_STATUS` responds in the Mainsail console
+- [ ] home all axes — watch the first Z move
+- [ ] one tool change, by hand, at temperature
+- [ ] a single-tool test print
+- [ ] a multi-tool test print
+
+The `.cfg` includes are **not** wired up automatically — a tuned `printer.cfg`
+is never modified. New files arrive as `*.mod-new`. Add the includes by hand
+in the order given in the toolchanger README, then run
+`FF_IMPORT_FIRMWARE_CONFIG` once.
 
 **Recovering from a bad UI, in increasing severity:**
 ```sh

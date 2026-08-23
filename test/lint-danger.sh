@@ -66,7 +66,10 @@ else
         || ok "$UIW has no bare 'set -e'"
     # It must hold the foreground: app_startup.sh greps ps for firmwareExe and
     # re-execs us if we exit, which would restart every service underneath.
-    grep -q 'sleep 3600' "$UIW" \
+    # Matched on the loop, not on `sleep 3600`: the number is an arbitrary
+    # detail and pinning the check to it turns a change of interval into a
+    # brick warning.
+    grep -qE 'while +(true|:) *(;| ) *do' "$UIW" \
         && ok "firmwareExe holds the process when the UI exits" \
         || bad "$UIW" "returns when the UI exits -- app_startup.sh restarts everything"
 fi

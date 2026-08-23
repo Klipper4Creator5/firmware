@@ -4,13 +4,14 @@
 # inside the pinned build image (docker/Dockerfile.build); the docker socket
 # is mounted through so the simulation targets can start sibling containers.
 #
-#   make probe                  build the stage-0 package (changes nothing)
+#   make probe                  build the pre-flight package (changes nothing)
+#   make default                build the firmware package
 #   make test                   full brick-safety suite
 #   make shell                  interactive shell in the build container
 #
 # Escape hatch: LOCAL=1 make <target> runs the scripts directly on the host.
 
-PROFILE ?= probe
+PROFILE ?= default
 # Packages carry only the software component by default: the stock installer
 # skips absent components, so the kernel and the MCU/board firmware are left
 # alone. FULL=1 carries all four (and reflashes the MCU).
@@ -30,7 +31,7 @@ DOCKER_SOCK := /var/run/docker.sock
 # directories. Keeping the path identical on both sides avoids that entirely.
 # config.env usually points at a stock package OUTSIDE this repo, so the
 # directory holding it must be mounted too. Override when yours lives
-# elsewhere:  make ASSET_ROOT=/path/to/parent probe
+# elsewhere:  make ASSET_ROOT=/path/to/parent default
 ASSET_ROOT ?= $(firstword $(wildcard /mnt/c /Users /home))
 
 # Two runners, because the two lanes need different things:
@@ -61,7 +62,7 @@ else
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help image shell build probe ssh web full helix all-profiles \
+.PHONY: help image shell build vendor probe default all-profiles \
         rootfs verify test test-lint test-install test-applets \
         printer-image printer-image-push \
         test-recovery test-ui test-ash test-abi test-model release clean distclean
@@ -70,16 +71,14 @@ help:
 	@echo 'creator5-custom-firmware -- everything runs in Docker'
 	@echo
 	@echo 'Build (flash these in order -- see docs/hardware-testing.md):'
-	@echo '  make probe        stage 0  changes nothing, reports back on a USB stick'
-	@echo '  make ssh          stage 1  root password only'
-	@echo '  make web          stage 2  + Mainsail / moonraker'
-	@echo '  make full         stage 3  + forked Klipper, toolchanger'
-	@echo '  make helix        stage 4  + HelixScreen as the UI'
+	@echo '  make probe        pre-flight  changes nothing, reports back on a USB stick'
+	@echo '  make default      the firmware  Klipper fork, toolchanger, Mainsail,'
+	@echo '                                  ssh and HelixScreen'
 	@echo '  make all-profiles'
 	@echo '  make release PROFILE=<p>   build BOTH models into dist/'
 	@echo
 	@echo 'Models: packages are model-specific and refuse to install on the'
-	@echo 'other one. MODEL=Creator5 make web  builds the non-Pro variant.'
+	@echo 'other one. MODEL=Creator5 make default  builds the non-Pro variant.'
 	@echo
 	@echo 'Recovery: keep a copy of the STOCK FlashForge .tgz on a spare stick.'
 	@echo 'Flashing it restores every file the mod touches (see make test-recovery).'
@@ -87,7 +86,7 @@ help:
 	@echo 'Test:'
 	@echo '  make test             everything below'
 	@echo '  make test-lint        brick-risk lint'
-	@echo '  make test-install     install into a replica of the printer'
+	@echo '  make test-install     end-to-end: USB stick -> update -> reboot'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo '  make test-ui          UI selection, crash fallback, SAFE-MODE'
 	@echo '  make test-model       both models gated + firmware correct'
@@ -95,12 +94,16 @@ help:
 	@echo '  make test-ash         parse the payload with the printer own busybox'
 	@echo '  make test-abi         MIPS ELF ABI checks'
 	@echo
-	@echo 'test-install, test-recovery, test-ui and test-applets run inside a'
-	@echo 'replica of the printer: the real rootfs.squashfs under qemu-mipsel,'
-	@echo 'with /usr/prog installed by FlashForge own updater. They need'
-	@echo 'make rootfs first, which needs the stock package.'
+	@echo 'test-install, test-recovery, test-ui and test-ash run inside a replica'
+	@echo 'of the printer: the real rootfs.squashfs under qemu-mipsel, with'
+	@echo '/usr/prog installed by FlashForge own updater. test-install goes the'
+	@echo 'whole way -- the package sits on a real FAT filesystem at /dev/sda1'
+	@echo 'and the printer own app_startup.sh finds it, installs it, and boots.'
+	@echo 'They need make rootfs first (or PRINTER_IMAGE), which needs the'
+	@echo 'stock package.'
 	@echo
 	@echo 'Other:'
+	@echo '  make vendor       download Mainsail + HelixScreen into vendor/'
 	@echo '  make rootfs       extract the real printer rootfs (enables test-ash)'
 	@echo '  make image        build the build container'
 	@echo '  make shell        shell inside it'
@@ -128,14 +131,20 @@ shell: image
 #  ships payload/ and assets/, and touches nothing under test/.
 # ===========================================================================
 
+# Mainsail and HelixScreen are not vendored in the repo. bin/build.sh fetches
+# whatever the profile needs; this target pre-fetches everything, and is a
+# no-op once vendor/ holds files with the sha256 that versions.env pins.
+vendor: image config.env
+	@$(RUN) ./bin/fetch-assets.sh --all
+
 build: image config.env
 	@PROFILE=$(PROFILE) $(RUN) ./bin/build.sh $(PACKARGS)
 
-probe ssh web full helix: image config.env
+probe default: image config.env
 	@PROFILE=$@ $(RUN) ./bin/build.sh $(PACKARGS)
 
 all-profiles: image config.env
-	@for p in probe ssh web full helix; do \
+	@for p in probe default; do \
 	   echo "=== $$p ==="; PROFILE=$$p $(RUN) ./bin/build.sh || exit 1; done
 
 # One package per model, collected in dist/. They cannot share content: the
@@ -169,12 +178,18 @@ test: image
 	@$(RUNSIM) ./test/run-tests.sh
 
 # A Docker image that IS the printer: real rootfs, real /usr/prog and
-# /usr/data, ready to run. Takes a replica run from ~1m35s to ~15s because
-# the factory image is unpacked once at build time instead of every run.
+# /usr/data, with the stock package already installed on top of them.
 #
-#   make printer-image                 both models
-#   make printer-image MODEL=Creator5Pro
-#   make printer-image-push            build and push to Docker Hub
+# Both of those are per-run costs it removes. Measured on this repo:
+#
+#   unpacking the 182MB factory image        22s   every run
+#   installing the stock package under qemu   37s   every run
+#   with the image                           0.7s   once, at build time
+#
+#   make printer-image           build (one image serves both models)
+#   make printer-image-push      build and push to Docker Hub
+#
+# Point PRINTER_IMAGE in test.env at it to use it.
 #
 # The image contains proprietary FlashForge firmware.
 printer-image: image
@@ -206,7 +221,7 @@ test-ui: image
 # there). Look in both.
 test-install: image
 	@$(RUNSIM) bash -c 'pkg=$$(ls -1 dist/$(or $(MODEL),Creator5Pro)-*.tgz work/out/$(or $(MODEL),Creator5Pro)-*.tgz 2>/dev/null | head -1); \
-	   [ -n "$$pkg" ] || { echo "build a package first: make probe (or make release)"; exit 1; }; \
+	   [ -n "$$pkg" ] || { echo "build a package first: make default (or make release)"; exit 1; }; \
 	   echo "package: $$pkg"; ./test/sim-install.sh "$$pkg"'
 
 # Recovery = flash the stock package you already have. This proves it works.
@@ -214,7 +229,7 @@ test-install: image
 # It builds its own package rather than reusing whatever is lying around: the
 # test is meaningless against a profile that does not replace the UI, and
 # `probe` deliberately does not. RECOVERY_PROFILE=<p> to test another one.
-RECOVERY_PROFILE ?= full
+RECOVERY_PROFILE ?= default
 test-recovery: image config.env
 	@MODEL=$(or $(MODEL),Creator5Pro) PROFILE=$(RECOVERY_PROFILE) $(RUNSIM) bash -c '. ./bin/common.sh; \
 	   ./bin/build.sh $(PACKARGS) >/dev/null || exit 1; \

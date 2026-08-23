@@ -18,7 +18,7 @@ does the work.
 | | |
 |---|---|
 | **Mainsail in your browser** | The full Klipper web interface at `http://<printer-ip>/` — upload gcode, watch the print, tune on the fly. Moonraker comes with it, so anything that speaks the Klipper API works. |
-| **A shell on your printer** | ssh as root. Dropbear is already running on stock firmware; this simply gives you a password you know. |
+| **A shell on your printer** | ssh as root. Dropbear is already running on stock firmware; this simply gives you a password you know — the installer picks a random one and writes it to `anvil-password.txt` on your USB stick. |
 | **Real toolchanger Klipper** | A current Klipper with proper tool-change support, replacing the 0.12-era tree FlashForge ships. |
 | **A modern touchscreen UI** | HelixScreen instead of the stock interface — optional, and the stock UI is kept on disk as a fallback. |
 | **Nothing you cannot undo** | Flashing the stock FlashForge package puts every file back. |
@@ -57,21 +57,17 @@ Not sure which you have? On the printer: **Settings → About**.
 Afterwards, `http://<printer-ip>/` gets you Mainsail. The install log is on
 the printer at `/usr/data/anvil-install.log`.
 
-### Flash them in this order
+### Flash the probe first
 
-The releases are rungs on a ladder, not a menu. Each one makes the next one
-recoverable, so start at the bottom even if you only want the top:
+There are two files per model, and they are not a menu — flash them in order:
 
-| Stage | What it changes | Why start here |
+| Stage | What it changes | Why |
 |---|---|---|
-| **probe** | **nothing at all** | Proves the whole update chain works on *your* machine, and writes a report back onto the USB stick. Costs you five minutes and rules out a bad stick, a wrong model or a broken download. |
-| **ssh** | a root password | Gives you a way in before anything risky happens. |
-| **web** | + Mainsail and moonraker | Turns on a web stack FlashForge already ships but leaves switched off. Printing behaviour is unchanged. |
-| **full** | + toolchanger Klipper | The first stage that changes how the machine moves. |
-| **helix** | + HelixScreen as the UI | The first stage where the stock screen stops driving the display. |
+| **probe** | **nothing at all** | Proves the whole update chain works on *your* machine, and writes a report back onto the USB stick. Costs you five minutes and rules out a bad stick, the wrong model or a truncated download. |
+| **firmware** | everything: Mainsail, ssh, toolchanger Klipper, HelixScreen | The actual firmware. Flash it once the probe has come back clean. |
 
-The go/no-go checks for each rung — what to look at, and what means stop — are
-in **[docs/hardware-testing.md](docs/hardware-testing.md)**. Read it before
+The go/no-go checks — what to look at after each flash, and what means stop —
+are in **[docs/hardware-testing.md](docs/hardware-testing.md)**. Read it before
 the first flash.
 
 ---
@@ -83,7 +79,7 @@ stick before you start.** That stick is the undo button: flashing it restores
 every file this firmware touches. It is a normal FlashForge update, so it
 installs the same way — stick in, power on.
 
-A few things are deliberately built in so a bad stage cannot cost you the
+A few things are deliberately built in so a bad flash cannot cost you the
 machine:
 
 * **The screen always comes back.** If the new UI cannot start or crashes
@@ -101,12 +97,14 @@ More detail, including what to do when the printer will not boot at all:
 ## Status
 
 **No package has been installed on a real printer yet.** The build pipeline
-and the full test suite pass, including installing into a replica of the
-printer — its real filesystem, running its real binaries — but a simulation is
-not a machine.
+and the full test suite pass — including the end-to-end update test, where the
+package sits on a real FAT filesystem in a replica of the printer and the
+machine's own boot script finds it, installs it, and boots again with the mod
+running. That replica is the printer's real filesystem running its real
+binaries. It is still not a machine.
 
-Start at stage 0 (`probe`), and have the stock package on a spare stick before
-you begin.
+Flash the probe first, and have the stock package on a spare stick before you
+begin.
 
 ---
 
@@ -114,7 +112,7 @@ you begin.
 
 | | |
 |---|---|
-| [docs/hardware-testing.md](docs/hardware-testing.md) | The flash ladder, stage by stage, with the checks that say go or stop |
+| [docs/hardware-testing.md](docs/hardware-testing.md) | The on-hardware procedure, with the checks that say go or stop |
 | [docs/how-it-works.md](docs/how-it-works.md) | How the mod hooks into the stock firmware, and what the stock firmware does that surprises people |
 | [docs/building.md](docs/building.md) | Building your own packages from a stock FlashForge one |
 | [docs/testing.md](docs/testing.md) | The test suite, and how we know a package does not brick a printer |

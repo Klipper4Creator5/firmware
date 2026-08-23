@@ -28,9 +28,9 @@ on:
     inputs:
       profile:
         description: 'Profile to build'
-        default: full
+        default: default
         type: choice
-        options: [ probe, ssh, web, full, helix ]
+        options: [ default, probe ]
 
 permissions:
   contents: write
@@ -39,7 +39,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      PROFILE: ${{ inputs.profile || 'full' }}
+      PROFILE: ${{ inputs.profile || 'default' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -79,10 +79,19 @@ jobs:
       - name: Write test.env (the replica's /usr/prog)
         env:
           FACTORY: ${{ secrets.FACTORY_URL }}
+          # Optional repository variable: a prebuilt replica image, e.g.
+          # monstrofil/creator5-printer:latest. It carries the factory
+          # partitions AND the stock package already installed, which is about
+          # a minute of setup saved on every replica case. The end-to-end test
+          # reinstalls the baseline itself when the package under test is for
+          # the other model, so this only ever changes how long it takes.
+          PRINTER_IMAGE: ${{ vars.PRINTER_IMAGE }}
         run: |
           set -euo pipefail
           curl -fsSL "$FACTORY" -o stock/factory.tar.xz
           echo "PROG_DUMP=\"$PWD/stock/factory.tar.xz\"" > test.env
+          [ -z "${PRINTER_IMAGE:-}" ] || echo "PRINTER_IMAGE=\"$PRINTER_IMAGE\"" >> test.env
+          cat test.env
 
       - name: Write config.env
         run: |
@@ -99,8 +108,6 @@ jobs:
           STOCK_TGZ=""
           KLIPPER_FORK=""
           TOOLCHANGE=""
-          HELIX_TGZ=""
-          MAINSAIL_ZIP=""
           DEFAULT_PROFILE=$PROFILE
           MOD_UI=stock
           ROOT_PW_HASH='${{ secrets.ROOT_PW_HASH }}'
@@ -122,11 +129,15 @@ jobs:
       - name: Build both models
         run: make release PROFILE=$PROFILE ASSET_ROOT=$PWD
 
-      - name: Install simulation on the packages that will actually ship
+      - name: End-to-end update test on the packages that will actually ship
+        # The suite above tested a package built from the same tree; this
+        # tests the exact files that get attached to the release.
+        env:
+          REQUIRE_PRINTER_SIM: 1     # a skip here must fail the release
         run: |
           for p in dist/*.tgz; do
             echo "=== $p ==="
-            ./test/sim-install.sh "$p"
+            ./test/sim-install.sh "$p" || exit 1
           done
 
       - uses: actions/upload-artifact@v4
@@ -146,5 +157,7 @@ jobs:
             install on a Creator 5 and vice versa.
 
             Every package here was installed into a replica of the printer --
-            the real rootfs running under qemu-mipsel -- and the machine was
-            checked to still boot afterwards.
+            the real rootfs running under qemu-mipsel, with the package on a
+            real FAT filesystem that the machine's own app_startup.sh found
+            and installed -- and the machine was booted again afterwards and
+            checked to come up.

@@ -2,8 +2,8 @@
 # and the selected profile, and exports the feature flags.
 #
 # Profile selection, in order of precedence:
-#   PROFILE=web ./bin/build.sh      environment
-#   ./bin/build.sh --profile web    argument (parsed by the caller)
+#   PROFILE=probe ./bin/build.sh    environment
+#   ./bin/build.sh --profile probe  argument (parsed by the caller)
 #   PROFILE in config.env           default
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 cd "$ROOT"
@@ -21,7 +21,7 @@ fi
 # shellcheck disable=SC1090
 . "$CONFIG_ENV"
 
-PROFILE="${PROFILE:-${DEFAULT_PROFILE:-full}}"
+PROFILE="${PROFILE:-${DEFAULT_PROFILE:-default}}"
 if [ -f "profiles/$PROFILE.env" ]; then
     # shellcheck disable=SC1090
     . "profiles/$PROFILE.env"
@@ -29,6 +29,17 @@ else
     echo "unknown profile '$PROFILE' (have: $(ls profiles/*.env 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.env$//' | tr '\n' ' '))" >&2
     exit 1
 fi
+
+# Third-party payload pieces (Mainsail, HelixScreen). They are downloaded on
+# demand rather than vendored, so the repo carries no binaries and no binary
+# history. versions.env pins the version and the sha256; bin/fetch-assets.sh
+# puts the file in vendor/. Point MAINSAIL_ZIP / HELIX_TGZ at your own build
+# in config.env to override -- an explicit path is never overwritten.
+# shellcheck disable=SC1091
+[ -f "$ROOT/versions.env" ] && . "$ROOT/versions.env"
+MAINSAIL_ZIP="${MAINSAIL_ZIP:-$ROOT/vendor/mainsail-${MAINSAIL_VERSION:-unpinned}.zip}"
+HELIX_TGZ="${HELIX_TGZ:-$ROOT/vendor/${HELIX_FILE:-helixscreen.tar.gz}}"
+export MAINSAIL_ZIP HELIX_TGZ
 
 # Replica-only settings: the factory image and the partition sizes. They exist
 # for the tests and never reach a printer, so they live in their own file --

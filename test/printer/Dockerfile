@@ -14,6 +14,8 @@ RUN apt-get update -qq \
         xz-utils \
         openssl \
         ca-certificates \
+        dosfstools \
+        mount \
  && rm -rf /var/lib/apt/lists/*
 
 COPY . /opt/printer/

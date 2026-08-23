@@ -1,7 +1,7 @@
 work/
 config.env
 test.env
-assets/mainsail.zip
+vendor/
 assets/mips/
 build-tmp/
 dist/

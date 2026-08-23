@@ -5,6 +5,14 @@
 # Runs on the printer's own userland. /mnt/mod.tgz and /mnt/stock.tgz are the
 # two packages; both are unpacked with the printer's unTar, exactly as
 # app_startup.sh would.
+#
+# Unlike case-install.sh this calls the installer directly rather than booting
+# through app_startup.sh. That is deliberate: what is under test here is what
+# a stock package RESTORES, not how a package is discovered -- and discovery
+# is already proven end-to-end next door. Driving two different packages
+# through one boot script would mean swapping the contents of the stick
+# between boots and relying on `ls -1t` ordering to pick the right one, which
+# is a coin flip dressed up as a test.
 FAIL=0
 ok()  { echo "  PASS  $*"; }
 bad() { echo "  FAIL  $*"; FAIL=1; }
