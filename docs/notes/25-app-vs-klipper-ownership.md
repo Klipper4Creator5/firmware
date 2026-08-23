@@ -55,9 +55,9 @@ Missing: a START_PRINT gate refusing when a requested tool is not docked (`_FF_R
 No ML runtime linked (no ncnn/tflite/onnx; OpenCV only for capture), no upload endpoint, no
 MQTT verdict topic. The feature is one boolean `aiCheck` in general.json that boots to `false`
 (`MainWindow.c:275`); `SettingInfo::doAiDetected()` hard-writes 0. `E0164` is a dead string.
-→ nothing to port; Obico off-box (host is MIPS X2000, 128–256 MB, no NPU). Note the `[webcam]`
-entry this used to suggest is not available: the `:8080` stream is firmwareExe's own, see
-"What is lost with firmwareExe" below.
+→ nothing to port; Obico off-box (host is MIPS X2000, 128–256 MB, no NPU) with a `[webcam]`
+entry in moonraker.conf -- see "What is lost with firmwareExe" below for how the stream is
+served now.
 
 ## Corrections to earlier notes
 - The "station" used for nozzle offsets is **not** the eddy probe. `[e_stop X|Y|Z]` all sit on
@@ -81,16 +81,32 @@ against it stop working the moment the mod is installed. Moonraker's API replace
 (`/server/files/upload`, `/printer/print/start`); tool-to-slot mapping stops being a request
 field and becomes the slicer's job, baked into the gcode.
 
-### The camera stream on :8080 -- gone, and not restorable by restarting anything
-This one is easy to get wrong, because the URL looks like mjpg-streamer:
-`http://<ip>:8080/?action=stream`, `multipart/x-mixed-replace;boundary=boundarydonotcross`.
-It is not. `strings firmwareExe` shows that request line, that boundary, `:8080`, and the
-binary's own accept/bind/pthread_create error strings alongside `cameraOpen` and
-`/usr/data/firmwareRes/camera/*` -- the MJPEG server is compiled into the app, over its OpenCV
-capture. There is no mjpg-streamer process on the box to keep alive.
+### The camera stream on :8080 -- lost with the app, but restored from the disk
+Easy to get wrong in both directions, so both halves matter.
 
-So unlike WiFi -- where firmwareExe merely *drove* stock binaries and `S50wifi` could take over
-the same wpa_supplicant -- there is nothing here to take over. Restoring the camera means
-shipping a streamer built for MIPS (ustreamer or mjpg-streamer) in the payload and starting it
-from an init script, then adding the `[webcam]` block that `assets/moonraker.conf` keeps
-commented out. Until then the printer has no camera and Mainsail correctly shows none.
+On stock, the stream *is* firmwareExe's: `strings firmwareExe` shows `GET /?action=stream`,
+`multipart/x-mixed-replace;boundary=boundarydonotcross`, `:8080`, its own accept/bind/
+pthread_create error strings, `cameraOpen` and `/usr/data/firmwareRes/camera/*` -- an HTTP
+server compiled into the app over its OpenCV capture, right down to announcing
+`Server: MJPG-Streamer/0.2`. Kill firmwareExe and that server goes with it.
+
+But the real thing is also on the box and merely unused. `/usr/prog/mjpg-streamer/` holds
+`mjpg_streamer`, `input_uvc.so`, `output_http.so`, its own `libjpeg.so.9` and a `www/` dir, and
+`app_startup.sh:159` exports `LD_LIBRARY_PATH=/usr/prog/mjpg-streamer` for it -- and then never
+launches it. So nothing has to be cross-compiled or shipped: start FlashForge's own binary.
+
+`payload/init.d/S65camera` does exactly that, on the S50wifi pattern (the wait for `/dev/video0`
+and the respawn loop are backgrounded so a printer with no camera never delays the boot):
+
+```sh
+export LD_LIBRARY_PATH=/usr/prog/mjpg-streamer:$LD_LIBRARY_PATH
+cd /usr/prog/mjpg-streamer
+./mjpg_streamer -i "input_uvc.so -d /dev/video0 -r 1280x720 -f 30" \
+                -o "output_http.so -p 8080 -w www"
+```
+
+Two details that bite: `libjpeg.so.9` lives in that directory, so without the LD_LIBRARY_PATH the
+binary dies on a missing shared object (the same failure moonrakerDaemon has in S60web); and the
+plugin `.so` names resolve against the working directory, hence the `cd`. nginx proxies it at
+`/webcam/` and `assets/moonraker.conf` carries the matching `[webcam]` entry with relative URLs,
+so one forwarded port is enough.

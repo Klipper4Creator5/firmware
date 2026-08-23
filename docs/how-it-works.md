@@ -39,7 +39,9 @@ Services are ordinary init.d-style scripts in `/usr/data/anvil/init.d/`, run in
 filename order and individually restartable over ssh:
 
 ```
+S50wifi      wlan0 + wpa_supplicant + udhcpc
 S60web       nginx (Mainsail) + moonraker
+S65camera    mjpg-streamer on :8080 (nginx proxies it at /webcam/)
 S70klipper   Klipper
 S80ui        decides whether the UI runs; owns SAFE-MODE
 ```

@@ -30,18 +30,19 @@ as it was.
 
 ### What you give up
 
-That one file is FlashForge's whole application, and two things people use
-live inside it rather than in some separate service. Both stop working:
+That one file is FlashForge's whole application, so anything that lived inside
+it rather than in a separate service goes with it:
 
-* **The camera.** The stream on `:8080` is served by the app itself, not by a
-  camera daemon, so it goes when the app does. Mainsail shows no webcam.
-  Restoring it needs a streamer built for this board — not done yet.
 * **The FlashForge network API on `:8898`**, and with it FlashPrint, Orca's
   FlashForge profile and the mobile app. Moonraker's API takes over, which is
   what Mainsail, OrcaSlicer's Klipper/Moonraker upload and Fluidd speak.
   Slice for the toolchanger and send it there instead.
 
-Flashing the stock package brings both back.
+The camera is **not** on that list, though the app did serve it: mjpg-streamer
+is already on the printer, unused, and this firmware simply starts it. The
+stream shows up in Mainsail as usual.
+
+Flashing the stock package brings the API back.
 
 ---
 
@@ -73,18 +74,20 @@ Not sure which you have? On the printer: **Settings → About**.
 Afterwards, `http://<printer-ip>/` gets you Mainsail. The install log is on
 the printer at `/usr/data/anvil-install.log`.
 
-### Flash the probe first
+### Before you do
 
-There are two files per model, and they are not a menu — flash them in order:
+One file per model, one flash — but do two things first, because they are the
+cheap version of every problem people hit:
 
-| Stage | What it changes | Why |
-|---|---|---|
-| **probe** | **nothing at all** | Proves the whole update chain works on *your* machine, and writes a report back onto the USB stick. Costs you five minutes and rules out a bad stick, the wrong model or a truncated download. |
-| **firmware** | everything: Mainsail, ssh, toolchanger Klipper, HelixScreen | The actual firmware. Flash it once the probe has come back clean. |
+* **Check the model.** A `Creator5Pro-` package will not install on a Creator 5
+  and vice versa; the printer refuses it outright, which is annoying rather
+  than dangerous, but it is the most common reason a flash "does nothing".
+* **Put the stock FlashForge package for your model on a second stick**, and
+  keep it separate. That stick is the undo button — see below.
 
-The go/no-go checks — what to look at after each flash, and what means stop —
-are in **[docs/hardware-testing.md](docs/hardware-testing.md)**. Read it before
-the first flash.
+The go/no-go checks — what to look at after the flash, in what order, and what
+means stop — are in **[docs/hardware-testing.md](docs/hardware-testing.md)**.
+Read it before the first flash.
 
 ---
 
@@ -123,8 +126,7 @@ machine's own boot script finds it, installs it, and boots again with the mod
 running. That replica is the printer's real filesystem running its real
 binaries. It is still not a machine.
 
-Flash the probe first, and have the stock package on a spare stick before you
-begin.
+Have the stock package for your model on a spare stick before you begin.
 
 ---
 

@@ -1,0 +1,104 @@
+#!/bin/sh
+# Camera -- mjpg-streamer on :8080.
+#
+# WHY THIS EXISTS -- the same trap as WiFi. /usr/prog/mjpg-streamer ships on
+# stock firmware (mjpg_streamer, input_uvc.so, output_http.so, its own
+# libjpeg.so.9 and a www/ dir), and app_startup.sh only ever exports
+# LD_LIBRARY_PATH for it -- it never launches it. firmwareExe did, and in fact
+# served the stream from its own OpenCV capture, labelling itself
+# "Server: MJPG-Streamer/0.2". So the moment the mod replaces firmwareExe the
+# camera goes dark, with a perfectly good streamer sitting unused on the disk.
+#
+# Nothing has to be built or shipped for this: we start the binary FlashForge
+# already put there. Mainsail then finds it through the [webcam] entry in
+# moonraker.conf, which points at nginx's /webcam/ proxy rather than :8080
+# directly, so a tunnel that forwards one port still shows the stream.
+#
+# LD_LIBRARY_PATH matters: libjpeg.so.9 lives in the mjpg-streamer directory
+# itself, so without it the binary dies on a missing shared object -- the same
+# failure moonrakerDaemon has in S60web. The plugin names are resolved relative
+# to the working directory, hence the cd.
+#
+# LIKE S50wifi, IT MUST NOT MAKE THE BOOT WAIT. The USB camera can take a few
+# seconds to enumerate, and a printer with no camera plugged in would otherwise
+# hold up Klipper and the UI for the full timeout. The wait and the respawn
+# loop live in a background subshell; start() returns at once.
+MODDIR=/usr/data/anvil
+[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
+
+CAMDIR=/usr/prog/mjpg-streamer
+VIDEO=/dev/video0
+PIDFILE=$MODDIR/mjpg.pid
+LOG=/usr/data/logs/mjpg.log
+RES="${MOD_CAM_RES:-1280x720}"
+FPS="${MOD_CAM_FPS:-30}"
+PORT="${MOD_CAM_PORT:-8080}"
+
+streamer_running() {
+    ps 2>/dev/null | grep mjpg_streamer | grep -v grep >/dev/null 2>&1
+}
+
+# The part that waits. Detached from the boot sequence, so nothing reads its
+# exit code -- it reports through the boot log only.
+supervise() {
+    i=0
+    while [ ! -e "$VIDEO" ] && [ $i -lt 30 ]; do
+        sleep 1
+        i=$((i + 1))
+    done
+    if [ ! -e "$VIDEO" ]; then
+        echo "camera: $VIDEO never appeared -- no camera plugged in?"
+        return 1
+    fi
+
+    mkdir -p /usr/data/logs
+    export LD_LIBRARY_PATH=$CAMDIR:$LD_LIBRARY_PATH
+    cd "$CAMDIR" || return 1
+
+    # Respawn: a USB camera that is unplugged and replugged takes the streamer
+    # down with it, and there is no other supervisor on this box.
+    while true; do
+        ./mjpg_streamer \
+            -i "input_uvc.so -d $VIDEO -r $RES -f $FPS" \
+            -o "output_http.so -p $PORT -w www" \
+            >>"$LOG" 2>&1
+        sleep 3
+    done
+}
+
+start() {
+    if [ "${MOD_CAM:-1}" != "1" ]; then
+        echo "camera: disabled by MOD_CAM"
+        return 0
+    fi
+    [ -x "$CAMDIR/mjpg_streamer" ] || { echo "camera: no $CAMDIR/mjpg_streamer"; return 1; }
+    if streamer_running; then
+        echo "camera: mjpg_streamer already running"
+        return 0
+    fi
+
+    supervise &
+    echo $! > "$PIDFILE"
+    echo "camera: waiting for $VIDEO in the background (:$PORT, $RES @ ${FPS}fps)"
+    return 0
+}
+
+stop() {
+    # The supervisor first: kill only the streamer and it is restarted in 3s.
+    [ -f "$PIDFILE" ] && kill `cat "$PIDFILE"` 2>/dev/null
+    rm -f "$PIDFILE"
+    killall mjpg_streamer 2>/dev/null
+    echo "camera: stopped"
+}
+
+case "$1" in
+    start|'') start ;;
+    stop)     stop ;;
+    restart)  stop; sleep 2; start ;;
+    status)
+        streamer_running && echo "camera: mjpg_streamer running on :$PORT" \
+                         || echo "camera: not running"
+        [ -e "$VIDEO" ] && echo "camera: $VIDEO present" || echo "camera: no $VIDEO"
+        ;;
+    *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
