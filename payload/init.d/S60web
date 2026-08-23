@@ -19,6 +19,16 @@ start() {
         echo "nginx: not available"
     fi
     if [ -x /usr/prog/klipper/moonrakerDaemon ]; then
+        # moonrakerDaemon just execs /usr/prog/Python-3.8.2/bin/python3 and
+        # sets NO library path of its own. On stock it is only ever called
+        # from klipper/start.sh, which exports these first -- so calling it
+        # from here without them means python3 dies on
+        # "libpython3.8.so.1.0: cannot open shared object file", moonraker
+        # never listens on 7125, and every UI reports a connection timeout.
+        export PATH=$PATH:/usr/prog/Python-3.8.2/bin
+        export LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:$LD_LIBRARY_PATH
+        export LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
+        export LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
         /usr/prog/klipper/moonrakerDaemon start && echo "moonraker: started"
     fi
 }

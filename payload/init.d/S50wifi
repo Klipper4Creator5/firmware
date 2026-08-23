@@ -105,6 +105,7 @@ start() {
 }
 
 stop() {
+    killall wpa_cli 2>/dev/null
     killall udhcpc 2>/dev/null
     killall wpa_supplicant 2>/dev/null
     echo "wifi: stopped"

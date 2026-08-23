@@ -105,6 +105,7 @@ scp payload/klipper/config/ff-*.cfg \
 [include ff-tool-offset.cfg]
 [include ff-filament.cfg]
 [include ff-print-macros.cfg]  ; after ff-filament.cfg (the nozzle clean uses it)
+[include ff-orca-compat.cfg]   ; after the two above — lets the STOCK slicer start G-code run
 [include ff-runout.cfg]        ; after printer.base.cfg (overrides its sensor sections)
 [include ff-legacy.cfg]        ; temporary — only for step 5
 ```
@@ -317,9 +318,22 @@ same material. Untested on hardware: whether the motion sensors
 
 ## OrcaSlicer setup
 
+**Keep FlashForge's stock start G-code.** `ff-orca-compat.cfg` (in the include
+list above) makes it work unmodified, so an existing profile needs no editing
+and files sliced with it print correctly. The two things the stock block
+assumes — an already-homed machine and an already-applied print Z offset —
+are supplied around it: homing and the bed mesh move to `SDCARD_PRINT_FILE`,
+which runs before the file's first line, and the Z offset is applied on the
+`M109` that precedes the prime line.
+
+`M191 S0` in that block is accepted and ignored, with a note in the console.
+It is not a command in this fork — the touchscreen app intercepted it, and the
+printer has no controllable chamber heater — so a stock file used to abort on
+it.
+
 In the printer profile:
 
-* **Machine start G-code**: contents of
+* **Machine start G-code**: FlashForge's stock block, or equivalently
   [`assets/orca/machine-start-gcode.txt`](../assets/orca/machine-start-gcode.txt)
 * **Machine end G-code**: contents of
   [`assets/orca/machine-end-gcode.txt`](../assets/orca/machine-end-gcode.txt)
@@ -332,11 +346,32 @@ Or skip the copy-pasting: open
 [`assets/orca/creator-mainsail.3mf`](../assets/orca/creator-mainsail.3mf) in OrcaSlicer —
 an example project with the "Mainsail - Flashforge Creator 5 Pro 0.4
 nozzle" printer profile already carrying all three G-code blocks above
-(its start G-code predates `TOOLS=`/`TEMPS=` — paste the current
-`machine-start-gcode.txt` over it to get the presence gate and nozzle clean).
+(its start G-code is the older explicit form; either leave it or paste the
+stock block over it).
 
-Re-slice anything sliced with older start G-code — old files won't call
-`TOOLCHANGE_SET_PRINT_OFFSET` and will print ~3.2 mm low.
+### Layer height
+
+The one value the stock block never states. `TOOLCHANGE_SET_PRINT_OFFSET` uses
+it only as a threshold — it subtracts 0.06 mm when the layer is at or below
+0.10 mm, and nothing at all above that — so at 0.12, 0.15, 0.2 or 0.25 the
+assumed default costs nothing. **If you print at 0.10 mm or below**, either set
+the default once:
+
+```gcode
+SET_GCODE_VARIABLE MACRO=_FF_AUTOSTART VARIABLE=default_layer VALUE=0.08
+```
+
+(add it to a `[delayed_gcode]` if you want it to survive a restart) or use the
+explicit start G-code below, which passes the real `[layer_height]`.
+
+### Explicit start G-code (optional)
+
+[`assets/orca/machine-start-gcode-explicit.txt`](../assets/orca/machine-start-gcode-explicit.txt)
+calls `START_PRINT` directly. Worth it for the tool-presence gate, the
+pre-print nozzle clean, a real layer height, or bed levelling. It works
+whether or not `ff-orca-compat.cfg` is included — `START_PRINT` applies the
+offset itself and the compat `M109` hook stands down, so nothing happens
+twice.
 
 `START_PRINT` options: `TOOLS=0,2` every tool the file uses (Orca:
 `is_extruder_used[n]`, as in the snippet) — presence gate and pre-print

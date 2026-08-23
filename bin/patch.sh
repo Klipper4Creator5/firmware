@@ -77,8 +77,22 @@ if [ "${BUILD_KLIPPER:-fork}" = "fork" ] && [ -d "${KLIPPER_FORK:-}/klippy" ]; t
         # then dies at connect, because cffi resolves symbols lazily. Check
         # the symbols too, here, where it is still a build failure.
         if ! python3 test/test-chelper.py "$KLIPPER_FORK"; then
-            echo "   !! c_helper.so does not match klippy -- rebuild it" >&2
-            exit 1
+            # Deliberate escape hatch, off by default. The prebuilt .so comes
+            # from FlashForge's own firmware, so it goes stale the moment the
+            # klippy tree picks up an upstream commit that adds a chelper
+            # function -- and rebuilding it needs the Ingenic glibc toolchain,
+            # which is not always to hand. ALLOW_STALE_CHELPER=1 ships it
+            # anyway, for a test build where the missing symbol is known not
+            # to be reached. It is not a fix: klippy still dies at connect the
+            # moment something calls the absent function.
+            if [ "${ALLOW_STALE_CHELPER:-0}" = "1" ]; then
+                say "Klipper: SHIPPING A STALE c_helper.so (ALLOW_STALE_CHELPER=1)"
+                say "         klippy will fail at connect if it calls the missing symbol"
+            else
+                echo "   !! c_helper.so does not match klippy -- rebuild it" >&2
+                echo "      (ALLOW_STALE_CHELPER=1 builds anyway, at your own risk)" >&2
+                exit 1
+            fi
         fi
         if readelf -h "$CH" 2>/dev/null | grep -q nan2008; then
             say "Klipper: c_helper.so is nan2008 MIPS32r2 -- good"
@@ -206,6 +220,7 @@ chmod +x "$SW/firmwareExe"
 
 # ------------------------------------------------------ 9. mod service dir
 mkdir -p "$MP/init.d"
+[ -d payload/bin ] && cp -f payload/bin/* "$MP/bin/" && chmod +x "$MP/bin"/*
 cp -f payload/init.d/S* "$MP/init.d/"
 chmod +x "$MP/init.d"/S*
 sed -e "s/^MOD_UI=.*/MOD_UI=${MOD_UI:-stock}/" \

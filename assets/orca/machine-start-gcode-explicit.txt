@@ -1,0 +1,27 @@
+; Explicit variant: this block drives everything through START_PRINT.
+;
+; Use it when you want the tool-presence gate, the pre-print nozzle clean, the
+; real layer height (matters at <= 0.10 mm) or bed levelling. It needs no
+; ff-orca-compat.cfg, and works with it included too -- START_PRINT sets the
+; offset itself and the compat M109 hook stands down.
+;
+; For a profile you would rather not touch at all, use machine-start-gcode.txt,
+; which is FlashForge's stock block unmodified.
+;start_gcode
+M106 P101 S0 ; L+R_PLA_Turbo_Fan_0-255
+M106 P2 S0 ; Center_Fresch_Air_Input_Fan_for_PLA30%_(80_0-255)
+;M191 S0 -- chamber temp: NOT a klipper command in this fork (the app intercepts M191); harmless but noisy, left commented
+M106 S0 ; Model_Fan_(Heat_Break_Cooler_80-255)100%=255
+M106 P3 S0 ; Filter_Unit_Fan_0-255(ABS=255)
+M104 S[nozzle_temperature_initial_layer] T[initial_extruder] ; preheat in parallel (the clean re-sets it)
+; TOOLS = every extruder the file uses (presence gate + pre-print nozzle clean),
+; TEMPS = each tool's first-layer temperature, indexed by tool (0 = unused).
+START_PRINT BED=[bed_temperature_initial_layer_single] TOOL=[initial_extruder] NOZZLE=[nozzle_temperature_initial_layer] LAYER=[layer_height] LEVEL=0 TOOLS={if is_extruder_used[0]}0,{endif}{if is_extruder_used[1]}1,{endif}{if is_extruder_used[2]}2,{endif}{if is_extruder_used[3]}3{endif} TEMPS={if is_extruder_used[0]}{nozzle_temperature_initial_layer[0]}{else}0{endif},{if is_extruder_used[1]}{nozzle_temperature_initial_layer[1]}{else}0{endif},{if is_extruder_used[2]}{nozzle_temperature_initial_layer[2]}{else}0{endif},{if is_extruder_used[3]}{nozzle_temperature_initial_layer[3]}{else}0{endif} CLEAN=1
+G90
+M83
+M109 S[nozzle_temperature_initial_layer] T[initial_extruder]
+G1 Z5 F2400
+G1 X256 Y0 Z0.2 F6000
+G1 E5 F{filament_max_volumetric_speed[initial_no_support_extruder]/2.4053*60}
+G1 X216 E10 F{filament_max_volumetric_speed[initial_no_support_extruder]/2.4053*60}
+;start_gcode end

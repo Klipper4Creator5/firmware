@@ -45,7 +45,7 @@ ASSET_ROOT ?= $(firstword $(wildcard /mnt/c /Users /home))
 DOCKER_BASE = $(DOCKER) run --rm -i \
           -v "$(CURDIR)":"$(CURDIR)" -w "$(CURDIR)" \
           $(if $(ASSET_ROOT),-v "$(ASSET_ROOT)":"$(ASSET_ROOT)",) \
-          -e PROFILE -e MODEL -e TARGET_MACHINE -e CONFIG_ENV
+          -e PROFILE -e MODEL -e TARGET_MACHINE -e CONFIG_ENV -e ALLOW_STALE_CHELPER
 
 ifeq ($(LOCAL),)
   RUN    = $(DOCKER_BASE) $(IMAGE)
@@ -65,7 +65,7 @@ endif
 .PHONY: help image shell build vendor probe default all-profiles \
         rootfs verify test test-lint test-install test-applets \
         printer-image printer-image-push \
-        test-recovery test-ui test-ash test-abi test-chelper test-model release clean distclean
+        test-recovery test-ui test-ash test-abi test-chelper test-macros test-model release clean distclean
 
 help:
 	@echo 'creator5-custom-firmware -- everything runs in Docker'
@@ -94,6 +94,7 @@ help:
 	@echo '  make test-ash         parse the payload with the printer own busybox'
 	@echo '  make test-abi         MIPS ELF ABI checks'
 	@echo '  make test-chelper     c_helper.so exports everything klippy declares'
+	@echo '  make test-macros      the ff-*.cfg gcode macros parse as Jinja'
 	@echo
 	@echo 'test-install, test-recovery, test-ui and test-ash run inside a replica'
 	@echo 'of the printer: the real rootfs.squashfs under qemu-mipsel, with'
@@ -213,6 +214,9 @@ test-abi: image
 
 test-chelper: image
 	@$(RUN) python3 ./test/test-chelper.py
+
+test-macros: image
+	@$(RUN) python3 ./test/test-macros.py
 
 test-applets: image
 	@$(RUN) python3 ./test/test-applets.py
