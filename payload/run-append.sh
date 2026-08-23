@@ -49,30 +49,43 @@ else
 fi
 sync
 
-# ---- the real UI binary, kept beside our wrapper -------------------------
-# The stock run.sh copied our wrapper to firmwareExe; put the genuine binary
-# next to it so the wrapper (and SAFE-MODE) can always fall back to it.
-if [ -f "$WORK_DIR/firmwareExe.stock" ]; then
-    cp -f "$WORK_DIR/firmwareExe.stock" /usr/prog/PROGRAM/software/firmwareExe.stock
-    chmod +x /usr/prog/PROGRAM/software/firmwareExe.stock
-    echo "installed firmwareExe.stock (fallback UI)"
-fi
-sync
-
-# ---- klipper configs -------------------------------------------------------
-# Install only what is missing: never clobber a printer.cfg the user tuned.
-# Anything that already exists lands as <name>.mod-new for manual merging.
+# ---- klipper + moonraker configs -------------------------------------------
+# Every file here is one the mod ships (ff-*.cfg, moonraker.conf); printer.cfg
+# is the user's and is never shipped, so it is never a candidate.
+#
+# Install what is missing. For what already exists the question is whether the
+# user edited it: a file still byte-identical to the one the LAST package wrote
+# is ours to update, and one that differs is theirs to keep. $MODDIR/config-installed
+# holds that last-written copy -- it is not in the rm -rf above, so it survives
+# the payload swap and is refreshed only after the comparison below.
+#
+# Without this, a config we own could only ever be written once: it exists on
+# the second flash, so it would land as .mod-new forever and updates would
+# silently never reach the printer.
+#
+# First install after this rule arrives has no config-installed, so an existing
+# file is treated as edited -- .mod-new, the conservative answer.
 if [ -d $MODDIR/config ]; then
     mkdir -p /usr/data/config
     for f in $MODDIR/config/*; do
         [ -f "$f" ] || continue
         b=`basename "$f"`
-        if [ -f "/usr/data/config/$b" ]; then
-            cp -f "$f" "/usr/data/config/$b.mod-new"
+        live="/usr/data/config/$b"
+        prev="$MODDIR/config-installed/$b"
+        if [ ! -f "$live" ]; then
+            cp -f "$f" "$live"
+        elif [ -f "$prev" ] && [ "`md5sum < "$live"`" = "`md5sum < "$prev"`" ]; then
+            cp -f "$f" "$live"
+            echo "config: $b updated (was unmodified)"
         else
-            cp -f "$f" /usr/data/config/
+            cp -f "$f" "$live.mod-new"
+            echo "config: $b kept -- new version left as $b.mod-new"
         fi
     done
+    # Snapshot what we just shipped, for the NEXT update to compare against.
+    rm -rf $MODDIR/config-installed
+    mkdir -p $MODDIR/config-installed
+    cp -f $MODDIR/config/* $MODDIR/config-installed/ 2>/dev/null
 fi
 sync
 

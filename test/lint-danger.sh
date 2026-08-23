@@ -56,11 +56,11 @@ done <<< "$FILES"
 # their absence is itself a failure.
 UIW=payload/firmwareExe
 if [ ! -f "$UIW" ]; then
-    bad "payload/firmwareExe" "missing -- nothing replaces the stock UI binary"
+    bad "payload/firmwareExe" "missing -- nothing replaces FlashForge's UI binary"
 else
-    grep -q 'firmwareExe.stock' "$UIW" \
-        && ok "firmwareExe falls back to the stock UI" \
-        || bad "$UIW" "no stock-UI fallback -- a missing HelixScreen means a blank screen"
+    grep -q 'helix' "$UIW" \
+        && ok "firmwareExe launches HelixScreen" \
+        || bad "$UIW" "never mentions HelixScreen -- nothing would drive the screen"
     grep -qE '^[[:space:]]*set -e' "$UIW" \
         && warn "$UIW" "an early exit here can leave the printer with no UI" \
         || ok "$UIW has no bare 'set -e'"

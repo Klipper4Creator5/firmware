@@ -3,7 +3,7 @@
 Source of truth for the sequence: [`46-offset-calibration-recovered.md`](46-offset-calibration-recovered.md),
 recovered 2026-08-21 from MIPS machine code with a custom disassembler (annotated `.asm` listing not in repo).
 
-Design decision (2026-08-21): firmwareExe's JSON is no longer a runtime source. The stock UI
+Design decision (2026-08-21): firmwareExe's JSON is no longer a runtime source. FlashForge's UI
 cannot use Klipper-side results anyway and HelixScreen is the target, so calibration is stored
 the way Klipper's own calibrators store theirs — `configfile.set()` + `SAVE_CONFIG` — in
 per-tool sections, modelled on `[bed_mesh <profile>]` / klipper-toolchanger's `[tool Tn]`.

@@ -22,9 +22,9 @@ export LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
 
-# Idempotence guard: firmwareExe runs this script, and so does
-# init.d/S70klipper when the stock UI is not present. Running it twice would
-# start a second klippy against the same MCU.
+# Idempotence guard: init.d/S70klipper runs this script, and so does its own
+# retry loop. Running it twice would start a second klippy against the same
+# MCU.
 if [ -S /tmp/uds ]; then
     echo "start.sh: klippy already running, nothing to do"
     exit 0

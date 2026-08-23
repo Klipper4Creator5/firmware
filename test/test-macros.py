@@ -59,7 +59,10 @@ def sections(path):
 
 def main():
     env = jinja2.Environment()
-    files = sorted(glob.glob(os.path.join(CFGDIR, "ff-*.cfg")))
+    # <file>.creator5 / <file>.creator5pro are installed under their real
+    # name by bin/patch.sh, so they are Klipper config too and must parse.
+    files = sorted(glob.glob(os.path.join(CFGDIR, "ff-*.cfg"))
+                   + glob.glob(os.path.join(CFGDIR, "ff-*.cfg.*")))
     if not files:
         print("  SKIP: no ff-*.cfg in %s" % CFGDIR)
         return 0

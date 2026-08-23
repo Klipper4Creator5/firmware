@@ -131,12 +131,9 @@ if head -c 2 "$FE" 2>/dev/null | grep -q '#!'; then
     WRAPPER=1
     sh -n "$FE" 2>/dev/null && ok "firmwareExe wrapper parses under the printer's busybox" \
                             || { bad "BRICK: wrapper syntax error"; sh -n "$FE" 2>&1 | sed 's/^/        /'; }
-    [ -s "$SW/firmwareExe.stock" ] \
-        && ok "stock UI binary preserved as firmwareExe.stock" \
-        || bad "BRICK: wrapper installed but the stock UI binary is gone"
-    head -c 4 "$SW/firmwareExe.stock" 2>/dev/null | grep -q 'ELF' \
-        && ok "firmwareExe.stock is a real ELF binary" \
-        || bad "firmwareExe.stock is not an ELF -- the UI could not be restored"
+    grep -q 'helix' "$FE" \
+        && ok "the wrapper launches HelixScreen" \
+        || bad "BRICK: wrapper installed but it starts no UI at all"
 elif head -c 4 "$FE" | grep -q 'ELF'; then
     ok "stock firmwareExe binary in place (no UI replacement in this profile)"
 fi
@@ -206,7 +203,7 @@ fi
 echo
 echo "  -- boot 2: the stick was left in the slot --"
 cp -a $APP /tmp/app_startup.after1
-[ "$WRAPPER" = 1 ] && cp -a "$SW/firmwareExe.stock" /tmp/stock-ui.after1
+[ "$WRAPPER" = 1 ] && cp -a "$FE" /tmp/firmwareExe.after1
 
 boot /tmp/boot2.log 900 || bad "boot 2 never settled"
 case "$BOOT_RESULT" in
@@ -218,12 +215,12 @@ cmp -s /tmp/app_startup.after1 $APP && ok "re-install is idempotent (app_startup
 [ -s "$FE" ] && ok "firmwareExe still present after re-install" \
              || bad "BRICK: re-install left no firmwareExe"
 if [ "$WRAPPER" = 1 ]; then
-    head -c 4 "$SW/firmwareExe.stock" 2>/dev/null | grep -q 'ELF' \
-        && ok "firmwareExe.stock is still the stock UI, not the wrapper" \
-        || bad "BRICK: firmwareExe.stock is now the wrapper -- stock UI lost forever"
-    cmp -s /tmp/stock-ui.after1 "$SW/firmwareExe.stock" \
-        && ok "the preserved stock UI is byte-identical after the second install" \
-        || bad "BRICK: the second install overwrote firmwareExe.stock"
+    head -c 2 "$FE" 2>/dev/null | grep -q '#!' \
+        && ok "firmwareExe is still the wrapper after the re-install" \
+        || bad "BRICK: the second install left something else at firmwareExe"
+    cmp -s /tmp/firmwareExe.after1 "$FE" \
+        && ok "the installed wrapper is byte-identical after the second install" \
+        || bad "re-install changed firmwareExe"
 fi
 
 # ================================================================== boot 3 ==

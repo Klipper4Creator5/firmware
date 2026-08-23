@@ -19,9 +19,9 @@
 # Install: copy ff_tool.py and ff_toolchange.py to
 # /usr/prog/klipper/klippy/extras/, then see config/ff-toolchange.cfg.
 #
-# Klipper calls Tn only for lines that reach the gcode engine; a bare "Tn" in a
-# printing file is still swallowed by the FlashForge virtual_sdcard fork, so
-# touchscreen jobs are unaffected.
+# Klipper calls Tn only for lines that reach the gcode engine. We ship upstream
+# virtual_sdcard, which passes tool lines straight through, so a bare "Tn" from
+# any slicer lands here -- no marker comment needed.
 
 import contextlib
 import logging
@@ -916,9 +916,12 @@ class FFToolchange:
                           % self._extruder_name(tool))
                 self._apply_tool_diff_offsets(tool)
                 self._arm_runout(tool)
-            # Keep the fork's channel state coherent: bare M104/M109 get
-            # " T<channel>" appended and SET_PRESSURE_ADVANCE is rewritten to
-            # pa_value_t<channel> (virtual_sdcard.py:543 / :479).
+            # FIXME: SDCARD_SET_CHANNEL exists only in FlashForge's
+            # virtual_sdcard fork, where it kept the channel state coherent
+            # (bare M104/M109 got " T<channel>" appended, SET_PRESSURE_ADVANCE
+            # was rewritten to pa_value_t<channel>). We ship upstream
+            # virtual_sdcard, which has no such command and no such rewriting,
+            # so this is an unknown command on the shipped Klipper.
             self._run('SDCARD_SET_CHANNEL CHANNEL=%d' % tool)
         except FFToolchangeError as e:
             raise gcmd.error(str(e))

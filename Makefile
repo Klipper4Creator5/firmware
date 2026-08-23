@@ -65,7 +65,7 @@ endif
 .PHONY: help image shell build vendor probe default all-profiles \
         rootfs verify test test-lint test-install test-applets \
         printer-image printer-image-push \
-        test-recovery test-ui test-mcu test-ash test-abi test-chelper test-macros test-model release clean distclean
+        test-recovery test-ui test-mcu test-ash test-abi test-chelper test-macros test-chamber test-model release clean distclean
 
 help:
 	@echo 'creator5-custom-firmware -- everything runs in Docker'
@@ -88,7 +88,7 @@ help:
 	@echo '  make test-lint        brick-risk lint'
 	@echo '  make test-install     end-to-end: USB stick -> update -> reboot'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
-	@echo '  make test-ui          UI selection, crash fallback, SAFE-MODE'
+	@echo '  make test-ui          UI startup, crash protection, SAFE-MODE'
 	@echo '  make test-mcu         ff-mcu-bringup.py runs on the printer own python'
 	@echo '  make test-model       both models gated + firmware correct'
 	@echo '  make test-applets     every command the payload uses exists on the printer'
@@ -96,6 +96,7 @@ help:
 	@echo '  make test-abi         MIPS ELF ABI checks'
 	@echo '  make test-chelper     c_helper.so exports everything klippy declares'
 	@echo '  make test-macros      the ff-*.cfg gcode macros parse as Jinja'
+	@echo '  make test-chamber     the chamber heater is off on the Creator 5'
 	@echo
 	@echo 'test-install, test-recovery, test-ui, test-mcu and test-ash run inside'
 	@echo 'a replica of the printer: the real rootfs.squashfs under qemu-mipsel, with'
@@ -218,6 +219,9 @@ test-chelper: image
 
 test-macros: image
 	@$(RUN) python3 ./test/test-macros.py
+
+test-chamber: image
+	@$(RUN) python3 ./test/test-chamber.py
 
 test-applets: image
 	@$(RUN) python3 ./test/test-applets.py

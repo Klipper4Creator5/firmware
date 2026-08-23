@@ -118,17 +118,19 @@ channel, so confirm it before you touch anything else.
 [docs/toolchange.md](toolchange.md). A wrong offset drives the nozzle into
 the plate.
 
-Understand the safety net first, because the stock UI is no longer driving the
-screen:
+Understand the safety net first, because FlashForge's UI is gone from the
+screen and there is nothing to fall back to:
 
-- The genuine binary is kept on disk as `firmwareExe.stock` and is the
-  fallback. Nothing is deleted.
+- ssh and Mainsail do not depend on the screen. `/etc/init.d/S50dropbear` is
+  stock and runs long before the UI, and `init.d/S60web` starts nginx and
+  moonraker independently. They are your way in when the screen is dark.
 - `init.d/S70klipper` owns Klipper startup, because on stock firmware it was
   `firmwareExe` — not any init script — that ran `/usr/prog/klipper/start.sh`.
   Without this the printer would boot to a working screen and be unable to
   move.
 - If the UI dies repeatedly, `SAFE-MODE` latches after 3 boots and the printer
-  falls back to the stock UI on its own.
+  boots **headless** — no UI started at all — rather than crash-looping. ssh
+  and Mainsail stay up. Delete `/usr/data/anvil/SAFE-MODE` to try again.
 
 **Go/no-go, in this order — with the emergency stop within reach:**
 
@@ -162,7 +164,7 @@ in the order given in the toolchanger README, then run
 ```sh
 ssh root@PRINTER
 /usr/data/anvil/init.d/S80ui status        # what did it choose, and why
-touch /usr/data/anvil/SAFE-MODE            # force the stock UI on next boot
+touch /usr/data/anvil/SAFE-MODE            # boot headless next time (ssh + Mainsail only)
 reboot
 ```
 If ssh is gone too, flash the stock FlashForge package for your model.
@@ -173,7 +175,7 @@ If ssh is gone too, flash the stock FlashForge package for your model.
 
 | Symptom | Do this |
 |---|---|
-| Printer boots, screen blank | ssh in; `touch /usr/data/anvil/SAFE-MODE`; reboot |
+| Printer boots, screen blank | ssh in; `/usr/data/anvil/init.d/S80ui status`; `touch /usr/data/anvil/SAFE-MODE`; reboot |
 | No ssh, no screen | flash the stock package for your model |
 | Recovery stick does not help | try a newer stock FlashForge package for your model |
 | Still broken | factory package (`Creator5Pro-factory-*.tgz` **plus** the separate `Creator5Pro-factory.tar.xz` on the same stick; needs 800 MB free) |

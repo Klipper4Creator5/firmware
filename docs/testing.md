@@ -38,9 +38,9 @@ make test            # everything below
 |---|---|:-:|
 | `test-lint` | Scans on-printer scripts for brick patterns: raw block-device writes, `rm -rf` of top-level paths, unguarded `rm -rf $VAR/`, missing backups, a boot chain that could end with no UI | |
 | `test-model` | Each package's filename prefix matches the gate inside, the PID matches the model, and the two models ship **different** `firmwareExe` binaries | |
-| `test-install` | **End-to-end.** The package sits on a real FAT filesystem exposed as `/dev/sda1`, and the machine's own `app_startup.sh` runs verbatim through three boots: stick in → it installs; stick still in → it installs again (idempotence); stick pulled → the machine boots with the mod running and the stock `ps`-watchdog satisfied. Asserts along the way: UI present and executable, boot scripts unmodified and still parsing, Klipper owned by a service, `c_helper.so` still nan2008 MIPS, user `printer.cfg` preserved, `firmwareExe.stock` never overwritten | ✓ |
+| `test-install` | **End-to-end.** The package sits on a real FAT filesystem exposed as `/dev/sda1`, and the machine's own `app_startup.sh` runs verbatim through three boots: stick in → it installs; stick still in → it installs again (idempotence); stick pulled → the machine boots with the mod running and the stock `ps`-watchdog satisfied. Asserts along the way: UI present and executable, boot scripts unmodified and still parsing, Klipper owned by a service, `c_helper.so` still nan2008 MIPS, user `printer.cfg` preserved, the wrapper unchanged by a re-install | ✓ |
 | `test-recovery` | Installs the mod, then flashes the **stock** package, and asserts the machine is genuinely back to stock byte-for-byte and the leftover payload is inert | ✓ |
-| `test-ui` | Drives the UI selection logic on the printer's shell: helix missing, crash-loop, SAFE-MODE latch and release, **and the no-UI-at-all case** | ✓ |
+| `test-ui` | Drives the UI decision logic on the printer's shell: HelixScreen missing, crash-loop, SAFE-MODE latch and release, and that SAFE-MODE means **headless, not a respawn loop** | ✓ |
 | `test-applets` | Every command the payload runs exists on the printer. Its busybox has no `timeout`, no `bash`, no `systemctl`; reaching for one is a blank screen at boot | ✓ |
 | `test-ash` | Parses every on-printer script with the printer's own busybox 1.31.1 ash | ✓ |
 | `test-abi` | Every shipped MIPS binary is `nan2008`/`mips32r2`/`o32` | |
@@ -80,7 +80,7 @@ say where it goes — `run-tests.sh` stamps every header with elapsed seconds:
 == brick-risk lint ==                                    [0s]
 == profile: probe / default (on the fixture) ==          [1s]
 == extracting the printer rootfs ==                     [16s]
-== applets / ash / ABI / UI fallback ==                 [18s]
+== applets / ash / ABI / UI safety ==                   [18s]
 == end-to-end update on the replica: probe ==           [28s]
 == end-to-end update on the replica: default ==        [111s]
 == recovery: a stock package reverts the mod ==        [250s]

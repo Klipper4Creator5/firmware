@@ -55,8 +55,9 @@ Missing: a START_PRINT gate refusing when a requested tool is not docked (`_FF_R
 No ML runtime linked (no ncnn/tflite/onnx; OpenCV only for capture), no upload endpoint, no
 MQTT verdict topic. The feature is one boolean `aiCheck` in general.json that boots to `false`
 (`MainWindow.c:275`); `SettingInfo::doAiDetected()` hard-writes 0. `E0164` is a dead string.
-→ nothing to port; Obico off-box (host is MIPS X2000, 128–256 MB, no NPU) with a `[webcam]`
-entry in moonraker.conf pointing at the existing mjpg-streamer `:8080`.
+→ nothing to port; Obico off-box (host is MIPS X2000, 128–256 MB, no NPU). Note the `[webcam]`
+entry this used to suggest is not available: the `:8080` stream is firmwareExe's own, see
+"What is lost with firmwareExe" below.
 
 ## Corrections to earlier notes
 - The "station" used for nozzle offsets is **not** the eddy probe. `[e_stop X|Y|Z]` all sit on
@@ -65,3 +66,31 @@ entry in moonraker.conf pointing at the existing mjpg-streamer `:8080`.
   (`testStationPosFourPointTwoCheck`). `[probe]` (`eboard:PG0`) is the carriage eddy used only
   for G28 Z / mesh. The gap `t<n>_offset_z − z_station_pos` (~3.19 mm) is still the print-start
   Z term; only its provenance was wrong.
+
+## What is lost with firmwareExe (2026-08-23)
+
+The mod replaces firmwareExe outright -- HelixScreen is the only UI and there is no fallback.
+Everything in the "app only" row of the table above therefore stops existing on the printer,
+not just stops being used. Two of them were load-bearing for users:
+
+### The HTTP REST API on :8898 -- gone
+FlashForge's AD5M-style API (`/detail`, `/gcodeList`, `/uploadGcode`, `/printGcode`, and the
+`materialMappings` multi-tool start) was served by firmwareExe. Nothing else on the box
+implements it, so FlashPrint, Orca's FlashForge profile, the mobile app and any script written
+against it stop working the moment the mod is installed. Moonraker's API replaces it
+(`/server/files/upload`, `/printer/print/start`); tool-to-slot mapping stops being a request
+field and becomes the slicer's job, baked into the gcode.
+
+### The camera stream on :8080 -- gone, and not restorable by restarting anything
+This one is easy to get wrong, because the URL looks like mjpg-streamer:
+`http://<ip>:8080/?action=stream`, `multipart/x-mixed-replace;boundary=boundarydonotcross`.
+It is not. `strings firmwareExe` shows that request line, that boundary, `:8080`, and the
+binary's own accept/bind/pthread_create error strings alongside `cameraOpen` and
+`/usr/data/firmwareRes/camera/*` -- the MJPEG server is compiled into the app, over its OpenCV
+capture. There is no mjpg-streamer process on the box to keep alive.
+
+So unlike WiFi -- where firmwareExe merely *drove* stock binaries and `S50wifi` could take over
+the same wpa_supplicant -- there is nothing here to take over. Restoring the camera means
+shipping a streamer built for MIPS (ustreamer or mjpg-streamer) in the payload and starting it
+from an init script, then adding the `[webcam]` block that `assets/moonraker.conf` keeps
+commented out. Until then the printer has no camera and Mainsail correctly shows none.

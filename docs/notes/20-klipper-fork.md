@@ -22,14 +22,19 @@ if line.startswith("T") and line in VALID_GCODE_T:
 The fork does **no motion at all** — it raises `doingChangeEx`/`refuelling` and waits
 for firmwareExe to perform the physical change and send `SDCARD_CLEAR_REFUELLING`.
 For a Mainsail-started print nobody services that state, so a bare `Tn` freezes the
-print. `line` is taken from `data.split('\n')` and never stripped, so
-`T2 ; ff-toolchange` does NOT match and falls through to `gcode.run_script()` — the
-basis of this repo's approach (see README).
+print. `line` is taken from `data.split('\n')` and never stripped, so any trailing
+comment (`T2 ; anything`) does NOT match and falls through to `gcode.run_script()`.
+Earlier releases of this repo exploited exactly that with a `; ff-toolchange` marker
+in the slicer's change-filament G-code. **We no longer ship this fork**: the
+`creator5` Klipper branch carries upstream `virtual_sdcard`, so bare `Tn` reaches
+`ff_toolchange.py` directly and the marker is gone. This section stays as a record of
+stock behaviour.
 
 Couplings to `load_channel` worth knowing: bare `M104`/`M109` get ` T<print_channel>`
 appended (543-547), and `SET_PRESSURE_ADVANCE` is rewritten to the per-channel value
-when `pa_enable == 1` (479-487). `ff_toolchange.py` keeps the channel in sync via
-`SDCARD_SET_CHANNEL`.
+when `pa_enable == 1` (479-487). `ff_toolchange.py` still issues `SDCARD_SET_CHANNEL`
+to keep that channel in sync — a no-op-turned-unknown-command on the upstream
+`virtual_sdcard` we now ship, which does neither rewrite.
 
 ## Custom commands (by area)
 

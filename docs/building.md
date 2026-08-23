@@ -79,7 +79,7 @@ This distinction is the one to keep straight:
 * **`MOD_*`** are runtime switches. They are written into
   `/usr/data/anvil/anvil.conf`, which the printer re-reads at every boot, so
   they can be changed over ssh afterwards and survive a mod update.
-  (`MOD_UI`, `MOD_WEB`, `MOD_SSH`.)
+  (`MOD_WEB`, `MOD_SSH`, `MOD_WIFI`.)
 
 `BUILD_REPORT` is the diagnostic report, and it is a debug payload:
 `payload/report.sh` copies `/etc`, `passwd` and `shadow` onto the USB stick.

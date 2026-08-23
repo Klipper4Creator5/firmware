@@ -25,8 +25,8 @@
 # services' lines, out of order.
 #
 # The saved networks live in /usr/prog/wifi/wpa_supplicant.conf on the
-# firmware partition -- we never ship or touch that file, so whatever the
-# stock UI saved is still there. It sets ctrl_interface=DIR=/var/run/wpa_supplicant,
+# firmware partition -- we never ship or touch that file, so whatever
+# FlashForge's UI saved there before the mod is still there. It sets ctrl_interface=DIR=/var/run/wpa_supplicant,
 # which is also one of the paths HelixScreen probes for a control socket, so
 # its WiFi panel drives this very daemon (and update_config=1 lets it save new
 # networks back).
@@ -83,12 +83,6 @@ connect() {
 start() {
     if [ "${MOD_WIFI:-1}" != "1" ]; then
         echo "wifi: disabled by MOD_WIFI"
-        return 0
-    fi
-    # When the stock UI owns the screen it also owns the network, exactly as
-    # on unmodified firmware. Racing it would fight over the interface.
-    if [ "${MOD_UI:-stock}" = "stock" ]; then
-        echo "wifi: stock UI owns the network -- leaving it alone"
         return 0
     fi
     if supplicant_running; then

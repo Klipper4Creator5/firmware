@@ -1,12 +1,11 @@
 #!/bin/sh
-# Exercise the UI selection and crash-fallback logic on the printer's own
+# Exercise the UI decision and crash-protection logic on the printer's own
 # shell.
 #
-# This matters because the plan is to retire FlashForge's firmwareExe in
-# favour of HelixScreen. Once the stock UI no longer drives the screen, a UI
-# failure must not cost you the machine: ssh comes from the stock
-# /etc/init.d/S50dropbear and is unaffected, and the mod has to fall back
-# rather than crash-loop.
+# This matters because FlashForge's firmwareExe is retired in favour of
+# HelixScreen and there is nothing to fall back to. A UI failure must not cost
+# you the machine: ssh comes from the stock /etc/init.d/S50dropbear and is
+# unaffected, and the mod has to go headless rather than crash-loop.
 #
 # The payload under test is mounted at /tmp/payload.
 FAIL=0
@@ -15,52 +14,52 @@ bad() { echo "  FAIL  $*"; FAIL=1; }
 MOD=/usr/data/anvil
 SWD=/usr/prog/PROGRAM/software
 
-setup() {   # $1=helix installed?  $2=stock UI installed?  $3=MOD_UI
+setup() {   # $1=helix installed?
     killall sleep 2>/dev/null
     rm -rf $MOD $SWD
     mkdir -p $MOD/init.d $MOD/helixscreen/bin /usr/data/logs $SWD
     cp /tmp/payload/init.d/S* $MOD/init.d/; chmod +x $MOD/init.d/S*
-    printf 'MOD_UI=%s\nMOD_WEB=0\nMOD_SSH=1\n' "$3" > $MOD/anvil.conf
+    printf 'MOD_WEB=0\nMOD_SSH=1\n' > $MOD/anvil.conf
     [ "$1" = yes ] && { printf '#!/bin/sh\nsleep 300\n' > $MOD/helixscreen/bin/helix-launcher.sh
                         chmod +x $MOD/helixscreen/bin/helix-launcher.sh; }
-    [ "$2" = yes ] && { printf '#!/bin/sh\nsleep 300\n' > $SWD/firmwareExe.stock
-                        chmod +x $SWD/firmwareExe.stock; }
     return 0
 }
 choice() { cat $MOD/.ui-choice 2>/dev/null; }
 run_ui() { $MOD/init.d/S80ui start >/tmp/ui.out 2>&1; }
 
-echo "  case 1: helix installed and requested"
-setup yes yes helix; run_ui
+echo "  case 1: helix installed"
+setup yes; run_ui
 [ "$(choice)" = helix ] && ok "chose helix" || bad "chose '$(choice)', expected helix"
 
 echo
-echo "  case 2: helix requested but NOT installed"
-setup no yes helix; run_ui
-[ "$(choice)" = stock ] && ok "fell back to stock UI" || bad "chose '$(choice)', expected stock"
+echo "  case 2: helix NOT installed -- headless, not a blank crash loop"
+setup no; run_ui
+[ "$(choice)" = none ] && ok "chose none" || bad "chose '$(choice)', expected none"
+grep -q 'headless' /tmp/ui.out && ok "headless state reported" || bad "headless state not reported"
 
 echo
 echo "  case 3: repeated short boots latch SAFE-MODE"
-setup yes yes helix
+setup yes
 echo 3 > $MOD/ui-failures
 run_ui
 [ -f $MOD/SAFE-MODE ] && ok "SAFE-MODE latched" || bad "SAFE-MODE not latched"
-[ "$(choice)" = stock ] && ok "forced to stock UI" || bad "chose '$(choice)', expected stock"
+[ "$(choice)" = none ] && ok "SAFE-MODE means no UI at all" || bad "chose '$(choice)', expected none"
 
 echo
 echo "  case 4: SAFE-MODE is honoured on the next boot"
 rm -f $MOD/ui-failures
 run_ui
-[ "$(choice)" = stock ] && ok "still stock while SAFE-MODE is latched" || bad "SAFE-MODE ignored"
+[ "$(choice)" = none ] && ok "still headless while SAFE-MODE is latched" || bad "SAFE-MODE ignored"
+grep -q "$MOD/SAFE-MODE" /tmp/ui.out && ok "the log says which file to delete" \
+                                     || bad "the log never names the SAFE-MODE file"
 rm -f $MOD/SAFE-MODE
 run_ui
 [ "$(choice)" = helix ] && ok "clearing SAFE-MODE re-enables helix" \
                         || bad "still '$(choice)' after clearing SAFE-MODE"
 
 echo
-echo "  case 5: NO UI AT ALL (the firmwareExe-is-retired scenario)"
-setup no no helix; run_ui
-grep -q 'headless' /tmp/ui.out && ok "headless state reported" || bad "headless state not reported"
+echo "  case 5: the wrapper holds the foreground even with no UI"
+setup no; run_ui
 cp /tmp/payload/firmwareExe $SWD/firmwareExe; chmod +x $SWD/firmwareExe
 # The printer's busybox has no `timeout` applet, so hold-and-check by hand.
 sh $SWD/firmwareExe >/dev/null 2>&1 &
@@ -75,7 +74,7 @@ fi
 
 echo
 echo "  case 6: Klipper is started independently of the UI"
-setup yes yes helix
+setup yes
 mkdir -p /usr/prog/klipper
 printf '#!/bin/sh\ntouch /tmp/klipper-started\nsleep 60\n' > /usr/prog/klipper/start.sh
 chmod +x /usr/prog/klipper/start.sh
@@ -88,6 +87,6 @@ sleep 2
 killall sleep 2>/dev/null
 
 echo
-[ "$FAIL" = 0 ] && echo "  UI selection and fallback behave correctly" \
-                || echo "  UI FALLBACK TESTS FAILED"
+[ "$FAIL" = 0 ] && echo "  UI decision and crash protection behave correctly" \
+                || echo "  UI SAFETY TESTS FAILED"
 exit $FAIL

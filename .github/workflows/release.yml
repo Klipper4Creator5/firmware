@@ -108,7 +108,6 @@ jobs:
           STOCK_TGZ=""
           KLIPPER_FORK=""
           DEFAULT_PROFILE=$PROFILE
-          MOD_UI=stock
           ROOT_PW_HASH='${{ secrets.ROOT_PW_HASH }}'
           FF_KEY='FFP0331&*%root'
           CFG

@@ -8,11 +8,11 @@
 # printer boots to a working screen with NO klippy behind it: no motion, no
 # heaters, no printing.
 #
-# Therefore Klipper startup is owned here, independently of whichever UI runs.
+# Therefore Klipper startup is owned here, independently of the UI.
 #
-# Double-start guard: when MOD_UI=stock, firmwareExe still starts Klipper
-# itself, so we must not race it. We only start Klipper if it is not already
-# running, and start.sh carries the same guard.
+# Double-start guard: we only start Klipper if it is not already running, and
+# start.sh carries the same guard, so a restart over ssh cannot end up with two
+# klippys against the same MCU.
 #
 # WHY IT ALSO SUPERVISES -- the heater board (mcu 'eheaterboard' on
 # /dev/ttyS4) is frequently not answering yet when klippy first opens the
@@ -21,7 +21,7 @@
 # _connect() sets the error state, returns, and fires FlashForge's own
 # klippy:notify_mcu_error event over /tmp/uds. On stock, firmwareExe is the
 # API client listening for that event, and it restarts the firmware -- which
-# is why the stock UI needs two or three attempts before every board is
+# is why FlashForge's UI needs two or three attempts before every board is
 # found. Nothing in the mod plays that role, so klippy would sit in the error
 # state forever with no heaters. Restarting klippy achieves what the stock
 # retry achieves: reopening the port toggles DTR/RTS and the board comes up.
@@ -108,17 +108,6 @@ start() {
     if klippy_running; then
         echo "klipper: already running"
         return 0
-    fi
-    if [ "${MOD_UI:-stock}" = "stock" ]; then
-        # firmwareExe will start it, and it does its own retrying. Give it a
-        # moment, then only step in if it did not, so a stock-UI machine
-        # behaves exactly like stock.
-        sleep 15
-        if klippy_running; then
-            echo "klipper: started by firmwareExe (stock path)"
-            return 0
-        fi
-        echo "klipper: firmwareExe did not start it -- starting directly"
     fi
     [ -x /usr/prog/klipper/start.sh ] || { echo "klipper: start.sh missing"; return 1; }
     # start.sh does the MCU bring-up itself, and that costs a few seconds per

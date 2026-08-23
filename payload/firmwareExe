@@ -10,8 +10,9 @@
 # with a script is the cleanest possible integration point: app_startup.sh,
 # rcS and the whole init chain stay 100% STOCK and are never patched.
 #
-# The original binary is preserved next to us as firmwareExe.stock and is
-# still the default UI; nothing is lost by installing the mod.
+# HelixScreen is the only UI. FlashForge's binary is not kept anywhere: the
+# installer wipes the software dir before run.sh anyway, so the way back is
+# flashing the stock FlashForge package, which still ships it.
 #
 # Two further properties we get for free:
 #   * app_startup.sh's own watchdog greps `ps` for "firmwareExe" 5s after
@@ -21,13 +22,11 @@
 #     from the newest version directory -- the stock recovery path still works.
 
 MODDIR=/usr/data/anvil
-SELFDIR=`dirname "$0"`
-STOCK_UI="$SELFDIR/firmwareExe.stock"
 
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 mkdir -p /usr/data/logs
 exec >>/usr/data/logs/anvil-boot.log 2>&1
-echo "=== mod firmwareExe `date 2>/dev/null` (UI=${MOD_UI:-stock}) ==="
+echo "=== mod firmwareExe `date 2>/dev/null` ==="
 
 # ---- services ------------------------------------------------------------
 # init.d-style scripts, run in filename order. One failing service must never
@@ -41,35 +40,26 @@ if [ -d $MODDIR/init.d ]; then
 fi
 
 # ---- the UI, in the foreground so the stock watchdog can see us ----------
-# S80ui already handled SAFE-MODE, crash counting and fallback selection and
-# wrote its verdict here.
-UI_CHOICE=`cat $MODDIR/.ui-choice 2>/dev/null || echo stock`
-echo "ui: running $UI_CHOICE in the foreground"
+# S80ui already handled SAFE-MODE and crash counting and wrote its verdict
+# here: "helix" to start the UI, "none" to stay headless.
+UI_CHOICE=`cat $MODDIR/.ui-choice 2>/dev/null || echo none`
+echo "ui: choice is $UI_CHOICE"
 
-case "$UI_CHOICE" in
-    helix)
-        HELIX_DATA_DIR=$MODDIR/helixscreen
-        HELIX_LOG_DEST=file
-        HELIX_LOG_FILE=/usr/data/logs/helixscreen.log
-        export HELIX_DATA_DIR HELIX_LOG_DEST HELIX_LOG_FILE
-        if [ -x $MODDIR/helixscreen/bin/helix-launcher.sh ]; then
-            $MODDIR/helixscreen/bin/helix-launcher.sh
-        else
-            $MODDIR/helixscreen/bin/helix-screen
-        fi
-        ;;
-    *)
-        if [ -x "$STOCK_UI" ]; then
-            exec "$STOCK_UI"
-        else
-            echo "ui: firmwareExe.stock missing -- staying alive headless so ssh keeps working"
-            while true; do sleep 3600; done
-        fi
-        ;;
-esac
+if [ "$UI_CHOICE" = helix ]; then
+    HELIX_DATA_DIR=$MODDIR/helixscreen
+    HELIX_LOG_DEST=file
+    HELIX_LOG_FILE=/usr/data/logs/helixscreen.log
+    export HELIX_DATA_DIR HELIX_LOG_DEST HELIX_LOG_FILE
+    if [ -x $MODDIR/helixscreen/bin/helix-launcher.sh ]; then
+        $MODDIR/helixscreen/bin/helix-launcher.sh
+    else
+        $MODDIR/helixscreen/bin/helix-screen
+    fi
+fi
 
-# If the UI exits we do NOT exit: dropping out of this script makes
-# app_startup.sh think the UI died and re-exec us, which would restart every
-# service. Hold the process instead; ssh and Mainsail remain available.
-echo "ui: $UI_CHOICE exited -- holding process so services stay up"
+# If the UI exits -- or was never started at all -- we do NOT exit: dropping
+# out of this script makes app_startup.sh think the UI died and re-exec us,
+# which would restart every service. Hold the process instead; ssh and
+# Mainsail remain available.
+echo "ui: nothing left in the foreground -- holding process so services stay up"
 while true; do sleep 3600; done

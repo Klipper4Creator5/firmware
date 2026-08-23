@@ -133,7 +133,6 @@ jobs:
           STOCK_TGZ=""
           KLIPPER_FORK=""
           DEFAULT_PROFILE=probe
-          MOD_UI=stock
           ROOT_PW_HASH='\$6\$ci\$abcdefghijklmnopqrstuvwxyz'
           FF_KEY='FFP0331&*%root'
           CFG

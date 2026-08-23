@@ -33,7 +33,9 @@ documented in the file headers.
 | [`payload/klipper/config/ff-print-macros.cfg`](../payload/klipper/config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the calibration gate |
 | [`payload/klipper/config/ff-filament.cfg`](../payload/klipper/config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
 | [`payload/klipper/config/ff-runout.cfg`](../payload/klipper/config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163), optionally after printing through the PTFE buffer (`runout_distance`); `ff_toolchange` arms only the mounted tool's sensors |
-| [`assets/orca/`](../assets/orca/) | OrcaSlicer printer profile | Machine start/end G-code, change-filament G-code, example project |
+| [`payload/klipper/config/ff-model.cfg.creator5`](../payload/klipper/config/ff-model.cfg.creator5) · [`.creator5pro`](../payload/klipper/config/ff-model.cfg.creator5pro) | `/usr/data/config/ff-model.cfg` | Per-model hardware facts (today: does this machine have a chamber heater?). Anything that differs between models exists once per model with a `.creator5` / `.creator5pro` suffix and is installed under its real name — **nothing is edited at build time**, and every other file is byte-identical in every package |
+| [`payload/klipper/config/ff-chamber.cfg`](../payload/klipper/config/ff-chamber.cfg) | `/usr/data/config/` | `M141` / `M191` for the chamber heater (Klipper has neither, and the stock app drove the chamber only from its own UI), plus the model gate: the Creator 5 Pro has a chamber heater and the plain **Creator 5 does not**, so a non-zero chamber target is refused when `ff-model.cfg` says the machine has none. Identical in every package |
+| [`assets/orca/`](../assets/orca/) | OrcaSlicer printer profile | Machine start/end G-code, example project |
 | [`docs/notes/`](notes/) | (reference only) | Condensed reverse-engineering notes: what the stock app actually does, with binary addresses |
 
 ## ⚠️ Use at your own risk
@@ -108,6 +110,8 @@ scp payload/klipper/config/ff-*.cfg \
 [include ff-filament.cfg]
 [include ff-print-macros.cfg]  ; after ff-filament.cfg (the nozzle clean uses it)
 [include ff-runout.cfg]        ; after printer.base.cfg (overrides its sensor sections)
+[include ff-model.cfg]         ; per-model facts; BEFORE ff-chamber.cfg
+[include ff-chamber.cfg]       ; after printer.base.cfg (gates chamber_heater by model)
 [include ff-legacy.cfg]        ; temporary — only for step 5
 ```
 
@@ -325,17 +329,15 @@ In the printer profile:
   [`assets/orca/machine-start-gcode.txt`](../assets/orca/machine-start-gcode.txt)
 * **Machine end G-code**: contents of
   [`assets/orca/machine-end-gcode.txt`](../assets/orca/machine-end-gcode.txt)
-* **Change filament G-code**: contents of
-  [`assets/orca/change-filament-gcode.txt`](../assets/orca/change-filament-gcode.txt) —
-  `T[next_extruder] ; ff-toolchange`, where the trailing comment is
-  load-bearing (see below)
 
-Or skip the copy-pasting: open
-[`assets/orca/creator-mainsail.3mf`](../assets/orca/creator-mainsail.3mf) in OrcaSlicer —
-an example project with the "Mainsail - Flashforge Creator 5 Pro 0.4
-nozzle" printer profile already carrying all three G-code blocks above
-(its start G-code predates `TOOLS=`/`TEMPS=` — paste the current
-`machine-start-gcode.txt` over it to get the presence gate and nozzle clean).
+Leave **Change filament G-code** empty. With no custom block Orca emits its
+own bare `Tn` at each tool change, which reaches `ff_toolchange.py` directly.
+Older instructions here asked for a `T[next_extruder] ; ff-toolchange` line to
+dodge a trap in FlashForge's Klipper fork; we ship upstream `virtual_sdcard`
+now and that trap is gone, so **clear the field** if it still holds anything.
+Files already sliced with the old marker keep printing correctly — the G-code
+parser discards the comment and `T2` arrives either way, so no re-slice is
+needed for that.
 
 Re-slice anything sliced with older start G-code — old files won't call
 `TOOLCHANGE_SET_PRINT_OFFSET` and will print ~3.2 mm low.
@@ -349,31 +351,6 @@ station, cooled by 100 °C and docked while the bed heats — the app's
 `clearNozzlePrint`); `LEVEL=1` probes a fresh mesh (recommended for the
 first print); `SOAK=<seconds>` dwells after the bed reaches target (the app
 waits 5 min; default 0).
-
-### Why `T[next_extruder] ; ff-toolchange` and not just `T[next_extruder]`
-
-The comment satisfies two different parsers at once:
-
-* **OrcaSlicer** reads the change-filament block with a real G-code parser.
-  It sees an actual `T<n>` command in there, decides the custom G-code
-  already changes the tool (`custom_gcode_changes_tool()`), and stops
-  emitting its own bare `Tn` after the block — so the tool change happens
-  exactly once.
-* **FlashForge's Klipper fork** traps toolchange lines *before* they reach
-  the G-code interpreter: `virtual_sdcard.py` (line 566) checks
-  `line.startswith("T") and line in VALID_GCODE_T`, where `line` comes
-  straight from `data.split('\n')` and is **never stripped or normalized**.
-  A bare `T2` matches the exact string in `VALID_GCODE_T`, gets swallowed
-  by the fork, and is handed to the touchscreen app, which then blocks the
-  print on its own `doingChangeEx`/`refuelling` state — state that only the
-  touchscreen UI advances. `T2 ; ff-toolchange` is not the exact string
-  `T2`, so the trap does not fire; the line falls through to
-  `gcode.run_script()`, where `ff_toolchange.py`'s `T2` handler services it.
-
-This is also why touchscreen-started prints are untouched: FF-sliced files
-carry bare `Tn` lines, which the fork still intercepts and the app still
-services exactly as before. Only lines with the marker comment reach this
-module.
 
 ## Design notes
 

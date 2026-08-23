@@ -126,6 +126,22 @@ if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     # .cfg files belong on the data partition; run.sh installs them without
     # clobbering a config the user already tuned.
     cp -f payload/klipper/config/ff-*.cfg "$MP/config/"
+    # Anything that differs between models exists once per model, named
+    # <file>.creator5 / <file>.creator5pro, and the matching one is installed
+    # under its real name. Nothing is edited: the suffixed file IS the
+    # difference. The suffixed names do not match the ff-*.cfg glob above, so
+    # a variant cannot leak into the wrong package.
+    SUFFIX=$(printf '%s' "$TARGET_MACHINE" | tr 'A-Z' 'a-z')
+    for variant in payload/klipper/config/*."$SUFFIX"; do
+        [ -e "$variant" ] || continue
+        cp -f "$variant" "$MP/config/$(basename "$variant" ".$SUFFIX")"
+        say "Model: $(basename "$variant" ".$SUFFIX") for $TARGET_MACHINE"
+    done
+    # ff-model.cfg is what tells ff-chamber.cfg whether this machine has a
+    # chamber heater. Missing, every macro that reads it fails at runtime, so
+    # this is a broken build rather than a silent default.
+    [ -f "$MP/config/ff-model.cfg" ] \
+        || { echo "no ff-model.cfg.$SUFFIX for TARGET_MACHINE=$TARGET_MACHINE" >&2; exit 1; }
 else
     skip "Toolchange"
 fi
@@ -210,11 +226,12 @@ chmod +x "$SW/start.sh"
 # firmwareExe, and firmwareExe is also what starts Klipper. Replacing this
 # one file is therefore enough to own the whole userspace boot, which means
 # app_startup.sh, rcS and the init chain are left COMPLETELY STOCK.
-say "firmwareExe: installing wrapper (original kept as firmwareExe.stock)"
-if [ -f "$SW/firmwareExe" ] && ! head -c 2 "$SW/firmwareExe" | grep -q '#!'; then
-    mv -f "$SW/firmwareExe" "$SW/firmwareExe.stock"
-    echo "   stock binary -> firmwareExe.stock ($(du -h "$SW/firmwareExe.stock" | cut -f1))"
-fi
+#
+# The genuine binary is replaced, not kept aside: HelixScreen is the only UI,
+# and the installer wipes the software dir before run.sh anyway, so nothing
+# here could ever be a reliable backup. Flashing the stock FlashForge package
+# -- which still ships the binary -- is the uninstall.
+say "firmwareExe: installing wrapper (replaces the stock binary)"
 cp -f payload/firmwareExe "$SW/firmwareExe"
 chmod +x "$SW/firmwareExe"
 
@@ -223,8 +240,7 @@ mkdir -p "$MP/init.d"
 [ -d payload/bin ] && cp -f payload/bin/* "$MP/bin/" && chmod +x "$MP/bin"/*
 cp -f payload/init.d/S* "$MP/init.d/"
 chmod +x "$MP/init.d"/S*
-sed -e "s/^MOD_UI=.*/MOD_UI=${MOD_UI:-stock}/" \
-    -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
+sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
     -e "s/^MOD_SSH=.*/MOD_SSH=${MOD_SSH:-1}/" \
     -e "s/^MOD_WIFI=.*/MOD_WIFI=${MOD_WIFI:-1}/" \
     payload/anvil.conf > "$MP/anvil.conf"

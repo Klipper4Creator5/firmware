@@ -17,10 +17,13 @@ busybox init → /etc/init.d/rcS → S99factory_test_shell
 ```
 
 The mod's entire integration point is **one file**: it replaces
-`/usr/prog/PROGRAM/software/firmwareExe` with a shell script. Because
-everything funnels through that binary, `app_startup.sh`, `rcS` and the whole
-init chain stay **completely stock and unpatched**. The genuine binary is kept
-beside it as `firmwareExe.stock` and remains the default UI.
+`/usr/prog/PROGRAM/software/firmwareExe` with a shell script that runs
+HelixScreen. Because everything funnels through that binary, `app_startup.sh`,
+`rcS` and the whole init chain stay **completely stock and unpatched**. The
+genuine binary is not kept anywhere — the stock installer wipes the software
+directory before `run.sh` runs, so nothing on the printer could ever be a
+reliable backup of it. Flashing the stock FlashForge package, which still
+ships it, is the uninstall.
 
 Two properties come for free from keeping that name and that place:
 
@@ -38,7 +41,7 @@ filename order and individually restartable over ssh:
 ```
 S60web       nginx (Mainsail) + moonraker
 S70klipper   Klipper
-S80ui        decides which UI runs; owns SAFE-MODE
+S80ui        decides whether the UI runs; owns SAFE-MODE
 ```
 
 Everything the mod installs lives under `/usr/data/anvil` on the **data**

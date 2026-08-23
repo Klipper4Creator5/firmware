@@ -106,7 +106,6 @@ MAINSAIL_ZIP="$FXASSETS/mainsail.zip"
 BUSYBOX_BIN=""
 DEFAULT_PROFILE=probe
 TARGET_MACHINE=Creator5Pro
-MOD_UI=stock
 ROOT_PW_HASH='\$6\$ci\$abcdefghijklmnopqrstuvwxyz'
 FF_KEY='FFP0331&*%root'
 CFG
@@ -186,11 +185,14 @@ else
         hdr "klipper macros parse"
         sub "macros" python3 ./test/test-macros.py
 
+        hdr "chamber heater is gated by model"
+        sub "chamber gate" python3 ./test/test-chamber.py
+
         hdr "MCU bring-up runs on the printer's own Python"
         sub "mcu bring-up" ./test/sim-mcu-bringup.sh
 
-        hdr "UI selection and fallback (on the printer's shell)"
-        sub "ui fallback" ./test/sim-ui-fallback.sh
+        hdr "UI decision and crash protection (on the printer's shell)"
+        sub "ui safety" ./test/sim-ui-fallback.sh
 
         for PROF in probe default; do
             hdr "end-to-end update on the printer replica: $PROF"

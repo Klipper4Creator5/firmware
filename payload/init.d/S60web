@@ -2,8 +2,13 @@
 # nginx (Mainsail) + moonraker.
 #
 # Both binaries already ship on stock firmware -- FlashForge simply comments
-# them out of /usr/prog/klipper/start.sh. We run nginx on our OWN prefix so
-# their config is never modified and MOD_WEB=0 restores stock behaviour.
+# them out of /usr/prog/klipper/start.sh and serves its own HTTP API from
+# firmwareExe instead. The mod replaces firmwareExe, so that API is gone and
+# this is the only web stack on the printer.
+#
+# MOD_WEB=0 therefore does NOT fall back to anything: it leaves the printer
+# with ssh and the touchscreen only. It is a debugging switch, not a way back
+# to stock -- that is a stock FlashForge package.
 MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 NGINX=/usr/prog/nginx/sbin/nginx

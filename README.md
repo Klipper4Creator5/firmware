@@ -20,12 +20,28 @@ does the work.
 | **Mainsail in your browser** | The full Klipper web interface at `http://<printer-ip>/` — upload gcode, watch the print, tune on the fly. Moonraker comes with it, so anything that speaks the Klipper API works. |
 | **A shell on your printer** | ssh as root. Dropbear is already running on stock firmware; this simply gives you a password you know — the installer picks a random one and writes it to `anvil-password.txt` on your USB stick. |
 | **Real toolchanger Klipper** | A current Klipper with proper tool-change support, replacing the 0.12-era tree FlashForge ships. |
-| **A modern touchscreen UI** | HelixScreen instead of the stock interface — optional, and the stock UI is kept on disk as a fallback. |
+| **A modern touchscreen UI** | HelixScreen replaces the stock interface on the printer's own screen. |
 | **Nothing you cannot undo** | Flashing the stock FlashForge package puts every file back. |
 
-Your printer keeps working as a printer throughout: the stock screen, the
-stock boot process and the stock recovery path are all left in place until you
-choose a stage that replaces them.
+The stock boot process and the stock recovery path are left in place: the mod
+replaces one file (`firmwareExe`) and nothing in `rcS` or `app_startup.sh` is
+patched, so flashing the stock FlashForge package puts the printer back exactly
+as it was.
+
+### What you give up
+
+That one file is FlashForge's whole application, and two things people use
+live inside it rather than in some separate service. Both stop working:
+
+* **The camera.** The stream on `:8080` is served by the app itself, not by a
+  camera daemon, so it goes when the app does. Mainsail shows no webcam.
+  Restoring it needs a streamer built for this board — not done yet.
+* **The FlashForge network API on `:8898`**, and with it FlashPrint, Orca's
+  FlashForge profile and the mobile app. Moonraker's API takes over, which is
+  what Mainsail, OrcaSlicer's Klipper/Moonraker upload and Fluidd speak.
+  Slice for the toolchanger and send it there instead.
+
+Flashing the stock package brings both back.
 
 ---
 
@@ -82,11 +98,15 @@ installs the same way — stick in, power on.
 A few things are deliberately built in so a bad flash cannot cost you the
 machine:
 
-* **The screen always comes back.** If the new UI cannot start or crashes
-  repeatedly, the printer latches SAFE-MODE and boots the stock interface.
+* **A crashing UI cannot lock you out.** If HelixScreen cannot start or
+  crashes repeatedly, the printer latches SAFE-MODE and boots *headless* —
+  no UI at all — instead of looping. Delete `/usr/data/anvil/SAFE-MODE` over
+  ssh to try again.
 * **ssh stays up** even when the screen does not, so you can get in and look.
-* **Your `printer.cfg` is never overwritten.** A config that already exists is
-  left alone and the new one lands beside it as `.mod-new`.
+* **Your `printer.cfg` is never overwritten** — it is not a file this
+  firmware ships. Of the configs it does ship, one you have edited is left
+  alone and the new version lands beside it as `.mod-new`; one you never
+  touched is updated in place.
 * **The kernel and the motion board are never touched** by a normal package.
 
 More detail, including what to do when the printer will not boot at all:
