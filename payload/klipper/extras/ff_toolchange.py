@@ -916,13 +916,13 @@ class FFToolchange:
                           % self._extruder_name(tool))
                 self._apply_tool_diff_offsets(tool)
                 self._arm_runout(tool)
-            # FIXME: SDCARD_SET_CHANNEL exists only in FlashForge's
-            # virtual_sdcard fork, where it kept the channel state coherent
-            # (bare M104/M109 got " T<channel>" appended, SET_PRESSURE_ADVANCE
-            # was rewritten to pa_value_t<channel>). We ship upstream
-            # virtual_sdcard, which has no such command and no such rewriting,
-            # so this is an unknown command on the shipped Klipper.
-            self._run('SDCARD_SET_CHANNEL CHANNEL=%d' % tool)
+            # No channel to announce. FlashForge's virtual_sdcard tracked one
+            # so it could rewrite bare M104/M109 to " T<channel>" and
+            # SET_PRESSURE_ADVANCE to pa_value_t<channel>. Upstream does no
+            # such rewriting and needs none: both apply to the ACTIVE
+            # extruder, which _grab (or the ACTIVATE_EXTRUDER above) has just
+            # set to this tool. The stock start block's bare `M104 S<t>` lands
+            # on the right hotend for exactly that reason.
         except FFToolchangeError as e:
             raise gcmd.error(str(e))
         except self.printer.command_error:
