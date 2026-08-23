@@ -1,0 +1,43 @@
+{
+  "printers": [
+    {
+      "id": "flashforge_creator5_pro",
+      "name": "FlashForge Creator 5 Pro",
+      "manufacturer": "FlashForge",
+      "image": "generic-corexy.png",
+      "ams_type": "tool_changer",
+      "z_offset_calibration_strategy": "firmware_managed",
+      "notes": "4-tool toolchanger driven by the ff_toolchange Klipper extras (github: creator5-toolchange). The toolchanger/tool objects come from ff_toolchanger_compat; per-tool Z is managed by TOOL_Z_ADJUST and the print-start offset by TOOLCHANGE_SET_PRINT_OFFSET, so HelixScreen's probe-based Z-offset flow does not apply.",
+      "heuristics": [
+        {
+          "type": "object_exists",
+          "field": "printer_objects",
+          "pattern": "ff_toolchange",
+          "confidence": 98,
+          "reason": "Creator 5 Pro native toolchanger extra"
+        },
+        {
+          "type": "object_exists",
+          "field": "printer_objects",
+          "pattern": "ff_tool_offset",
+          "confidence": 90,
+          "reason": "Creator 5 Pro nozzle-offset calibration extra"
+        },
+        {
+          "type": "object_exists",
+          "field": "printer_objects",
+          "pattern": "e_stop X",
+          "confidence": 60,
+          "reason": "FlashForge fork station sensor wrapper"
+        },
+        {
+          "type": "hostname_match",
+          "field": "hostname",
+          "pattern": "creator",
+          "confidence": 40,
+          "reason": "Hostname hint"
+        }
+      ]
+    }
+  ]
+}
