@@ -36,7 +36,6 @@ documented in the file headers.
 | [`payload/klipper/config/printer.base.cfg`](../payload/klipper/config/printer.base.cfg) | `/usr/prog/klipper/config/` | FlashForge's `printer.base.cfg` with the chamber block replaced by `[include printer.chamber.cfg]`. Klipper can override an option but cannot un-declare a section, and the plain Creator 5 has no chamber heating element, so its heater must be **absent** rather than neutralised. `make test-basecfg` reconstructs the stock file from this plus the Pro's chamber file and fails if FlashForge's has changed |
 | [`printer.chamber.cfg.creator5`](../payload/klipper/config/printer.chamber.cfg.creator5) · [`.creator5pro`](../payload/klipper/config/printer.chamber.cfg.creator5pro) | `/usr/prog/klipper/config/printer.chamber.cfg` | The one per-model difference: the Pro gets `[heater_generic chamber_heater]` + `[verify_heater]` verbatim from FlashForge, the Creator 5 gets only `[temperature_sensor chamber]` on the same pin. Anything that differs between models exists once per model with a `.creator5` / `.creator5pro` suffix and is installed under its real name — **nothing is edited at build time** |
 | [`payload/klipper/config/ff-chamber.cfg`](../payload/klipper/config/ff-chamber.cfg) | `/usr/data/config/` | `M141` / `M191` for the chamber heater (Klipper has neither, and the stock app drove the chamber only from its own UI), plus the gate: the macros ask Klipper whether `heater_generic chamber_heater` exists, so a non-zero chamber target is refused on a machine that does not declare one. Nothing to keep in sync; identical in every package |
-| [`assets/orca/`](../assets/orca/) | OrcaSlicer printer profile | Machine start/end G-code, example project |
 | [`docs/notes/`](notes/) | (reference only) | Condensed reverse-engineering notes: what the stock app actually does, with binary addresses |
 
 ## ⚠️ Use at your own risk
@@ -333,9 +332,6 @@ a homed machine) and no `M190` (nothing waits for the bed). At the other end
 its `;end_gcode` is a single move that turns nothing off, so
 `FF_AFTER_PRINT_END` runs the exit sequence when the job leaves the printing
 state.
-
-[`assets/orca/`](../assets/orca/) holds copies of both stock blocks for
-reference -- what the mod expects, not something to paste.
 
 To drive the sequence from the slicer instead, put an explicit `START_PRINT`
 call in Machine start G-code and set
