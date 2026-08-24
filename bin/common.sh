@@ -24,7 +24,9 @@ fi
 # when a second "changes nothing, writes a report" package existed alongside
 # this one. With one build left the indirection bought nothing but a layer to
 # read through, so the flags are plain defaults here and config.env -- sourced
-# above -- still overrides any of them.
+# above -- still overrides any of them. Not an exhaustive list: MOD_CAM and
+# MOD_WIFI are defaulted where they are used, in bin/patch.sh, and only
+# appear here if config.env sets them.
 #
 # FlashForge's firmwareExe is REPLACED, not kept: HelixScreen is the only UI.
 # If it will not start, set MOD_UI=0 in /usr/data/anvil/anvil.conf to boot
@@ -62,13 +64,13 @@ TEST_ENV="${TEST_ENV:-$ROOT/test.env}"
 # shellcheck disable=SC1090
 [ -f "$TEST_ENV" ] && . "$TEST_ENV"
 
-# The version is the release date, 20260823. It only ever appears in the
+# The version is the release date, today's, as YYYYMMDD. It only appears in the
 # outer filename -- the stock installer reads the software component's own
 # version, never this one -- so a date says something true about the build,
 # where a semver would just be a number nobody remembers to bump.
 #
 # Set MOD_VER explicitly to pin it: for a reproducible rebuild of an old
-# release, or for a second release on the same day (20260823b).
+# release, or for a second release on the same day (e.g. 20260824b).
 MOD_VER="${MOD_VER:-$(date -u +%Y%m%d)}"
 export MOD_VER
 

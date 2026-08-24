@@ -205,9 +205,12 @@ mistake that costs a print.
 
 `make test-py` checks both files against the shipped macros and the configured
 axis limits: every command in them must be one `payload/klipper/config/` or
-`payload/klipper/extras/` defines, `TOOLS=` must list every tool the feature
-print uses, and the safe file must stay cold and above Z50. A renamed macro
-breaks the suite rather than the print.
+`payload/klipper/extras/` defines (bar an explicit allowlist of Klipper
+built-ins, currently just `SET_PRESSURE_ADVANCE`), `TOOLS=` must list every
+tool the feature print uses, and the safe file's own lines must stay cold and
+above Z50 — the check reads the file, so it does not see what an implicit
+`START_PRINT` does before it. A renamed macro breaks the suite rather than the
+print.
 
 The `.cfg` includes are wired up **for** you: `printer.base.cfg` ends with the
 seven `[include ff-*.cfg]` lines, so a flash brings the mod up by itself. Your

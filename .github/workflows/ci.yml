@@ -95,7 +95,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ~280MB of somebody else's release assets per run, and they never
+      # ~370MB of somebody else's release assets per run (two ~93MB stock
+      # packages and the 182MB factory image), and they never
       # change -- the cache key is their checksums, so a new pin misses and
       # re-fetches, and an unchanged pin costs the archive nothing.
       - name: Cache the stock firmware

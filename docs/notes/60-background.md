@@ -1,7 +1,11 @@
 # Background: filament system, calibration, persistent state
 
-Context recovered from the binary but NOT (yet) ported — the stock touchscreen still
-handles all of this. Kept as reference for future work.
+Context recovered from the binary. Written when none of it was ported and the stock
+touchscreen still handled it; both halves of that have since changed. The runout
+handling, filament load/unload and the offset calibration below ARE ported now
+(`ff-runout.cfg`, `ff-filament.cfg`, `ff_tool_offset.py`), and there is no stock
+touchscreen on a modded printer — `firmwareExe` is replaced and HelixScreen is the only
+UI. What is genuinely still unported is marked as such per item. Kept as reference.
 
 ## Filament system
 
@@ -27,8 +31,9 @@ handles all of this. Kept as reference for future work.
   each nozzle; circular probing + least-squares circle fit for XY; results →
   `tN_offset_x/y/z`, `z_station_pos` in extruder.json. Reimplemented in Klipper as
   `STATION_CALIBRATE` / `TOOL_OFFSET_CALIBRATE` (`45-tool-offset-calibration.md`,
-  `46-offset-calibration-recovered.md`); the JSON is imported once with
-  `FF_IMPORT_FIRMWARE_CONFIG` and not consulted afterwards.
+  `46-offset-calibration-recovered.md`); the JSON is imported by
+  `FF_IMPORT_FIRMWARE_CONFIG` — automatically, on every startup, for as long as no
+  `[ff_tool n]` has a saved nozzle position — and is never a runtime source.
 - **Input shaper**: `STEPPER_RESONANCE_FACTORY_CALIBRATE` (fork) / `SHAPER_CALIBRATE`.
 - **Auto PA**: prints slow-fast-slow line patterns per PA candidate, scores via
   `PA_ACTION`/`PA_GET` (sensor unknown), stores per-tool table via `SET_PA_ADVANCE`.

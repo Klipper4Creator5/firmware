@@ -93,7 +93,8 @@ later options win — the stock `printer.filament.cfg` is left untouched):
 * the eight sections get `runout_gcode: _FF_RUNOUT TOOL=n KIND=switch|motion` and
   `insert_gcode: _FF_INSERT …`, `pause_on_runout` stays `False`.
 * `_FF_RUNOUT`: ignores the event unless `print_stats.state == printing`, not paused, and
-  `TOOL` is `ff_toolchange.current_tool`; then `PAUSE`, `M117 E0162/E0163 …` and a console
+  `TOOL` is `ff_toolchange.current_tool`; then `PAUSE`, `M117 T<n> clog` or
+  `M117 T<n> out of filament` (the app's E0162/E0163 codes are not emitted) and a console
   line telling the user to `LOAD_FILAMENT TOOL=n` (its paused path is the app's in-print
   feed: `E100`, `E-5`) and `RESUME`. `_FF_RUNOUT_CFG` `clog_pause` is the app's `plugCheck`
   (0 = report a clog, don't pause); `switch_pause` has no app equivalent.

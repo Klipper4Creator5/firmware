@@ -5,7 +5,8 @@ Address-verified against the live binary (`CommMgr` methods). Ported in
 
 ## Physical model
 
-- 4 docks on the right, X ≈ 250–280, per-dock X/Y from `extruder.json`
+- 4 docks on the right, X ≈ 297 (250 and 280 are the staging and approach
+  waypoints, `x_safe` / `x_approach`), per-dock X/Y from `extruder.json`
   (`x/y_check_pos..3`), station base `x/y/z_station_pos`.
 - Lock motor on the carriage grabs/releases the head. Its endstop is registered on
   `manual_stepper gear_stepper`; `MOTOR_GRAB`/`MOTOR_RELEASE` are STOP_ON_ENDSTOP-style
@@ -22,11 +23,17 @@ Address-verified against the live binary (`CommMgr` methods). Ported in
 2. Dock-must-be-OCCUPIED precheck: 20 × 50 ms polls of `checkInLocation(tool)`;
    failure → E0127+tool, no motion.
 3. `SET_VELOCITY_LIMIT ACCEL=8000`; `SET_GCODE_OFFSET X=0 Y=0 MOVE=1 MOVE_SPEED=100`.
-4. Approach: `G1 X250 F<fast>`, `G1 Y<dockY>`, `G1 X<dockX> F<slow>` (+`grabOffset`
-   correction from test.json).
-5. `MOTOR_GRAB`, `G1 X.. F4800`, `G1 X280`, `M400`, `G1 X250 F1500`, `MOTOR_STOP`
-   (with `MOTOR_GRAB2` final-lock stage), retries up to 3×.
-6. Verify: dock sensor released AND grab sensor pressed → else E0143.
+4. Approach, once, before the retry loop: `G1 X250 F<fast>` (`x_safe`),
+   `G1 Y<dockY>`, `G1 X280` (`x_approach`).
+5. Then up to 3 attempts. Each begins by re-engaging the dock —
+   `G1 X<dockX> F<slow>` (+`grabOffset` correction from test.json) — which is
+   what undoes the previous attempt's back-off. Poll the grab sensor for up to
+   1 s; on success `MOTOR_GRAB`, `G1 X<dockX-20> F4800` (the app's literal
+   pullback feed, not the calibrated one), `MOTOR_GRAB2`, and leave the loop.
+   On failure back off to `G1 X280` and wait. `G1 X250 F1500` is the retreat
+   after the loop, not part of an attempt.
+6. Verify: dock sensor released AND grab sensor pressed → else E0051+tool
+   (`ERR_GRAB_VERIFY_BASE`; the app's own code here was not recovered).
 7. Apply per-tool G-code offsets (see `40-offsets.md`).
 8. `SET_VELOCITY_LIMIT ACCEL=20000`.
 
@@ -73,8 +80,9 @@ sensor is pressed). Exactly-one-empty + held → that tool; all-occupied + held,
 several-empty + held → abort (faulty switch / ambiguous — refusing beats guessing,
 since guessing wrong would drop the carried tool into another tool's dock).
 Nothing is persisted; the value cannot go stale. `now_extruder` is never written
-(see `40-offsets.md` on why writing the JSON is forbidden); `TOOLCHANGE_STATUS`
-flags disagreement with the app informationally.
+(see `40-offsets.md` on why writing the JSON is forbidden), and it is no longer
+read either: the JSON reader was removed, so `TOOLCHANGE_STATUS` reports only
+sensors and Klipper config and has nothing to compare against.
 
 ## Deliberate divergences in the port
 

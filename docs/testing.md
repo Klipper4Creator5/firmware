@@ -43,12 +43,17 @@ is stubbed, and what it still cannot tell you.
 ## The tests
 
 ```sh
-make test            # everything below
+make test            # the gates below, and more besides
 ```
+
+`make test` does not invoke these targets: `test/run-tests.py` re-implements
+the work inline, and adds three things the table has no row for — a shell
+syntax parse, a `shellcheck -s dash` bashism pass over the on-printer payload,
+and a full unpack/patch/pack/verify build on a synthetic stock fixture.
 
 | Gate | What it does | Replica |
 |---|---|:-:|
-| `test-py` | pytest. The Klipper config gate: every `ff-*.cfg` gcode body parses in **Klipper's** Jinja dialect, and the chamber macros are rendered per model to prove a chamber target is refused on a Creator 5 that has no heating element  — plus, when a rootfs has been extracted, that every absolute path the payload names exists on the printer | partly |
+| `test-py` | pytest, the whole `test/` tree — 48 tests in six files. The Klipper config gate (`test_chamber.py`): every `ff-*.cfg` gcode body parses in **Klipper's** Jinja dialect, and the chamber macros are rendered per model to prove a chamber target is refused on a Creator 5 that has no heating element. Plus `test_paths.py` (every absolute path the payload names exists on the printer, once a rootfs has been extracted), `test_includes.py` (the `[include ff-*.cfg]` block is exactly the expected set, in order), `test_config_ownership.py` (every mod-owned config carries its DO-NOT-EDIT banner and `moonraker.conf` does not), `test_gcode.py` (every command in `gcode/*.gcode` is one our configs define) and `test_harness.py` (the harness's own self-checks) | partly |
 | `test-install` | **End-to-end.** The package sits on a real FAT filesystem exposed as `/dev/sda1`, and the machine's own `app_startup.sh` runs verbatim through three boots: stick in -> it installs; stick still in -> it installs again (idempotence); stick pulled -> the machine boots with the mod running and the stock `ps`-watchdog satisfied. Asserts along the way: UI present and executable, boot scripts unmodified and still parsing, every installed script `sh -n`-clean under the printer's own busybox, Klipper owned by a service, `c_helper.so` still nan2008 MIPS, user `printer.cfg` preserved, the wrapper unchanged by a re-install | yes |
 | `test-mcu` | Runs `ff-mcu-bringup.py` on the printer's **own** Python 3.8.2 in the exact environment `start.sh` sets — the only gate that executes our Python on the real interpreter, and the one that pins the `LD_LIBRARY_PATH` regression that shipped broken once | yes |
 | `test-recovery` | Installs the mod, then flashes the **stock** package, and asserts the machine is genuinely back to stock byte-for-byte and the leftover payload is inert | yes |
@@ -153,21 +158,24 @@ whole end-to-end update test takes **~70s**. Without it, the same test spends
 a minute on setup before it begins. That image contains proprietary FlashForge
 firmware.
 
-`make test` end to end, measured, with the image: **5m26s**, and the sections
-say where it goes — `run-tests.py` stamps every header with elapsed seconds:
+`run-tests.py` stamps every header with elapsed seconds, so a run says for
+itself where the time went. The headers, in the order they are printed:
 
 ```
-== python checks (klipper config) ==                      [0s]
-== build on the fixture ==                               [1s]
-== extracting the printer rootfs ==                     [16s]
-== python checks (rootfs) / MCU bring-up ==             [18s]
-== end-to-end update on the replica ==                 [111s]
-== recovery: a stock package reverts the mod ==        [250s]
-                                                       [326s]
+== shell syntax ==
+== no bashisms in the on-printer payload ==
+== extracting the printer rootfs ==            (skipped if already extracted)
+== python checks ==
+== packaging, on a synthetic stock package ==
+== build on the fixture ==
+== printer replica ==                          (or: MCU bring-up runs on the
+                                                printer's own Python)
+== end-to-end update on the printer replica ==
+== recovery: a stock package reverts the mod ==
 ```
 
-What is left is real work: two full package builds (the payload is 55MB
-through `xz`) and two replica runs. If it needs to get faster again,
+What takes the time is real work: two full package builds (the payload is
+55MB through `xz`) and two replica runs. If it needs to get faster again,
 that is where to look — not in the harness.
 
 ## What was dropped, and why

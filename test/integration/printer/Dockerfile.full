@@ -16,9 +16,10 @@
 # CONTAINS PROPRIETARY FLASHFORGE FIRMWARE.
 
 # ----------------------------------------------------------------- fetch ----
-# A throwaway stage: the 88MB package and the 182MB compressed factory image
+# A throwaway stage: the ~93MB package and the 182MB compressed factory image
 # never reach a layer of the final image, and the unpack that would otherwise
-# cost 90 seconds on every test run happens once, here.
+# cost ~60 seconds on every test run (22s unpack + 37s install) happens once,
+# here.
 FROM debian:bookworm-slim AS fetch
 
 RUN apt-get update -qq \

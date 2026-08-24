@@ -59,7 +59,8 @@ and stay next to the machine until you trust it.
   start. Here every `T<n>` grab applies that tool's gap
   (`nozzle_z − station_z + z_adjust`) as the Z offset, so Z=0 is the bed
   whenever a tool is mounted; `START_PRINT`'s `TOOLCHANGE_SET_PRINT_OFFSET`
-  only adds the thermal/bed/thin-layer terms (< 0.1 mm). With no tool
+  only adds the thermal/bed/thin-layer terms — a tenth of a millimetre or so:
+  the worked example below reaches 0.125 mm at 220 °C with a 100 °C bed. With no tool
   mounted, or on an uncalibrated machine, Z=0 is still ~3.2 mm *below* the
   plate — the print gate refuses to start in that state.
 * **Where the numbers live.** Nothing is read from firmwareExe's JSON at
@@ -239,6 +240,16 @@ stores the nozzle's absolute `nozzle_x/y/z`. Results are station-frame
 absolutes per tool, so recalibrating one tool leaves the others valid;
 `nozzle_z − station_z` is the ~3.2 mm gap the print-start Z offset uses.
 Re-run `STATION_CALIBRATE` whenever the station or bed is disturbed.
+
+`CALIBRATE_TOOL_OFFSETS` runs both passes in one command. It is
+klipper-toolchanger's documented entry point, so it is the name HelixScreen's
+setup wizard and other UIs look for — the two commands above are what it calls.
+
+Note on the word "gap": `station_z` is where the *empty carriage* trips the
+station, and the feature it trips sits about 12.4 mm +X of the nozzle and lower
+(see `notes/46-offset-calibration-recovered.md`). So `nozzle_z − station_z` is
+a nozzle-to-station-trigger distance, not a nozzle-to-eddy-coil one — the
+number is right, the mental picture of an eddy measurement is not.
 
 Per-tool first-layer tuning: Klipper's `SET_GCODE_OFFSET Z_ADJUST=` babystep
 is one global number. Use
@@ -456,8 +467,10 @@ commands they send: `SELECT_TOOL T=<n>` (= `T<n>`), `UNSELECT_TOOL [T=<n>]`
 (= `TOOLCHANGE_PARK`), `INITIALIZE_TOOLCHANGER` (state check, no motion),
 `SET_TOOL_TEMPERATURE [T=<n>] TARGET=<t> [WAIT=1]`,
 `VERIFY_TOOL_DETECTED [T=<n>] [ASYNC=…]` and `SELECT_TOOL_ERROR [MESSAGE=…]`.
-`status` is `changing` from before the first move until the sensors confirm
-the swap, `error` when the dock sensors disagree, else `ready`.
+`status` is `changing` from before the first move of a **toolchange** until the
+sensors confirm the swap, `error` when the dock sensors disagree, else `ready`.
+A bare park (`TOOLCHANGE_PARK` / `UNSELECT_TOOL`) never sets it, so it reports
+`ready` throughout one.
 We keep no commanded tool state, so `detected_tool*` always equals `tool*`:
 both are derived from the dock and grab sensors.
 

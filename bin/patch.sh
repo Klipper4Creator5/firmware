@@ -57,7 +57,7 @@ if [ "${BUILD_KLIPPER:-fork}" = "fork" ] && [ -d "${KLIPPER_FORK:-}/klippy" ]; t
             exit 1
         fi
     else
-        echo "   !! no c_helper.so in the fork; see README 'Rebuilding chelper'" >&2
+        echo "   !! no c_helper.so in the fork; see docs/building.md 'Rebuilding chelper'" >&2
         exit 1
     fi
     # klippy/ now contains the fork's own extras+kinematics, so the stock
@@ -114,8 +114,8 @@ fi
 
 # -------------------------------------------------------------- 3. Mainsail
 if [ "${BUILD_MAINSAIL:-1}" = "1" ]; then
-    # The profile asked for Mainsail, so a missing file is a broken build, not
-    # a reason to ship a package with an empty web root. bin/fetch-assets.sh
+    # BUILD_MAINSAIL=1 asked for Mainsail, so a missing file is a broken build,
+    # not a reason to ship a package with an empty web root. bin/fetch-assets.sh
     # should have put it here.
     [ -f "${MAINSAIL_ZIP:-}" ] || { echo "BUILD_MAINSAIL=1 but no Mainsail zip at '${MAINSAIL_ZIP:-}' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
     say "Mainsail: unpacking $(basename "$MAINSAIL_ZIP")"
@@ -211,7 +211,7 @@ if [ "${BUILD_HELIX:-1}" = "1" ]; then
     [ -f "${HELIX_TGZ:-}" ] || { echo "BUILD_HELIX=1 but no HelixScreen tarball at '${HELIX_TGZ:-}' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
     say "HelixScreen: unpacking $(basename "$HELIX_TGZ")"
     mkdir -p "$MP/helixscreen"
-    tar -xzf "$HELIX_TGZ" -C "$MP" # yields mod/helixscreen/
+    tar -xzf "$HELIX_TGZ" -C "$MP" # yields $MP/helixscreen/
     # Printer-database entry so it detects the Creator 5 Pro as a tool changer
     mkdir -p "$MP/helixscreen/config/printer_database.d"
     cp -f payload/helixscreen/printer_database.d/*.json \

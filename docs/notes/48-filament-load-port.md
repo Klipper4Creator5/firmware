@@ -39,13 +39,17 @@ Port: `payload/klipper/config/ff-filament.cfg` — `LOAD_FILAMENT`, `UNLOAD_FILA
 | paused print | LoadFilamentPrint path | mounted tool only (else refuse), E100/E−5, no Z, tool and heater left for RESUME |
 | printing | UI disabled | refuse |
 | unload | same as load | **designed**: E+10 prime, E−20 F1200, remainder of `unload_length` (80) F600 |
-| PURGE | clearNozzlePrint | same; `PURGE_TEMP=` is HelixScreen's name |
+| PURGE | clearNozzlePrint | same, plus the app's cold wipe: `WIPE=1` by default runs `_FF_NOZZLE_WIPE` (travel to 266.5/13.8, cool by `clean_cool_delta` 100 °C, `G1 Z10 F1200`). `PURGE_TEMP=` is HelixScreen's name |
 
 HelixScreen: its tool-changer backend maps Load/Unload to SELECT/UNSELECT_TOOL; assigning
 `LOAD_FILAMENT`/`UNLOAD_FILAMENT`/`PURGE` in Settings → Macro Buttons outranks that. Parameter modal
 reads `params.X|default()` from the template.
 
-## Verified (mock render harness, 23 checks)
+## Verified (mock render harness, 23 checks — harness since deleted)
+
+The harness was `test/test-macros.py`, removed in `91604c2` when the suite was cut down
+and the Python half rewritten as pytest. Nothing renders these macros today, so the
+checks below are a record of what was true then, not a gate that still runs:
 
 Emitted order for idle load matches the recovered list; per-tool nudges; thin-nozzle F80; material
 table; chamber fan off/restore; refusals (printing, paused + other tool, no tool); paused path;

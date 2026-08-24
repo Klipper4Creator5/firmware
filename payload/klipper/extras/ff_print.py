@@ -29,7 +29,6 @@
 #   slicer metadata, and calls two ordinary G-code macros:
 #
 #       FF_BEFORE_PRINT_START ORIGIN=<cmd> [BED=] [TOOL=] [NOZZLE=] [LAYER=]
-#                             [TOOLS=<tool>:<temp>,...]
 #       FF_AFTER_PRINT_END    STATE=<complete|cancelled|error|...>
 #
 #   Both are defined in ff-print-macros.cfg and may be redefined by the user.

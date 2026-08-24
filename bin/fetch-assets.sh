@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Download the pinned third-party payload pieces into vendor/.
 #
-#   ./bin/fetch-assets.sh              everything the profile needs
-#   ./bin/fetch-assets.sh --all        everything, whatever the profile says
+#   ./bin/fetch-assets.sh              whatever BUILD_MAINSAIL / BUILD_HELIX ask for
+#   ./bin/fetch-assets.sh --all        both, regardless of those flags
 #
 # Nothing here is committed: the repo stays free of binaries and the versions
 # live in versions.env. A cached file with the right sha256 is never

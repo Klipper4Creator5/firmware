@@ -32,9 +32,10 @@ stock behaviour.
 
 Couplings to `load_channel` worth knowing: bare `M104`/`M109` get ` T<print_channel>`
 appended (543-547), and `SET_PRESSURE_ADVANCE` is rewritten to the per-channel value
-when `pa_enable == 1` (479-487). `ff_toolchange.py` still issues `SDCARD_SET_CHANNEL`
-to keep that channel in sync — a no-op-turned-unknown-command on the upstream
-`virtual_sdcard` we now ship, which does neither rewrite.
+when `pa_enable == 1` (479-487). `ff_toolchange.py` used to issue
+`SDCARD_SET_CHANNEL` to keep that channel in sync; it was dropped in `764af2a`
+("upstream needs no channel") and appears nowhere in `payload/` now — the upstream
+`virtual_sdcard` we ship does neither rewrite, so there is no channel to sync.
 
 ### `c_helper.so` is no longer checked against its klippy
 
@@ -74,4 +75,5 @@ custom webhooks endpoint `bed_mesh/abort_probe_mesh`.
 
 Socket `/tmp/uds`, stock Klipper webhooks protocol; subscribes to `print_stats`,
 `virtual_sdcard`, `pause_resume`, `gcode_move`, `toolhead`, heaters, buttons, fans.
-In a Moonraker world the same socket serves both — the app and Moonraker coexist.
+On a modded printer the app is gone entirely — `firmwareExe` is replaced — so the only
+clients on that socket are Moonraker and HelixScreen.

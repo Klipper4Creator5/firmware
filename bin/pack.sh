@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 3/3 -- repack work/software back into an installable USB package.
 #
-#   ./bin/pack.sh              software component only (DEFAULT, ~28MB)
+#   ./bin/pack.sh              software component + the mod payload (DEFAULT, ~62MB)
 #   ./bin/pack.sh --full       also carry kernel / control / library
 #   ./bin/pack.sh --plain      no encryption: emits runFirmwareExe.sh + payload
 #                          for the /mnt/runFirmwareExe.sh dev path

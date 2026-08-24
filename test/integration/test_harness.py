@@ -46,11 +46,16 @@ def python_files(root):
 
 
 def test_upward_walks_land_on_the_repo_root(root):
-    """Two host-side shell scripts are left; they still count `..` by hand.
+    """One host-side shell script is left that still counts `..` by hand.
 
     build-printer-image.sh bakes the published replica image and is run by
     hand, so it is exactly the kind of script that can be broken for months
     without anyone noticing.
+
+    The `assert checked` below passes on a single hit, so it does not notice
+    if that one script stops walking upward and this test quietly covers
+    nothing. If the count ever reaches zero the guard fires; between one and
+    zero there is no alarm.
     """
     wrong = []
     checked = 0

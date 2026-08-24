@@ -18,16 +18,21 @@ does the work.
 | | |
 |---|---|
 | **Mainsail in your browser** | The full Klipper web interface at `http://<printer-ip>/` — upload gcode, watch the print, tune on the fly. Moonraker comes with it, so anything that speaks the Klipper API works. |
-| **A shell on your printer** | ssh as root. Dropbear is already running on stock firmware; this simply gives you a password you know — the installer picks a random one and writes it to `anvil-password.txt` on your USB stick. |
+| **A shell on your printer** | ssh as root. Dropbear is already running on stock firmware; this simply gives you a password you know. Official releases have one baked in at build time; a package you build yourself without setting `ROOT_PW_HASH` picks a random password and writes it to `anvil-password.txt` on your USB stick. |
 | **Real toolchanger Klipper** | A current Klipper with proper tool-change support, replacing the 0.12-era tree FlashForge ships. |
 | **A current Moonraker** | Replacing the 2022 build FlashForge ships, which is too old for today's Mainsail — with it, the camera panel never appears at all. |
 | **A modern touchscreen UI** | HelixScreen replaces the stock interface on the printer's own screen. |
-| **Nothing you cannot undo** | Flashing the stock FlashForge package puts every file back. |
+| **Nothing you cannot undo** | Flashing the stock FlashForge package restores every file the mod replaced, and the printer behaves as it did before. |
 
-The stock boot process and the stock recovery path are left in place: the mod
-replaces one file (`firmwareExe`) and nothing in `rcS` or `app_startup.sh` is
-patched, so flashing the stock FlashForge package puts the printer back exactly
-as it was.
+The stock boot process and the stock recovery path are left in place. The mod's
+whole *integration point* is one file — `firmwareExe`, the stock application —
+and nothing in `rcS` or `app_startup.sh` is patched, so FlashForge's own updater
+is still what installs and still what reverts. Flashing the stock package
+restores everything the mod replaced: `firmwareExe`, `start.sh`, the Klipper
+tree, `printer.base.cfg` and `shadow`. What it does not do is scrub the disk —
+the payload under `/usr/data/anvil`, the `ff-*.cfg` in `/usr/data/config/` and
+the install log stay behind, inert, because nothing references them any more.
+`make test-recovery` asserts exactly that, on a replica of the machine.
 
 ### What you give up
 

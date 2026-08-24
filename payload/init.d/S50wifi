@@ -14,8 +14,9 @@
 #
 # BUT IT MUST NOT MAKE THEM WAIT. firmwareExe runs the S* scripts one at a
 # time in the foreground. Everything interesting here is a wait on hardware:
-# up to 15s for wlan0 to register after the 8821cu insmod, up to 20s more for
-# the AP to associate. Inline, that is ~20s with no Klipper, no Mainsail and
+# up to 15s for wlan0 to register after the 8821cu insmod, then up to 20s more
+# for the AP to associate. The two waits are sequential, so inline that is up
+# to ~35s with no Klipper, no Mainsail and
 # no UI whenever the AP is out of range or the password is stale -- i.e. the
 # longest delay lands on exactly the machines with no network, where you most
 # need ssh to diagnose and where waiting buys nothing. So the waiting happens

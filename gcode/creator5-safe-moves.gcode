@@ -2,7 +2,8 @@
 ; Creator 5 / Creator 5 Pro -- safe first check
 ;
 ; The feature print with the heat and the filament taken out. Once the
-; machine is homed, no move in this file goes below Z50; nothing
+; machine is homed, no move in THIS FILE goes below Z50 (the implicit
+; prepare that runs before it does -- see the note at the end); nothing
 ; extrudes, and no heater is ever given a target. It is the file to run
 ; FIRST on a freshly flashed machine, so that the expensive way to
 ; discover a wrong Z offset or a dock that does not latch is not a
@@ -44,8 +45,14 @@
 ;
 ; This file names no tool as a bare `Tn`, and carries no M104/M140, so
 ; ff_print derives nothing from it and the implicit prepare has nothing
-; to heat or purge. It is safe whether FF_BEFORE_PRINT_START.prepare is
-; 0 or 1 -- unlike the feature print, which wants it at 0.
+; to heat or purge -- unlike the feature print, which wants prepare at 0.
+;
+; With prepare at 1 (the shipped default) the implicit START_PRINT still
+; runs G28, BED_MESH_PROFILE LOAD=MESH_DATA and `G1 Z10 F1200` before
+; this file's own first line. That Z10 is in the raw eddy frame, ~6.8 mm
+; physical, and it is the one move here that goes below Z50. It heats
+; nothing and extrudes nothing. Set prepare to 0 if you want the
+; Z50 floor to hold for the entire run.
 ; ====================================================================
 
 G90

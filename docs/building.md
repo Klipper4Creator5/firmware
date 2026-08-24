@@ -19,8 +19,9 @@ Docker. That is the whole list — the build image carries `openssl`, `tar`,
 and every target runs inside it. `make shell` drops you into it.
 `LOCAL=1 make <target>` runs on the host instead.
 
-Only the test targets get the docker socket mounted through, so they can start
-the replica as a sibling container. A build cannot reach the docker daemon.
+The test targets get the docker socket mounted through, so they can start the
+replica as a sibling container — and so does `make shell`, which shares their
+run flags. A build cannot reach the docker daemon.
 
 ## The pipeline
 
@@ -73,7 +74,11 @@ This distinction is the one to keep straight:
 * **`MOD_*`** are runtime switches. They are written into
   `/usr/data/anvil/anvil.conf`, which the printer re-reads at every boot, so
   they can be changed over ssh afterwards and survive a mod update.
-  (`MOD_WEB`, `MOD_SSH`, `MOD_WIFI`.)
+  (`MOD_WEB`, `MOD_CAM`, `MOD_UI`, `MOD_WIFI`, plus the `MOD_CAM_*` tunables.)
+  `MOD_SSH` is the odd one out: it is written to the same file, but nothing on
+  the printer reads it — it is consumed at build time by `bin/patch.sh` to
+  decide whether to set a root password, and ssh itself comes from the stock
+  `/etc/init.d/S50dropbear` regardless.
 
 ## Third-party pieces are downloaded, not vendored
 
@@ -147,7 +152,11 @@ belongs to. Nothing from the test lane can reach a printer.
 ```
 payload/        POSIX sh, busybox ash -- runs ON the printer
   firmwareExe     the wrapper that replaces the stock binary
-  init.d/         S60web, S70klipper, S80ui
+  start.sh        replaces the stock Klipper launcher (priority, MCU bring-up)
+  init.d/         S50wifi, S60web, S65camera, S70klipper, S80ui
+  bin/            ff-mcu-bringup.py, wifi-action.sh
+  klipper/        extras/ff_*.py and config/ff-*.cfg + printer.base.cfg
+  helixscreen/    the printer-database entry that makes it a toolchanger
   anvil.conf      runtime switches, preserved across mod updates
   run-pre.sh      backups, injected at the TOP of the stock run.sh
   run-append.sh   payload install, injected before its exit
@@ -173,6 +182,9 @@ test/           run-tests.py, and the shared pytest fixtures
   integration/    the suite
     test_chamber.py         the Klipper config gate -- no firmware needed
     test_paths.py           payload paths against the real rootfs
+    test_includes.py        the [include ff-*.cfg] block, exact set and order
+    test_config_ownership.py  DO-NOT-EDIT banners on the mod-owned configs
+    test_gcode.py           gcode/*.gcode against the macros we define
     test_harness.py         static checks on the harness itself
     make-stock-fixture.sh   synthetic stand-in for a stock package
     printer/        the replica itself: binfmt, mount layout, its two

@@ -4,8 +4,11 @@ Each one is a plain function that returns normally, raises Skip when its
 precondition is genuinely absent, or raises Fail when it ran and the answer
 was no. run-tests.py calls them directly -- no subprocess between the gate and
 the thing counting results, so there is no output format to agree on and
-nothing to misread. The scripts in test/integration/ are thin wrappers around
-these same functions, for running one gate on its own.
+nothing to misread. Three scripts in test/integration/ -- sim-install.py,
+sim-roundtrip.py and extract-rootfs.py -- are thin wrappers around these same
+functions, for running one gate on its own. (printer-exec.py wraps Replica
+directly, and build-printer-image.sh / make-stock-fixture.sh are not wrappers
+at all.)
 """
 import os
 import subprocess

@@ -83,8 +83,13 @@ sensors, max_temp 350.
 ## Klipper objects the UI expects (all present in the stock config)
 
 - Heaters/sensors: `extruder..extruder3`, `heater_bed`, `heater_generic
-  chamber_heater`, `temperature_sensor motor_value` (grab-motor current),
-  `temperature_sensor ptcTemp`.
+  chamber_heater` (Pro only — it lives in `printer.chamber.cfg`, and the plain
+  Creator 5 gets `[temperature_sensor chamber]` instead),
+  `temperature_sensor ptcTemp`, `temperature_sensor extruder_servo_value`
+  (`eboard:PA0`), `temperature_sensor adc_current_value` (`eheaterboard:PC1`).
+  The `temperature_sensor motor_value` on `eboard:PA1` named in `25-...md` is
+  **not** in anything this repo ships; if it exists it is in
+  `printer.motor.cfg`, which is not in the package.
 - Fans: `fan_generic fanM106` (part fan, via custom `SET_FAN_M106`), `chamber_fan`,
   `chamber_cool_fan`, `chamber_heat_fan`, `chamber_loop_fan`.
 - Buttons (`gcode_button`): `extruder_pos1..4` (head present in dock N),

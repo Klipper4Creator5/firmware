@@ -195,7 +195,8 @@ class FFToolchange:
         # toolchanger.status = 'changing').
         self.changing = False
         # Reported as every tool's `fan`: the part-cooling fan is shared on
-        # this machine (fanM106 via M106 P1); heat_fan0..3 are hotend fans.
+        # this machine (fanM106 via M106 P1); heat_fan / heat_fan1..3 are the
+        # hotend fans.
         self.part_fan = config.get('part_fan', 'fan_generic fanM106')
         for oname, view in [('toolchanger', _ToolchangerView(self))] + [
                 ('tool T%d' % i, _ToolView(self, i))
@@ -362,8 +363,9 @@ class FFToolchange:
 
         Without station_z (STATION_CALIBRATE) Z falls back to the app's
         relative form, nozzle_z[tool] - nozzle_z[base]. A tool without a
-        calibration contributes zero offset (and is listed by
-        TOOLCHANGE_STATUS / warned about at ready). If the BASE tool is
+        calibration contributes no MEASURED offset -- X and Y are zero, and Z
+        is that tool's z_adjust, which is not zero if one was ever set. Such
+        tools are listed by TOOLCHANGE_STATUS / warned about at ready. If the BASE tool is
         uncalibrated X/Y are zero for every tool, since nothing can be
         measured against it.
         """
@@ -486,7 +488,8 @@ class FFToolchange:
         if missing:
             self.gcode.respond_info(
                 "ff_toolchange: WARNING: no nozzle calibration for %s --"
-                " those tools get ZERO X/Y/Z offset. Run"
+                " those tools get ZERO X/Y and only their z_adjust in Z."
+                " Run"
                 " TOOL_OFFSET_CALIBRATE (or FF_IMPORT_FIRMWARE_CONFIG once)"
                 " and SAVE_CONFIG." % ", ".join("T%d" % i for i in missing))
 
@@ -1364,7 +1367,8 @@ class FFToolchange:
                              % (t.index, t.nozzle[0], t.nozzle[1],
                                 t.nozzle[2], t.z_adjust))
             else:
-                lines.append("  T%d nozzle NOT CALIBRATED (zero offset)"
+                lines.append("  T%d nozzle NOT CALIBRATED"
+                             " (zero X/Y, z_adjust only in Z)"
                              % t.index)
         sz = self._station_z()
         lines.append("  station_z     %s"

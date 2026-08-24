@@ -135,7 +135,7 @@ if head -c 2 "$FE" 2>/dev/null | grep -q '#!'; then
         && ok "the wrapper launches HelixScreen" \
         || bad "BRICK: wrapper installed but it starts no UI at all"
 elif head -c 4 "$FE" | grep -q 'ELF'; then
-    ok "stock firmwareExe binary in place (no UI replacement in this profile)"
+    ok "stock firmwareExe binary in place (no UI replacement requested)"
 fi
 
 # Every shell script the mod puts on the machine has to parse with THIS shell.
@@ -360,8 +360,10 @@ else
     bad "moonraker: no $MRPKG -- this prog partition has no Moonraker to replace"
 fi
 
-# Nothing may be written to the read-only root. A mod that needs it works in a
-# permissive sandbox and fails silently on the machine.
+# Informational only -- this block asserts nothing and never sets FAIL. The
+# read-only root is enforced by the mount layout in assemble.sh, not here; what
+# follows just shows which calls the simulation had to neuter, so a mod that
+# quietly depends on one is visible in the log.
 if [ -f /tmp/sim-neutered.log ]; then
     echo
     echo "  -- calls neutered by the simulation --"

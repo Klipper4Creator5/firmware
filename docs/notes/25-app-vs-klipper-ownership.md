@@ -7,7 +7,7 @@ print is driven from Mainsail unless `ff_*` re-provides it.
 
 | Subsystem | App decides | Klipper side | Evidence |
 |---|---|---|---|
-| Heaters | `M104 S.. T0..T3`, `M140`, `SET_HEATER_TEMPERATURE HEATER=chamber_heater`; **never M109/M190** — waiting is app-side polling; staged heating e1+e2 then e3+e4; 5-min bed soak; chamber heater coupled to `chamber_heat_fan` 0.9 / `chamber_loop_fan` 0.3 in the app only | `[verify_heater]` (fork hardcodes gain times, caps concurrent extruder heating at 2, loosens PID settle so M109 returns early); `min_extrude_temp: -200` on all extruders = cold-extrude guard effectively off | `CommMgr::heatManager` @0x76… (CommMgr.c:2576-2700) |
+| Heaters | `M104 S.. T0..T3`, `M140`, `SET_HEATER_TEMPERATURE HEATER=chamber_heater`; **never M109/M190** — waiting is app-side polling; staged heating e1+e2 then e3+e4; 5-min bed soak; chamber heater coupled to `chamber_heat_fan` 0.9 / `chamber_loop_fan` 0.3 in the app only | `[verify_heater]` (fork hardcodes gain times, caps concurrent extruder heating at 2, loosens PID settle so M109 returns early); `min_extrude_temp: -200` on all extruders = cold-extrude guard effectively off. The chamber is **ported**: `ff-chamber.cfg` wraps `SET_HEATER_TEMPERATURE` and adds `M141`/`M191`, gated on the model that actually has an element | `CommMgr::heatManager` @0x76… (CommMgr.c:2576-2700) |
 | Material temps | from `filament.json` via `getFilamentOperationTemp` | none | CommMgr.c, LoadFilamentPrint.c |
 | Runout / clog | app state machine on `filament_switch_sensor fd_ex*` `filament_detected` + `"wheel runout:Tn"` text; arms/disarms with `SET_FILAMENT_SENSOR … ENABLE=0/1`; endless-spool auto-swap (E0162/E0163) | all eight sensors `pause_on_runout: False`; motion sensors' `runout_gcode` only `action_respond_info` — **ported** (mounted-tool arming in `ff_toolchange.py`, pause via `payload/klipper/config/ff-runout.cfg`; no endless spool), see `49-runout-recovered.md` | `printer.filament.cfg`, `dealFilamentWheelStatus`, `checkAndAutoFeed` |
 | Doors | `openDoorPause` toggle in general.json | `[gcode_button topDoor/frontDoor]` with **empty** `press_gcode` | `printer.base.cfg:278-287` |
@@ -16,7 +16,7 @@ print is driven from Mainsail unless `ff_*` re-provides it.
 | Z frame | absolute print-start Z offset (~+3.2 mm) computed in `BuildPage::startPrint`; per-tool XY/Z diffs applied on every grab | nothing; eddy `G28 Z` is **not** nozzle zero | 40-offsets.md |
 | Mesh / leveling | app triggers `BED_MESH_CALIBRATE` / `BED_MESH_PROFILE LOAD=…` | executes | 50-print-lifecycle.md |
 | Tool remap | `SDCARD_SET_GCODE_EX_USED_BASE`, `SDCARD_SET_CHANNEL`; fork's `virtual_sdcard` swallows bare `Tn` | executes blindly | 20-klipper-fork.md |
-| LEDs / fans | `SET_LED LED=chamber_led`, `SET_FAN_SPEED FAN=…` enum mapping | bare sections | `ledControlMgr`, `fanControlMgr` |
+| LEDs / fans | `SET_LED LED=chamber_led`, `SET_FAN_SPEED FAN=…` enum mapping | bare sections — the chamber light is **ported**: `ff-chamber.cfg` sets `initial_WHITE: 1.0` so it comes up lit without a UI to switch it | `ledControlMgr`, `fanControlMgr` |
 | PLR, timelapse, camera, MQTT/REST, OTA, drying box | app only | none | 60-background.md |
 
 ## Four items looked at in depth (and what turned out to be true)
@@ -27,8 +27,11 @@ The app subscribes to `temperature_sensor motor_value` (A4988 sense, stock `adc_
 log line (toolchange.c:419 in the recovered sources, `"extruderGrab/motorValue: %d / %f"`). Every grab /
 release decision is made on the grab micro-switches: 3 attempts × 30 polls @100 ms, grab = OR of
 `extruder_grab1..4` (`getGrabSensorStatus` @0x76f294 ignores the tool index), post-verify = dock
-switch released AND grab switch pressed. `E0145 "Lock motor current abnormal"` exists only in the
-language tables — no code raises it. `MOTOR_STOP` is a no-op in `printer.motor.cfg`.
+switch released AND grab switch pressed. `MOTOR_STOP` is a no-op in `printer.motor.cfg`.
+`E0145 "Lock motor current abnormal"`: this note says it exists only in the language tables
+with no code raising it, while `ff_toolchange.py`'s header says it is raised Klipper/MCU-side.
+Both are claims about the stock side and neither is decidable from this repo — but they cannot
+both be right, so treat E0145 as unresolved.
 → `ff_toolchange.py` reproduces the switch logic; real current supervision would be a new
 feature (sample `motor_value` during the grab inside the extra; thresholds unknown).
 
@@ -40,7 +43,10 @@ byte; `QUERY_ESTOP` (`e_stop.py:360`) is probe-endstop diagnostics, unrelated.
 `checkPlatformInstall/Remove` (E0147/E0167/E0168) are stubs called from the *leveling* page; no
 platform switch exists in the config — input signal not found (probably eddy-derived).
 → `ff_toolchange.py` derives the tool from the dock switches (survives power cycle and G28).
-Missing: a START_PRINT gate refusing when a requested tool is not docked (`_FF_PREFLIGHT`).
+Ported: `_FF_PREFLIGHT` (`ff-print-macros.cfg`) refuses before any heating or motion when a
+requested tool is not docked or mounted, and again when the machine is uncalibrated.
+START_PRINT calls it, and `[ff_print]` calls it a second time through
+`FF_BEFORE_PRINT_START`, before the file is even fed.
 
 ### Calibration
 | Item | App math | Klipper-native |

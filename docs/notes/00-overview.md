@@ -61,10 +61,19 @@ notes are verified against the live binary.
 
 ## Notes map
 
+Files ending `-recovered` are reconstructions of the stock app's behaviour; the matching
+`-port` note says what this repo actually shipped.
+
 - `10-hardware.md` — MCUs, serial ports, Klipper objects the UI expects
 - `20-klipper-fork.md` — fork delta: custom commands, the `Tn` interception
+- `25-app-vs-klipper-ownership.md` — which side owns which behaviour, and what is ported
 - `30-toolchange.md` — dock/grab/release sequences, sensors, mounted-tool state
 - `40-offsets.md` — where per-unit numbers live; per-tool offsets; the absolute print Z offset
+- `45-tool-offset-calibration.md` — the Klipper port: storage layout, commands, guards
+- `46-offset-calibration-recovered.md` — the app's calibration sequence it was ported from
+- `47-filament-load-recovered.md` / `48-filament-load-port.md` — load/unload/purge
+- `49-runout-recovered.md` — runout and clog handling (ported: `ff-runout.cfg`)
 - `50-print-lifecycle.md` — start/pause/resume/cancel/complete, address-verified
-- `60-background.md` — filament system, calibration flows, config keys (unported context)
+- `50a-nozzle-clean-recovered.md` / `50b-nozzle-clean-port.md` — the pre-print nozzle clean
+- `60-background.md` — filament system, calibration flows, config keys (background context)
 - `70-error-codes.md` — full E-code table (behavioral spec)

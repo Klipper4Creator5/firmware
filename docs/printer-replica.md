@@ -24,12 +24,15 @@ work/rootfs/          rootfs.squashfs, extracted from the stock package's
 
 1. registers a `binfmt_misc` handler so MIPS binaries execute (see below),
 2. builds the machine's mount layout,
-3. installs the **stock FlashForge package** with FlashForge's own installer,
+3. installs the **stock FlashForge package** with FlashForge's own installer —
+   only when `BASE_PKG` is set. `make test-mcu` does not set it, so the MCU
+   gate skips this step,
 4. `chroot`s in and runs the test case.
 
 From step 4 onward there is no host shell involved. `sh`, `tar`, `md5sum`,
-`expr`, `find`, `cmp`, `unzip` and the `unTar` decryptor are all the
-printer's binaries, executing under `qemu-mipsel`.
+`find`, `cmp` and the `unTar` decryptor are all the printer's binaries,
+executing under `qemu-mipsel` (`expr` and `unzip` are the printer's too, but
+are reached only from inside the stock installer, not from any case script).
 
 ## The mount layout
 
@@ -48,9 +51,9 @@ Root is read-only on purpose. On the printer a write to `/bin` or `/etc`
 silently fails; a mod that depended on one would pass a permissive sandbox and
 fail on the machine.
 
-`/dev` is a tmpfs holding only `null`, `zero`, `random`, `urandom`, `tty` and
-a regular file for `fb0` (the installer does `cat start.img > /dev/fb0`), and
-`/sys` is mounted read-only.
+`/dev` is a tmpfs holding `null`, `zero`, `full`, `random`, `urandom`, `tty`,
+a `devpts` at `pts`, a tmpfs at `shm`, and a regular file for `fb0` (the
+installer does `cat start.img > /dev/fb0`). `/sys` is mounted read-only.
 
 The one block device is the USB stick. With `USB_STICK=1` the harness formats
 a FAT filesystem, copies the packages into it, attaches it to a loop device

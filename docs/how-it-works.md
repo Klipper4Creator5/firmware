@@ -31,7 +31,10 @@ Two properties come for free from keeping that name and that place:
   after launch. The wrapper *is* `firmwareExe` and stays in the foreground, so
   the stock watchdog supervises the mod correctly.
 * If the wrapper is ever removed, `app_startup.sh` restores a `firmwareExe`
-  from the newest version directory — the stock recovery path still works.
+  from a version directory — the last entry of a plain `ls -ld [0-9]*`, which
+  is alphabetical rather than version-sorted, though since the installer keeps
+  only one directory there is normally just the one candidate. The stock
+  recovery path still works.
 
 ## Services
 

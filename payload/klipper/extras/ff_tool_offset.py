@@ -637,7 +637,9 @@ class FFToolOffset:
 
     def _report_diffs(self, gcmd, results):
         """Tool-to-tool differences against T0, the quantity the toolchanger
-        applies (ff_toolchange._derive_offsets, base T0)."""
+        applies (ff_toolchange._derive_offsets, base = its offset_base option,
+        which defaults to T0 but is configurable -- with a different base this
+        report is not what the toolchanger applies)."""
         base = None
         if 0 in results:
             base = results[0]

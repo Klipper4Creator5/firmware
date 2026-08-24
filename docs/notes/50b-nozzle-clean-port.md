@@ -9,20 +9,24 @@ Port: `payload/klipper/config/ff-print-macros.cfg` — `_FF_PREFLIGHT`, `_FF_NOZ
 ## START_PRINT now
 
 ```
-START_PRINT BED=60 TOOL=2 NOZZLE=240 LAYER=0.2 LEVEL=0 TOOLS=0,2 TEMPS=220,0,240,0 [CLEAN=1] [SOAK=0]
+START_PRINT BED=60 TOOL=2 NOZZLE=240 LAYER=0.2 LEVEL=0 TOOLS=0:220,2:240 [CLEAN=1] [SOAK=0]
 ```
 
 1. `_FF_PREFLIGHT` — both gates in one pass, before any heating or motion:
    every tool in TOOLS (plus TOOL) calibrated and the station known, and every one of
    them docked or mounted (`docked_tools` / `current_tool`). App: E0165.
-3. `G90 M82 BED_MESH_CLEAR M400 G28`, offset zero, idle timeout 1800000 — unchanged.
+3. `G90 M82 BED_MESH_CLEAR G28`, offset zero (`MOVE=1 MOVE_SPEED=600`), idle timeout
+   864000. No `M400`; the app's 1800000 timeout is not reproduced.
 4. `M140 S<bed>` (non-blocking, as the app's heatManager).
 5. `_FF_NOZZLE_CLEAN TOOLS=.. TEMPS=.. TEMP=<NOZZLE>` then `M106 P1 S0` — the clean runs
    while the bed heats, exactly where the app runs it.
 6. `M190`, optional `G4` soak, `G28 Z`, mesh, `M104 S<NOZZLE> T<TOOL>`, `T<TOOL>`,
    `TOOLCHANGE_SET_PRINT_OFFSET` — as before, plus the app's heat-before-grab of the first tool.
 
-TOOLS defaults to TOOL; with neither, no gate and no clean (single-tool legacy call).
+`TOOLS` is the paired form `<tool>:<temp>`; a bare `0,2` is accepted and falls back to
+`NOZZLE`. `TEMPS=` is the older positional override, still honoured. TOOLS defaults to
+TOOL; with neither, no tool-presence check and no clean — but `_FF_PREFLIGHT` still runs
+and the calibration gate still applies via `print_offset_ready`.
 
 ## _FF_NOZZLE_CLEAN, per tool
 
@@ -31,22 +35,28 @@ Reuses `_FF_FILAMENT_PREP` (new `ALLOW_PRINTING=1`, since `print_stats.state` is
 `ACTIVATE_EXTRUDER` when already mounted), `G1 Z purge_z` if below, the chute approach with the
 per-tool nudge, `TEMPERATURE_WAIT ±3`, chamber fans off. Then, verbatim from the app:
 `M83 G92 E0 G1 E50 F<speed> M400 M106 P1 S153 G1 E-5 M400`, `G1 X250 F6000`,
-`G1 Y13.8 F24000`, `G1 X266.5 F6000`, `G1 Z1.0 F600`, `M104 S<temp-100>`,
+`G1 Y13.8 F24000`, `G1 X266.5 F6000`, `G1 Z<clean_wipe_z - homing_origin.z> F600`,
+`M104 S<temp-100>`,
 `TEMPERATURE_WAIT MAXIMUM=<temp-97>`, `M106 P1 S0`, `G1 Z10 F1200`, and
 `_FF_FILAMENT_FINISH RELEASE=1 HEAT_OFF=0` (chamber fans back, `UNSELECT_TOOL`). The hotend
 is left at temp−100 as the app leaves it; `speed` is 80 for a 0.25 mm nozzle, else 240.
 
-Temperatures: `TEMPS` indexed by tool number (0 / missing → `TEMP`, which START_PRINT sets
-to NOZZLE). The app takes the slot's material-table temperature; the slicer's first-layer
-temperature per extruder is the same information from the other side.
+Temperatures, in precedence order: the paired `TOOLS=<n>:<temp>`, then positional `TEMPS`
+indexed by tool number, then — and this is the fallback that actually fires — the slot's
+material in `_FF_FILAMENT.tool_material` looked up in `_FF_FILAMENT.temps`, exactly as the
+app did. Only if that material is unknown does it fall back to `TEMP` (which START_PRINT
+sets to NOZZLE). So with the shipped `tool_material: ['PLA','PLA','PLA','PLA']`, a
+`START_PRINT NOZZLE=240` with no per-tool temperature cleans at **220**, not 240.
 
 ## Deliberate divergences
 
 - **Gate scope**: the app checks only the initial tool at prepare (the others fail at their
   grab, after the bed is already heating); we refuse up front for all of TOOLS.
-- **Purge / wipe heights** are `purge_z` (8.0) and `clean_wipe_z` (1.0) in the homed frame,
-  i.e. the app's `probeZ + 8` / `probeZ + 1` with probeZ taken as 0 — no fresh eddy
-  `PROBE_ACCURACY` at (265, 4.8). Same assumption as LOAD_FILAMENT; unmeasured.
+- **Purge / wipe heights** are `purge_z` (8.0) and `clean_wipe_z` (1.0) in the RAW eddy
+  frame, i.e. the app's `probeZ + 8` / `probeZ + 1` with probeZ taken as 0 — no fresh eddy
+  `PROBE_ACCURACY` at (265, 4.8). `_FF_NOZZLE_WIPE` commands
+  `clean_wipe_z - gcode_move.homing_origin.z`, so the `G1 Z...` it emits is not literally
+  1.0. Same assumption as LOAD_FILAMENT; unmeasured.
 - **Cool-down wait** has no timeout (`TEMPERATURE_WAIT`); the app gives up after 180 s with
   E003x. `clean_cool_delta: 0` skips it (much faster, less clean).
 - The PA-test variant (`paTest` flag → `SET_KINEMATIC_POSITION` + `paTestMgr`) and the

@@ -111,7 +111,13 @@ if [ -f "$T/anvil.tar.xz" ]; then
                                           || bad "mod payload missing S70klipper -- Klipper would never start"
     echo "$LIST" | grep -q 'mainsail/index.html' && ok "Mainsail present" || warn "no Mainsail in payload"
     echo "$LIST" | grep -q 'helixscreen/bin/helix-screen' && ok "HelixScreen present" || warn "no HelixScreen in payload"
-    echo "$LIST" | grep -q 'bin/dropbear'  && ok "dropbear present" || warn "no dropbear -- ssh will not start"
+    # We deliberately ship no dropbear: the stock rootfs already has one, with
+    # an enabled S50dropbear, so ssh is up before the mod does anything. A
+    # dropbear in the payload would mean something unexpected, not something
+    # missing -- hence the check reads the way round it does.
+    echo "$LIST" | grep -q 'bin/dropbear' \
+        && warn "dropbear in the payload -- we ship none; stock S50dropbear provides ssh" \
+        || ok "no dropbear in the payload (stock S50dropbear provides ssh)"
     # moonraker.py is the file moonrakerDaemon execs by absolute path; a
     # payload with the directory but not that file installs a Moonraker that
     # cannot start, which looks identical to a dead printer from the outside.
