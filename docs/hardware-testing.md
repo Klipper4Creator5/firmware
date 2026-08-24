@@ -126,8 +126,48 @@ Then motion, which is the part that can damage the machine:
 - [ ] `TOOLCHANGE_STATUS` responds in the Mainsail console
 - [ ] home all axes — watch the first Z move
 - [ ] one tool change, by hand, at temperature
-- [ ] a single-tool test print
-- [ ] a multi-tool test print
+- [ ] a single-tool test print — `make test-gcode TOOLS=0`
+- [ ] a multi-tool test print — `make test-gcode TOOLS=0,1`
+
+## The feature-verification print
+
+`make test-gcode` writes `dist/creator5-feature-test-T0T1.gcode`. It is not a
+model. It is one file that drives every macro the mod adds, in the order a real
+print drives them, and leaves something on the plate you can measure:
+
+| Phase | What it proves |
+|---|---|
+| start block | `START_PRINT` with `TOOLS=`: the preflight gate, then one purge + wipe per tool at the chute while the bed heats |
+| 0 | `TOOLCHANGE_STATUS` / `TOOL_OFFSET_STATUS` dumped into `printer.log` alongside the print itself |
+| 1 | nested squares, one ring per tool, 2 mm apart. Cold, the gap on left vs right is that tool's X offset error; front vs back its Y |
+| 2 | a solid single first layer — squish is the verdict on `TOOLCHANGE_SET_PRINT_OFFSET` |
+| 3 | the `M106 P<n>` fan map, one target at a time with a dwell |
+| 4 | `M141`: a Pro heats, a plain Creator 5 says so and prints on. An abort here is a real failure |
+| 5 | a tower with one tool change per layer, hot, mid-print |
+| 6 | `END_PRINT` via the machine end block |
+
+Two things it deliberately does **not** do. It never calibrates —
+`TOOL_OFFSET_CALIBRATE` and `STATION_CALIBRATE` need the build plate off, which
+a print does not have, so the file only reads the geometry. And it contains no
+`PAUSE`: press Pause in Mainsail during the tower and then Resume, which is the
+one check that wants a human at the machine.
+
+Send it to the printer the way you send any print — Mainsail's upload, or
+OrcaSlicer's Klipper/Moonraker target. Before the first run, turn the implicit
+prepare off, because this file's start block calls `START_PRINT` itself:
+
+```
+SET_GCODE_VARIABLE MACRO=FF_BEFORE_PRINT_START VARIABLE=prepare VALUE=0
+```
+
+Preparing twice misplaces nothing, but it re-homes and re-purges every tool for
+no reason. The file's own header repeats this, along with what to watch for at
+each phase.
+
+`--tools`, `--nozzle`, `--bed`, `--tower-layers` and the rest are on
+`bin/gen-test-gcode.py --help`. `make test-py` checks the generated file
+against the shipped macros and the configured axis limits, so a renamed macro
+breaks the suite rather than the print.
 
 The `.cfg` includes are **not** wired up automatically — a tuned `printer.cfg`
 is never modified. New files arrive as `*.mod-new`. Add the includes by hand

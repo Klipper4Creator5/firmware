@@ -62,7 +62,7 @@ endif
 .DEFAULT_GOAL := help
 .PHONY: help image shell build vendor \
         rootfs verify test test-py test-install \
-        printer-image printer-image-push \
+        printer-image printer-image-push test-gcode \
         test-recovery test-mcu release clean distclean
 
 help:
@@ -99,6 +99,8 @@ help:
 	@echo 'fails. ALLOW_SKIP=1 accepts the gap deliberately.'
 	@echo
 	@echo 'Other:'
+	@echo '  make test-gcode   generate the on-printer feature-verification print'
+	@echo '                    into dist/ (TOOLS=0,1 picks the tools)'
 	@echo '  make vendor       download Mainsail + HelixScreen into vendor/'
 	@echo '  make rootfs       extract the real printer rootfs (enables the replica gates)'
 	@echo '  make image        build the build container'
@@ -194,6 +196,13 @@ test-py: image
 
 test-mcu: image
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-mcu-bringup.sh
+
+# Not a gate -- the thing you print once the gates have passed and the machine
+# is flashed. See docs/hardware-testing.md. test-py checks the generator's
+# output against the shipped macros and the axis limits.
+TOOLS ?= 0,1
+test-gcode: image
+	@$(RUN) ./bin/gen-test-gcode.py --tools '$(TOOLS)'
 
 # Packages land in dist/ after `make release` and in work/out after a single
 # build (pack.sh clears work/out each run, so only the last model survives
