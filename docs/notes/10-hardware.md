@@ -87,9 +87,12 @@ sensors, max_temp 350.
   Creator 5 gets `[temperature_sensor chamber]` instead),
   `temperature_sensor ptcTemp`, `temperature_sensor extruder_servo_value`
   (`eboard:PA0`), `temperature_sensor adc_current_value` (`eheaterboard:PC1`).
-  The `temperature_sensor motor_value` on `eboard:PA1` named in `25-...md` is
-  **not** in anything this repo ships; if it exists it is in
-  `printer.motor.cfg`, which is not in the package.
+  `temperature_sensor motor_value` (`sensor_type: motor_current_sensor`,
+  `eboard:PA1`) is real and ships, but in `printer.motor.cfg`, not
+  `printer.base.cfg` — so `printer.base.cfg` does not include it and the
+  machine's own `printer.cfg` must. `MOTOR_STOP`, `MOTOR_GRAB` and the rest of
+  the lock macros live in that same file, which is why `ff-toolchange.cfg` can
+  name them.
 - Fans: `fan_generic fanM106` (part fan, via custom `SET_FAN_M106`), `chamber_fan`,
   `chamber_cool_fan`, `chamber_heat_fan`, `chamber_loop_fan`.
 - Buttons (`gcode_button`): `extruder_pos1..4` (head present in dock N),

@@ -45,8 +45,10 @@ platform switch exists in the config — input signal not found (probably eddy-d
 → `ff_toolchange.py` derives the tool from the dock switches (survives power cycle and G28).
 Ported: `_FF_PREFLIGHT` (`ff-print-macros.cfg`) refuses before any heating or motion when a
 requested tool is not docked or mounted, and again when the machine is uncalibrated.
-START_PRINT calls it, and `[ff_print]` calls it a second time through
-`FF_BEFORE_PRINT_START`, before the file is even fed.
+`FF_BEFORE_PRINT_START` calls it first, before the file is fed, and then chains to
+START_PRINT, which calls it again. Note that `[ff_print]`'s call is inside
+`{% if origin == 'SDCARD_PRINT_FILE' %}`, so an M23-started print gets only
+START_PRINT's -- and with `prepare_on_m23: 0`, the shipped default, not even that.
 
 ### Calibration
 | Item | App math | Klipper-native |

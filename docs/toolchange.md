@@ -59,8 +59,9 @@ and stay next to the machine until you trust it.
   start. Here every `T<n>` grab applies that tool's gap
   (`nozzle_z − station_z + z_adjust`) as the Z offset, so Z=0 is the bed
   whenever a tool is mounted; `START_PRINT`'s `TOOLCHANGE_SET_PRINT_OFFSET`
-  only adds the thermal/bed/thin-layer terms — a tenth of a millimetre or so:
-  the worked example below reaches 0.125 mm at 220 °C with a 100 °C bed. With no tool
+  only adds the thermal/bed/thin-layer terms — small, but not negligible:
+  `NOZZLE=220 BED=80` (the example below) gives 0.045 mm, and a bed at 100 °C
+  or above adds a further 0.08 mm. With no tool
   mounted, or on an uncalibrated machine, Z=0 is still ~3.2 mm *below* the
   plate — the print gate refuses to start in that state.
 * **Where the numbers live.** Nothing is read from firmwareExe's JSON at

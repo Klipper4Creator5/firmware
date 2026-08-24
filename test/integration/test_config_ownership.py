@@ -42,7 +42,7 @@ def shipped(root):
     """What patch.sh copies to the printer, by basename.
 
     Read from the payload rather than a built tree so this needs no package:
-    bin/patch.sh:80 ships ff-*.cfg, :88 printer.base.cfg, :128 moonraker.conf.
+    bin/patch.sh ships ff-*.cfg, printer.base.cfg and moonraker.conf.
     """
     cfgdir = os.path.join(root, "payload", "klipper", "config")
     names = [f for f in config_files(cfgdir)]

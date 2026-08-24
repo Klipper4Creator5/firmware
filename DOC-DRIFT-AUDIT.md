@@ -1,8 +1,12 @@
 # Documentation & comment drift audit — RESOLVED
 
 > **Every finding below has been applied.** This file is the record of what was
-> wrong and why, not a list of open work. See the five commits following
-> `b686548` for the changes; `make test` is 12/12 green with them in.
+> wrong and why, not a list of open work. See the audit commits on this branch
+> (`git log --oneline master..HEAD`); `make test` is 12/12 green with them in.
+>
+> Line and commit references inside the sections below were written against the
+> tree BEFORE the fixes, so some no longer point where they did. They are kept
+> as the record of what was found, not as current citations.
 >
 > Decisions taken on the items that were not simply wrong prose:
 >
@@ -27,7 +31,7 @@ docstring in the repo against the code as ground truth. ~140 findings.
 marked UNVERIFIABLE and are **not** proposed for change. Everything below is a
 claim about something this repo actually ships.
 
-Nothing in this file has been applied. Each item carries a proposed fix.
+Each item below carries the proposed fix as it was written at the time.
 
 ---
 

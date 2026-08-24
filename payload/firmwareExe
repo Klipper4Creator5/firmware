@@ -19,7 +19,8 @@
 #     launch. This script keeps that name (it IS $0) and stays in the
 #     FOREGROUND, so the stock watchdog supervises the mod correctly.
 #   * If this script is ever removed, app_startup.sh restores a firmwareExe
-#     from the newest version directory -- the stock recovery path still works.
+#     from a version directory (the last `ls` entry, alphabetical -- and there is
+# normally only one) -- the stock recovery path still works.
 
 MODDIR=/usr/data/anvil
 

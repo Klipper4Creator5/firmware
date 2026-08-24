@@ -6,7 +6,7 @@ Everything below was app-side. The stock config ships all eight sensors with
 
 ## Sensors (live `printer.filament.cfg`)
 
-| tool | switch (`filament_switch_sensor`) | motion (`filament_motion_sensor`, `detection_length 50`, `extruder: extruderN`) |
+| tool | switch (`filament_switch_sensor`) | motion (`filament_motion_sensor`, `detection_length 50`) |
 |---|---|---|
 | 0 | `fd_ex0` `!eheaterboard:PC13` | `fm_ex0` `!eheaterboard:PA15` |
 | 1 | `fd_ex1` `!eheaterboard:PC14` | `fm_ex1` `!eheaterboard:PB13` |

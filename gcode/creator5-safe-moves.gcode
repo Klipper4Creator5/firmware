@@ -50,9 +50,10 @@
 ; With prepare at 1 (the shipped default) the implicit START_PRINT still
 ; runs G28, BED_MESH_PROFILE LOAD=MESH_DATA and `G1 Z10 F1200` before
 ; this file's own first line. That Z10 is in the raw eddy frame, ~6.8 mm
-; physical, and it is the one move here that goes below Z50. It heats
-; nothing and extrudes nothing. Set prepare to 0 if you want the
-; Z50 floor to hold for the entire run.
+; physical. The G28 and the offset move before it also take Z well below
+; 50 -- homing is what drops you, as the opening note says. None of it
+; heats or extrudes. Set prepare to 0 if you want the Z50 floor to hold
+; from power-on to the last line.
 ; ====================================================================
 
 G90
