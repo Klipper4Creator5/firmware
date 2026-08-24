@@ -33,7 +33,7 @@ documented in the file headers.
 | [`payload/klipper/config/ff-legacy.cfg`](../payload/klipper/config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — include only for the import step, then remove |
 | [`payload/klipper/config/ff-print-macros.cfg`](../payload/klipper/config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the `_FF_PREFLIGHT` calibration and tool-presence gate; declares `[ff_print]` and the `FF_BEFORE_PRINT_START` / `FF_AFTER_PRINT_END` entry points it calls |
 | [`payload/klipper/config/ff-filament.cfg`](../payload/klipper/config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
-| [`payload/klipper/config/ff-runout.cfg`](../payload/klipper/config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163, reported here in plain words), optionally after printing through the PTFE buffer (`runout_distance`); `ff_toolchange` arms only the mounted tool's sensors |
+| [`payload/klipper/config/ff-runout.cfg`](../payload/klipper/config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163, reported here in plain words); `ff_toolchange` arms only the mounted tool's sensors |
 | [`payload/klipper/config/printer.base.cfg`](../payload/klipper/config/printer.base.cfg) | `/usr/prog/klipper/config/` | FlashForge's `printer.base.cfg` with the chamber block replaced by `[include printer.chamber.cfg]`. Klipper can override an option but cannot un-declare a section, and the plain Creator 5 has no chamber heating element, so its heater must be **absent** rather than neutralised. `bin/unpack.sh` compares this against each stock package it unpacks and warns if FlashForge's has changed |
 | [`printer.chamber.cfg.creator5`](../payload/klipper/config/printer.chamber.cfg.creator5) · [`.creator5pro`](../payload/klipper/config/printer.chamber.cfg.creator5pro) | `/usr/prog/klipper/config/printer.chamber.cfg` | The one per-model difference: the Pro gets `[heater_generic chamber_heater]` + `[verify_heater]` verbatim from FlashForge, the Creator 5 gets only `[temperature_sensor chamber]` on the same pin. Anything that differs between models exists once per model with a `.creator5` / `.creator5pro` suffix and is installed under its real name — **nothing is edited at build time** |
 | [`payload/klipper/config/ff-chamber.cfg`](../payload/klipper/config/ff-chamber.cfg) | `/usr/data/config/` | `M141` / `M191` for the chamber heater (Klipper has neither, and the stock app drove the chamber only from its own UI), plus the gate: the macros ask Klipper whether `heater_generic chamber_heater` exists, so a non-zero chamber target is refused on a machine that does not declare one. Nothing to keep in sync; identical in every package |
@@ -308,15 +308,12 @@ outside a print. `TOOLCHANGE_STATUS` shows which sensors are armed;
 can be made report-only, as the app's `plugCheck` toggle did:
 `SET_GCODE_VARIABLE MACRO=_FF_RUNOUT_CFG VARIABLE=clog_pause VALUE=0`.
 
-The runout switch is upstream of the extruder gear with a long PTFE run in
-between (~600 mm here), so when it opens the head still holds that much
-printable filament; the app paused at once and wasted it. Set
-`variable_runout_distance` in `[gcode_macro _FF_RUNOUT_CFG]` to the
-measured switch-to-gear length minus a margin (e.g. 500) and the print
-carries on, a 1 s watcher counts the mounted tool's extrusion and pauses
-once that much has been used — extrusion by other tools in
-between does not count, a manual `PAUSE` freezes the countdown. 0 (the
-default) pauses immediately.
+The pause is immediate, as the app's was. Note that the runout switch is
+upstream of the extruder gear with a long PTFE run in between (~600 mm
+here), so the head still holds that much printable filament when the print
+stops — it is lost. Printing on and pausing once that length has been
+extruded is a real improvement, but it needs a per-machine measurement and
+a watcher counting extrusion; it is not built in.
 No endless-spool: another tool is another head, not another spool of the
 same material. Untested on hardware: whether the motion sensors
 (`detection_length 50`, `event_delay 3`) stay quiet through `LOAD_FILAMENT`.
