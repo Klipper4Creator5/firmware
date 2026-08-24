@@ -82,8 +82,9 @@ if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     # [include printer.chamber.cfg] -- Klipper can override an option but
     # cannot un-declare a section, and the plain Creator 5 has no chamber
     # heating element, so its heater has to be absent rather than neutralised.
-    # test/test-base-cfg.py reconstructs the stock file from ours plus the
-    # Pro's chamber file and fails if FlashForge's has changed.
+    # NOTE: this cp is why the stock-drift check lives in bin/unpack.sh and
+    # not in a test -- it overwrites the pristine copy, and the test that used
+    # to read it afterwards was comparing our file against itself.
     cp -f payload/klipper/config/printer.base.cfg "$SW/klipper/config/printer.base.cfg"
 
     # Anything that differs between models exists once per model, named

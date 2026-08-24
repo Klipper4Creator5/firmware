@@ -162,7 +162,7 @@ docker/         Dockerfile.build -- the container every target runs in
 **Tests it** — never ships, and never touched by a build:
 
 ```
-test/           the suite, the synthetic fixture, the brick lint
+test/           the suite: pytest for the config gate, the synthetic fixture
   printer/        the replica: binfmt, mount layout, its two Dockerfiles,
                   and the cases that run inside it on the printer's binaries
   extract-rootfs.sh       pulls the real rootfs out of the stock package
@@ -180,7 +180,7 @@ package contains any file byte-identical to one in `bin/`, `test/` or
 
 `klippy/chelper/c_helper.so` must be MIPS32r2 / nan2008 / o32 or klippy dies on
 import — `patch.sh` refuses to build a package with anything else, and
-`make test-abi` checks every shipped binary. Debian's cross-compiler cannot
+`test-install` checks the copy that lands on the machine. Debian's cross-compiler cannot
 produce one; use the Ingenic/K1 toolchain. See the Klipper fork's own notes.
 
 Nothing checks the .so's *symbols* against the klippy tree shipped beside it.

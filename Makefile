@@ -61,9 +61,9 @@ endif
 
 .DEFAULT_GOAL := help
 .PHONY: help image shell build vendor \
-        rootfs verify test test-lint test-install test-applets \
+        rootfs verify test test-py test-install \
         printer-image printer-image-push \
-        test-recovery test-ui test-mcu test-ash test-abi test-macros test-chamber test-basecfg test-model release clean distclean
+        test-recovery test-mcu release clean distclean
 
 help:
 	@echo 'creator5-custom-firmware -- everything runs in Docker'
@@ -79,33 +79,27 @@ help:
 	@echo 'Recovery: keep a copy of the STOCK FlashForge .tgz on a spare stick.'
 	@echo 'Flashing it restores every file the mod touches (see make test-recovery).'
 	@echo
-	@echo 'Test:'
-	@echo '  make test             everything below'
-	@echo '  make test-lint        brick-risk lint'
+	@echo 'Test -- four gates, no more:'
+	@echo '  make test             all of them'
+	@echo '  make test-py          klipper config + rootfs paths (pytest, no firmware)'
 	@echo '  make test-install     end-to-end: USB stick -> update -> reboot'
-	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
-	@echo '  make test-ui          UI startup, crash protection, SAFE-MODE'
 	@echo '  make test-mcu         ff-mcu-bringup.py runs on the printer own python'
-	@echo '  make test-model       both models gated + firmware correct'
-	@echo '  make test-applets     every command the payload uses exists on the printer'
-	@echo '  make test-ash         parse the payload with the printer own busybox'
-	@echo '  make test-abi         MIPS ELF ABI checks'
-	@echo '  make     c_helper.so exports everything klippy declares'
-	@echo '  make test-macros      the ff-*.cfg gcode macros parse as Jinja'
-	@echo '  make test-chamber     the chamber heater is off on the Creator 5'
-	@echo '  make test-basecfg     our printer.base.cfg still matches the stock one'
+	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo
-	@echo 'test-install, test-recovery, test-ui, test-mcu and test-ash run inside'
-	@echo 'a replica of the printer: the real rootfs.squashfs under qemu-mipsel, with'
-	@echo '/usr/prog installed by FlashForge own updater. test-install goes the'
-	@echo 'whole way -- the package sits on a real FAT filesystem at /dev/sda1'
-	@echo 'and the printer own app_startup.sh finds it, installs it, and boots.'
-	@echo 'They need make rootfs first (or PRINTER_IMAGE), which needs the'
-	@echo 'stock package.'
+	@echo 'test-py needs nothing proprietary and runs on any checkout. The other'
+	@echo 'three run inside a replica of the printer: the real rootfs.squashfs'
+	@echo 'under qemu-mipsel, with /usr/prog installed by FlashForge own updater.'
+	@echo 'test-install goes the whole way -- the package sits on a real FAT'
+	@echo 'filesystem at /dev/sda1 and the printer own app_startup.sh finds it,'
+	@echo 'installs it, and boots. They need make rootfs first (or PRINTER_IMAGE),'
+	@echo 'which needs the stock package.'
+	@echo
+	@echo 'A gate that cannot run is reported SKIP, not ok, and make test then'
+	@echo 'fails. ALLOW_SKIP=1 accepts the gap deliberately.'
 	@echo
 	@echo 'Other:'
 	@echo '  make vendor       download Mainsail + HelixScreen into vendor/'
-	@echo '  make rootfs       extract the real printer rootfs (enables test-ash)'
+	@echo '  make rootfs       extract the real printer rootfs (enables the replica gates)'
 	@echo '  make image        build the build container'
 	@echo '  make shell        shell inside it'
 	@echo '  make clean | distclean'
@@ -192,34 +186,10 @@ printer-image: image
 printer-image-push: image
 	@$(RUNSIM) ./test/build-printer-image.sh --push
 
-test-lint: image
-	@$(RUN) ./test/lint-danger.sh payload payload/init.d
-
-test-model: image
-	@$(RUN) ./test/test-model-gate.sh
-
-# RUNSIM, not RUN: it starts a sibling container with the printer's busybox,
-# so it needs the docker socket. Under RUN it always skipped, silently.
-test-ash: image
-	@$(RUNSIM) ./test/test-ash-conformance.sh
-
-test-abi: image
-	@$(RUN) ./test/test-abi.sh
-
-test-macros: image
-	@$(RUN) python3 ./test/test-macros.py
-
-test-chamber: image
-	@$(RUN) python3 ./test/test-chamber.py
-
-test-basecfg: image
-	@$(RUN) python3 ./test/test-base-cfg.py
-
-test-applets: image
-	@$(RUN) python3 ./test/test-applets.py
-
-test-ui: image
-	@$(RUNSIM) ./test/printer-exec.sh ./test/printer/case-ui.sh
+# The Python gate. Tests marked `rootfs` need the extracted printer rootfs and
+# are skipped without it; everything else runs on any checkout.
+test-py: image
+	@$(RUN) python3 -m pytest ./test -q
 
 test-mcu: image
 	@$(RUNSIM) ./test/printer-exec.sh ./test/printer/case-mcu-bringup.sh

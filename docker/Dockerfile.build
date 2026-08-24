@@ -10,7 +10,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
  && apt-get update && apt-get install -y --no-install-recommends \
       bash coreutils tar xz-utils gzip openssl unzip curl ca-certificates \
-      python3 python3-jinja2 binutils file findutils grep sed gawk make git diffutils procps \
+      python3 python3-jinja2 python3-pytest \
+      binutils file findutils grep sed gawk make git diffutils procps \
       squashfs-tools qemu-user-static docker.io shellcheck \
  && rm -rf /var/lib/apt/lists/*
 

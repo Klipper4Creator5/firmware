@@ -1,12 +1,11 @@
-"""Shared pieces of the test/ Python checks.
+"""Klipper config parsing for the test suite.
 
-`sections()` parses Klipper config the way klippy's own parser sees it; the
-reporting helpers keep the PASS/FAIL output format run-tests.sh consumes.
+`sections()` parses Klipper config the way klippy's own parser sees it.
 
-This module exists so test-chamber.py and test-base-cfg.py stop
-re-implementing the reporting and stop loading test-macros.py through importlib
-machinery just to reach its parser (the dash in that filename made a plain
-import impossible).
+This used to also carry ok()/bad()/finish() reporting helpers, because the
+checks were standalone scripts that printed their own PASS/FAIL lines and
+returned an exit code. They are pytest tests now, so pytest does the
+reporting and only the parser is left.
 """
 import re
 
@@ -40,24 +39,3 @@ def sections(path):
             opts[key] = m.group(2)
     if cur:
         yield cur, opts
-
-
-P, F = [], []
-
-
-def ok(name):
-    P.append(name)
-    print("  \033[32mPASS\033[0m  %s" % name)
-
-
-def bad(name, detail=""):
-    F.append(name)
-    print("  \033[31mFAIL\033[0m  %s" % name)
-    if detail:
-        print("        %s" % detail)
-
-
-def finish():
-    """Print the summary line; return the process exit code."""
-    print("\n  %d passed, %d failed" % (len(P), len(F)))
-    return 1 if F else 0

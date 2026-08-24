@@ -17,16 +17,35 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-PASS=0; FAIL=0
+PASS=0; FAIL=0; SKIP=0
 # Every section carries the elapsed time. The suite is mostly waiting on qemu
 # and xz, and without a clock in the output it is guesswork which.
 T0=$(date +%s)
 hdr()  { printf '\n\033[1m== %s ==\033[0m \033[90m[%ss]\033[0m\n' "$*" "$(( $(date +%s) - T0 ))"; }
 pass() { printf '  \033[32mok\033[0m   %s\n' "$*"; PASS=$((PASS+1)); }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
+skip() { printf '  \033[33mSKIP\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 run()  { if "$@" >/tmp/c5t.$$ 2>&1; then pass "$*"; else fail "$*"; tail -25 /tmp/c5t.$$ | sed 's/^/       /'; fi; rm -f /tmp/c5t.$$; }
+
+# A test that decides it cannot run exits 0 and says "SKIP:". This used to be
+# reported as `ok`, so `test-abi.sh` sat in the suite for a long time printing
+# green while checking nothing at all -- the wiring deleted work/modpayload
+# immediately before it ran, and CI set KLIPPER_FORK="", so it had no targets
+# on any run. Four gates now carry the whole suite; a gate that silently does
+# not run is the one failure mode that must never look like success, so a skip
+# is counted apart from a pass and the summary refuses to call the run clean.
 sub()  { local name="$1"; shift
-         if "$@" 2>&1 | sed 's/^/  /'; then pass "$name"; else fail "$name"; fi; }
+         local out="$TMP/sub.$$"
+         if "$@" >"$out" 2>&1; then
+             sed 's/^/  /' "$out"
+             # Both dialects of "did not run": the shell launchers print
+             # "SKIP:", pytest summarises "N skipped".
+             if grep -qE '^[[:space:]]*SKIP:|[0-9]+ skipped' "$out"
+             then skip "$name"; else pass "$name"; fi
+         else
+             sed 's/^/  /' "$out"; fail "$name"
+         fi
+         rm -f "$out"; }
 
 TMP=$(mktemp -d)
 cleanup() { rm -rf "$TMP"; }
@@ -51,13 +70,14 @@ done
 
 hdr "no bashisms in the on-printer payload"
 # The dash dialect of shellcheck knows every "not supported in POSIX sh"
-# construct (the SC3xxx family) -- this replaced a hand-rolled grep that knew
-# five. It
-# still runs without the firmware; the authoritative check remains
-# test-ash-conformance.sh, which parses these files with the printer's own
-# busybox, but that needs the proprietary rootfs, so on a plain pull request
-# this is all there is. dash, not sh: busybox ash, like dash, supports
-# `local`, which the payload uses.
+# construct (the SC3xxx family). dash, not sh: busybox ash, like dash,
+# supports `local`, which the payload uses.
+#
+# This is now the only syntax gate that runs without the firmware.
+# test-ash-conformance.sh used to parse the same files with the printer's own
+# busybox, but case-install.sh already runs `sh -n` over every installed
+# script with that same qemu'd busybox and greps the boot log for
+# "Syntax error", so it was the weaker copy of a check that survives.
 if command -v shellcheck >/dev/null 2>&1; then
     BASHISMS=$(shellcheck -s dash -f gcc payload/*.sh payload/init.d/S* payload/firmwareExe 2>&1 \
                    | grep -E 'SC3[0-9]{3}|SC2039' || true)
@@ -68,8 +88,16 @@ else
     fail "shellcheck not installed (the build image has it -- run through 'make test')"
 fi
 
-hdr "brick-risk lint"
-sub "lint-danger" ./test/lint-danger.sh payload payload/init.d
+# The Python half. Needs no firmware -- python3, jinja2 and the configs in the
+# repo -- so it runs here, in the half that works on a plain pull request. It
+# used to sit behind the rootfs extraction, which meant the one safety-relevant
+# check in the suite (a chamber heater declared on a machine that has no
+# element for it) never ran on a PR at all. The tests that do need the rootfs
+# carry the `rootfs` marker and are deselected here, then run in the replica
+# half -- deselected, not skipped, so a skip in this lane still means something
+# went wrong rather than being the expected state.
+hdr "python checks (klipper config)"
+sub "pytest" python3 -m pytest ./test -q -m "not rootfs"
 
 # ================================================== packaging, on a fixture ==
 hdr "synthetic stock package"
@@ -118,8 +146,10 @@ run ./bin/pack.sh
 PKG=$(ls -1 work/out/Creator5Pro-*.tgz 2>/dev/null | head -n1)
 if [ -n "$PKG" ]; then run ./bin/verify.sh "$PKG"; else fail "no package produced"; fi
 
-hdr "model gates"
-sub "model gate" ./test/test-model-gate.sh
+# The model gate used to get its own section here. bin/verify.sh above already
+# compares MACHINE=/PID= inside the package against TARGET_MACHINE (§8b) and
+# against the filename prefix (§9), and bin/pack.sh exits on MODEL MISMATCH
+# before a package exists at all -- three checks of one invariant.
 
 # ============================================================ the replica ====
 # Back to the real config for the replica half: it needs the actual stock
@@ -145,8 +175,9 @@ if [ -z "$STOCK" ] || [ ! -f "$STOCK" ]; then
     if [ "${REQUIRE_PRINTER_SIM:-0}" = 1 ]; then
         fail "no stock package configured -- the replica tests cannot run, and this build requires them"
     else
-        printf '  \033[33mskipped\033[0m -- no stock package in config.env.\n'
-        printf '  These are the tests that decide whether a package bricks a printer.\n'
+        # Counted, not just narrated: three of the four gates live in here.
+        skip "the printer replica (no stock package in config.env)"
+        printf '  These are the gates that decide whether a package bricks a printer.\n'
         printf '  Set STOCK_TGZ_CREATOR5PRO in config.env and re-run.\n'
     fi
 else
@@ -158,29 +189,13 @@ else
     fi
 
     if [ -d work/rootfs/bin ]; then
-        hdr "commands the payload uses exist on the printer"
-        sub "applets" python3 ./test/test-applets.py
-
-        hdr "busybox ash conformance (printer's own shell)"
-        sub "ash conformance" ./test/test-ash-conformance.sh
-
-        hdr "MIPS ABI"
-        sub "abi" ./test/test-abi.sh
-
-        hdr "klipper macros parse"
-        sub "macros" python3 ./test/test-macros.py
-
-        hdr "chamber heater is gated by model"
-        sub "chamber gate" python3 ./test/test-chamber.py
-
-        hdr "our printer.base.cfg is still FlashForge's"
-        sub "base cfg" python3 ./test/test-base-cfg.py
+        # The rootfs exists now, so the tests that skipped in the Python pass
+        # above can actually run. Same command, different world.
+        hdr "python checks, now with the printer rootfs"
+        sub "pytest (rootfs)" python3 -m pytest ./test -q -m rootfs
 
         hdr "MCU bring-up runs on the printer's own Python"
         sub "mcu bring-up" ./test/printer-exec.sh ./test/printer/case-mcu-bringup.sh
-
-        hdr "UI decision and crash protection (on the printer's shell)"
-        sub "ui safety" ./test/printer-exec.sh ./test/printer/case-ui.sh
 
         hdr "end-to-end update on the printer replica"
         run ./bin/unpack.sh
@@ -198,5 +213,15 @@ else
     fi
 fi
 
-printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
+printf '\n\033[1m%d passed, %d failed, %d skipped\033[0m\n' "$PASS" "$FAIL" "$SKIP"
+
+# A skip is a gate that did not run. With four gates carrying the suite that is
+# not a detail to note in passing, so it is not silently forgiven: say what was
+# skipped and how to make it stop. ALLOW_SKIP=1 accepts it deliberately, which
+# is what a laptop without docker or without the stock package wants.
+if [ "$SKIP" -gt 0 ] && [ "${ALLOW_SKIP:-0}" != 1 ]; then
+    printf '\033[33m%d gate(s) did not run.\033[0m Set STOCK_TGZ_CREATOR5PRO in config.env\n' "$SKIP"
+    printf 'and make docker available, or pass ALLOW_SKIP=1 to accept the gap.\n'
+    exit 1
+fi
 [ "$FAIL" = 0 ]

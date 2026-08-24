@@ -25,7 +25,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            openssl xz-utils unzip binutils file squashfs-tools
+            openssl xz-utils unzip binutils file squashfs-tools python3-pytest python3-jinja2
 
       # Syntax and the brick lint are the first thing run-tests.sh does, so
       # they are not repeated here.
@@ -51,19 +51,6 @@ jobs:
           path: work/out/*.tgz
           if-no-files-found: ignore
           retention-days: 7
-
-  abi:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install binutils
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends binutils file
-      - name: MIPS ABI checks
-        # Skips cleanly when no MIPS binaries are present (they are build
-        # artifacts and are never committed).
-        run: ./test/test-abi.sh
 
   # Does the repo have access to the stock firmware? Secrets cannot be read
   # from a job-level `if`, so decide it in a step and fan out from there.

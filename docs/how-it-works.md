@@ -87,7 +87,7 @@ firmware, so each must be built from its own stock package.
 The filename prefix and the gate inside must agree: `app_startup.sh` globs for
 the prefix, and `runFirmwareExe.sh` checks the gate. A mismatch means the
 printer picks the file up and then refuses it. `make verify` and
-`make test-model` both check this.
+`bin/verify.sh` both check this.
 
 ## Recovery
 

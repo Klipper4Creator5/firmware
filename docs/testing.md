@@ -4,8 +4,8 @@ The suite has two halves, and only one of them can answer the question.
 
 **Half 1 — static and packaging.** Needs no printer and no proprietary
 firmware: a synthetic fixture (`test/fixtures/make-stock-fixture.sh`)
-reproduces the package *structure*, so shell syntax, bashism and brick-pattern
-lint, the packaging pipeline and the model gates all run in CI on a clean
+reproduces the package *structure*, so shell syntax, the bashism pass, the
+pytest config gate and the whole packaging pipeline run in CI on a clean
 machine.
 
 **Half 2 — the printer replica.** The real `rootfs.squashfs`, extracted from
@@ -34,22 +34,28 @@ is stubbed, and what it still cannot tell you.
 make test            # everything below
 ```
 
-| Test | What it does | Replica |
+| Gate | What it does | Replica |
 |---|---|:-:|
-| `test-lint` | Scans on-printer scripts for brick patterns: raw block-device writes, `rm -rf` of top-level paths, unguarded `rm -rf $VAR/`, missing backups, a boot chain that could end with no UI | |
-| `test-model` | Each package's filename prefix matches the gate inside, the PID matches the model, and the two models ship **different** `firmwareExe` binaries | |
-| `test-install` | **End-to-end.** The package sits on a real FAT filesystem exposed as `/dev/sda1`, and the machine's own `app_startup.sh` runs verbatim through three boots: stick in → it installs; stick still in → it installs again (idempotence); stick pulled → the machine boots with the mod running and the stock `ps`-watchdog satisfied. Asserts along the way: UI present and executable, boot scripts unmodified and still parsing, Klipper owned by a service, `c_helper.so` still nan2008 MIPS, user `printer.cfg` preserved, the wrapper unchanged by a re-install | ✓ |
-| `test-recovery` | Installs the mod, then flashes the **stock** package, and asserts the machine is genuinely back to stock byte-for-byte and the leftover payload is inert | ✓ |
-| `test-ui` | Drives the UI decision logic on the printer's shell: HelixScreen missing, crash-loop, SAFE-MODE latch and release, and that SAFE-MODE means **headless, not a respawn loop** | ✓ |
-| `test-applets` | Every command the payload runs exists on the printer. Its busybox has no `timeout`, no `bash`, no `systemctl`; reaching for one is a blank screen at boot | ✓ |
-| `test-ash` | Parses every on-printer script with the printer's own busybox 1.31.1 ash | ✓ |
-| `test-abi` | Every shipped MIPS binary is `nan2008`/`mips32r2`/`o32` | |
+| `test-py` | pytest. The Klipper config gate: every `ff-*.cfg` gcode body parses in **Klipper's** Jinja dialect, and the chamber macros are rendered per model to prove a chamber target is refused on a Creator 5 that has no heating element — plus, with a rootfs present, that every absolute path the payload names exists on the printer | partly |
+| `test-install` | **End-to-end.** The package sits on a real FAT filesystem exposed as `/dev/sda1`, and the machine's own `app_startup.sh` runs verbatim through three boots: stick in -> it installs; stick still in -> it installs again (idempotence); stick pulled -> the machine boots with the mod running and the stock `ps`-watchdog satisfied. Asserts along the way: UI present and executable, boot scripts unmodified and still parsing, every installed script `sh -n`-clean under the printer's own busybox, Klipper owned by a service, `c_helper.so` still nan2008 MIPS, user `printer.cfg` preserved, the wrapper unchanged by a re-install | yes |
+| `test-mcu` | Runs `ff-mcu-bringup.py` on the printer's **own** Python 3.8.2 in the exact environment `start.sh` sets — the only gate that executes our Python on the real interpreter, and the one that pins the `LD_LIBRARY_PATH` regression that shipped broken once | yes |
+| `test-recovery` | Installs the mod, then flashes the **stock** package, and asserts the machine is genuinely back to stock byte-for-byte and the leftover payload is inert | yes |
 
-The replica tests need `make rootfs` first, which extracts the printer's
+Four gates, deliberately. `test-install` boots the machine, so it independently
+covers what `verify.sh` checks, parses every installed script with the same
+busybox that `test-ash` used, and reads `c_helper.so`'s ELF header the way
+`test-abi` did — the separate checks were the weaker copies.
+
+The replica gates need `make rootfs` first, which extracts the printer's
 genuine root filesystem from the stock package's `kernel-*.tar.xz`. It is
 never committed — it is FlashForge's firmware. `make test` skips the replica
 half with a loud message when no stock package is configured;
 `REQUIRE_PRINTER_SIM=1` turns that skip into a failure.
+
+**A skip is not a pass.** `run-tests.sh` counts skips separately and exits
+non-zero if any gate did not run; `ALLOW_SKIP=1` accepts the gap deliberately.
+This matters more with four gates than it did with twelve — and it is not
+hypothetical, see `test-abi` below.
 
 ## Speed
 
@@ -77,10 +83,10 @@ firmware.
 say where it goes — `run-tests.sh` stamps every header with elapsed seconds:
 
 ```
-== brick-risk lint ==                                    [0s]
+== python checks (klipper config) ==                      [0s]
 == build on the fixture ==                               [1s]
 == extracting the printer rootfs ==                     [16s]
-== applets / ash / ABI / UI safety ==                   [18s]
+== python checks (rootfs) / MCU bring-up ==             [18s]
 == end-to-end update on the replica ==                 [111s]
 == recovery: a stock package reverts the mod ==        [250s]
                                                        [326s]
@@ -118,12 +124,46 @@ Tests that cannot fail are worse than no tests, because they read as coverage:
   honest but not useful enough to earn its place, and the whole check is gone.
 - **The hand-rolled bashism grep in `run-tests.sh`.** It knew five constructs;
   `shellcheck -s dash` knows the whole SC3xxx family and now stands in its
-  place (the authoritative check is still `test-ash`, on the printer's own
-  busybox). The same pass gave every replica launcher one shared
+  place. The same pass gave every replica launcher one shared
   `test/sim-image.sh` for the docker plumbing, which also fixed two `make
   test-ash` bugs: it ran without the docker socket (so it always silently
   skipped), and it never read `test.env`, so it ignored `PRINTER_IMAGE` and
   rebuilt the local sim image every run.
+
+- **Eight checks, in one pass, once each had been read properly.** The suite
+  had grown to twelve gates and most of them were the weaker copy of a gate
+  that survives:
+  - `test-abi` had **never asserted anything in CI**. `run-tests.sh` deleted
+    `work/modpayload` immediately before it ran and CI set `KLIPPER_FORK=""`,
+    so it had no targets on any run, skipped, exited 0 and was printed as
+    `ok`. `bin/patch.sh` refuses to build a non-nan2008 `c_helper.so` anyway,
+    and `test-install` reads the ELF header of the file that actually landed.
+  - `test-macros` used `jinja2.Environment()` — the default `{{ }}` syntax.
+    The configs contain **no** `{{` at all, only single-brace expressions, so
+    it validated `{% %}` block structure and never once looked inside an
+    expression. `test_default_delimiters_are_blind` now pins that.
+  - `test-ash-conformance` parsed the payload with the printer's busybox;
+    `test-install` runs `sh -n` over every *installed* script with the same
+    qemu'd busybox and then greps the boot log for `Syntax error`.
+  - `test-model-gate` checked what `verify.sh` §8b/§9 checks and what
+    `pack.sh` already refuses to build. Its header claimed it proved the two
+    models ship different files; no such check existed in it.
+  - `test-base-cfg` compared our `printer.base.cfg` against
+    `work/software/.../printer.base.cfg` — which `bin/patch.sh` overwrites
+    *with our own file* before the test reads it. It had been diffing our file
+    against itself: green on a cold tree, red on a second `make test`, and
+    blind to real drift either way. The comparison moved into `bin/unpack.sh`,
+    where a pristine stock tree actually exists.
+  - `test-applets`' command-word scan only extracted the first word of a
+    simple, unprefixed command: `if timeout 5 foo; then` yielded
+    `['if','echo','fi']`, so the one failure its docstring named was invisible
+    to it. Its allowlist had drifted to nine entries that excused nothing. The
+    absolute-path half survives, because `S50wifi`'s binaries sit on a branch
+    no simulation reaches.
+  - `lint-danger`'s structural greps were satisfiable by comments —
+    `firmwareExe:44` and `S80ui:16` *mention* `helix` and `SAFE-MODE`, so the
+    checks passed with the logic deleted.
+  - `case-ui` went with the helix-only decision.
 
 ## Bugs these caught
 
@@ -140,3 +180,5 @@ involved:
 - three checks in the brick lint had been quietly dead for months: two were
   guarded on a `payload/boot.sh` that no longer existed, and the file glob
   never matched `firmwareExe` or the `init.d/S*` scripts at all
+- a skip counted as a pass for the whole life of the suite, which is how
+  `test-abi` sat in it for months checking nothing while printing green
