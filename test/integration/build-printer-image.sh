@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Build a Docker image that IS the printer.
 #
-#   ./test/replica/build-printer-image.sh            build
-#   ./test/replica/build-printer-image.sh --push     build and push
-#   ./test/replica/build-printer-image.sh --no-bake  skip the baseline install
+#   ./test/integration/build-printer-image.sh            build
+#   ./test/integration/build-printer-image.sh --push     build and push
+#   ./test/integration/build-printer-image.sh --no-bake  skip the baseline install
 #
 # ONE image covers both models. That is not a shortcut -- there is genuinely
 # nothing model-specific to put in a second one:
@@ -43,7 +43,7 @@
 # THE IMAGE CONTAINS PROPRIETARY FLASHFORGE FIRMWARE. Pushing it redistributes
 # their software.
 set -euo pipefail
-cd "$(cd "$(dirname "$0")/.." && pwd)"
+cd "$(cd "$(dirname "$0")/../.." && pwd)"
 
 NS="${IMAGE_NS:-monstrofil}"
 NAME="${IMAGE_NAME:-creator5-printer}"
@@ -75,7 +75,7 @@ $DOCKER build -t "$RAW" \
     --build-arg "FACTORY_URL=$FACTORY_URL" \
     --build-arg "FF_KEY=${FF_KEY:-FFP0331&*%root}" \
     --build-arg "FW_VERSION=$FWVER" \
-    -f test/replica/printer/Dockerfile.full test/printer
+    -f test/integration/printer/Dockerfile.full test/printer
 
 if [ "$BAKE" = 1 ]; then
     echo

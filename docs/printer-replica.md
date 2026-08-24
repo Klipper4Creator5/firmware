@@ -1,6 +1,6 @@
 # The printer replica
 
-Everything in `test/replica/printer/` exists to answer one question honestly: **would
+Everything in `test/integration/printer/` exists to answer one question honestly: **would
 this package brick the machine?**
 
 A Debian container with hand-written stand-ins cannot answer it. The stock
@@ -20,7 +20,7 @@ work/rootfs/          rootfs.squashfs, extracted from the stock package's
                       (busybox 1.31.1, glibc 2.33, MIPS32r2 nan2008, mipsel)
 ```
 
-`test/replica/printer-exec.sh` starts a privileged container that:
+`test/integration/printer-exec.sh` starts a privileged container that:
 
 1. registers a `binfmt_misc` handler so MIPS binaries execute (see below),
 2. builds the machine's mount layout,
@@ -80,7 +80,7 @@ the Ingenic toolchain produced for this printer has `3` there:
 
 So the stock handler never matched, and every attempt to run a printer binary
 came back `exec format error` — with qemu installed, registered and enabled.
-`test/replica/printer/binfmt.sh` registers a handler with that byte masked out.
+`test/integration/printer/binfmt.sh` registers a handler with that byte masked out.
 Everything else is the stock mipsel matcher.
 
 The handler is registered with the `F` (fix-binary) flag, so the kernel holds
@@ -111,7 +111,7 @@ supply it, and there is no third:
 
 There used to be a third: stubs, for whatever neither of those provided. They
 are gone. A green run that came from a hand-written `python3` and an OpenSSL 3
-pretending to be 1.0.2d is reassurance, not evidence — `test/replica/printer/seed-prog.sh`
+pretending to be 1.0.2d is reassurance, not evidence — `test/integration/printer/seed-prog.sh`
 now hard-fails when the prog partition is not real.
 
 A full-filesystem factory image works too, and one is published:

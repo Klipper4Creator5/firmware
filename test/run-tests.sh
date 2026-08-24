@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
 # Full suite, in two halves.
 #
-#   1. test/repo -- static and packaging checks. Nothing proprietary needed:
+#   1. test/unit -- static and packaging checks. Nothing proprietary needed:
 #      a synthetic fixture stands in for the stock package. These run on every
 #      pull request.
 #
-#   2. test/replica -- the printer replica. The real rootfs.squashfs is
+#   2. test/integration -- the printer replica. The real rootfs.squashfs is
 #      extracted from the stock package and chrooted under qemu-mipsel, so the
 #      installer runs on the printer's own busybox, tar, md5sum and unTar. This
 #      is the half that can actually tell you whether a package bricks a
 #      machine, and it needs the stock FlashForge package to exist.
 #
-#   The two halves are two directories now. Everything under test/repo runs
-#   against this checkout alone; everything under test/replica needs the
-#   printer's real rootfs, and half of it also needs the docker socket to
-#   start the replica as a sibling container. This file is the only thing in
-#   test/ that spans both.
+#   The two halves are two directories: unit and integration. Everything
+#   under test/unit runs against this checkout alone; everything under
+#   test/integration needs the printer's real rootfs, and most of it also
+#   needs the docker socket to start the replica as a sibling container. This
+#   file is the only thing in test/ that spans both.
 #
-#   ./test/run-tests.sh                       runs half 2 if a stock package is configured
+#   ./test/run-tests.sh                       runs the integration half when a
+#                                             stock package is configured
 #   REQUIRE_PRINTER_SIM=1 ./test/run-tests.sh fails instead of skipping it
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -68,8 +69,8 @@ FIXTURE_CFG="$TMP/config.env"
 hdr "shell syntax"
 SYNTAX_BAD=""
 for f in bin/*.sh payload/*.sh payload/init.d/S* payload/firmwareExe \
-         test/*.sh test/repo/*.sh test/replica/*.sh \
-         test/replica/printer/*.sh; do
+         test/*.sh test/unit/*.sh test/integration/*.sh \
+         test/integration/printer/*.sh; do
     [ -f "$f" ] || continue
     bash -n "$f" 2>/dev/null || { SYNTAX_BAD="$SYNTAX_BAD $f"; bash -n "$f" 2>&1 | sed 's/^/       /'; }
 done
@@ -95,15 +96,15 @@ else
     fail "shellcheck not installed (the build image has it -- run through 'make test')"
 fi
 
-# The repo lane. Needs no firmware -- python3, jinja2 and the configs in the
+# The unit lane. Needs no firmware -- python3, jinja2 and the configs in the
 # repo -- so it runs here, in the half that works on a plain pull request. It
 # used to sit behind the rootfs extraction, which meant the one safety-relevant
 # check in the suite (a chamber heater declared on a machine that has no
 # element for it) never ran on a PR at all. The tests that need the printer's
-# rootfs are in test/replica and are simply not named here, so a skip in this
+# rootfs are in test/integration and are simply not named here, so a skip in this
 # lane still means something went wrong rather than being the expected state.
 hdr "python checks (klipper config)"
-sub "pytest" python3 -m pytest ./test/repo -q
+sub "pytest (unit)" python3 -m pytest ./test/unit -q
 
 # ================================================== packaging, on a fixture ==
 hdr "synthetic stock package"
@@ -111,7 +112,7 @@ hdr "synthetic stock package"
 # containers through the docker socket, and those mounts are resolved by the
 # host daemon, where a path under this container's /tmp does not exist.
 FXDIR="$ROOT/work/.fixture"
-run ./test/repo/make-stock-fixture.sh "$FXDIR"
+run ./test/unit/make-stock-fixture.sh "$FXDIR"
 FIXTURE="$FXDIR/Creator5Pro-stock-fixture.tgz"
 export TARGET_MACHINE=Creator5Pro
 [ -f "$FIXTURE" ] || { echo "no fixture -- aborting"; exit 1; }
@@ -191,28 +192,28 @@ else
     if [ -d work/rootfs/bin ]; then pass "rootfs already extracted"
     else
         run ./bin/unpack.sh
-        run ./test/replica/extract-rootfs.sh
+        run ./test/integration/extract-rootfs.sh
     fi
 
     if [ -d work/rootfs/bin ]; then
-        # The rootfs exists now, so the other lane can run.
+        # The rootfs exists now, so the integration lane can run.
         hdr "python checks against the printer rootfs"
-        sub "pytest (replica)" python3 -m pytest ./test/replica -q
+        sub "pytest (integration)" python3 -m pytest ./test/integration -q
 
         hdr "MCU bring-up runs on the printer's own Python"
-        sub "mcu bring-up" ./test/replica/printer-exec.sh ./test/replica/printer/case-mcu-bringup.sh
+        sub "mcu bring-up" ./test/integration/printer-exec.sh ./test/integration/printer/case-mcu-bringup.sh
 
         hdr "end-to-end update on the printer replica"
         run ./bin/unpack.sh
         run ./bin/patch.sh
         run ./bin/pack.sh
         P=$(ls -1 work/out/*-*.tgz 2>/dev/null | head -n1)
-        if [ -n "$P" ]; then sub "boot -> install -> re-install -> boot" ./test/replica/sim-install.sh "$P"
+        if [ -n "$P" ]; then sub "boot -> install -> re-install -> boot" ./test/integration/sim-install.sh "$P"
         else fail "no package produced"; fi
 
         hdr "recovery: a stock package reverts the mod"
         P=$(ls -1 work/out/*-*.tgz 2>/dev/null | head -n1)
-        sub "install mod -> flash stock -> back to stock" ./test/replica/sim-roundtrip.sh "$P" "$STOCK"
+        sub "install mod -> flash stock -> back to stock" ./test/integration/sim-roundtrip.sh "$P" "$STOCK"
     else
         fail "could not extract the printer rootfs from $STOCK"
     fi

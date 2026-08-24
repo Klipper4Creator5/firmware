@@ -81,13 +81,13 @@ help:
 	@echo
 	@echo 'Test -- four gates, no more:'
 	@echo '  make test             all of them'
-	@echo '  make test-py          pytest: test/repo always, test/replica if a rootfs exists'
+	@echo '  make test-py          pytest: test/unit always, test/integration with a rootfs'
 	@echo '  make test-install     end-to-end: USB stick -> update -> reboot'
 	@echo '  make test-mcu         ff-mcu-bringup.py runs on the printer own python'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo
-	@echo 'test/repo needs nothing proprietary and runs on any checkout;'
-	@echo 'test/replica needs the printer rootfs, and its shell half the'
+	@echo 'test/unit needs nothing proprietary and runs on any checkout;'
+	@echo 'test/integration needs the printer rootfs, and its shell half the'
 	@echo 'docker socket. test-py runs the Python side of both. The other'
 	@echo 'three run inside a replica of the printer: the real rootfs.squashfs'
 	@echo 'under qemu-mipsel, with /usr/prog installed by FlashForge own updater.'
@@ -162,7 +162,7 @@ verify: image
 # it only exists inside the stock package's kernel component.
 rootfs: image config.env
 	@$(RUN) ./bin/unpack.sh >/dev/null
-	@$(RUN) ./test/replica/extract-rootfs.sh
+	@$(RUN) ./test/integration/extract-rootfs.sh
 
 test: image
 	@$(RUNSIM) ./test/run-tests.sh
@@ -183,10 +183,10 @@ test: image
 #
 # The image contains proprietary FlashForge firmware.
 printer-image: image
-	@$(RUNSIM) ./test/replica/build-printer-image.sh
+	@$(RUNSIM) ./test/integration/build-printer-image.sh
 
 printer-image-push: image
-	@$(RUNSIM) ./test/replica/build-printer-image.sh --push
+	@$(RUNSIM) ./test/integration/build-printer-image.sh --push
 
 # The Python gate. Tests marked `rootfs` need the extracted printer rootfs and
 # are skipped without it; everything else runs on any checkout.
@@ -194,7 +194,7 @@ test-py: image
 	@$(RUN) python3 -m pytest ./test -q
 
 test-mcu: image
-	@$(RUNSIM) ./test/replica/printer-exec.sh ./test/replica/printer/case-mcu-bringup.sh
+	@$(RUNSIM) ./test/integration/printer-exec.sh ./test/integration/printer/case-mcu-bringup.sh
 
 # Packages land in dist/ after `make release` and in work/out after a single
 # build (pack.sh clears work/out each run, so only the last model survives
@@ -202,7 +202,7 @@ test-mcu: image
 test-install: image
 	@$(RUNSIM) bash -c 'pkg=$$(ls -1 dist/$(or $(MODEL),Creator5Pro)-*.tgz work/out/$(or $(MODEL),Creator5Pro)-*.tgz 2>/dev/null | head -1); \
 	   [ -n "$$pkg" ] || { echo "build a package first: make build (or make release)"; exit 1; }; \
-	   echo "package: $$pkg"; ./test/replica/sim-install.sh "$$pkg"'
+	   echo "package: $$pkg"; ./test/integration/sim-install.sh "$$pkg"'
 
 # Recovery = flash the stock package you already have. This proves it works.
 #
@@ -216,7 +216,7 @@ test-recovery: image config.env
 	   [ -n "$$m" ] || { echo "no package built for $$TARGET_MACHINE"; exit 1; }; \
 	   [ -f "$$STOCK_TGZ" ] || { echo "no stock package for $$TARGET_MACHINE"; exit 1; }; \
 	   echo "mod:   $$m"; echo "stock: $$STOCK_TGZ"; \
-	   ./test/replica/sim-roundtrip.sh "$$m" "$$STOCK_TGZ"'
+	   ./test/integration/sim-roundtrip.sh "$$m" "$$STOCK_TGZ"'
 
 clean:
 	@rm -rf work/stage work/out work/uninst work/uninst-sw work/modpayload

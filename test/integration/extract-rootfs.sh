@@ -5,14 +5,14 @@
 # -- the genuine buildroot rootfs: busybox 1.31.1, /etc/inittab, /etc/init.d
 # (including the stock S50dropbear), /usr/sbin/dropbear, the real ash.
 #
-# test/replica/sim-install.sh uses it to run the installer inside the ACTUAL printer
+# test/integration/sim-install.sh uses it to run the installer inside the ACTUAL printer
 # userland under qemu-mipsel, where `uname -m` genuinely reports "mips" and
 # busybox applets behave exactly as they do on the machine. That is a far
 # better test than approximating with a Debian container.
 #
 # Never committed: it is FlashForge's proprietary firmware.
 set -euo pipefail
-. "$(dirname "$0")/../bin/common.sh"
+. "$(dirname "$0")/../../bin/common.sh"
 
 command -v unsquashfs >/dev/null 2>&1 || { echo "need squashfs-tools (the build image has it)" >&2; exit 1; }
 

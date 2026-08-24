@@ -126,7 +126,7 @@ jobs:
         run: |
           for p in dist/*.tgz; do
             echo "=== $p ==="
-            ./test/replica/sim-install.sh "$p" || exit 1
+            ./test/integration/sim-install.sh "$p" || exit 1
           done
 
       - uses: actions/upload-artifact@v4

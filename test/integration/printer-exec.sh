@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Host-side launcher for the printer replica.
 #
-#   test/replica/printer-exec.sh <case-script> [name=package.tgz ...]
+#   test/integration/printer-exec.sh <case-script> [name=package.tgz ...]
 #
 # The case script is executed by the printer's own busybox inside a chroot of
 # the real extracted rootfs.squashfs, with MIPS binaries running under
@@ -19,7 +19,7 @@
 # (`tar -cf /mnt/prog.tar /usr/prog` over ssh). With one, the replica has no
 # invented files left at all.
 set -uo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CASE="${1:?usage: printer-exec.sh <case-script> [name=pkg.tgz ...]}"; shift
 
 # The config (config.env, test.env) and the docker plumbing (skip policy,
@@ -29,7 +29,7 @@ CASE="${1:?usage: printer-exec.sh <case-script> [name=pkg.tgz ...]}"; shift
 # the local replica image every time. Sourcing this twice is harmless: the
 # environment wins over both files, and the first pass exported them.
 # shellcheck disable=SC1091
-. "$ROOT/test/replica/sim-image.sh"
+. "$ROOT/test/integration/sim-image.sh"
 
 if [ "$PREBUILT" = 0 ]; then
     # Say why this is about to be slow. Unpacking the factory image is ~22s
