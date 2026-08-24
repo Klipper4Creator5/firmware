@@ -1,6 +1,6 @@
 # Testing: how we know it does not brick
 
-Everything lives in `test/integration`, and `test/run-tests.sh` runs it. There
+Everything lives in `test/integration`, and `test/run-tests.py` runs it. There
 is still a real seam inside it, though — what needs the proprietary firmware
 and what does not — and it is worth knowing which side of that seam a failure
 is on.
@@ -64,10 +64,54 @@ never committed — it is FlashForge's firmware. `make test` skips the replica
 half with a loud message when no stock package is configured;
 `REQUIRE_PRINTER_SIM=1` turns that skip into a failure.
 
-**A skip is not a pass.** `run-tests.sh` counts skips separately and exits
+**A skip is not a pass.** `run-tests.py` counts skips separately and exits
 non-zero if any gate did not run; `ALLOW_SKIP=1` accepts the gap deliberately.
 This matters more with four gates than it did with twelve — and it is not
 hypothetical, see `test-abi` below.
+
+<a name="why-the-harness-is-python"></a>
+## Why the harness is Python
+
+The host half of the harness — the orchestrator and the replica launchers —
+was shell until August 2026. It moved to Python for one specific reason, and
+it is worth stating because the rule it enforces is the one above.
+
+In the shell suite, "this gate did not run" travelled between processes as the
+string `SKIP:` on stdout, and the runner decided by grepping for it:
+
+```sh
+if "$@" >"$out" 2>&1; then
+    if grep -qE '^[[:space:]]*SKIP:|[0-9]+ skipped' "$out"
+    then skip "$name"; else pass "$name"; fi
+```
+
+Text on stdout cannot tell you what happened inside a process. A launcher that
+had **already failed** would reach the same line by a different road: the file
+that sources `config.env` failed to load, so `STOCK_TGZ_*` was never set, so
+the launcher concluded there was nothing to test, printed those five
+characters and exited 0 — on a machine with docker and the firmware sitting
+right there. That is not a hypothetical; it is how five broken launchers
+shipped and stayed broken.
+
+What changed:
+
+- **A skip is an exception** (`ffsim.Skip`), not a string. Output cannot
+  imitate it, and a gate that fails cannot accidentally claim it was skipped.
+- **The repo root is found by searching** upward for `bin/common.sh`, not by
+  counting `..` from `$0`. Moving a launcher to a different depth used to
+  break it silently; now it cannot.
+- **A broken config is not an absent one.** Sourcing a file with a syntax
+  error returns non-zero and does *not* stop the shell, so the old code
+  carried on with half a config. `ffsim.config` checks each source and names
+  the file that failed.
+- **pytest results are read from JUnit XML**, not from grepping `N skipped`.
+- **The suite calls the gates as functions.** There is no subprocess between a
+  gate and the thing counting results, so there is no format to agree on.
+
+The four things that used to be reported as skips and are now failures:
+a `config.env` that does not parse, a missing case script, a missing package,
+and a missing baseline. A genuinely absent precondition — no docker, no stock
+package — is still a skip, because that is still the truth.
 
 ## Speed
 
@@ -92,7 +136,7 @@ a minute on setup before it begins. That image contains proprietary FlashForge
 firmware.
 
 `make test` end to end, measured, with the image: **5m26s**, and the sections
-say where it goes — `run-tests.sh` stamps every header with elapsed seconds:
+say where it goes — `run-tests.py` stamps every header with elapsed seconds:
 
 ```
 == python checks (klipper config) ==                      [0s]

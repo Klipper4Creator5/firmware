@@ -46,7 +46,7 @@ def rootfs():
 
     This is the one Python fixture that needs the proprietary package, which
     is why everything using it lives in test/integration. A skip here is a gate
-    that did not run: run-tests.sh reports it as SKIP rather than as a pass,
+    that did not run: run-tests.py reports it as SKIP rather than as a pass,
     and refuses to call the suite clean.
     """
     path = os.path.join(ROOT, "work", "rootfs")

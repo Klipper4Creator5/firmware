@@ -162,16 +162,20 @@ docker/         Dockerfile.build -- the container every target runs in
 **Tests it** — never ships, and never touched by a build:
 
 ```
-test/           run-tests.sh, and the shared pytest fixtures
+test/           run-tests.py, and the shared pytest fixtures
+  ffsim/          the host side of the harness, as a python package:
+                  config loading, the docker plumbing, gate reporting
   integration/    the suite
     test_chamber.py         the Klipper config gate -- no firmware needed
     test_paths.py           payload paths against the real rootfs
+    test_harness.py         static checks on the harness itself
     make-stock-fixture.sh   synthetic stand-in for a stock package
     printer/        the replica itself: binfmt, mount layout, its two
                     Dockerfiles, and the cases that run inside it on the
-                    printer's own binaries
-    extract-rootfs.sh       pulls the real rootfs out of the stock package
-    sim-*.sh, printer-exec.sh   host-side launchers, via the docker socket
+                    printer's own binaries -- SHELL, because the printer's
+                    busybox ash is the only interpreter that matters there
+    extract-rootfs.py       pulls the real rootfs out of the stock package
+    sim-*.py, printer-exec.py   host-side launchers, via the docker socket
     build-printer-image.sh  bakes a prebuilt replica image
 test.env        replica settings only -- factory image, partition sizes
 docs/           the documentation
@@ -181,9 +185,15 @@ Not everything in there needs the firmware — the config gate needs only
 python3 and jinja2, and runs on a bare checkout. It briefly had a directory of
 its own, `test/unit`, so that a pull request had something to run; with one
 maintainer who always has the firmware, that was a boundary kept in sync for
-nobody. `run-tests.sh` extracts the rootfs before it runs pytest, so a single
+nobody. `run-tests.py` extracts the rootfs before it runs pytest, so a single
 invocation covers as much as the machine allows and reports the rest as gates
 that did not run.
+
+The line between Python and shell here is not taste. Everything that runs on
+YOUR machine is Python; everything executed by the printer's own busybox under
+qemu stays shell, because the fact that it survives that is a large part of
+what the suite proves. See [testing.md](testing.md#why-the-harness-is-python)
+for why the host half moved.
 
 Two things keep the boundary from eroding: only `payload/` and `assets/` are
 ever copied into a package by `patch.sh`, and `make verify` fails if a built

@@ -20,7 +20,7 @@ work/rootfs/          rootfs.squashfs, extracted from the stock package's
                       (busybox 1.31.1, glibc 2.33, MIPS32r2 nan2008, mipsel)
 ```
 
-`test/integration/printer-exec.sh` starts a privileged container that:
+`test/integration/printer-exec.py` starts a privileged container that:
 
 1. registers a `binfmt_misc` handler so MIPS binaries execute (see below),
 2. builds the machine's mount layout,

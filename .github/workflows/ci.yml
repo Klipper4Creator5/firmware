@@ -27,7 +27,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             openssl xz-utils unzip binutils file squashfs-tools python3-pytest python3-jinja2
 
-      # Syntax and the brick lint are the first thing run-tests.sh does, so
+      # Syntax and the brick lint are the first thing run-tests.py does, so
       # they are not repeated here.
       - name: shellcheck
         run: |
@@ -36,12 +36,12 @@ jobs:
           # shellcheck could report anything it liked and the job stayed green.
           # payload scripts run under busybox ash on the printer.
           shellcheck -s sh   -S error payload/*.sh payload/init.d/S* payload/firmwareExe
-          shellcheck -s bash -S error bin/*.sh test/*.sh test/integration/*.sh
+          shellcheck -s bash -S error bin/*.sh test/integration/*.sh
           # Warnings are advisory: printed, not enforced.
           shellcheck -s sh -S warning payload/*.sh payload/init.d/S* payload/firmwareExe || true
 
       - name: Full test suite (fixture-based)
-        run: ./test/run-tests.sh
+        run: ./test/run-tests.py
 
       - name: Upload built fixture packages
         if: always()
@@ -136,4 +136,4 @@ jobs:
             -v "$PWD":"$PWD" -w "$PWD" \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -e REQUIRE_PRINTER_SIM=1 \
-            creator5-fw-build ./test/run-tests.sh
+            creator5-fw-build ./test/run-tests.py

@@ -161,10 +161,10 @@ verify: image
 # it only exists inside the stock package's kernel component.
 rootfs: image config.env
 	@$(RUN) ./bin/unpack.sh >/dev/null
-	@$(RUN) ./test/integration/extract-rootfs.sh
+	@$(RUN) ./test/integration/extract-rootfs.py
 
 test: image
-	@$(RUNSIM) ./test/run-tests.sh
+	@$(RUNSIM) ./test/run-tests.py
 
 # A Docker image that IS the printer: real rootfs, real /usr/prog and
 # /usr/data, with the stock package already installed on top of them.
@@ -187,13 +187,13 @@ printer-image: image
 printer-image-push: image
 	@$(RUNSIM) ./test/integration/build-printer-image.sh --push
 
-# The Python gate. Tests marked `rootfs` need the extracted printer rootfs and
-# are skipped without it; everything else runs on any checkout.
+# The Python gate. The checks that read the printer's rootfs skip without one;
+# everything else runs on any checkout.
 test-py: image
 	@$(RUN) python3 -m pytest ./test -q
 
 test-mcu: image
-	@$(RUNSIM) ./test/integration/printer-exec.sh ./test/integration/printer/case-mcu-bringup.sh
+	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-mcu-bringup.sh
 
 # Packages land in dist/ after `make release` and in work/out after a single
 # build (pack.sh clears work/out each run, so only the last model survives
@@ -201,7 +201,7 @@ test-mcu: image
 test-install: image
 	@$(RUNSIM) bash -c 'pkg=$$(ls -1 dist/$(or $(MODEL),Creator5Pro)-*.tgz work/out/$(or $(MODEL),Creator5Pro)-*.tgz 2>/dev/null | head -1); \
 	   [ -n "$$pkg" ] || { echo "build a package first: make build (or make release)"; exit 1; }; \
-	   echo "package: $$pkg"; ./test/integration/sim-install.sh "$$pkg"'
+	   echo "package: $$pkg"; ./test/integration/sim-install.py "$$pkg"'
 
 # Recovery = flash the stock package you already have. This proves it works.
 #
@@ -215,7 +215,7 @@ test-recovery: image config.env
 	   [ -n "$$m" ] || { echo "no package built for $$TARGET_MACHINE"; exit 1; }; \
 	   [ -f "$$STOCK_TGZ" ] || { echo "no stock package for $$TARGET_MACHINE"; exit 1; }; \
 	   echo "mod:   $$m"; echo "stock: $$STOCK_TGZ"; \
-	   ./test/integration/sim-roundtrip.sh "$$m" "$$STOCK_TGZ"'
+	   ./test/integration/sim-roundtrip.py "$$m" "$$STOCK_TGZ"'
 
 clean:
 	@rm -rf work/stage work/out work/uninst work/uninst-sw work/modpayload

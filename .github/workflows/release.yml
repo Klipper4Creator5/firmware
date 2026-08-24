@@ -113,7 +113,7 @@ jobs:
             -v "$PWD":"$PWD" -w "$PWD" \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -e REQUIRE_PRINTER_SIM=1 \
-            creator5-fw-build ./test/run-tests.sh
+            creator5-fw-build ./test/run-tests.py
 
       - name: Build both models
         run: make release ASSET_ROOT=$PWD
@@ -126,7 +126,7 @@ jobs:
         run: |
           for p in dist/*.tgz; do
             echo "=== $p ==="
-            ./test/integration/sim-install.sh "$p" || exit 1
+            ./test/integration/sim-install.py "$p" || exit 1
           done
 
       - uses: actions/upload-artifact@v4
