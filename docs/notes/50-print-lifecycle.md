@@ -21,7 +21,7 @@ CommMgr::serialPrint @0x79c8e0         -> the 37 KB engine thread
 3. `SET_GCODE_OFFSET X=0 Y=0 MOVE=1 MOVE_SPEED=600`
 4. two probe touch checks (app-internal `checkProbeZValue`)
 5. heat bed + chamber; dock whatever tool is held; presence check of the file's first
-   tool (E0165) — ported as `_FF_REQUIRE_TOOLS` for every tool in `TOOLS=`
+   tool (E0165) — ported as `_FF_PREFLIGHT` for every tool in `TOOLS=`
 6. `SET_IDLE_TIMEOUT TIMEOUT=1800000`; eddy probe at (265, 4.8); nozzle clean of every tool
    the file uses (purge at the chute, wipe at (266.5, 13.8), cool by 100 °C, release) —
    ported as `_FF_NOZZLE_CLEAN`, see [`50a`](50a-nozzle-clean-recovered.md) /
@@ -72,6 +72,6 @@ bed presentation drop `G1 Z150/200/256.8 F1800` by current-Z thresholds 100/150;
 - pause park: +10 mm clamped to 256 (app's exact formula unrecovered)
 - tool gate covers all of TOOLS, not just the first tool; nozzle clean uses slicer
   temperatures (TEMPS=) and the fixed purge_z instead of a fresh eddy probe
-- CANCEL_PRINT override adds our cleanup only for Mainsail-started jobs (tracked by
-  the SDCARD_PRINT_FILE wrapper) — the touchscreen's own cancel does its own cleanup
-  and must not be doubled.
+- CANCEL_PRINT override runs our cleanup for every cancel. The job-origin flag it
+  used to check existed for the touchscreen's own cancel, which did its own motion
+  cleanup; that UI is not one this mod ships.

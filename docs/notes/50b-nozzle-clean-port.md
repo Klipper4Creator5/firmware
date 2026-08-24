@@ -1,7 +1,7 @@
 # Pre-print nozzle clean and tool gate — Klipper port
 
 Source of truth: [`50a-nozzle-clean-recovered.md`](50a-nozzle-clean-recovered.md).
-Port: `payload/klipper/config/ff-print-macros.cfg` — `_FF_REQUIRE_TOOLS`, `_FF_NOZZLE_CLEAN`, and the
+Port: `payload/klipper/config/ff-print-macros.cfg` — `_FF_PREFLIGHT`, `_FF_NOZZLE_CLEAN`, and the
 `TOOLS=` / `TEMPS=` / `CLEAN=` / `SOAK=` parameters of `START_PRINT`; tunables
 `clean_*` in `[gcode_macro _FF_FILAMENT]` (`payload/klipper/config/ff-filament.cfg`);
 `docked_tools` in `printer.ff_toolchange` status.
@@ -12,9 +12,9 @@ Port: `payload/klipper/config/ff-print-macros.cfg` — `_FF_REQUIRE_TOOLS`, `_FF
 START_PRINT BED=60 TOOL=2 NOZZLE=240 LAYER=0.2 LEVEL=0 TOOLS=0,2 TEMPS=220,0,240,0 [CLEAN=1] [SOAK=0]
 ```
 
-1. `_FF_REQUIRE_CALIBRATION` — every tool in TOOLS (plus TOOL) calibrated, station known.
-2. `_FF_REQUIRE_TOOLS` — every tool in TOOLS docked or mounted (`docked_tools` /
-   `current_tool`); refuses before any heating or motion. App: E0165.
+1. `_FF_PREFLIGHT` — both gates in one pass, before any heating or motion:
+   every tool in TOOLS (plus TOOL) calibrated and the station known, and every one of
+   them docked or mounted (`docked_tools` / `current_tool`). App: E0165.
 3. `G90 M82 BED_MESH_CLEAR M400 G28`, offset zero, idle timeout 1800000 — unchanged.
 4. `M140 S<bed>` (non-blocking, as the app's heatManager).
 5. `_FF_NOZZLE_CLEAN TOOLS=.. TEMPS=.. TEMP=<NOZZLE>` then `M106 P1 S0` — the clean runs
@@ -50,8 +50,9 @@ temperature per extruder is the same information from the other side.
 - **Cool-down wait** has no timeout (`TEMPERATURE_WAIT`); the app gives up after 180 s with
   E003x. `clean_cool_delta: 0` skips it (much faster, less clean).
 - The PA-test variant (`paTest` flag → `SET_KINEMATIC_POSITION` + `paTestMgr`) and the
-  `SET_PA_ADVANCE … ENABLE=0` reset after the loop are not reproduced (`_FF_PRINT_END`
-  already resets PA).
+  `SET_PA_ADVANCE … ENABLE=0` reset after the loop are not reproduced. Both were
+  line-rewriting state in FlashForge's `virtual_sdcard`; upstream rewrites nothing, so
+  there is no PA override to reset — see the note in `END_PRINT`.
 - Consecutive-duplicate skipping became full de-duplication of TOOLS.
 - Bed soak: `SOAK=<s>` is a plain dwell after `M190`; the app's 5-minute `keepBedTempPrint`
   starts when the bed first reaches target. (The previous file referenced an undefined `soak`

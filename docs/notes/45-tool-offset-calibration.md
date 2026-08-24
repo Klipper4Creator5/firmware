@@ -63,8 +63,8 @@ Remove `ff-legacy.cfg` afterwards; it is only needed once.
 
 ## Safety on an uncalibrated machine (added 2026-08-21, user request)
 
-- `START_PRINT` calls `_FF_REQUIRE_CALIBRATION` first and the Mainsail entry point
-  (`SDCARD_PRINT_FILE` wrapper) checks `printer.ff_toolchange.print_offset_ready`: no
+- `START_PRINT` calls `_FF_PREFLIGHT` first, and `[ff_print]` calls it again through
+  `FF_BEFORE_PRINT_START` before the file is loaded: no
   `nozzle_z`/`station_z` → refuse before heating/homing/grabbing, with the fix spelled out.
   Escape hatch for tests: `SET_GCODE_VARIABLE MACRO=_FF_JOB VARIABLE=allow_uncalibrated VALUE=1`.
 - `TOOL_OFFSET_CALIBRATE` / `STATION_CALIBRATE` require `PLATE_REMOVED=1`; default `z_target`

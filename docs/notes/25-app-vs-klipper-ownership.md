@@ -40,7 +40,7 @@ byte; `QUERY_ESTOP` (`e_stop.py:360`) is probe-endstop diagnostics, unrelated.
 `checkPlatformInstall/Remove` (E0147/E0167/E0168) are stubs called from the *leveling* page; no
 platform switch exists in the config — input signal not found (probably eddy-derived).
 → `ff_toolchange.py` derives the tool from the dock switches (survives power cycle and G28).
-Missing: a START_PRINT gate refusing when a requested tool is not docked (`_FF_REQUIRE_TOOLS`).
+Missing: a START_PRINT gate refusing when a requested tool is not docked (`_FF_PREFLIGHT`).
 
 ### Calibration
 | Item | App math | Klipper-native |
