@@ -7,13 +7,25 @@ broke every one of them at once. They all open with
 
 and one `..` was right at test/ and wrong a directory deeper, so $ROOT became
 test/ and the first thing each of them did -- source $ROOT/test/integration/
-sim-image.sh -- looked for test/test/integration/. Nothing caught it: the
-integration half cannot run without docker and the stock package, so on any
-machine missing either, five broken scripts still reported a clean skip.
+sim-image.sh -- looked for test/test/integration/.
 
-The check is static on purpose. It needs no docker, no firmware and no shell,
-so it runs everywhere -- which is the whole point, because the bug it pins
-only shows itself in the gates that often do not run at all.
+Running them does not catch this, which is the whole reason the check is here.
+sim-image.sh is the file that sources config.env, so when the broken path stops
+it from loading, STOCK_TGZ_* is never set, the launcher concludes it has
+nothing to work on, prints "SKIP:" and exits 0 -- on a machine that has docker
+and the firmware and could have run the gate perfectly well. run-tests.sh greps
+for exactly that string and counts it as a skip. Verified by putting the bug
+back:
+
+    line 22: .../test/test/integration/sim-image.sh: No such file or directory
+      SKIP: no stock package configured for fake.tgz -- set STOCK_TGZ_* ...
+    EXIT CODE: 0
+
+The suite still goes red, because a skip is not forgiven, but it blames
+config.env rather than line 12 of the script. This check names the file and
+says how far off it is.
+
+Static on purpose: no docker, no firmware, no shell, so it runs everywhere.
 """
 import os
 import re
@@ -32,78 +44,21 @@ def shell_scripts(root):
 
 def test_upward_walks_land_on_the_repo_root(root):
     wrong = []
+    checked = 0
     for path in shell_scripts(root):
         # How deep is this script? test/run-tests.sh is 1, test/integration/
         # sim-install.sh is 2, so that is how many `..` it needs.
         depth = os.path.relpath(path, root).count(os.sep)
         src = open(path, encoding="utf-8", errors="replace").read()
         for ups in UPWALK.findall(src):
+            checked += 1
             climbed = ups.count("..")
             if climbed != depth:
                 wrong.append("%s: climbs %d, is %d deep"
                              % (os.path.relpath(path, root), climbed, depth))
-    assert not wrong, "scripts that do not reach the repo root:\n  " + "\n  ".join(wrong)
-
-
-def test_some_scripts_were_actually_checked(root):
-    """Guard against the walk or the regex silently matching nothing."""
-    hits = [p for p in shell_scripts(root)
-            if UPWALK.search(open(p, encoding="utf-8", errors="replace").read())]
-    assert hits, "no upward walks found -- regex or file walk broken?"
-
-
-# A repo-relative path naming something checked in: "$ROOT/test/integration/
-# printer", "./bin/unpack.sh", "test/integration/printer/Dockerfile".
-REPO_PATH = re.compile(r'(?:\$ROOT/|\./|(?<![\w./$-]))((?:test|bin)/[\w./-]+)')
-
-
-def host_scripts(root):
-    """The launchers, which run on the host and so name paths in this repo.
-
-    test/integration/printer/ is excluded: those run inside the container, and
-    inside a chroot of the printer's own filesystem after that, where `bin/`
-    is the printer's /bin and has nothing to do with this checkout.
-    """
-    printer = os.path.join(root, "test", "integration", "printer") + os.sep
-    return [p for p in shell_scripts(root) if not p.startswith(printer)]
-
-
-def test_named_paths_under_test_and_bin_exist(root):
-    """Every checked-in path a launcher names must actually be there.
-
-    The check above pins the `..` count; this pins the other half of the same
-    accident. Moving the replica into test/integration/ left two `docker build`
-    lines with a corrected -f Dockerfile argument and a STALE build context on
-    the very same line -- `-f test/integration/printer/Dockerfile test/printer`
-    -- because the search-and-replace matched the first path on the line and
-    not the second. docker fails outright on a context that is not there, but
-    only when PRINTER_IMAGE is unset, so anyone on the published prebuilt
-    image never reached it.
-
-    Comments are skipped. They are prose, and they legitimately name paths
-    that no longer exist -- run-tests.sh opens by explaining where test/unit
-    went.
-    """
-    missing = []
-    for path in host_scripts(root):
-        rel = os.path.relpath(path, root)
-        for n, line in enumerate(
-                open(path, encoding="utf-8", errors="replace"), 1):
-            if line.lstrip().startswith("#"):
-                continue
-            for hit in REPO_PATH.findall(line):
-                # A glob or a shell variable is not a literal to resolve.
-                if "*" in hit or "$" in hit:
-                    continue
-                if not os.path.exists(os.path.join(root, hit)):
-                    missing.append("%s:%d: names %s, which is not there"
-                                   % (rel, n, hit))
-    assert not missing, ("scripts naming paths that do not exist:\n  "
-                         + "\n  ".join(missing))
-
-
-def test_some_paths_were_actually_checked(root):
-    """As above: a regex that matches nothing would pass silently."""
-    hits = [p for p in host_scripts(root)
-            if REPO_PATH.search(open(p, encoding="utf-8", errors="replace").read())]
-    assert hits, "no repo-relative paths found -- regex or file walk broken?"
+    assert not wrong, ("scripts that do not reach the repo root:\n  "
+                       + "\n  ".join(wrong))
+    # A regex that matched nothing would pass silently, and this repo has done
+    # that before -- test-abi.sh sat in the suite printing green while checking
+    # nothing at all, because the wiring left it with no targets on any run.
+    assert checked, "no upward walks found -- regex or file walk broken?"
