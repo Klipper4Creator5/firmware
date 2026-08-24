@@ -174,8 +174,9 @@ class FFToolOffset:
         self.gap_min = config.getfloat('gap_min', 1.5)
         self.gap_max = config.getfloat('gap_max', 5.0)
         # Plate check (empty carriage, before any nozzle descends): the
-        # station Z must land within plate_z_tolerance of the calibrated
-        # station_z, and a sideways probe must find the circle's edge. With
+        # station Z must not land more than plate_z_tolerance ABOVE the
+        # calibrated station_z -- one-sided, because a plate can only hold the
+        # probe high -- and a sideways probe must find the circle's edge. With
         # the build plate still on, the Z probe stops high on the sheet (or
         # never triggers) and there is no edge. 0 disables the check.
         self.plate_check = config.getboolean('plate_check', True)
