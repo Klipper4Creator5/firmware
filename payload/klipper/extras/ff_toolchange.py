@@ -82,9 +82,8 @@ ERR_RELEASE_STATE = 144         # E0144    state error after release verify
 # HelixScreen subscribes (src/api/moonraker_discovery_sequence.cpp):
 #   toolchanger : status (ready|changing|error|uninitialized), tool_number,
 #                 tool_numbers[, tool_names, tool]
-#   tool T<n>   : active, mounted, extruder, fan, gcode_x/y/z_offset
-#                 (detect_state omitted on purpose: we have dock switches,
-#                  not on-carriage detection, and "absent" is a hard fault)
+#   tool T<n>   : active, mounted, extruder, fan, gcode_x/y/z_offset,
+#                 detect_state (from this tool's on-carriage grab sensor)
 # ---------------------------------------------------------------------------
 
 class _ToolchangerView:
@@ -100,11 +99,22 @@ class _ToolchangerView:
             status = 'error'
         else:
             status = 'ready'
-        return {'status': status,
+        # Upstream separates the COMMANDED tool (tool/tool_number) from the
+        # one the hardware reports (detected_tool/detected_tool_number). We
+        # keep no commanded state: every answer here is derived from the dock
+        # and grab sensors, so the two are the same value by construction.
+        # They are reported separately anyway, because a UI that only reads
+        # detected_* must still see a tool.
+        name = 'T%d' % cur if cur >= 0 else None
+        return {'name': 'toolchanger',
+                'status': status,
                 'tool_number': cur,
                 'tool_numbers': list(range(EXTRUDER_COUNT)),
                 'tool_names': ['T%d' % i for i in range(EXTRUDER_COUNT)],
-                'tool': 'T%d' % cur if cur >= 0 else None,
+                'tool': name,
+                'detected_tool': name,
+                'detected_tool_number': cur,
+                'has_detection': True,
                 'state_reason': st['state_reason'],
                 'print_offset_ready': st['print_offset_ready']}
 
@@ -120,17 +130,24 @@ class _ToolView:
         t = tc.tools[self.index]
         # klipper-toolchanger's detect_state: is THIS tool seen on the
         # carriage -- our per-tool grab sensor. 'unavailable' if unreadable.
+        # 'mounted' is upstream's spelling of present (DETECT_PRESENT).
         try:
-            detect = ('present' if tc._sensor(tc.grab_sensors[self.index],
+            detect = ('mounted' if tc._sensor(tc.grab_sensors[self.index],
                                               eventtime) else 'absent')
         except (FFToolchangeError, IndexError):
             detect = 'unavailable'
         return {'tool_number': self.index,
                 'name': 'T%d' % self.index,
+                'toolchanger': 'toolchanger',
                 'active': cur == self.index,
                 'mounted': cur == self.index,
                 'detect_state': detect,
                 'extruder': t.extruder_name,
+                # In Klipper the extruder object IS its heater, and this
+                # machine has no separate [extruder_stepper] sections, so
+                # upstream's third name has nothing to point at.
+                'heater': t.extruder_name,
+                'extruder_stepper': None,
                 'fan': tc.part_fan,
                 # the differences actually applied on a grab
                 'gcode_x_offset': tc.off_x[self.index],
