@@ -1,4 +1,23 @@
-# Documentation & comment drift audit
+# Documentation & comment drift audit — RESOLVED
+
+> **Every finding below has been applied.** This file is the record of what was
+> wrong and why, not a list of open work. See the five commits following
+> `b686548` for the changes; `make test` is 12/12 green with them in.
+>
+> Decisions taken on the items that were not simply wrong prose:
+>
+> | | |
+> |---|---|
+> | A1 motion sensors | fixed in config — each `fm_ex*` now watches its own extruder |
+> | A2 motion inserts | fixed in config — `_FF_INSERT` gained its motion branch |
+> | A3 `TOOL=ALL` staging | fixed in code — staged only after every tool validates |
+> | A4 plate check | kept one-sided (a plate can only read high); documented |
+> | A5 `make test` timing | figure dropped rather than re-measured |
+> | A6 gate count | number dropped from docs and Makefile |
+> | A7 `initial_WHITE` | removed from `printer.base.cfg`; `ff-chamber.cfg` alone sets it, so the file is FlashForge's again and the drift check is quiet |
+> | A8 SAFE-MODE | **removed entirely**, not repaired — it never worked. Replaced by `MOD_UI` in `anvil.conf`, which stops the UI starting but does not pretend to repair one |
+
+
 
 Six read-only agents checked every `.md`, every config comment block and every
 docstring in the repo against the code as ground truth. ~140 findings.
