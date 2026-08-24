@@ -3,21 +3,25 @@
 
 The Pro and the plain Creator 5 are the same printer except for the chamber
 heating element, so the two database entries are identical apart from one
-heuristic each:
+discriminating heuristic each:
 
     Pro      object_exists  heater_generic chamber_heater
     non-Pro  object_exists  temperature_sensor chamber
 
-Exactly one of those objects exists on any given machine, because
-printer.chamber.cfg.<model> declares one or the other. This checks that claim
-against the configs we actually ship, then scores both entries the way
-PrinterDetector does and asserts the right one wins.
+This asserts three invariants against the configs we actually ship:
 
-The scoring below mirrors src/printer/printer_detector.cpp (execute_heuristic
-+ calculate_confidence): base = highest single matching confidence, then
-+3 per additional match capped at +12. It is a MODEL of that code, not the
-code itself -- if HelixScreen changes its formula this test will keep passing
-while reality changes, so re-check it against the fork when bumping HelixScreen.
+  1. the two entries are identical apart from the chamber heuristic,
+  2. each entry's chamber heuristic carries positive confidence,
+  3. each discriminating object exists on exactly one model (because
+     printer.chamber.cfg.<model> declares one or the other).
+
+Together those force the right entry to win under ANY scoring in which an
+extra matching heuristic never lowers a score: the shared heuristics
+contribute identically to both entries, and only the correct entry gains its
+discriminator. An earlier version of this test additionally re-implemented
+PrinterDetector's confidence formula from printer_detector.cpp -- a model of
+someone else's code that would keep passing if the fork changed its formula,
+while proving nothing the invariants above do not already prove.
 
     ./test/test-printer-db.py
 """
@@ -27,27 +31,18 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ffcfg import F, ok, bad, finish
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFGDIR = os.path.join(ROOT, "payload", "klipper", "config")
 DB = os.path.join(ROOT, "payload", "helixscreen", "printer_database.d",
                   "flashforge_creator5.json")
 MODELS = {"Creator5Pro": ("creator5pro", "flashforge_creator5_pro"),
           "Creator5": ("creator5", "flashforge_creator5")}
+DISCRIMINATORS = {"flashforge_creator5_pro": "heater_generic chamber_heater",
+                  "flashforge_creator5": "temperature_sensor chamber"}
 SECTION = re.compile(r"^\[([^\]]+)\]\s*$")
-
-P, F = [], []
-
-
-def ok(n):
-    P.append(n)
-    print("  \033[32mPASS\033[0m  %s" % n)
-
-
-def bad(n, d=""):
-    F.append(n)
-    print("  \033[31mFAIL\033[0m  %s" % n)
-    if d:
-        print("        %s" % d)
 
 
 def objects_for(suffix):
@@ -71,24 +66,6 @@ def objects_for(suffix):
     return objs
 
 
-def score(entry, objects, hostname):
-    """PrinterDetector's confidence for one entry. 0 = no identifying match."""
-    hits = []
-    for h in entry["heuristics"]:
-        t, pat, conf = h["type"], h.get("pattern", ""), h.get("confidence", 0)
-        if t == "object_exists":
-            if any(pat.lower() in o.lower() for o in objects):
-                hits.append(conf)
-        elif t == "hostname_match":
-            if pat.lower() in hostname.lower():
-                hits.append(conf)
-        else:
-            raise AssertionError("unmodelled heuristic type %r -- update this test" % t)
-    if not hits:
-        return 0
-    return max(hits) + min(3 * (len(hits) - 1), 12)
-
-
 def main():
     db = json.load(open(DB, encoding="utf-8"))
     entries = {p["id"]: p for p in db["printers"]}
@@ -100,22 +77,37 @@ def main():
             bad("database has an entry for %s (%s)" % (machine, want_id),
                 "have %r" % sorted(entries))
     if F:
-        print("\n  %d passed, %d failed" % (len(P), len(F)))
-        return 1
+        return finish()
 
     # The two entries must differ ONLY in the discriminating heuristic, or the
     # winner could turn on something unrelated to the chamber.
-    def without_chamber(e):
-        return [h for h in e["heuristics"]
-                if "chamber" not in h.get("pattern", "").lower()]
-    a, b = (without_chamber(entries["flashforge_creator5_pro"]),
-            without_chamber(entries["flashforge_creator5"]))
-    if a == b:
+    def chamber_split(e):
+        shared = [h for h in e["heuristics"]
+                  if "chamber" not in h.get("pattern", "").lower()]
+        disc = [h for h in e["heuristics"] if h not in shared]
+        return shared, disc
+
+    pro_shared, pro_disc = chamber_split(entries["flashforge_creator5_pro"])
+    np_shared, np_disc = chamber_split(entries["flashforge_creator5"])
+    if pro_shared == np_shared:
         ok("the two entries are identical apart from the chamber heuristic")
     else:
         bad("the two entries are identical apart from the chamber heuristic")
 
-    # Each discriminator must exist on exactly one model.
+    # Each entry's discriminator: exactly one, object_exists, the expected
+    # pattern, and positive confidence -- so matching it genuinely helps.
+    for want_id, disc in (("flashforge_creator5_pro", pro_disc),
+                          ("flashforge_creator5", np_disc)):
+        pat = DISCRIMINATORS[want_id]
+        label = "%s discriminates on '%s' with positive confidence" % (want_id, pat)
+        if (len(disc) == 1 and disc[0].get("type") == "object_exists"
+                and disc[0].get("pattern", "").lower() == pat
+                and disc[0].get("confidence", 0) > 0):
+            ok(label)
+        else:
+            bad(label, "heuristics mentioning 'chamber': %r" % disc)
+
+    # And each discriminating object must exist on exactly one model.
     for pat, owner in (("heater_generic chamber_heater", "Creator5Pro"),
                        ("temperature_sensor chamber", "Creator5")):
         present = [m for m, (sfx, _) in MODELS.items()
@@ -125,22 +117,7 @@ def main():
         else:
             bad("'%s' exists only on %s" % (pat, owner), "present on %r" % present)
 
-    # And the right entry must actually win -- with and without the hostname
-    # hint, since that one matches both entries equally and only shifts counts.
-    for hostname in ("creator5", "printer"):
-        for machine, (sfx, want_id) in sorted(MODELS.items()):
-            objs = objects_for(sfx)
-            scores = {i: score(e, objs, hostname) for i, e in entries.items()}
-            win = max(scores, key=lambda i: scores[i])
-            margin = scores[win] - max(v for i, v in scores.items() if i != win)
-            label = "%s wins on %s (hostname %r)" % (want_id, machine, hostname)
-            if win == want_id and margin > 0:
-                ok("%s -- %s, margin %d" % (label, scores, margin))
-            else:
-                bad(label, "scores %s" % scores)
-
-    print("\n  %d passed, %d failed" % (len(P), len(F)))
-    return 1 if F else 0
+    return finish()
 
 
 if __name__ == "__main__":

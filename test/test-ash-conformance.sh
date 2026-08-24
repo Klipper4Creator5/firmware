@@ -16,27 +16,20 @@
 # every single run, which made a local syntax check depend on the network.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RFS="$ROOT/work/rootfs"
 
-DOCKER=docker
-command -v docker >/dev/null 2>&1 || DOCKER=docker.exe
-command -v $DOCKER >/dev/null 2>&1 || { echo "  SKIP: docker not available"; exit 0; }
-$DOCKER info >/dev/null 2>&1 || { echo "  SKIP: docker daemon not running"; exit 0; }
+# Load test.env like the sim-* launchers do: without it this script never saw
+# PRINTER_IMAGE and rebuilt the local sim image on every run.
+# shellcheck disable=SC1091
+. "$ROOT/test/test-env.sh"
 
-IMAGE="${PRINTER_IMAGE:-}"
+# The docker plumbing (skip policy, image choice, local sim-image build) is
+# shared with the replica launchers -- including REQUIRE_PRINTER_SIM, which
+# turns these skips into failures in a release build.
+# shellcheck disable=SC1091
+. "$ROOT/test/sim-image.sh"
+
 MOUNT=()
-if [ -n "$IMAGE" ]; then
-    :                                   # the image carries /rootfs itself
-elif [ -f "$RFS/bin/busybox" ]; then
-    IMAGE=creator5-printer-sim
-    MOUNT=(-v "$RFS:/rootfs:ro")
-    $DOCKER build -q -t "$IMAGE" -f "$ROOT/test/printer/Dockerfile" "$ROOT/test/printer" >/dev/null \
-        || { echo "  FAIL: could not build $IMAGE"; exit 1; }
-else
-    echo "  SKIP: no printer rootfs -- run 'make rootfs' (needs the stock package),"
-    echo "        or set PRINTER_IMAGE to a prebuilt printer image"
-    exit 0
-fi
+[ "$PREBUILT" = 1 ] || MOUNT=(-v "$ROOT/work/rootfs:/rootfs:ro")
 
 $DOCKER run --rm -i --entrypoint sh \
     "${MOUNT[@]}" \

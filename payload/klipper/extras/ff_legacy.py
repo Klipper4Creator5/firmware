@@ -67,23 +67,27 @@ class FFFirmwareConfig:
         obj = self.files.get(fname)
         if obj is None:
             return None
+
         val = obj.get(key)
         if isinstance(val, bool) or not isinstance(val, (int, float)):
             return None
+
         if not math.isfinite(val):
             return None
+
         return float(val)
 
     def tool_offsets(self):
         rows = []
-        for n in range(EXTRUDER_COUNT):
-            v = [self.num('extruder', 't%d_offset_%s' % (n, a)) for a in 'xyz']
-            rows.append(None if None in v else tuple(v))
+        for index in range(EXTRUDER_COUNT):
+            offset = [self.num('extruder', 't%d_offset_%s' % (index, axis)) for axis in 'xyz']
+            rows.append(None if None in offset else tuple(offset))
         return rows
 
     def docks(self):
         rows = []
         for n in range(EXTRUDER_COUNT):
+            # first extruder is just "extruder", next is "extruder1"
             sfx = '' if n == 0 else '%d' % n
             x = self.num('extruder', 'x_check_pos' + sfx)
             y = self.num('extruder', 'y_check_pos' + sfx)

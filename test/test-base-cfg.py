@@ -15,9 +15,11 @@ being silently overridden by a stale copy.
 
     ./test/test-base-cfg.py [stock-printer.base.cfg]
 """
-import importlib.util
 import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ffcfg import sections, ok, bad, finish
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFGDIR = os.path.join(ROOT, "payload", "klipper", "config")
@@ -28,34 +30,11 @@ INCLUDE = "[include printer.chamber.cfg]"
 STOCK = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
     ROOT, "work", "software", "klipper", "config", "printer.base.cfg")
 
-_spec = importlib.util.spec_from_file_location(
-    "test_macros", os.path.join(ROOT, "test", "test-macros.py"))
-_tm = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_tm)
-
-P = F = 0
-
-
-def ok(name):
-    global P
-    P += 1
-    print("  \033[32mPASS\033[0m  %s" % name)
-
-
-def bad(name, detail=""):
-    global F
-    F += 1
-    print("  \033[31mFAIL\033[0m  %s" % name)
-    if detail:
-        print("        %s" % detail)
-
-
 def parse(path):
-    return list(_tm.sections(path))
+    return list(sections(path))
 
 
 def main():
-    global F
     if not os.path.exists(STOCK):
         print("  SKIP: no stock printer.base.cfg at %s" % STOCK)
         print("        (run ./bin/unpack.sh first)")
@@ -124,8 +103,7 @@ def main():
                 ", ".join("%s: %r != %r" % (k, sensor.get(k), pro.get(k))
                           for k in mismatch))
 
-    print("\n  %d passed, %d failed" % (P, F))
-    return 1 if F else 0
+    return finish()
 
 
 if __name__ == "__main__":

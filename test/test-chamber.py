@@ -14,7 +14,6 @@ that model's real config file.
     ./test/test-chamber.py
 """
 import glob
-import importlib.util
 import os
 import sys
 
@@ -24,6 +23,9 @@ except ImportError:
     print("  SKIP: jinja2 not installed")
     sys.exit(0)
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ffcfg import sections, ok, bad, finish
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFGDIR = os.path.join(ROOT, "payload", "klipper", "config")
 CFG = os.path.join(CFGDIR, "ff-chamber.cfg")
@@ -32,34 +34,14 @@ HEATER = "heater_generic chamber_heater"
 # buildable but missing here would otherwise go untested.
 MODELS = {"Creator5Pro": "creator5pro", "Creator5": "creator5"}
 
-_spec = importlib.util.spec_from_file_location(
-    "test_macros", os.path.join(ROOT, "test", "test-macros.py"))
-_tm = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_tm)
-
-P, F = [], []
-
-
-def ok(name):
-    P.append(name)
-    print("  \033[32mPASS\033[0m  %s" % name)
-
-
-def bad(name, detail=""):
-    F.append(name)
-    print("  \033[31mFAIL\033[0m  %s" % name)
-    if detail:
-        print("        %s" % detail)
-
-
 def load(machine):
     """ff-chamber.cfg's macros, plus whether this model declares the heater."""
-    macros = dict(_tm.sections(CFG))
+    macros = dict(sections(CFG))
     chamber = os.path.join(CFGDIR, "printer.chamber.cfg.%s" % MODELS[machine])
     if not os.path.exists(chamber):
         bad("printer.chamber.cfg.%s exists" % MODELS[machine])
         return None, None
-    return macros, HEATER in dict(_tm.sections(chamber))
+    return macros, HEATER in dict(sections(chamber))
 
 
 def render(macros, has_heater, section, params, rawparams=""):
@@ -108,8 +90,7 @@ def main():
     pro_m, pro_h = load("Creator5Pro")
     np_m, np_h = load("Creator5")
     if pro_m is None or np_m is None:
-        print("\n  %d passed, %d failed" % (len(P), len(F)))
-        return 1
+        return finish()
 
     if pro_h:
         ok("Creator5Pro declares the chamber heater")
@@ -173,8 +154,7 @@ def main():
     else:
         bad("Pro: M191 waits to within wait_band", repr(out.strip()))
 
-    print("\n  %d passed, %d failed" % (len(P), len(F)))
-    return 1 if F else 0
+    return finish()
 
 
 if __name__ == "__main__":

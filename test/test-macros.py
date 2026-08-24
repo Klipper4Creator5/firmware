@@ -12,7 +12,6 @@ behaviour: a macro that parses can still do the wrong thing.
 """
 import glob
 import os
-import re
 import sys
 
 try:
@@ -21,40 +20,12 @@ except ImportError:
     print("  SKIP: jinja2 not installed")
     sys.exit(0)
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ffcfg import sections
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFGDIR = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
     ROOT, "payload", "klipper", "config")
-
-SECTION = re.compile(r"^\[([^\]]+)\]\s*$")
-# Klipper's own option regex: name, colon or equals, value.
-OPTION = re.compile(r"^([^:=\s][^:=]*)\s*[:=]\s*(.*)$")
-
-
-def sections(path):
-    """Yield (section_name, {option: value}) the way Klipper's parser sees it."""
-    cur, opts, name = None, {}, None
-    key = None
-    for raw in open(path, encoding="utf-8", errors="replace"):
-        line = raw.rstrip("\n")
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        m = SECTION.match(line.strip())
-        if m:
-            if cur:
-                yield cur, opts
-            cur, opts, key = m.group(1), {}, None
-            continue
-        if cur is None:
-            continue
-        if line[:1] in " \t" and key:            # continuation line
-            opts[key] += "\n" + line
-            continue
-        m = OPTION.match(line)
-        if m:
-            key = m.group(1).strip()
-            opts[key] = m.group(2)
-    if cur:
-        yield cur, opts
 
 
 def main():
