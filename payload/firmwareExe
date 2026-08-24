@@ -40,8 +40,8 @@ if [ -d $MODDIR/init.d ]; then
 fi
 
 # ---- the UI, in the foreground so the stock watchdog can see us ----------
-# S80ui already handled SAFE-MODE and crash counting and wrote its verdict
-# here: "helix" to start the UI, "none" to stay headless.
+# S80ui already decided and wrote its verdict here: "helix" to start the UI,
+# "none" to stay headless (MOD_UI=0, or HelixScreen not installed).
 UI_CHOICE=`cat $MODDIR/.ui-choice 2>/dev/null || echo none`
 echo "ui: choice is $UI_CHOICE"
 

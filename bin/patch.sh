@@ -288,6 +288,7 @@ cp -f payload/init.d/S* "$MP/init.d/"
 chmod +x "$MP/init.d"/S*
 sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
     -e "s/^MOD_CAM=.*/MOD_CAM=${MOD_CAM:-1}/" \
+    -e "s/^MOD_UI=.*/MOD_UI=${MOD_UI:-1}/" \
     -e "s/^MOD_SSH=.*/MOD_SSH=${MOD_SSH:-1}/" \
     -e "s/^MOD_WIFI=.*/MOD_WIFI=${MOD_WIFI:-1}/" \
     payload/anvil.conf > "$MP/anvil.conf"

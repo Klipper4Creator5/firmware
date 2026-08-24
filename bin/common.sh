@@ -27,10 +27,10 @@ fi
 # above -- still overrides any of them.
 #
 # FlashForge's firmwareExe is REPLACED, not kept: HelixScreen is the only UI.
-# If it crash-loops, S80ui latches SAFE-MODE after 3 failed boots and the
-# printer boots headless instead of looping. ssh and Mainsail are your
-# recovery path if the screen is dark, and a USB stick with the STOCK
-# FlashForge package on it is the uninstall (proven by `make test-recovery`).
+# If it will not start, set MOD_UI=0 in /usr/data/anvil/anvil.conf to boot
+# headless. ssh and Mainsail are your recovery path if the screen is dark, and
+# a USB stick with the STOCK FlashForge package on it is the uninstall (proven
+# by `make test-recovery`).
 BUILD_KLIPPER="${BUILD_KLIPPER:-fork}"
 BUILD_TOOLCHANGE="${BUILD_TOOLCHANGE:-1}"
 BUILD_MAINSAIL="${BUILD_MAINSAIL:-1}"
@@ -38,6 +38,7 @@ BUILD_MOONRAKER="${BUILD_MOONRAKER:-1}"
 BUILD_HELIX="${BUILD_HELIX:-1}"
 MOD_SSH="${MOD_SSH:-1}"
 MOD_WEB="${MOD_WEB:-1}"
+MOD_UI="${MOD_UI:-1}"
 
 # Third-party payload pieces (Mainsail, HelixScreen, Moonraker). They are
 # downloaded on demand rather than vendored, so the repo carries no binaries

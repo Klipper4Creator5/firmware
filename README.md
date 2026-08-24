@@ -102,10 +102,13 @@ installs the same way — stick in, power on.
 A few things are deliberately built in so a bad flash cannot cost you the
 machine:
 
-* **A crashing UI cannot lock you out.** If HelixScreen cannot start or
-  crashes repeatedly, the printer latches SAFE-MODE and boots *headless* —
-  no UI at all — instead of looping. Delete `/usr/data/anvil/SAFE-MODE` over
-  ssh to try again.
+* **A crashing UI cannot lock you out.** The screen is not how you reach the
+  printer: ssh and Mainsail come up from their own services, before and
+  independently of the UI, so a dead screen costs you the screen and nothing
+  else — you can still print. It is not repairable on the machine, though:
+  HelixScreen is the only UI there is, and getting a working screen back means
+  flashing a package again. `MOD_UI=0` in `/usr/data/anvil/anvil.conf` stops
+  it being started at all.
 * **ssh stays up** even when the screen does not, so you can get in and look.
 * **Your `printer.cfg` is never overwritten** — it is not a file this
   firmware ships, and it is where your changes belong. The configs the mod

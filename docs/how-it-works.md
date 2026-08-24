@@ -43,7 +43,7 @@ S50wifi      wlan0 + wpa_supplicant + udhcpc
 S60web       nginx (Mainsail) + moonraker
 S65camera    mjpg-streamer on :8080 (nginx proxies it at /webcam/)
 S70klipper   Klipper
-S80ui        decides whether the UI runs; owns SAFE-MODE
+S80ui        decides whether the UI runs (MOD_UI, HelixScreen installed?)
 ```
 
 Everything the mod installs lives under `/usr/data/anvil` on the **data**

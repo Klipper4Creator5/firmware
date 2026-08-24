@@ -102,9 +102,10 @@ screen and there is nothing to fall back to:
   `firmwareExe` — not any init script — that ran `/usr/prog/klipper/start.sh`.
   Without this the printer would boot to a working screen and be unable to
   move.
-- If the UI dies repeatedly, `SAFE-MODE` latches after 3 boots and the printer
-  boots **headless** — no UI started at all — rather than crash-looping. ssh
-  and Mainsail stay up. Delete `/usr/data/anvil/SAFE-MODE` to try again.
+- If the UI misbehaves, set `MOD_UI=0` in `/usr/data/anvil/anvil.conf` and
+  reboot: the printer comes up **headless** — no UI started at all. ssh and
+  Mainsail are unaffected either way. There is no automatic latch; nothing
+  stops the UI unless you do.
 
 **Go/no-go, in this order — with the emergency stop within reach:**
 
@@ -223,14 +224,22 @@ every flash. Each of those files opens with a header saying as much.
 `moonraker.conf` is the one exception — it has no include-and-override seam, so
 an edited copy is kept and the new version lands beside it as `.mod-new`.
 
-**Recovering from a bad UI, in increasing severity:**
+**A bad UI is not repairable on the printer.** There is no fallback interface:
+FlashForge's binary is replaced and HelixScreen is the only thing that draws on
+the screen. ssh tells you *why* it is dark, but nothing you can set on the
+machine will make it light up again:
+
 ```sh
 ssh root@PRINTER
 /usr/data/anvil/init.d/S80ui status        # what did it choose, and why
-touch /usr/data/anvil/SAFE-MODE            # boot headless next time (ssh + Mainsail only)
-reboot
+# chose "none"  -> MOD_UI=0, or HelixScreen is not installed
+# chose "helix" -> it was started and failed on its own; see its log
 ```
-If ssh is gone too, flash the stock FlashForge package for your model.
+
+`MOD_UI=0` only stops it being started at all — useful to silence a UI that
+interferes with something else, not a repair. The actual fix is to flash a
+package again: the mod, if you have a corrected build, or the stock FlashForge
+package for your model to go back to FlashForge's own interface.
 
 ---
 
@@ -238,7 +247,7 @@ If ssh is gone too, flash the stock FlashForge package for your model.
 
 | Symptom | Do this |
 |---|---|
-| Printer boots, screen blank | ssh in; `/usr/data/anvil/init.d/S80ui status`; `touch /usr/data/anvil/SAFE-MODE`; reboot |
+| Printer boots, screen blank | ssh in; `/usr/data/anvil/init.d/S80ui status` says whether the UI was even started. No on-device repair — reflash the mod, or flash the stock package to get FlashForge's UI back. ssh, Mainsail and printing are unaffected |
 | No ssh, no screen | flash the stock package for your model |
 | Recovery stick does not help | try a newer stock FlashForge package for your model |
 | Still broken | factory package (`Creator5Pro-factory-*.tgz` **plus** the separate `Creator5Pro-factory.tar.xz` on the same stick; needs 800 MB free) |

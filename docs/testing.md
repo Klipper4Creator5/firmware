@@ -234,9 +234,9 @@ Tests that cannot fail are worse than no tests, because they read as coverage:
     to it. Its allowlist had drifted to nine entries that excused nothing. The
     absolute-path half survives, because `S50wifi`'s binaries sit on a branch
     no simulation reaches.
-  - `lint-danger`'s structural greps were satisfiable by comments —
-    `firmwareExe:44` and `S80ui:16` *mention* `helix` and `SAFE-MODE`, so the
-    checks passed with the logic deleted.
+  - `lint-danger`'s structural greps were satisfiable by comments — the
+    comments in `firmwareExe` and `S80ui` *mention* `helix` and (at the time)
+    `SAFE-MODE`, so the checks passed with the logic deleted.
   - `case-ui` went with the helix-only decision.
 
 ## Bugs these caught

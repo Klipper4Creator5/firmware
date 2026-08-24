@@ -545,11 +545,16 @@ class FFToolOffset:
             self.last['t%d' % tool] = (cx, cy, zp)
             gcmd.respond_info("T%d: offset = (%.4f, %.4f, %.4f)"
                               % (tool, cx, cy, zp))
-            if save:
-                self.tools[tool].set_nozzle(cx, cy, zp)
             if release:
                 self._run('TOOLCHANGE_PARK')
                 self._wait_moves()
+
+        # Staged only once every tool has passed its guards, so that a failure
+        # part-way through TOOL=ALL really does leave nothing saved -- which is
+        # what the guard messages above promise.
+        if save:
+            for tool, (cx, cy, zp) in results.items():
+                self.tools[tool].set_nozzle(cx, cy, zp)
 
         # the app's exit block: heater off for the tool(s), Z15
         for tool in tools:

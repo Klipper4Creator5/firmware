@@ -8,19 +8,14 @@
 # foreground, so it only chooses.
 #
 # HelixScreen is the only UI: FlashForge's firmwareExe is retired and there is
-# nothing to fall back to. So the safety rules encoded here are what stands
-# between a crash-looping UI and losing the machine:
-#   * ssh comes from the stock /etc/init.d/S50dropbear, which busybox init
-#     already ran long before this script. It is up regardless of what
-#     happens here, and so are S60web (Mainsail) and S70klipper.
-#   * A UI that crash-loops latches SAFE-MODE after MAX_UI_FAILURES boots and
-#     the printer then boots HEADLESS -- no UI at all -- rather than looping.
-#   * Delete /usr/data/anvil/SAFE-MODE (over ssh) to try the UI again.
+# nothing to fall back to. There is no crash counter and no automatic headless
+# latch -- the UI is started whenever it is installed and MOD_UI is not 0.
+# To stop it, set MOD_UI=0 in /usr/data/anvil/anvil.conf and reboot; ssh comes
+# from the stock /etc/init.d/S50dropbear, which busybox init ran long before
+# this script, so it is up regardless of what happens here, and so are S60web
+# (Mainsail) and S70klipper.
 MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
-MAX_UI_FAILURES="${MOD_MAX_UI_FAILURES:-3}"
-FAILFILE=$MODDIR/ui-failures
-SAFEFILE=$MODDIR/SAFE-MODE
 CHOICE=$MODDIR/.ui-choice
 
 have_helix() { [ -x $MODDIR/helixscreen/bin/helix-launcher.sh ] || [ -x $MODDIR/helixscreen/bin/helix-screen ]; }
@@ -28,20 +23,8 @@ have_helix() { [ -x $MODDIR/helixscreen/bin/helix-launcher.sh ] || [ -x $MODDIR/
 start() {
     want=helix
 
-    if [ -f "$SAFEFILE" ]; then
-        echo "ui: SAFE-MODE latched -- staying headless (delete $SAFEFILE to retry)"
-        want=none
-    fi
-
-    failures=`cat "$FAILFILE" 2>/dev/null || echo 0`
-    case "$failures" in ''|*[!0-9]*) failures=0 ;; esac
-
-    # Every boot increments the counter; the UI clears it once it has been
-    # alive for a while (see the settle check below). A crash-loop therefore
-    # walks the counter up until SAFE-MODE latches.
-    if [ "$failures" -ge "$MAX_UI_FAILURES" ]; then
-        echo "ui: $failures consecutive short boots -- latching SAFE-MODE"
-        : > "$SAFEFILE"
+    if [ "${MOD_UI:-1}" = 0 ]; then
+        echo "ui: MOD_UI=0 in anvil.conf -- staying headless"
         want=none
     fi
 
@@ -56,12 +39,6 @@ start() {
 
     echo "$want" > "$CHOICE"
     echo "ui: chose $want"
-
-    # Arm the failure counter, then clear it in the background once the UI has
-    # survived long enough to be considered healthy.
-    echo `expr $failures + 1` > "$FAILFILE"
-    ( sleep 90
-      if [ -s "$CHOICE" ]; then rm -f "$FAILFILE"; fi ) &
 }
 stop() {
     killall helix-screen helix-watchdog helix-splash 2>/dev/null
@@ -72,7 +49,6 @@ case "$1" in
     stop)     stop ;;
     restart)  stop; sleep 2; start ;;
     status)   echo "ui choice: `cat $CHOICE 2>/dev/null || echo unset`";
-              echo "failures:  `cat $FAILFILE 2>/dev/null || echo 0`";
-              [ -f "$SAFEFILE" ] && echo "SAFE-MODE: latched" || echo "SAFE-MODE: clear" ;;
+              echo "MOD_UI:    ${MOD_UI:-1}" ;;
     *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
 esac
