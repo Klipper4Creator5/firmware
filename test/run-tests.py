@@ -210,6 +210,21 @@ def make_fixture(r, tmp):
     subprocess.run(["tar", "-czf", str(assets / "helixscreen.tar.gz"),
                     "-C", str(assets / "hs"), "helixscreen"], check=True)
 
+    # And one for Moonraker. Same reason, and the same shape patch.sh expects:
+    # a source tarball with one top directory, stripped, holding
+    # moonraker/moonraker.py -- which patch.sh checks for by name before it
+    # ships anything. Without this the fixture build dies on the missing
+    # tarball, and it dies AFTER the payload is half-assembled, so what the
+    # verify gate then reads is a stump: no init.d, no HelixScreen, no
+    # Moonraker. That is exactly how it failed in CI while `make test` was
+    # green locally against a populated vendor/.
+    mr = assets / "mr" / "moonraker-fixture" / "moonraker"
+    (mr / "components").mkdir(parents=True, exist_ok=True)
+    (mr / "moonraker.py").write_text("# moonraker fixture\n")
+    (mr / "components" / "webcam.py").write_text('# "enabled"\n')
+    subprocess.run(["tar", "-czf", str(assets / "moonraker.tar.gz"),
+                    "-C", str(assets / "mr"), "moonraker-fixture"], check=True)
+
     # A throwaway config, passed through CONFIG_ENV. It used to overwrite
     # ./config.env and copy it back afterwards, which put the config you
     # edited one crashed run away from being replaced by a fixture one.
@@ -222,11 +237,13 @@ def make_fixture(r, tmp):
         'KLIPPER_FORK=""\n'
         'HELIX_TGZ="%s"\n'
         'MAINSAIL_ZIP="%s"\n'
+        'MOONRAKER_TGZ="%s"\n'
         'BUSYBOX_BIN=""\n'
         "TARGET_MACHINE=Creator5Pro\n"
         "ROOT_PW_HASH='$6$ci$abcdefghijklmnopqrstuvwxyz'\n"
         "FF_KEY='FFP0331&*%%root'\n"
-        % (fixture, assets / "helixscreen.tar.gz", assets / "mainsail.zip"))
+        % (fixture, assets / "helixscreen.tar.gz", assets / "mainsail.zip",
+           assets / "moonraker.tar.gz"))
 
     return dict(os.environ, CONFIG_ENV=str(cfg), TARGET_MACHINE="Creator5Pro")
 
@@ -279,14 +296,31 @@ def main():
             with r.gate("build on the fixture"):
                 raise Fail("no fixture -- the steps below cannot run")
         else:
+            # Stop at the first step that fails. These are a chain, not four
+            # independent checks: a patch.sh that died half way leaves a
+            # half-assembled payload behind, and running verify.sh over it
+            # reports the missing pieces as separate failures -- "no init.d",
+            # "no HelixScreen" -- which describe the wreckage rather than the
+            # cause. The steps after a break are not registered as skipped
+            # gates: a skip here would ask to be accepted by name in
+            # ALLOW_SKIP, and nothing about a failed build should need that.
+            # Counted from here, not from zero: an earlier gate (pytest, say)
+            # may already have failed, and that is not a reason to skip the
+            # build.
+            failures_before = r.failed
+            broken = False
             for step in ("unpack", "patch", "pack"):
                 with r.gate(step):
                     r.run(["./bin/%s.sh" % step], cwd=ROOT, env=env)
-            with r.gate("verify"):
-                pkgs = sorted((ROOT / "work" / "out").glob("Creator5Pro-*.tgz"))
-                if not pkgs:
-                    raise Fail("no package produced")
-                r.run(["./bin/verify.sh", str(pkgs[0])], cwd=ROOT, env=env)
+                if r.failed > failures_before:
+                    broken = True
+                    break
+            if not broken:
+                with r.gate("verify"):
+                    pkgs = sorted((ROOT / "work" / "out").glob("Creator5Pro-*.tgz"))
+                    if not pkgs:
+                        raise Fail("no package produced")
+                    r.run(["./bin/verify.sh", str(pkgs[0])], cwd=ROOT, env=env)
 
     # Throw away everything the fixture half built. bin/ hardcodes work/, so
     # those packages land in the same work/out a real build uses -- and a
