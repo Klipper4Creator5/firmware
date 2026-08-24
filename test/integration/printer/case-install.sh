@@ -329,11 +329,26 @@ if [ -d $MRPKG ]; then
     # installed and we do not control, so an ImportError here is the failure
     # mode to be afraid of -- and it is real mipsel under qemu, not a mock.
     # S60web starts it during boot 3, so it has had time by now.
-    if wait_for 60 running 'moonraker/moonraker.py'; then
-        ok "moonraker: the shipped tree runs on the printer's python3.8"
+    #
+    # IT MUST STILL BE UP AFTER A SETTLE. An earlier version of this check
+    # asked only "did a moonraker.py process ever appear", and passed a build
+    # that died on a missing _sqlite3 module seconds into startup -- the
+    # process is alive for a moment before the failing import is reached. The
+    # false green is the whole reason that shipped. Liveness twice, and the
+    # log has to be clean too.
+    if wait_for 90 running 'moonraker/moonraker.py' && sleep 15 && running 'moonraker/moonraker.py'; then
+        ok "moonraker: the shipped tree runs on the printer's python3.8, and stays up"
     else
-        bad "moonraker: nothing is running moonraker.py -- the new tree did not start"
+        bad "moonraker: moonraker.py is not running after boot -- the new tree did not start"
         tail -25 /usr/data/logs/moonraker.log 2>/dev/null | sed 's/^/        /'
+    fi
+    # An import that fails names the module it could not find, which is a far
+    # more useful failure than "the process is gone".
+    if grep -q "ModuleNotFoundError\|ImportError" /usr/data/logs/moonraker.log 2>/dev/null; then
+        bad "moonraker: the log has an import error -- the printer's python cannot run this build"
+        grep "ModuleNotFoundError\|ImportError" /usr/data/logs/moonraker.log | tail -5 | sed 's/^/        /'
+    else
+        ok "moonraker: no import errors in its log"
     fi
 else
     bad "moonraker: no $MRPKG -- this prog partition has no Moonraker to replace"

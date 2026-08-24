@@ -68,7 +68,35 @@ if [ -d $MODDIR/moonraker ]; then
         # firmware partition, so check there is room before starting.
         NEED=`du -sk $MODDIR/moonraker | cut -f1`
         FREE=`df /usr/prog | tail -1 | tr -s ' ' | cut -d' ' -f4`
-        if [ "${FREE:-0}" -lt "$NEED" ]; then
+        # PRE-FLIGHT: ask THIS printer's python whether it can import the tree
+        # before anything is moved.
+        #
+        # This exists because reasoning about it was not enough. A build that
+        # ran on python 3.8 everywhere else still died here on
+        # "ModuleNotFoundError: No module named '_sqlite3'" -- FlashForge built
+        # their interpreter without it, and Moonraker's newer database
+        # component needs it. Installed blind, that leaves a printer with no
+        # web UI and no clue why. An import is cheap and it is the machine's
+        # own answer, not ours.
+        #
+        # moonrakerDaemon execs this interpreter and sets no library path of
+        # its own -- start.sh normally exports these first -- so the check has
+        # to export them too or it fails for the wrong reason.
+        MRPY=/usr/prog/Python-3.8.2/bin/python3
+        MRIMP=0
+        if [ -x $MRPY ]; then
+            (
+                PATH=$PATH:/usr/prog/Python-3.8.2/bin
+                LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:/usr/prog/openssl-1.0.2d/lib:/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
+                export PATH LD_LIBRARY_PATH
+                $MRPY -c "import sys; sys.path.insert(0, '$MODDIR'); import moonraker.server, moonraker.components.database, moonraker.components.file_manager.file_manager, moonraker.components.webcam"
+            ) > /tmp/mr-import.log 2>&1 || MRIMP=1
+        fi
+        if [ "$MRIMP" != 0 ]; then
+            echo "!! moonraker: the shipped tree does not import on this printer -- keeping the stock one"
+            echo "   (nothing was moved; the web UI is unaffected)"
+            sed 's/^/   /' /tmp/mr-import.log 2>/dev/null | tail -12
+        elif [ "${FREE:-0}" -lt "$NEED" ]; then
             echo "!! moonraker: only ${FREE}KB free on /usr/prog, need ${NEED}KB -- keeping the stock tree"
         else
             rm -rf $MRROOT/moonraker.modold

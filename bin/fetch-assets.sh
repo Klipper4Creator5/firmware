@@ -58,7 +58,9 @@ fi
 
 if [ "$ALL" = 1 ] || [ "${BUILD_MOONRAKER:-0}" = "1" ]; then
     # Moonraker ships no release asset, so this is GitHub's generated source
-    # tarball for the tag. The sha256 in versions.env is what makes that safe.
-    get "https://github.com/Arksine/moonraker/archive/refs/tags/$MOONRAKER_VERSION.tar.gz" \
+    # tarball. /archive/<ref> takes a tag OR a commit sha, which matters
+    # because the pin is currently a commit -- see versions.env for why there
+    # is no release we can use. The sha256 is what makes either safe.
+    get "https://github.com/Arksine/moonraker/archive/$MOONRAKER_VERSION.tar.gz" \
         "$MOONRAKER_TGZ" "$MOONRAKER_SHA256"
 fi

@@ -141,27 +141,37 @@ fi
 # WHAT IS AND IS NOT REPLACED. Only the python package tree
 # (moonraker/moonraker/moonraker/) is swapped. The interpreter, the
 # moonraker-env virtualenv beside it and moonrakerDaemon are all left alone,
-# because v0.9.3 runs on what the printer already has:
+# because the pinned build runs on what the printer already has:
 #
 #   tornado 6.1, jinja2 3.1.2, distro 1.5.0, libnacl 1.7.2,
 #   streaming-form-data 1.8.1, inotify-simple 1.3.5, importlib_metadata 5.1.0,
-#   dbus-next 0.2.3
+#   dbus-next 0.2.3, lmdb 1.3.0
 #
-# -- verified by booting v0.9.3 against exactly those versions on python 3.8,
-# started the same way moonrakerDaemon starts it (moonraker/moonraker.py -d).
-# Nothing needs a MIPS wheel built: the only native module Moonraker imports
-# is streaming_form_data._parser, and the installed 1.8.1 already exports
-# every name v0.9.3 asks of it (StreamingFormDataParser, ParseFailedException,
+# -- verified by booting it against exactly those versions on python 3.8,
+# started the way moonrakerDaemon starts it (moonraker/moonraker.py -d), with
+# _sqlite3 removed from the interpreter to match the printer. Nothing needs a
+# MIPS wheel built: the only native module it imports is
+# streaming_form_data._parser, and the installed 1.8.1 already exports every
+# name it asks of it (StreamingFormDataParser, ParseFailedException,
 # FileTarget, ValueTarget, SHA256Target).
 #
-# WHY v0.9.3 AND NOT v0.10.0. v0.10.0 swapped dbus-next for dbus-fast, a
-# compiled Cython module that is not on the printer and would have to be
-# cross-compiled for mipsel. v0.9.3 is the newest release that needs nothing
-# built, and it is already well past the webcam fix.
+# WHY A COMMIT AND NOT A RELEASE. FlashForge built python 3.8.2 without the
+# _sqlite3 module -- there is no _sqlite3*.so in lib-dynload and no libsqlite3
+# anywhere on the image, only the pure-python sqlite3/ wrapper that cannot
+# work without it. Moonraker moved its database from lmdb to sqlite in v0.9.0,
+# so every release from there on gets as far as loading the database component
+# and dies:
 #
-# The database converts itself. v0.9.x moved the store from lmdb to sqlite and
-# migrates the old one on first boot; lmdb 1.3.0 is installed, so it can still
-# read what is there and Mainsail's settings survive the upgrade.
+#   ModuleNotFoundError: No module named '_sqlite3'
+#
+# The last release still on lmdb is v0.8.0 (Feb 2023), which predates the
+# webcam flag (Apr 2023). No release has both, so versions.env pins the newest
+# commit that does. This was not caught by reasoning about it -- v0.9.3 was
+# built, shipped and tried on the printer first, and this is what it said.
+#
+# The database is NOT converted: the pinned build uses the same lmdb store the
+# stock server uses, so Mainsail's settings carry over untouched and going
+# back to stock is a clean round trip.
 #
 # WHY IT RIDES IN THE MOD PAYLOAD AND NOT THE SOFTWARE COMPONENT. The stock
 # run.sh does not extract the software component over /usr/prog -- it copies a

@@ -64,10 +64,26 @@ healthy behind nginx. No config change can fix that from either side.
 
 Only the python package tree is replaced. The interpreter, the `moonraker-env`
 beside it and `moonrakerDaemon` are FlashForge's and keep working, because the
-pinned version runs on the libraries already installed — nothing has to be
-cross-compiled for mipsel. That is the reason for the version choice: v0.9.3 is
-the newest release that needs nothing built (v0.10.0 wants `dbus-fast`, a
-compiled module the printer does not have).
+pinned build runs on the libraries already installed — nothing has to be
+cross-compiled for mipsel.
+
+**The pin is a commit, not a release, and that is not a matter of taste.**
+FlashForge built python 3.8.2 without the `_sqlite3` module — there is no
+`_sqlite3*.so` in `lib-dynload` and no `libsqlite3` anywhere on the image, just
+the pure-python `sqlite3/` wrapper that cannot work without it. Moonraker moved
+its database from lmdb to sqlite in v0.9.0, so every release from there on gets
+as far as loading the database component and dies with `ModuleNotFoundError: No
+module named '_sqlite3'`. The last release still on lmdb is v0.8.0, which
+predates the webcam flag. No release has both, so the pin is the newest commit
+that does. The printer's lmdb store is used in place — nothing is converted,
+and reverting to stock is a clean round trip.
+
+This was not worked out in advance; v0.9.3 was built, shipped and tried on the
+printer first, and that is what it said. Two things came out of it. The
+installer now asks the printer's own python to import the tree *before* moving
+anything, and keeps the stock server if it cannot — a bad pin refuses to
+install instead of leaving the machine with no web UI. And when bumping the
+pin, the blocker to check is native modules, not the python version.
 
 Moonraker does not come from the update package at all — it exists only on the
 factory image, and the stock `run.sh` copies a hand-written list of paths out
@@ -76,9 +92,12 @@ tree travels with the mod payload and `run-append.sh` puts it in place, moving
 the old one aside first and restoring it if the copy does not complete.
 
 `make test` covers this end to end on the printer replica: that the swap
-happened, that the installed `webcam.py` has the `enabled` field, and that the
-shipped tree really runs on the printer's own python3.8. `BUILD_MOONRAKER=0`
-builds a package that leaves the stock server alone.
+happened, that the installed `webcam.py` has the `enabled` field, that the
+shipped tree runs on the printer's own python3.8 **and is still running after a
+settle**, and that its log has no import errors. The settle matters — a build
+that dies on a missing module is alive for a second or two first, and checking
+only "did it start" is what let the sqlite3 failure through.
+`BUILD_MOONRAKER=0` builds a package that leaves the stock server alone.
 
 ## Five things the stock firmware does that will surprise you
 
