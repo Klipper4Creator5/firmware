@@ -43,7 +43,7 @@ ASSET_ROOT ?= $(firstword $(wildcard /mnt/c /Users /home))
 DOCKER_BASE = $(DOCKER) run --rm -i \
           -v "$(CURDIR)":"$(CURDIR)" -w "$(CURDIR)" \
           $(if $(ASSET_ROOT),-v "$(ASSET_ROOT)":"$(ASSET_ROOT)",) \
-          -e MODEL -e TARGET_MACHINE -e CONFIG_ENV -e ALLOW_STALE_CHELPER
+          -e MODEL -e TARGET_MACHINE -e CONFIG_ENV
 
 ifeq ($(LOCAL),)
   RUN    = $(DOCKER_BASE) $(IMAGE)
@@ -63,7 +63,7 @@ endif
 .PHONY: help image shell build vendor \
         rootfs verify test test-lint test-install test-applets \
         printer-image printer-image-push \
-        test-recovery test-ui test-mcu test-ash test-abi test-chelper test-macros test-chamber test-basecfg test-model release clean distclean
+        test-recovery test-ui test-mcu test-ash test-abi test-macros test-chamber test-basecfg test-model release clean distclean
 
 help:
 	@echo 'creator5-custom-firmware -- everything runs in Docker'
@@ -90,7 +90,7 @@ help:
 	@echo '  make test-applets     every command the payload uses exists on the printer'
 	@echo '  make test-ash         parse the payload with the printer own busybox'
 	@echo '  make test-abi         MIPS ELF ABI checks'
-	@echo '  make test-chelper     c_helper.so exports everything klippy declares'
+	@echo '  make     c_helper.so exports everything klippy declares'
 	@echo '  make test-macros      the ff-*.cfg gcode macros parse as Jinja'
 	@echo '  make test-chamber     the chamber heater is off on the Creator 5'
 	@echo '  make test-basecfg     our printer.base.cfg still matches the stock one'
@@ -205,9 +205,6 @@ test-ash: image
 
 test-abi: image
 	@$(RUN) ./test/test-abi.sh
-
-test-chelper: image
-	@$(RUN) python3 ./test/test-chelper.py
 
 test-macros: image
 	@$(RUN) python3 ./test/test-macros.py

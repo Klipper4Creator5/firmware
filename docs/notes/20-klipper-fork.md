@@ -36,6 +36,18 @@ when `pa_enable == 1` (479-487). `ff_toolchange.py` still issues `SDCARD_SET_CHA
 to keep that channel in sync — a no-op-turned-unknown-command on the upstream
 `virtual_sdcard` we now ship, which does neither rewrite.
 
+### `c_helper.so` is no longer checked against its klippy
+
+When a fork tree is shipped (`BUILD_KLIPPER=fork`), `patch.sh` still refuses a
+`c_helper.so` that is not MIPS32r2/nan2008/o32, but nothing compares its
+exported symbols against the klippy tree travelling with it. cffi resolves
+symbols lazily, so a .so built from older sources imports cleanly, passes the
+ABI check, installs and boots, then dies at `Unhandled exception during
+connect` pointing at cffi rather than at the stale build — which is how it
+shipped once before. The `test-chelper` check and its `ALLOW_STALE_CHELPER`
+escape hatch were dropped on 2026-08-24 as the fork path winds down. Rebuild
+the .so first if klippy ever fails at connect.
+
 ## Custom commands (by area)
 
 Toolchanger/motion: `MOTOR_GRAB`, `MOTOR_GRAB2`, `MOTOR_RELEASE`, `MOTOR_STOP`,

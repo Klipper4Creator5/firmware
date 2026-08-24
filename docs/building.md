@@ -182,3 +182,10 @@ package contains any file byte-identical to one in `bin/`, `test/` or
 import — `patch.sh` refuses to build a package with anything else, and
 `make test-abi` checks every shipped binary. Debian's cross-compiler cannot
 produce one; use the Ingenic/K1 toolchain. See the Klipper fork's own notes.
+
+Nothing checks the .so's *symbols* against the klippy tree shipped beside it.
+cffi resolves symbols lazily, so a `c_helper.so` built from older sources than
+its klippy imports cleanly, passes the ABI check, installs and boots, and then
+dies at `Unhandled exception during connect` with a traceback pointing at cffi
+rather than at the stale build. If you see that on the printer, rebuild the
+.so before looking anywhere else.

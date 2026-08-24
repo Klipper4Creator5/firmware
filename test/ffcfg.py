@@ -3,10 +3,10 @@
 `sections()` parses Klipper config the way klippy's own parser sees it; the
 reporting helpers keep the PASS/FAIL output format run-tests.sh consumes.
 
-This module exists so test-chamber.py, test-base-cfg.py and test-printer-db.py
-stop re-implementing the reporting and stop loading test-macros.py through
-importlib machinery just to reach its parser (the dash in that filename made a
-plain import impossible).
+This module exists so test-chamber.py and test-base-cfg.py stop
+re-implementing the reporting and stop loading test-macros.py through importlib
+machinery just to reach its parser (the dash in that filename made a plain
+import impossible).
 """
 import re
 

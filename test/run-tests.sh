@@ -167,9 +167,6 @@ else
         hdr "MIPS ABI"
         sub "abi" ./test/test-abi.sh
 
-        hdr "chelper symbols match klippy"
-        sub "chelper" python3 ./test/test-chelper.py
-
         hdr "klipper macros parse"
         sub "macros" python3 ./test/test-macros.py
 

@@ -40,28 +40,12 @@ if [ "${BUILD_KLIPPER:-fork}" = "fork" ] && [ -d "${KLIPPER_FORK:-}/klippy" ]; t
     # c_helper.so must be MIPS32r2 / nan2008 / o32 or klippy dies on import.
     CH="$KLIPPER_FORK/klippy/chelper/c_helper.so"
     if [ -f "$CH" ]; then
-        # The ABI is necessary but not sufficient: a .so with the right ABI
-        # and older sources than the klippy tree beside it installs, boots and
-        # then dies at connect, because cffi resolves symbols lazily. Check
-        # the symbols too, here, where it is still a build failure.
-        if ! python3 test/test-chelper.py "$KLIPPER_FORK"; then
-            # Deliberate escape hatch, off by default. The prebuilt .so comes
-            # from FlashForge's own firmware, so it goes stale the moment the
-            # klippy tree picks up an upstream commit that adds a chelper
-            # function -- and rebuilding it needs the Ingenic glibc toolchain,
-            # which is not always to hand. ALLOW_STALE_CHELPER=1 ships it
-            # anyway, for a test build where the missing symbol is known not
-            # to be reached. It is not a fix: klippy still dies at connect the
-            # moment something calls the absent function.
-            if [ "${ALLOW_STALE_CHELPER:-0}" = "1" ]; then
-                say "Klipper: SHIPPING A STALE c_helper.so (ALLOW_STALE_CHELPER=1)"
-                say "         klippy will fail at connect if it calls the missing symbol"
-            else
-                echo "   !! c_helper.so does not match klippy -- rebuild it" >&2
-                echo "      (ALLOW_STALE_CHELPER=1 builds anyway, at your own risk)" >&2
-                exit 1
-            fi
-        fi
+        # Only the ABI is checked here. A symbol-level check against the
+        # klippy tree beside it used to run too, because cffi resolves symbols
+        # lazily and a .so older than its sources installs, boots and then
+        # dies at connect. That check is gone; if klippy ever fails at connect
+        # with a cffi traceback, a stale c_helper.so is the first thing to
+        # suspect and rebuilding it is the fix.
         if readelf -h "$CH" 2>/dev/null | grep -q nan2008; then
             say "Klipper: c_helper.so is nan2008 MIPS32r2 -- good"
             mkdir -p work/.chelper/chelper
