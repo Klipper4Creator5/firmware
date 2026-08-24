@@ -76,7 +76,10 @@ git push origin v20260824-nova-kakhovka
 ```
 
 The tag is `v<YYYYMMDD>-<city>`: the release date, and a Ukrainian city under
-occupation. Only the date reaches the package — FlashForge's installer reads
+occupation. Write `docs/releases/<tag>.md` before you tag -- a short paragraph
+on that city -- and the workflow appends it to the release notes; without one
+it publishes a bare line saying releases are named this way, and warns in the
+job log. Only the date reaches the package — FlashForge's installer reads
 the version field as a number and compares it against what is on the machine,
 so `anvil-20260824` is what the filename says and the codename lives in the
 tag and the release title. A `workflow_dispatch` run has no tag; it builds and

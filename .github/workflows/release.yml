@@ -143,6 +143,45 @@ jobs:
           path: dist/*.tgz
           retention-days: 30
 
+      - name: Assemble the release notes
+        if: startsWith(github.ref, 'refs/tags/')
+        # The fixed half is the same every time; the half that names the city
+        # is not. docs/releases/<tag>.md carries it, and is appended when it
+        # exists -- so the story of the city the release is named for lives in
+        # the repo at the tagged commit, not only in a hand-edited release
+        # page that nothing reproduces.
+        run: |
+          set -euo pipefail
+          cat > RELEASE_NOTES.md <<'NOTES'
+          Copy the file matching YOUR printer to the root of a FAT32 USB
+          stick and power the machine on. A `Creator5Pro-` package will not
+          install on a Creator 5 and vice versa.
+
+          Every package here was installed into a replica of the printer --
+          the real rootfs running under qemu-mipsel, with the package on a
+          real FAT filesystem that the machine's own app_startup.sh found
+          and installed -- and the machine was booted again afterwards and
+          checked to come up.
+
+          **If the screen stays dark**, the UI has latched SAFE-MODE after
+          three failed boots and the printer is up headless: ssh in, or
+          reach Mainsail at `http://<printer-ip>/`. **To go back to stock**,
+          put FlashForge's own package on a USB stick and power on -- that
+          path is tested on every release too.
+
+          ---
+
+          NOTES
+          CITY="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$CITY" ]; then
+            cat "$CITY" >> RELEASE_NOTES.md
+          else
+            echo "::warning::no $CITY -- publishing the generic line instead"
+            echo "Releases are named for a Ukrainian city under occupation." \
+                 >> RELEASE_NOTES.md
+          fi
+          cat RELEASE_NOTES.md
+
       - name: Publish
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -154,21 +193,4 @@ jobs:
           # prose people scroll past.
           prerelease: true
           name: ${{ github.ref_name }}
-          body: |
-            Copy the file matching YOUR printer to the root of a FAT32 USB
-            stick and power the machine on. A `Creator5Pro-` package will not
-            install on a Creator 5 and vice versa.
-
-            Every package here was installed into a replica of the printer --
-            the real rootfs running under qemu-mipsel, with the package on a
-            real FAT filesystem that the machine's own app_startup.sh found
-            and installed -- and the machine was booted again afterwards and
-            checked to come up.
-
-            **If the screen stays dark**, the UI has latched SAFE-MODE after
-            three failed boots and the printer is up headless: ssh in, or
-            reach Mainsail at `http://<printer-ip>/`. **To go back to stock**,
-            put FlashForge's own package on a USB stick and power on -- that
-            path is tested on every release too.
-
-            Releases are named for a Ukrainian city under occupation.
+          body_path: RELEASE_NOTES.md
