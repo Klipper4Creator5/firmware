@@ -252,9 +252,18 @@ sync
 PW_KEEP=""
 if [ "$MOD_PW_AUTO" = "1" ] && [ -f $MODDIR/.prev-root-hash ]; then
     PREV=`cat $MODDIR/.prev-root-hash 2>/dev/null`
-    CUR=`awk 'BEGIN{FS=":"} $1=="root"{print $2}' /usr/prog/etc/shadow 2>/dev/null`
+    # Compare against the hash the PACKAGE ships ($WORK_DIR is the stock
+    # run.sh's own variable, still in scope here), not the live file: the
+    # stock installer has already copied the shipped shadow over the live one
+    # by now, and if that copy ever fails the live file still holds the old
+    # password -- which must read as "set by someone", not as "fresh".
+    SHIP=""
+    [ -n "${WORK_DIR:-}" ] && [ -f "$WORK_DIR/shadow" ] &&
+        SHIP=`awk 'BEGIN{FS=":"} $1=="root"{print $2}' "$WORK_DIR/shadow" 2>/dev/null`
+    [ -n "$SHIP" ] ||
+        SHIP=`awk 'BEGIN{FS=":"} $1=="root"{print $2}' /usr/prog/etc/shadow 2>/dev/null`
     case "$PREV" in
-    '$'*) [ "$PREV" != "$CUR" ] && PW_KEEP="$PREV" ;;
+    '$'*) [ "$PREV" != "$SHIP" ] && PW_KEEP="$PREV" ;;
     esac
 fi
 rm -f $MODDIR/.prev-root-hash

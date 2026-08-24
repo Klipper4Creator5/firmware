@@ -289,11 +289,13 @@ if [ "$PWRAND" = 1 ]; then
     grep -q 'root password preserved from the previous install' /usr/data/anvil-install.log 2>/dev/null \
         && ok "the installer preserved the password rather than regenerating it" \
         || bad "no 'preserved' line in the install log -- the keep path never ran"
-    # No parenthesis in the pattern and no $(...): this printer's ash counts
-    # parens naively inside command substitution, so a literal ( in a quoted
-    # pattern inside $() mangles the parse. Backticks and a paren-free pattern
-    # sidestep both; 'root password set' matches only the generation line.
-    PWGEN=`grep -c 'root password set' /usr/data/anvil-install.log 2>/dev/null`
+    # Anchored to line start: the stock run.sh runs under `set -x` and both
+    # install blocks capture stderr, so every echo lands in the install log
+    # twice -- once as the xtrace line ("+ echo 'root password set...'") and
+    # once as output. Only the output line starts at column 0. Backticks and
+    # a paren-free pattern on top: this ash counts parens naively inside
+    # $( ), so a literal ( in a quoted pattern there mangles the parse.
+    PWGEN=`grep -c '^root password set' /usr/data/anvil-install.log 2>/dev/null`
     [ "$PWGEN" = 1 ] \
         && ok "a random password was generated exactly once" \
         || bad "expected one password generation in the install log, found ${PWGEN:-none}"
