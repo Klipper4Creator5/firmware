@@ -135,7 +135,14 @@ if head -c 2 "$FE" 2>/dev/null | grep -q '#!'; then
         && ok "the wrapper launches HelixScreen" \
         || bad "BRICK: wrapper installed but it starts no UI at all"
 elif head -c 4 "$FE" | grep -q 'ELF'; then
-    ok "stock firmwareExe binary in place (no UI replacement requested)"
+    # bin/patch.sh installs the wrapper unconditionally and HelixScreen is the
+    # only UI, so the genuine binary sitting here means the install did not
+    # take. This used to print ok, which also switched off the wrapper parse,
+    # the HelixScreen check, the Klipper-service check and the whole boot-3 UI
+    # block -- making "the install produced nothing" a passing run.
+    bad "BRICK: stock firmwareExe binary in place -- the wrapper was not installed"
+else
+    bad "BRICK: firmwareExe is neither the wrapper nor the stock binary"
 fi
 
 # Every shell script the mod puts on the machine has to parse with THIS shell.
@@ -150,7 +157,11 @@ done
 [ "$BADPARSE" = 0 ] && ok "every installed script parses under the printer's busybox ash"
 
 if [ -d /usr/data/anvil/init.d ]; then
-    grep -rq 'start\.sh' /usr/data/anvil/init.d/ 2>/dev/null \
+    # Must be an actual invocation, not a mention. S70klipper and S60web both
+    # name start.sh in their header comments, so a bare grep for the string
+    # passed even with the line that runs it deleted -- the lint-danger
+    # failure mode this suite exists to avoid.
+    grep -rq '^[^#]*start\.sh' /usr/data/anvil/init.d/ 2>/dev/null \
         && ok "a service owns Klipper startup" \
         || bad "nothing starts Klipper -- UI would boot with no motion or heaters"
 elif [ "$WRAPPER" = 1 ]; then

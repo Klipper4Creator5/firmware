@@ -189,7 +189,14 @@ find bin test docker -type f 2>/dev/null | xargs -r md5sum 2>/dev/null \
 find "$T/ship" -type f 2>/dev/null | xargs -r md5sum 2>/dev/null > "$T/ship.md5"
 LEAK=$(awk 'NR==FNR{h[$1];next} $1 in h {print}' "$T/host.md5" "$T/ship.md5" \
        | sed "s|$T/ship/||")
-if [ -z "$LEAK" ]; then
+# Those finds are RELATIVE, so from any cwd but the repo root host.md5 comes
+# out empty, the join matches nothing and this reports ok having compared
+# nothing -- retiring the only check that keeps config.env and the host tooling
+# off a USB stick. common.sh cds to the root, so this is a guard against a
+# future caller that does not.
+if [ ! -s "$T/host.md5" ]; then
+    bad "ship-boundary check compared nothing (no files found under bin/, test/, docker/ -- wrong cwd?)"
+elif [ -z "$LEAK" ]; then
     ok "package carries nothing from bin/, test/ or docker/"
 else
     bad "host-side files leaked into the package:"

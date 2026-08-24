@@ -31,8 +31,16 @@ fi
 ok "payload ships bin/ff-mcu-bringup.py"
 
 if [ ! -x "$PY" ]; then
-    skip "no $PY in this replica -- set PROG_DUMP to a factory image"
-    exit 0
+    # `exit 0` here reported a PASSING gate: Replica.run_case only reads the
+    # exit code, so everything below -- the import test, the resolution check,
+    # the actual bring-up run, the ttyS7 coverage and the LD_LIBRARY_PATH
+    # negative control -- was skipped and scored as clean. That is the
+    # "SKIP printed, exit 0, counted as ok" protocol ffsim was written to end.
+    # seed-prog.sh already hard-fails when the interpreter is MISSING, so
+    # reaching here means it is present but not executable, which is a broken
+    # replica rather than an absent feature.
+    bad "$PY is not executable -- the replica has no usable interpreter"
+    exit 1
 fi
 ok "interpreter present at $PY"
 

@@ -90,10 +90,21 @@ def check_no_bashisms(r):
                + sorted(ROOT.glob("payload/init.d/S*"))
                + [ROOT / "payload" / "firmwareExe"])
     targets = [str(t) for t in targets if t.is_file()]
+    # With no targets shellcheck writes usage to stderr and exits 1, leaving
+    # `hits` empty -- a green gate that examined nothing. check_shell_syntax
+    # guards this; this one did not, so moving payload/ would have retired the
+    # ash-compatibility check silently.
+    if not targets:
+        raise Fail("no payload scripts found to check -- has payload/ moved?")
     proc = subprocess.run(["shellcheck", "-s", "dash", "-f", "gcc"] + targets,
                           capture_output=True, text=True)
     hits = [ln for ln in (proc.stdout or "").split("\n")
             if "SC3" in ln or "SC2039" in ln]
+    # shellcheck exits 1 for findings (which `hits` covers) but also for a
+    # usage or file error, which would otherwise pass unnoticed.
+    if not hits and proc.returncode not in (0, 1):
+        raise Fail("shellcheck failed to run (exit %d): %s"
+                   % (proc.returncode, (proc.stderr or "").strip()[:200]))
     if hits:
         for ln in hits[:10]:
             r._say("       %s\n" % ln)
@@ -137,6 +148,15 @@ def run_pytest(r):
                                            or "no reason given"))
 
     passed = total - failures - skipped
+    # A run that collected nothing is not a pass. pytest exits 5 and writes
+    # tests="0", which used to give passed=0/failures=0/skipped=0 and a green
+    # gate -- so renaming test/integration/, breaking a conftest import or
+    # adding a collect_ignore would silently stop the whole Python lane while
+    # make test and CI stayed green. That is the exact failure this harness
+    # was written to end (see test-abi.sh in docs/testing.md).
+    if not total:
+        raise Fail("pytest collected no tests (exit %d) -- collection is "
+                   "broken, or the suite has moved" % proc.returncode)
     if failures:
         r._say((proc.stdout or "")[-4000:])
         raise Fail("pytest: %d failed, %d passed, %d skipped"
