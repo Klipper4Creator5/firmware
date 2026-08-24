@@ -40,8 +40,13 @@ jobs:
           # Warnings are advisory: printed, not enforced.
           shellcheck -s sh -S warning payload/*.sh payload/init.d/S* payload/firmwareExe || true
 
+      # ALLOW_SKIP is correct HERE and nowhere else. This job has no stock
+      # package on purpose, so two gates cannot run -- the tests that read the
+      # real rootfs, and the replica itself -- and the suite refuses to call a
+      # gate it did not run a pass. The job that must not skip is printer-sim
+      # below, and release.yml, both of which set REQUIRE_PRINTER_SIM=1.
       - name: Full test suite (fixture-based)
-        run: ./test/run-tests.py
+        run: ALLOW_SKIP=1 ./test/run-tests.py
 
       - name: Upload built fixture packages
         if: always()

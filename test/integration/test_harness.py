@@ -13,10 +13,10 @@ bug is gone by construction rather than by being tested for -- see
 test_repo_root_does_not_care_how_deep_it_is below, which pins the property
 that replaced it.
 """
-import compileall
-import io
 import os
+import py_compile
 import re
+import subprocess
 import sys
 
 import pytest
@@ -72,7 +72,7 @@ def test_upward_walks_land_on_the_repo_root(root):
     assert checked, "no upward walks found -- regex or file walk broken?"
 
 
-def test_every_harness_file_compiles(root):
+def test_every_harness_file_compiles(root, tmp_path):
     """Byte-compile the whole harness, including the parts nothing else runs.
 
     run-tests.py imports ffsim, so a syntax error there shows up immediately.
@@ -84,16 +84,21 @@ def test_every_harness_file_compiles(root):
     files = python_files(root)
     assert files, "no python files found -- the walk is broken"
 
-    err = io.StringIO()
-    stderr, sys.stderr = sys.stderr, err
-    try:
-        good = True
-        for path in files:
-            if not compileall.compile_file(path, quiet=2, force=True):
-                good = False
-    finally:
-        sys.stderr = stderr
-    assert good, "python that does not compile:\n" + err.getvalue()
+    # py_compile with an explicit cfile, not compileall: compileall writes the
+    # .pyc beside the source and returns False if it cannot, which is
+    # indistinguishable from a syntax error and, under quiet=2, comes with an
+    # empty message. A read-only checkout or a root-owned __pycache__ then
+    # reads as "your code does not compile" and tells you nothing. This
+    # touches nothing outside tmp_path and reports the real exception.
+    broken = []
+    for path in files:
+        cfile = tmp_path / (os.path.relpath(path, str(root))
+                            .replace(os.sep, "_") + "c")
+        try:
+            py_compile.compile(path, cfile=str(cfile), doraise=True)
+        except py_compile.PyCompileError as exc:
+            broken.append(str(exc))
+    assert not broken, "python that does not compile:\n" + "\n".join(broken)
 
 
 def test_repo_root_does_not_care_how_deep_it_is(root, tmp_path):
@@ -112,3 +117,59 @@ def test_repo_root_does_not_care_how_deep_it_is(root, tmp_path):
 
     with pytest.raises(Fail):
         repo_root(str(tmp_path))
+
+
+def test_every_script_with_a_shebang_is_executable_in_git(root):
+    """A shebang and no exec bit is a script that only runs by accident.
+
+    This one shipped. `core.filemode` is false on the maintainer's checkout --
+    it has to be, because the repo lives on a Windows drive where every file
+    reads back as 0777, so turning it on would mark the entire tree
+    executable. The consequence is that a local `chmod +x` changes nothing git
+    can see, and for the whole life of the CI workflow not one tracked file
+    was 100755. Every run died on the first line it tried to execute:
+
+        ./test/run-tests.sh: Permission denied      exit 126
+
+    Locally it all worked, because `make` invokes the launchers through bash
+    and because the working tree claims 0777 anyway. So the mode has to come
+    from the index: asking the filesystem here answers a question about
+    Windows, not about what was committed.
+    """
+    root = str(root)
+    if not os.path.exists(os.path.join(root, ".git")):
+        pytest.skip("not a git checkout")
+
+    # -c safe.directory=*: git refuses to read a repository owned by
+    # another uid, and every docker run here is root over a checkout that is
+    # not, so without this the test skips inside the build image -- and
+    # release.yml runs the suite there with no ALLOW_SKIP. Reading file modes
+    # out of a repo whose code we are already executing is not the threat that
+    # guard exists for.
+    proc = subprocess.run(["git", "-c", "safe.directory=*", "ls-files", "-s"],
+                          cwd=root, capture_output=True, text=True)
+    if proc.returncode != 0:
+        pytest.skip("git unavailable: %s" % proc.stderr.strip())
+
+    wrong, checked = [], 0
+    for line in proc.stdout.splitlines():
+        meta, _, path = line.partition("\t")
+        if not meta or not path:
+            continue
+        mode = meta.split()[0]
+        try:
+            with open(os.path.join(root, path), "rb") as fh:
+                if fh.read(2) != b"#!":
+                    continue
+        except OSError:
+            continue
+        checked += 1
+        if mode != "100755":
+            wrong.append("%s is %s" % (path, mode))
+
+    assert not wrong, (
+        "scripts with a shebang that git records as non-executable:\n  "
+        + "\n  ".join(sorted(wrong))
+        + "\n\nFix with: git update-index --chmod=+x <path>")
+    # Same vacuity guard as above: a walk that finds nothing must not pass.
+    assert checked, "no shebang files found -- the walk is broken"
