@@ -59,8 +59,12 @@ else
   RUNTTY =
 endif
 
+# The build-lane runner with a tty, for targets that prompt. Derived from RUN,
+# not RUNSIM: prompting needs no docker socket and no replica knobs.
+RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
+
 .DEFAULT_GOAL := help
-.PHONY: help image shell build vendor \
+.PHONY: help image shell passwd build vendor \
         rootfs verify test test-py test-install \
         printer-image printer-image-push \
         test-recovery test-mcu release clean distclean
@@ -102,6 +106,7 @@ help:
 	@echo 'listed again at the end, with its reason.'
 	@echo
 	@echo 'Other:'
+	@echo '  make passwd       a ROOT_PW_HASH for config.env (prompts, echoes the hash)'
 	@echo '  make vendor       download Mainsail + HelixScreen + Moonraker'
 	@echo '  make rootfs       extract the real printer rootfs (enables the replica gates)'
 	@echo '  make image        build the build container'
@@ -124,6 +129,12 @@ config.env:
 
 shell: image
 	@$(RUNTTY) bash
+
+# A ROOT_PW_HASH for config.env, generated INSIDE the pinned build image so
+# the same python makes the same $6$ sha512-crypt everywhere. Host tools are
+# not dependable here: LibreSSL's openssl has no `passwd -6` at all.
+passwd: image
+	@$(RUNBLDTTY) python3 -W ignore -c 'import crypt, getpass; print(crypt.crypt(getpass.getpass("password: "), crypt.mksalt(crypt.METHOD_SHA512)))'
 
 # ===========================================================================
 #  BUILD LANE -- produces the package you flash. Reads config.env, ships

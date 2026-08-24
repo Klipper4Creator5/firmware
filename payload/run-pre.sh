@@ -33,5 +33,18 @@ mkdir -p "$MODDIR" "$BACKUP"
   if [ ! -d "$MODDIR/backup/stock" ]; then
       cp -a "$BACKUP" "$MODDIR/backup/stock" && echo "kept pristine copy at backup/stock"
   fi
+
+  # The root password the printer has RIGHT NOW -- random from a first
+  # install, or set by hand with `passwd` -- lives only in this shadow, and
+  # the stock installer is about to replace the file. Record the hash so the
+  # post-block can put it back: that is what keeps the password stable
+  # across updates.
+  rm -f "$MODDIR/.prev-root-hash"
+  if [ -f /usr/prog/etc/shadow ]; then
+      awk 'BEGIN{FS=":"} $1=="root"{print $2}' /usr/prog/etc/shadow \
+          > "$MODDIR/.prev-root-hash" 2>/dev/null &&
+          chmod 600 "$MODDIR/.prev-root-hash" &&
+          echo "recorded current root password hash"
+  fi
 } >> /usr/data/anvil-install.log 2>&1
 sync

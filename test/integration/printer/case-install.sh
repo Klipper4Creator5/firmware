@@ -232,6 +232,30 @@ echo "  -- boot 2: the stick was left in the slot --"
 cp -a $APP /tmp/app_startup.after1
 [ "$WRAPPER" = 1 ] && cp -a "$FE" /tmp/firmwareExe.after1
 
+# The root password from the first install. When the package carries no baked
+# hash the installer sets a random one and writes it to the stick; the second
+# install must then KEEP it -- a fresh password on every update is a fresh
+# trip to the stick on every update. Nothing here assumes which build this is:
+# the install log says which path ran, and a baked-hash build skips the block.
+PWHASH1=$(awk 'BEGIN{FS=":"} $1=="root"{print $2}' /usr/prog/etc/shadow 2>/dev/null)
+PWRAND=0
+if grep -q 'root password set (random' /usr/data/anvil-install.log 2>/dev/null; then
+    PWRAND=1
+    case "$PWHASH1" in
+        '$6$'*) ok "a random root password was set on the first install" ;;
+        *) bad "the log claims a random password but the shadow hash is '$PWHASH1'" ;;
+    esac
+    if mount /dev/sda1 /mnt 2>/dev/null; then
+        grep -q 'password:' /mnt/anvil-password.txt 2>/dev/null \
+            && ok "the password landed on the stick (anvil-password.txt)" \
+            || bad "no anvil-password.txt on the stick despite the random path"
+        md5sum < /mnt/anvil-password.txt > /tmp/pwfile.after1 2>/dev/null
+        umount /mnt
+    else
+        bad "could not remount the stick to look for anvil-password.txt"
+    fi
+fi
+
 # Stand in for a user who tuned Moonraker. The whole point of the seam is that
 # this survives an update, while moonraker.conf beside it is overwritten.
 if [ -f /usr/data/config/moonraker-custom.conf ]; then
@@ -256,6 +280,26 @@ if [ -f /tmp/custom.before2 ]; then
     grep -q '10.9.8.0/24' /usr/data/config/moonraker-custom.conf \
         && ok "the user's own Moonraker setting is still there" \
         || bad "the user's Moonraker setting was lost on update"
+fi
+if [ "$PWRAND" = 1 ]; then
+    PWHASH2=$(awk 'BEGIN{FS=":"} $1=="root"{print $2}' /usr/prog/etc/shadow 2>/dev/null)
+    [ "$PWHASH2" = "$PWHASH1" ] \
+        && ok "the root password survived the re-install" \
+        || bad "the re-install changed the root password -- every update would mean a new one"
+    grep -q 'root password preserved from the previous install' /usr/data/anvil-install.log 2>/dev/null \
+        && ok "the installer preserved the password rather than regenerating it" \
+        || bad "no 'preserved' line in the install log -- the keep path never ran"
+    [ "$(grep -c 'root password set (random' /usr/data/anvil-install.log 2>/dev/null)" = 1 ] \
+        && ok "a random password was generated exactly once" \
+        || bad "the re-install generated a second random password"
+    if [ -f /tmp/pwfile.after1 ] && mount /dev/sda1 /mnt 2>/dev/null; then
+        if [ "$(md5sum < /mnt/anvil-password.txt 2>/dev/null)" = "$(cat /tmp/pwfile.after1)" ]; then
+            ok "anvil-password.txt on the stick is untouched -- still the valid one"
+        else
+            bad "the re-install rewrote anvil-password.txt"
+        fi
+        umount /mnt
+    fi
 fi
 [ -s "$FE" ] && ok "firmwareExe still present after re-install" \
              || bad "BRICK: re-install left no firmwareExe"

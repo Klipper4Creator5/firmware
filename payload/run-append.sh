@@ -243,7 +243,32 @@ sync
 # printer starts accepting it. A password that was set but never landed on the
 # stick is a locked-out printer, so if the write fails we change nothing at
 # all and say so.
-if [ "$MOD_PW_AUTO" = "1" ]; then
+#
+# An UPDATE must not change the password. The pre-block recorded the hash the
+# printer had before the stock installer replaced the shadow file; when that
+# hash differs from the one the package shipped, a password was already set
+# -- by a previous install, or by hand with `passwd` -- and it is put back
+# unchanged. The stick only ever sees a password once, on the first install.
+PW_KEEP=""
+if [ "$MOD_PW_AUTO" = "1" ] && [ -f $MODDIR/.prev-root-hash ]; then
+    PREV=`cat $MODDIR/.prev-root-hash 2>/dev/null`
+    CUR=`awk 'BEGIN{FS=":"} $1=="root"{print $2}' /usr/prog/etc/shadow 2>/dev/null`
+    case "$PREV" in
+    '$'*) [ "$PREV" != "$CUR" ] && PW_KEEP="$PREV" ;;
+    esac
+fi
+rm -f $MODDIR/.prev-root-hash
+if [ -n "$PW_KEEP" ]; then
+    if awk -v h="$PW_KEEP" 'BEGIN{FS=OFS=":"} $1=="root"{$2=h} {print}' \
+            /usr/prog/etc/shadow > /usr/prog/etc/shadow.new &&
+        mv -f /usr/prog/etc/shadow.new /usr/prog/etc/shadow; then
+        chmod 600 /usr/prog/etc/shadow
+        echo "root password preserved from the previous install"
+    else
+        echo "!! could not restore the previous root password hash"
+        echo "!! root password is the stock one -- no ssh login"
+    fi
+elif [ "$MOD_PW_AUTO" = "1" ]; then
     PW=`tr -dc A-Za-z0-9 < /dev/urandom 2>/dev/null | head -c 14`
     H=""
     [ -n "$PW" ] && H=`mkpasswd -m sha512 "$PW" 2>/dev/null`

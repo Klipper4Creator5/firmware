@@ -71,18 +71,23 @@ One flash brings up everything: a root password you know, Mainsail and
 moonraker, the forked Klipper with the toolchanger extras, and HelixScreen on
 the touchscreen in place of FlashForge's UI.
 
-**The root password.** An official release has one baked in at build time
-(`ROOT_PW_HASH`). A package you build without setting it picks a random one on
-the printer, sets it, and writes it to
-`anvil-password.txt` on the USB stick you flashed from. Pull the stick after
-the flash and read it — then save the password somewhere safe and delete the
-file. If the stick is not writable no password is set at all, and the install
-log says so.
+**The root password.** Every package — the official releases included — picks
+a random one on the printer during the **first** install, sets it, and writes
+it to `anvil-password.txt` on the USB stick you flashed from. Pull the stick
+after the flash and read it — then save the password somewhere safe and delete
+the file. If the stick is not writable no password is set at all, and the
+install log says so. Updates keep whatever root password the printer already
+has — including one you set yourself with `passwd` — so the stick gets a
+password exactly once. Only a package you build with `ROOT_PW_HASH` set
+carries one baked in instead.
 
-To choose your own instead, set it before you build:
+To bake in your own, set it before you build:
 ```sh
-openssl passwd -6 'your-password'      # paste into ROOT_PW_HASH in config.env
+make passwd      # prompts, prints the hash -- paste into ROOT_PW_HASH in config.env
 ```
+It runs inside the pinned build image, so it is the same python producing the
+same SHA-512 crypt on every host. (A host's own `openssl passwd -6` is not
+dependable for this: LibreSSL builds ship no `-6` at all.)
 
 ssh works because the stock rootfs already ships `/usr/sbin/dropbear` and an
 enabled `/etc/init.d/S50dropbear` — port 22 is already open on a stock

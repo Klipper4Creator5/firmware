@@ -156,9 +156,14 @@ web root and no way to notice.
 ## The root password
 
 `ROOT_PW_HASH` in `config.env` is written straight into the shipped shadow
-file at build time. Leave it empty and the *installer* picks a random password
-on the printer instead, and writes it to `anvil-password.txt` on the USB stick
-it was flashed from.
+file at build time — `make passwd` prompts for one and prints the hash, using
+the build image's python so the result is the same on every host. Leave it
+empty and the *installer* picks a random password on the printer instead, on
+the **first** install only, and writes it to `anvil-password.txt` on the USB
+stick it was flashed from. An update finds the printer already has a password
+— the random one, or one set by hand with `passwd` — and keeps it: the
+pre-block records the live hash before the stock installer replaces the
+shadow file, and the post-block puts it back.
 
 The reason it works that way: a package is one file that many people flash, so
 any password baked into it would be the same on every machine. Generating it on
