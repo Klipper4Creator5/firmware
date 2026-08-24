@@ -177,15 +177,23 @@ a print does not have, so the file only reads the geometry. And it contains no
 `PAUSE`: press Pause in Mainsail during the tower and then Resume, which is the
 one check that wants a human at the machine.
 
-Unlike the safe file, this one **needs** the implicit prepare turned off,
-because its start block calls `START_PRINT` itself:
+Unlike the safe file, this one **needs** the implicit prepare turned off — it
+is the deliberate exception, because it carries its own `START_PRINT` with the
+`TOOLS=` list the automatic path cannot derive. For this print only:
 
 ```
 SET_GCODE_VARIABLE MACRO=FF_BEFORE_PRINT_START VARIABLE=prepare VALUE=0
 ```
 
+and put it back afterwards, with `VALUE=1` or simply a `RESTART`.
+
 Preparing twice misplaces nothing, but it re-homes and re-purges every tool for
 no reason.
+
+**Do not persist the 0** by editing `variable_prepare`. Every ordinary file
+printed here relies on the automatic path: the stock Orca profile calls no
+`START_PRINT` and carries no `G28`, so with prepare off nothing homes or heats
+the bed and the profile's first move — `G1 Z5 F2400` — runs on unhomed axes.
 
 It is set up for T0 and T1 at 220 °C on a 60 °C bed. To exercise different
 tools, edit the `TOOLS=` list in `START_PRINT` and the `T<n>` lines in the body

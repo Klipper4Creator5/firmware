@@ -10,11 +10,18 @@
 ;     calibrated -- START_PRINT refuses the job otherwise, before
 ;     it heats or homes anything. That refusal is itself the first
 ;     thing this file verifies.
-;   * the machine start block below calls START_PRINT itself, so
-;     set the implicit prepare off or the machine homes, purges and
-;     grabs twice:
+;   * this file is the exception: it carries its own START_PRINT, with
+;     the TOOLS= list the automatic path cannot derive. So turn the
+;     implicit prepare off FOR THIS PRINT ONLY, or the machine homes,
+;     purges and grabs twice:
 ;       SET_GCODE_VARIABLE MACRO=FF_BEFORE_PRINT_START VARIABLE=prepare VALUE=0
-;     (persist it by editing variable_prepare in ff-print-macros.cfg)
+;     and put it BACK when the print is done:
+;       SET_GCODE_VARIABLE MACRO=FF_BEFORE_PRINT_START VARIABLE=prepare VALUE=1
+;     Do NOT persist 0 by editing variable_prepare. Every ordinary file
+;     here relies on the automatic path -- the stock Orca profile calls
+;     no START_PRINT and carries no G28, so with prepare off nothing
+;     homes or heats the bed and its first move, G1 Z5 F2400, runs on
+;     unhomed axes. A restart puts it back to 1 by itself.
 ;   * filament loaded in every listed tool. LOAD_FILAMENT TOOL=<n>
 ;     is not called from here -- it releases the tool when it
 ;     finishes, which is wrong in the middle of a print.
