@@ -50,9 +50,12 @@ jobs:
           curl -fsSL "$STOCK_URL_CREATOR5PRO" -o stock/Creator5Pro-stock.tgz
           curl -fsSL "$STOCK_URL_CREATOR5"    -o stock/Creator5-stock.tgz
           curl -fsSL "$FACTORY_URL"           -o stock/factory.tar.xz
+          # Exactly two spaces before the path: sha256sum -c reads everything
+          # after them as the filename, so a column-aligned line looks for a
+          # file whose name begins with spaces and fails as "not found".
           echo "$STOCK_SHA_CREATOR5PRO  stock/Creator5Pro-stock.tgz" | sha256sum -c -
-          echo "$STOCK_SHA_CREATOR5     stock/Creator5-stock.tgz"    | sha256sum -c -
-          echo "$FACTORY_SHA            stock/factory.tar.xz"        | sha256sum -c -
+          echo "$STOCK_SHA_CREATOR5  stock/Creator5-stock.tgz" | sha256sum -c -
+          echo "$FACTORY_SHA  stock/factory.tar.xz" | sha256sum -c -
           ls -lh stock
 
       - name: Write test.env (the replica's /usr/prog)
