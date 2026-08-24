@@ -18,7 +18,7 @@ does the work.
 | | |
 |---|---|
 | **Mainsail in your browser** | The full Klipper web interface at `http://<printer-ip>/` — upload gcode, watch the print, tune on the fly. Moonraker comes with it, so anything that speaks the Klipper API works. |
-| **A shell on your printer** | ssh as root. Dropbear is already running on stock firmware; this simply gives you a password you know. Official releases have one baked in at build time; a package you build yourself without setting `ROOT_PW_HASH` picks a random password and writes it to `anvil-password.txt` on your USB stick. |
+| **A shell on your printer** | ssh as root. Dropbear is already running on stock firmware; this simply gives you a password you know. Every package -- the releases here included -- picks its own random root password at install time and writes it to `anvil-password.txt` on your USB stick; read it there, then pull the stick. Nothing crackable is shipped in the package. Build with `ROOT_PW_HASH` set to bake in a password of your own instead. |
 | **Real toolchanger Klipper** | A current Klipper with proper tool-change support, replacing the 0.12-era tree FlashForge ships. |
 | **A current Moonraker** | Replacing the 2022 build FlashForge ships, which is too old for today's Mainsail — with it, the camera panel never appears at all. |
 | **A modern touchscreen UI** | HelixScreen replaces the stock interface on the printer's own screen. |

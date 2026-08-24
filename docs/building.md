@@ -84,10 +84,11 @@ uploads the packages as a workflow artefact and publishes nothing.
 
 Nothing about the release job is privileged. The stock FlashForge packages and
 the factory image it tests against are large but public (`ghzserg/FF`), pinned
-by sha256 in the workflow exactly as `ci.yml` pins them. The one secret it
-reads is `ROOT_PW_HASH`, the baked-in root password of an official build; with
-no such secret the packages fall back to a random password written to
-`anvil-password.txt` on the stick, which is the same thing a local build does.
+by sha256 in the workflow exactly as `ci.yml` pins them. It reads one optional
+secret, `ROOT_PW_HASH`, and deliberately has none set: released packages fall
+back to a random root password written to `anvil-password.txt` on the stick,
+which is the same thing a local build does and means no crackable hash ships
+inside a public package.
 
 The job publishes only if the whole brick-safety suite passes on the replica,
 and then re-runs the end-to-end install against the exact `dist/*.tgz` files
