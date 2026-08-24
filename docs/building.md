@@ -70,7 +70,8 @@ This distinction is the one to keep straight:
 
 * **`BUILD_*`** decides what goes *into* a package. Read at build time only,
   defaulted in `bin/common.sh`, never present on the printer.
-  (`BUILD_KLIPPER`, `BUILD_TOOLCHANGE`, `BUILD_MAINSAIL`, `BUILD_HELIX`.)
+  (`BUILD_KLIPPER`, `BUILD_TOOLCHANGE`, `BUILD_MAINSAIL`, `BUILD_MOONRAKER`,
+  `BUILD_HELIX`.)
 * **`MOD_*`** are runtime switches. They are written into
   `/usr/data/anvil/anvil.conf`, which the printer re-reads at every boot, so
   they can be changed over ssh afterwards and survive a mod update.
