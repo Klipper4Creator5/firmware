@@ -34,20 +34,23 @@ fi
 BUILD_KLIPPER="${BUILD_KLIPPER:-fork}"
 BUILD_TOOLCHANGE="${BUILD_TOOLCHANGE:-1}"
 BUILD_MAINSAIL="${BUILD_MAINSAIL:-1}"
+BUILD_MOONRAKER="${BUILD_MOONRAKER:-1}"
 BUILD_HELIX="${BUILD_HELIX:-1}"
 MOD_SSH="${MOD_SSH:-1}"
 MOD_WEB="${MOD_WEB:-1}"
 
-# Third-party payload pieces (Mainsail, HelixScreen). They are downloaded on
-# demand rather than vendored, so the repo carries no binaries and no binary
-# history. versions.env pins the version and the sha256; bin/fetch-assets.sh
-# puts the file in vendor/. Point MAINSAIL_ZIP / HELIX_TGZ at your own build
-# in config.env to override -- an explicit path is never overwritten.
+# Third-party payload pieces (Mainsail, HelixScreen, Moonraker). They are
+# downloaded on demand rather than vendored, so the repo carries no binaries
+# and no binary history. versions.env pins the version and the sha256;
+# bin/fetch-assets.sh puts the file in vendor/. Point MAINSAIL_ZIP /
+# HELIX_TGZ / MOONRAKER_TGZ at your own build in config.env to override -- an
+# explicit path is never overwritten.
 # shellcheck disable=SC1091
 [ -f "$ROOT/versions.env" ] && . "$ROOT/versions.env"
 MAINSAIL_ZIP="${MAINSAIL_ZIP:-$ROOT/vendor/mainsail-${MAINSAIL_VERSION:-unpinned}.zip}"
 HELIX_TGZ="${HELIX_TGZ:-$ROOT/vendor/${HELIX_FILE:-helixscreen.tar.gz}}"
-export MAINSAIL_ZIP HELIX_TGZ
+MOONRAKER_TGZ="${MOONRAKER_TGZ:-$ROOT/vendor/moonraker-${MOONRAKER_VERSION:-unpinned}.tar.gz}"
+export MAINSAIL_ZIP HELIX_TGZ MOONRAKER_TGZ
 
 # Replica-only settings: the factory image and the partition sizes. They exist
 # for the tests and never reach a printer, so they live in their own file --

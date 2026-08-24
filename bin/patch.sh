@@ -127,7 +127,71 @@ else
 fi
 [ -f assets/moonraker.conf ] && cp -f assets/moonraker.conf "$MP/config/moonraker.conf"
 
-# ----------------------------------------------------------- 4. HelixScreen
+# ------------------------------------------------------------- 4. Moonraker
+# WHY THIS EXISTS -- the stock Moonraker is a 2022 build (it reports API
+# 1.0.5) and it does NOT come from the update package at all: it ships on the
+# factory image only, at /usr/prog/moonraker/moonraker/. Old enough that the
+# current Mainsail quietly drops features it cannot see. The camera is the one
+# you notice: Moonraker only grew the webcam "enabled" flag in April 2023, and
+# Mainsail filters its webcam list on exactly that field, so every [webcam]
+# entry is discarded and the panel disappears -- with the stream itself
+# perfectly healthy behind nginx. No amount of config fixes that; the server
+# has to be newer.
+#
+# WHAT IS AND IS NOT REPLACED. Only the python package tree
+# (moonraker/moonraker/moonraker/) is swapped. The interpreter, the
+# moonraker-env virtualenv beside it and moonrakerDaemon are all left alone,
+# because v0.9.3 runs on what the printer already has:
+#
+#   tornado 6.1, jinja2 3.1.2, distro 1.5.0, libnacl 1.7.2,
+#   streaming-form-data 1.8.1, inotify-simple 1.3.5, importlib_metadata 5.1.0,
+#   dbus-next 0.2.3
+#
+# -- verified by booting v0.9.3 against exactly those versions on python 3.8,
+# started the same way moonrakerDaemon starts it (moonraker/moonraker.py -d).
+# Nothing needs a MIPS wheel built: the only native module Moonraker imports
+# is streaming_form_data._parser, and the installed 1.8.1 already exports
+# every name v0.9.3 asks of it (StreamingFormDataParser, ParseFailedException,
+# FileTarget, ValueTarget, SHA256Target).
+#
+# WHY v0.9.3 AND NOT v0.10.0. v0.10.0 swapped dbus-next for dbus-fast, a
+# compiled Cython module that is not on the printer and would have to be
+# cross-compiled for mipsel. v0.9.3 is the newest release that needs nothing
+# built, and it is already well past the webcam fix.
+#
+# The database converts itself. v0.9.x moved the store from lmdb to sqlite and
+# migrates the old one on first boot; lmdb 1.3.0 is installed, so it can still
+# read what is there and Mainsail's settings survive the upgrade.
+#
+# WHY IT RIDES IN THE MOD PAYLOAD AND NOT THE SOFTWARE COMPONENT. The stock
+# run.sh does not extract the software component over /usr/prog -- it copies a
+# hand-written list of paths out of it (app_startup.sh, klipper/klippy/*,
+# firmwareExe, ...). A moonraker/ directory dropped in beside them would be
+# unpacked to /usr/prog/PROGRAM/software/<ver>/ and then simply sat there.
+# So it travels with the rest of the payload and run-append.sh puts it in
+# place, which also lets that step swap the tree atomically and roll back.
+if [ "${BUILD_MOONRAKER:-1}" = "1" ]; then
+    [ -f "${MOONRAKER_TGZ:-}" ] || { echo "BUILD_MOONRAKER=1 but no Moonraker tarball at '${MOONRAKER_TGZ:-}' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
+    say "Moonraker: staging $MOONRAKER_VERSION package tree"
+    rm -rf work/.moonraker
+    mkdir -p work/.moonraker
+    tar -xzf "$MOONRAKER_TGZ" -C work/.moonraker --strip-components=1
+    # Guard against a tarball whose shape changed under us -- silently
+    # shipping nothing here would look like a clean build and a dead UI.
+    [ -f work/.moonraker/moonraker/moonraker.py ] || {
+        echo "   !! no moonraker/moonraker.py in $(basename "$MOONRAKER_TGZ")" >&2; exit 1; }
+    rm -rf "$MP/moonraker"
+    cp -a work/.moonraker/moonraker "$MP/moonraker"
+    # Tests never run on the printer and are a sizeable chunk of the tree.
+    rm -rf "$MP/moonraker/tests"
+    find "$MP/moonraker" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
+    rm -rf work/.moonraker
+    du -sh "$MP/moonraker" | awk '{print "   "$1}'
+else
+    skip "Moonraker: keeping the stock 2022 build"
+fi
+
+# ----------------------------------------------------------- 5. HelixScreen
 if [ "${BUILD_HELIX:-1}" = "1" ]; then
     [ -f "${HELIX_TGZ:-}" ] || { echo "BUILD_HELIX=1 but no HelixScreen tarball at '${HELIX_TGZ:-}' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
     say "HelixScreen: unpacking $(basename "$HELIX_TGZ")"
@@ -144,7 +208,7 @@ else
     skip "HelixScreen"
 fi
 
-# ------------------------------------------------------------------- 5. SSH
+# ------------------------------------------------------------------- 6. SSH
 # Nothing to install. The stock rootfs (kernel-*.tar.xz -> rootfs.squashfs)
 # already ships /usr/sbin/dropbear, /usr/bin/dropbearkey AND an enabled
 # /etc/init.d/S50dropbear that busybox init runs at every boot. SSH is
@@ -168,7 +232,7 @@ if [ -n "${BUSYBOX_BIN:-}" ] && [ -f "$BUSYBOX_BIN" ]; then
     cp -f "$BUSYBOX_BIN" "$MP/bin/busybox"; chmod +x "$MP/bin/busybox"
 fi
 
-# --------------------------------------------------------- 6. root password
+# --------------------------------------------------------- 7. root password
 if [ -n "${ROOT_PW_HASH:-}" ]; then
     say "Accounts: setting root password hash"
     # /etc is a bind mount of /usr/prog/etc (app_startup.sh), and this file is
@@ -181,12 +245,12 @@ else
     skip "root password (set ROOT_PW_HASH)"
 fi
 
-# ------------------------------------------------ 7. start.sh (web stack on)
+# ------------------------------------------------ 8. start.sh (web stack on)
 say "start.sh: enabling nginx + moonraker"
 cp -f payload/start.sh "$SW/start.sh"
 chmod +x "$SW/start.sh"
 
-# ------------------------------------- 8. firmwareExe -> our wrapper script
+# ------------------------------------- 9. firmwareExe -> our wrapper script
 # The stock chain is rcS -> S99factory_test_shell -> app_startup.sh ->
 # firmwareExe, and firmwareExe is also what starts Klipper. Replacing this
 # one file is therefore enough to own the whole userspace boot, which means
@@ -200,7 +264,7 @@ say "firmwareExe: installing wrapper (replaces the stock binary)"
 cp -f payload/firmwareExe "$SW/firmwareExe"
 chmod +x "$SW/firmwareExe"
 
-# ------------------------------------------------------ 9. mod service dir
+# ----------------------------------------------------- 10. mod service dir
 mkdir -p "$MP/init.d"
 [ -d payload/bin ] && cp -f payload/bin/* "$MP/bin/" && chmod +x "$MP/bin"/*
 cp -f payload/init.d/S* "$MP/init.d/"
@@ -211,7 +275,7 @@ sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
     -e "s/^MOD_WIFI=.*/MOD_WIFI=${MOD_WIFI:-1}/" \
     payload/anvil.conf > "$MP/anvil.conf"
 
-# --------------------------------------------------- 10. run.sh install step
+# --------------------------------------------------- 11. run.sh install step
 say "run.sh: injecting mod install blocks (pre + post)"
 POST=work/.run-post.sh
 # 1 only when ssh is on and nothing was baked in: a package is one file that

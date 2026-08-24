@@ -52,6 +52,34 @@ goes to `/usr/prog` on the firmware partition, which only holds two versions
 and cannot fit ~100MB of web UI — that is why Mainsail and HelixScreen ride in
 the outer package instead.
 
+## Moonraker
+
+The mod ships its own Moonraker (pinned in `versions.env`) and installs it over
+the stock one. FlashForge's is a 2022 build that reports API 1.0.5, old enough
+that the current Mainsail hides features it cannot see. The visible one is the
+camera: Moonraker only grew the webcam `enabled` flag in April 2023, Mainsail
+filters its webcam list on exactly that field, and so every `[webcam]` entry is
+discarded and the panel disappears — while the stream itself is perfectly
+healthy behind nginx. No config change can fix that from either side.
+
+Only the python package tree is replaced. The interpreter, the `moonraker-env`
+beside it and `moonrakerDaemon` are FlashForge's and keep working, because the
+pinned version runs on the libraries already installed — nothing has to be
+cross-compiled for mipsel. That is the reason for the version choice: v0.9.3 is
+the newest release that needs nothing built (v0.10.0 wants `dbus-fast`, a
+compiled module the printer does not have).
+
+Moonraker does not come from the update package at all — it exists only on the
+factory image, and the stock `run.sh` copies a hand-written list of paths out
+of the software component rather than extracting it over `/usr/prog`. So the
+tree travels with the mod payload and `run-append.sh` puts it in place, moving
+the old one aside first and restoring it if the copy does not complete.
+
+`make test` covers this end to end on the printer replica: that the swap
+happened, that the installed `webcam.py` has the `enabled` field, and that the
+shipped tree really runs on the printer's own python3.8. `BUILD_MOONRAKER=0`
+builds a package that leaves the stock server alone.
+
 ## Five things the stock firmware does that will surprise you
 
 Each of these silently breaks a package or a printer, and each is enforced by

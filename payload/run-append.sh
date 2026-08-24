@@ -28,7 +28,7 @@ if [ -n "$MODTAR" ]; then
     else
         # Keep user-editable state; replace everything we own.
         [ -f $MODDIR/anvil.conf ] && cp -f $MODDIR/anvil.conf /tmp/anvil.conf.keep
-        rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen $MODDIR/config
+        rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen $MODDIR/config $MODDIR/moonraker
         mkdir -p $MODDIR
         # Try xz first (FlashForge's own factory installer uses `xz -dc`, so
         # it exists), then fall back to plain tar in case a build shipped it
@@ -48,6 +48,52 @@ else
     echo "!! no anvil.tar.xz found -- scripts only, no Mainsail/HelixScreen"
 fi
 sync
+
+# ---- Moonraker -------------------------------------------------------------
+# Replace the stock 2022 Moonraker with the one bin/patch.sh staged. Only the
+# python package is swapped -- the interpreter, the moonraker-env beside it and
+# moonrakerDaemon are FlashForge's and keep working, because the version we
+# ship runs on the libraries already installed. See bin/patch.sh for why that
+# is true and why this is the only way the camera can appear in Mainsail.
+#
+# This is the one thing the mod writes to /usr/prog that is not part of the
+# software component, so it is done defensively: the old tree is moved aside
+# rather than deleted, and put back if the copy does not complete. A printer
+# whose Moonraker did not survive an update has no web UI at all, and the
+# screen would be the only way to notice.
+if [ -d $MODDIR/moonraker ]; then
+    MRROOT=/usr/prog/moonraker/moonraker
+    if [ -d $MRROOT/moonraker ]; then
+        # Both trees exist at once during the swap; /usr/prog is the small
+        # firmware partition, so check there is room before starting.
+        NEED=`du -sk $MODDIR/moonraker | cut -f1`
+        FREE=`df /usr/prog | tail -1 | tr -s ' ' | cut -d' ' -f4`
+        if [ "${FREE:-0}" -lt "$NEED" ]; then
+            echo "!! moonraker: only ${FREE}KB free on /usr/prog, need ${NEED}KB -- keeping the stock tree"
+        else
+            rm -rf $MRROOT/moonraker.modold
+            if mv $MRROOT/moonraker $MRROOT/moonraker.modold; then
+                if cp -a $MODDIR/moonraker $MRROOT/moonraker; then
+                    sync
+                    # Bytecode from the FlashForge build would otherwise be
+                    # the first thing imported. Same trap as klippy below.
+                    find $MRROOT/moonraker -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
+                    rm -rf $MRROOT/moonraker.modold
+                    echo "moonraker: replaced with the mod's build"
+                else
+                    rm -rf $MRROOT/moonraker
+                    mv $MRROOT/moonraker.modold $MRROOT/moonraker
+                    echo "!! moonraker: copy failed -- rolled back to the stock tree"
+                fi
+            else
+                echo "!! moonraker: could not move the stock tree aside -- left it alone"
+            fi
+        fi
+    else
+        echo "!! moonraker: no $MRROOT/moonraker on this printer -- nothing replaced"
+    fi
+    sync
+fi
 
 # ---- klipper + moonraker configs -------------------------------------------
 # Every file here is one the mod ships (ff-*.cfg, moonraker.conf); printer.cfg

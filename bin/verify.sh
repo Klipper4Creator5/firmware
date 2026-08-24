@@ -112,6 +112,11 @@ if [ -f "$T/anvil.tar.xz" ]; then
     echo "$LIST" | grep -q 'mainsail/index.html' && ok "Mainsail present" || warn "no Mainsail in payload"
     echo "$LIST" | grep -q 'helixscreen/bin/helix-screen' && ok "HelixScreen present" || warn "no HelixScreen in payload"
     echo "$LIST" | grep -q 'bin/dropbear'  && ok "dropbear present" || warn "no dropbear -- ssh will not start"
+    # moonraker.py is the file moonrakerDaemon execs by absolute path; a
+    # payload with the directory but not that file installs a Moonraker that
+    # cannot start, which looks identical to a dead printer from the outside.
+    echo "$LIST" | grep -q 'moonraker/moonraker.py' && ok "Moonraker present" \
+                                          || warn "no Moonraker in payload -- the stock 2022 build stays, and Mainsail will hide the webcam"
 else
     warn "no anvil.tar.xz -- scripts only"
 fi

@@ -55,3 +55,10 @@ if [ "$ALL" = 1 ] || [ "${BUILD_HELIX:-0}" = "1" ]; then
     get "https://github.com/Klipper4Creator5/helixscreen/releases/download/$HELIX_VERSION/$HELIX_FILE" \
         "$HELIX_TGZ" "$HELIX_SHA256"
 fi
+
+if [ "$ALL" = 1 ] || [ "${BUILD_MOONRAKER:-0}" = "1" ]; then
+    # Moonraker ships no release asset, so this is GitHub's generated source
+    # tarball for the tag. The sha256 in versions.env is what makes that safe.
+    get "https://github.com/Arksine/moonraker/archive/refs/tags/$MOONRAKER_VERSION.tar.gz" \
+        "$MOONRAKER_TGZ" "$MOONRAKER_SHA256"
+fi

@@ -293,6 +293,52 @@ else
 fi
 killall sleep 2>/dev/null
 
+# ---- Moonraker was actually replaced ---------------------------------------
+# The stock Moonraker is a 2022 build that predates the webcam "enabled" flag,
+# and Mainsail drops every webcam that lacks it -- so a silently skipped swap
+# looks like a healthy printer with no camera. run-append.sh reports into the
+# install log, which is why the log line is checked and not just the files.
+MRPKG=/usr/prog/moonraker/moonraker/moonraker
+if [ -d $MRPKG ]; then
+    # Only assert the swap for a package that actually carries Moonraker --
+    # BUILD_MOONRAKER=0 is a supported way to build one that does not, and it
+    # should leave the stock server alone rather than fail the run.
+    if [ -d /usr/data/anvil/moonraker ]; then
+        grep -q "moonraker: replaced with the mod's build" /usr/data/anvil-install.log 2>/dev/null \
+            && ok "moonraker: the install replaced the stock tree" \
+            || bad "moonraker: run-append.sh did not report a replacement"
+        # The field the whole exercise is about. Its absence means an old tree.
+        grep -q '"enabled"' $MRPKG/components/webcam.py 2>/dev/null \
+            && ok "moonraker: the installed webcam component has the enabled field" \
+            || bad "moonraker: webcam.py has no enabled field -- Mainsail will hide the camera"
+    else
+        echo "  (skip) moonraker: this package ships none (BUILD_MOONRAKER=0)"
+    fi
+    # moonrakerDaemon execs this by absolute path; nothing else starts it.
+    [ -f $MRPKG/moonraker.py ] \
+        && ok "moonraker: moonraker.py is where moonrakerDaemon looks for it" \
+        || bad "BRICK: no $MRPKG/moonraker.py -- Moonraker cannot start"
+    # The rollback copy must never be left behind: it is a second full tree on
+    # the small firmware partition.
+    [ -d $MRPKG.modold ] \
+        && bad "moonraker: the swap left its rollback copy on /usr/prog" \
+        || ok "moonraker: no rollback copy left behind"
+    # THE ONE THAT MATTERS. Everything above only says the right files are on
+    # disk; this says the printer's own python3.8 can actually run them. We
+    # ship a Moonraker newer than the machine's, on libraries FlashForge
+    # installed and we do not control, so an ImportError here is the failure
+    # mode to be afraid of -- and it is real mipsel under qemu, not a mock.
+    # S60web starts it during boot 3, so it has had time by now.
+    if wait_for 60 running 'moonraker/moonraker.py'; then
+        ok "moonraker: the shipped tree runs on the printer's python3.8"
+    else
+        bad "moonraker: nothing is running moonraker.py -- the new tree did not start"
+        tail -25 /usr/data/logs/moonraker.log 2>/dev/null | sed 's/^/        /'
+    fi
+else
+    bad "moonraker: no $MRPKG -- this prog partition has no Moonraker to replace"
+fi
+
 # Nothing may be written to the read-only root. A mod that needs it works in a
 # permissive sandbox and fails silently on the machine.
 if [ -f /tmp/sim-neutered.log ]; then
