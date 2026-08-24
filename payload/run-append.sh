@@ -53,15 +53,36 @@ sync
 # Every file here is one the mod ships (ff-*.cfg, moonraker.conf); printer.cfg
 # is the user's and is never shipped, so it is never a candidate.
 #
-# Install what is missing. For what already exists the question is whether the
-# user edited it: a file still byte-identical to the one the LAST package wrote
-# is ours to update, and one that differs is theirs to keep. $MODDIR/config-installed
-# holds that last-written copy -- it is not in the rm -rf above, so it survives
-# the payload swap and is refreshed only after the comparison below.
+# Two rules, because the two kinds of file differ in whether the user has
+# somewhere else to put a change.
 #
-# Without this, a config we own could only ever be written once: it exists on
-# the second flash, so it would land as .mod-new forever and updates would
-# silently never reach the printer.
+# ff-*.cfg are OURS, and are overwritten every update, no questions asked.
+# They are the mod's moving parts -- macros and sections that a release
+# rewrites -- and Klipper hands the user a better seam than editing them:
+# parsing is RawConfigParser(strict=False), so same-named sections MERGE, the
+# last value of an option wins, and a redefined [gcode_macro] replaces the
+# original. Overriding from printer.cfg AFTER the include therefore costs
+# nothing and survives every flash, while an edit here is silently reverted by
+# the next one. Each file says so in its own header. This also makes the
+# shipped set the same on every printer, which is what makes a bug report
+# mean anything.
+#
+# printer.base.cfg is on the same footing and needs no rule here: it installs
+# to /usr/prog/klipper/config with the software component, which a flash
+# replaces wholesale.
+#
+# moonraker.conf is KEPT when edited. It is not a Klipper config, there is no
+# include-and-override seam for it, and a printer that is reached through a
+# tuned trusted_clients or cors_domains block would lose that access on an
+# update. So it still gets the compare-and-.mod-new dance: a file still
+# byte-identical to the one the LAST package wrote is ours to update, one that
+# differs is the user's to keep. $MODDIR/config-installed holds that
+# last-written copy -- it is not in the rm -rf above, so it survives the
+# payload swap and is refreshed only after the comparison below.
+#
+# Without that snapshot a config we own could only ever be written once: it
+# exists on the second flash, so it would land as .mod-new forever and updates
+# would silently never reach the printer.
 #
 # First install after this rule arrives has no config-installed, so an existing
 # file is treated as edited -- .mod-new, the conservative answer.
@@ -72,6 +93,17 @@ if [ -d $MODDIR/config ]; then
         b=`basename "$f"`
         live="/usr/data/config/$b"
         prev="$MODDIR/config-installed/$b"
+        case "$b" in
+        ff-*.cfg)
+            # Ours. Overwrite and say so when it had drifted, so the log
+            # explains where a local edit went.
+            if [ -f "$live" ] && [ "`md5sum < "$live"`" != "`md5sum < "$f"`" ]; then
+                echo "config: $b overwritten (mod-owned; override it from printer.cfg)"
+            fi
+            cp -f "$f" "$live"
+            continue
+            ;;
+        esac
         if [ ! -f "$live" ]; then
             cp -f "$f" "$live"
         elif [ -f "$prev" ] && [ "`md5sum < "$live"`" = "`md5sum < "$prev"`" ]; then

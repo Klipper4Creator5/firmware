@@ -208,10 +208,20 @@ axis limits: every command in them must be one `payload/klipper/config/` or
 print uses, and the safe file must stay cold and above Z50. A renamed macro
 breaks the suite rather than the print.
 
-The `.cfg` includes are **not** wired up automatically — a tuned `printer.cfg`
-is never modified. New files arrive as `*.mod-new`. Add the includes by hand
-in the order given in the toolchanger README, then run
-`FF_IMPORT_FIRMWARE_CONFIG` once.
+The `.cfg` includes are wired up **for** you: `printer.base.cfg` ends with the
+seven `[include ff-*.cfg]` lines, so a flash brings the mod up by itself. Your
+`printer.cfg` is not touched. Run `FF_IMPORT_FIRMWARE_CONFIG` once after the
+first flash to pull in the factory dock and nozzle numbers.
+
+The included files are the mod's, and every update overwrites them without
+asking — `ff-*.cfg` and `printer.base.cfg` alike. Do not edit them. Put changes
+at the end of `printer.cfg`, restating only the option or macro you are
+changing: Klipper merges same-named sections and the last value wins, so
+everything you leave out keeps the shipped value and your overrides survive
+every flash. Each of those files opens with a header saying as much.
+
+`moonraker.conf` is the one exception — it has no include-and-override seam, so
+an edited copy is kept and the new version lands beside it as `.mod-new`.
 
 **Recovering from a bad UI, in increasing severity:**
 ```sh

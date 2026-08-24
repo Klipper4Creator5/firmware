@@ -107,9 +107,14 @@ machine:
   ssh to try again.
 * **ssh stays up** even when the screen does not, so you can get in and look.
 * **Your `printer.cfg` is never overwritten** — it is not a file this
-  firmware ships. Of the configs it does ship, one you have edited is left
-  alone and the new version lands beside it as `.mod-new`; one you never
-  touched is updated in place.
+  firmware ships, and it is where your changes belong. The configs the mod
+  *does* ship (`ff-*.cfg`, `printer.base.cfg`) are overwritten on every
+  update, so put overrides in `printer.cfg` after the includes rather than
+  editing them: Klipper merges same-named sections and the last value of an
+  option wins, so you restate only what you are changing. Each of those files
+  says so in its own header. The exception is `moonraker.conf`, which has no
+  such seam — one you have edited is left alone and the new version lands
+  beside it as `.mod-new`.
 * **The kernel and the motion board are never touched** by a normal package.
 
 More detail, including what to do when the printer will not boot at all:
