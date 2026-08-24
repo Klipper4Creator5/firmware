@@ -12,8 +12,10 @@ Address-verified against the live binary (`CommMgr` methods). Ported in
   `manual_stepper gear_stepper`; `MOTOR_GRAB`/`MOTOR_RELEASE` are STOP_ON_ENDSTOP-style
   moves that respond "endstop triggered / not triggered".
 - Sensors (`gcode_button`): `extruder_pos1..4` = head present in dock N;
-  `extruder_grab(1..4)` = something locked on the carriage; `servo_min/max` = lock
-  mechanism end positions.
+  `extruder_grab(1..4)` = something locked on the carriage. The app also names
+  `servo_min`/`servo_max` (lock mechanism end positions), but this printer's
+  config declares neither -- see `10-hardware.md` for the family that actually
+  exists.
 - Invariant checked constantly: a head is EITHER in its dock OR on the carriage
   (E0127-134, E0139-146 cover every disagreement).
 

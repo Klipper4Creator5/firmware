@@ -204,7 +204,7 @@ jobs:
       # Nothing here noticed until this job ran for the first time, because
       # every local run already had a populated vendor/. Both are public,
       # sha256-pinned in versions.env, and re-download only on a version bump.
-      - name: Fetch the pinned Mainsail and HelixScreen assets
+      - name: Fetch the pinned Mainsail, HelixScreen and Moonraker assets
         run: make vendor ASSET_ROOT=$PWD
 
       - name: Extract the printer rootfs

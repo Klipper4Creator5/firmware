@@ -28,11 +28,20 @@ The stock boot process and the stock recovery path are left in place. The mod's
 whole *integration point* is one file — `firmwareExe`, the stock application —
 and nothing in `rcS` or `app_startup.sh` is patched, so FlashForge's own updater
 is still what installs and still what reverts. Flashing the stock package
-restores everything the mod replaced: `firmwareExe`, `start.sh`, the Klipper
-tree, `printer.base.cfg` and `shadow`. What it does not do is scrub the disk —
-the payload under `/usr/data/anvil`, the `ff-*.cfg` in `/usr/data/config/` and
-the install log stay behind, inert, because nothing references them any more.
-`make test-recovery` asserts exactly that, on a replica of the machine.
+restores everything the mod replaced *out of that package*: `firmwareExe`,
+`start.sh`, the Klipper tree, `printer.base.cfg` and `shadow`. What it does not
+do is scrub the disk — the payload under `/usr/data/anvil`, the `ff-*.cfg` in
+`/usr/data/config/` and the install log stay behind, inert, because nothing
+references them any more. `make test-recovery` asserts that, on a replica.
+
+**One thing does not come back: Moonraker.** The mod replaces the printer's
+Moonraker with a newer build, and Moonraker is not in the update package at all
+— it ships only on the factory image — so a stock reflash has nothing to
+restore it from, and the mod's build stays. It works, and Mainsail is happy
+with it; it is simply not reversible the way everything else here is. Getting
+FlashForge's own Moonraker back means the factory image. Build with
+`BUILD_MOONRAKER=0` if you would rather the mod never touched it (you keep the
+stock 2022 server, and Mainsail will show no camera).
 
 ### What you give up
 

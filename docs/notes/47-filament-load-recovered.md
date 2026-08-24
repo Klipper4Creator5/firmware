@@ -154,7 +154,7 @@ state 4  getVirSdInfoFilament(&info)                         (snapshot of fan sp
          changeFilamentControlFan(false, chamberTarget, info.chamber_fan):
                                                              [chamberTarget != 0: chamber_heat_fan 0.900 ; chamber_loop_fan 0.300]
                                                              SET_FAN_SPEED FAN=chamber_fan SPEED=<saved>
-         CommMgr::doReleaseExtruderMgr(n, false, false)      park tool (dock approach, MOTOR_RELEASE, MOTOR_STOP; 35-release-path-fidelity.md)
+         CommMgr::doReleaseExtruderMgr(n, false, false)      park tool (dock approach, MOTOR_RELEASE, MOTOR_STOP; see `30-toolchange.md` for the release path)
                                                              -- its ErrorBak is assigned but NOT tested: always -> state 5
          state = 5
 state 5  UI arrive3 ; state = 6

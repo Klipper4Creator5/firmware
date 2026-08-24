@@ -30,7 +30,7 @@ documented in the file headers.
 | [`payload/klipper/extras/ff_legacy.py`](../payload/klipper/extras/ff_legacy.py) | `/usr/prog/klipper/klippy/extras/` | `FF_IMPORT_FIRMWARE_CONFIG` — one-shot import of the factory/touchscreen JSON into Klipper config. Needed once, at install |
 | [`payload/klipper/config/ff-toolchange.cfg`](../payload/klipper/config/ff-toolchange.cfg) | `/usr/data/config/` | empty `[ff_tool 0..3]` sections (the per-unit dock/nozzle data is autosaved, nothing unit-specific ships), `[ff_toolchange]` feeds/geometry, the `G28` dock-first wrapper |
 | [`payload/klipper/config/ff-tool-offset.cfg`](../payload/klipper/config/ff-tool-offset.cfg) | `/usr/data/config/` | `[ff_tool_offset]` — probe geometry and guards for the calibration commands |
-| [`payload/klipper/config/ff-legacy.cfg`](../payload/klipper/config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — include only for the import step, then remove |
+| [`payload/klipper/config/ff-legacy.cfg`](../payload/klipper/config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — stays included permanently; with `auto_import` it re-imports on every startup until a tool has a saved nozzle position, then does nothing |
 | [`payload/klipper/config/ff-print-macros.cfg`](../payload/klipper/config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the `_FF_PREFLIGHT` calibration and tool-presence gate; declares `[ff_print]` and the `FF_BEFORE_PRINT_START` / `FF_AFTER_PRINT_END` entry points it calls |
 | [`payload/klipper/config/ff-filament.cfg`](../payload/klipper/config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
 | [`payload/klipper/config/ff-runout.cfg`](../payload/klipper/config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163, reported here in plain words); `ff_toolchange` arms only the mounted tool's sensors |
@@ -47,7 +47,7 @@ are responsible for what happens to your printer**. Mistakes here are not
 hypothetical — a wrong Z offset drives the nozzle through the build plate,
 and a failed grab or missing check can end like this:
 
-<img src="docs/molten-toolhead.jpg" alt="molten toolhead with a blob of melted plastic" width="450">
+<img src="molten-toolhead.jpg" alt="molten toolhead with a blob of melted plastic" width="450">
 
 Read the warnings below, run the Verify section before the first print,
 and stay next to the machine until you trust it.
@@ -484,7 +484,8 @@ where the old one was. The default is `restore_axis` in `[ff_toolchange]`,
 itself empty: nothing is restored unless asked, which is how this machine has
 always behaved. Restoring Z after an `UNSELECT_TOOL` is the sharp edge, since
 parking zeroes the tool offsets and the same G-code Z becomes a different
-machine Z (~3.2 mm, this tool's nozzle-to-eddy-trigger gap).
+machine Z (~3.2 mm, this tool's nozzle-to-station-trigger gap -- the station,
+not the eddy coil; see the note under Calibration).
 
 `SET_TOOL_TEMPERATURE` addresses the extruder behind the tool; `WAIT=1` waits
 only for heat-up, as Klipper's own `TEMPERATURE_WAIT MINIMUM` does.

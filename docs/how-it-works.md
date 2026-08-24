@@ -143,6 +143,22 @@ printer picks the file up and then refuses it. `make verify` and
 ## Recovery
 
 Recovery is the stock FlashForge package for your model. Flashing it restores
-every file the mod touches; the payload under `/usr/data/anvil` survives but is
-inert. `make test-recovery` proves it, by doing exactly that inside the
-replica and diffing the result against stock.
+the files the mod replaced out of that package; the payload under
+`/usr/data/anvil` survives but is inert. `make test-recovery` does exactly that
+inside the replica and compares `firmwareExe`, `app_startup.sh` and
+`klipper/start.sh` byte for byte, and checks that nothing stock still
+references the leftovers.
+
+Two caveats it does not cover, both worth knowing before you rely on it:
+
+* **Moonraker is not restored.** It is not in the update package — only on the
+  factory image — so once the mod has swapped it, a stock reflash leaves the
+  mod's build in place. `run-append.sh` moves the stock tree aside as
+  `moonraker.modold` and deletes it once the copy succeeds, so there is no
+  local copy either. `BUILD_MOONRAKER=0` avoids the swap entirely.
+* **An interrupted swap needs a hand.** If power is lost between the `mv` and
+  the copy, `/usr/prog/moonraker/moonraker/moonraker` is missing and every
+  later install logs "nothing replaced" rather than repairing it. Moonraker
+  will not start and Mainsail will not load. Over ssh:
+  `mv /usr/prog/moonraker/moonraker/moonraker.modold \
+      /usr/prog/moonraker/moonraker/moonraker` and reboot.

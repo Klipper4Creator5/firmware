@@ -148,6 +148,8 @@ contains. The replica gets as close as the packages allow:
 * **Genuine, from the factory image**: everything else on the prog partition —
   `klipperDaemon`, `moonrakerDaemon`, `checkEboard`, `nginx`, `python3`,
   `moonraker`, the stock `nginx.conf`, and the printer's OpenSSL 1.0.2d.
+  (A mod install then REPLACES the moonraker python package with the pinned
+  build — see how-it-works. The interpreter and moonrakerDaemon stay stock.)
 * **Not present at all**: stubs. Without a real prog partition the replica
   refuses to start rather than substitute one.
 * **Neutered, always**: `insmod`, `rmmod`, `modprobe`, `reboot`, `poweroff`,

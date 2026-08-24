@@ -40,7 +40,9 @@ firmwareExe (touchscreen app)
 
 - 4-tool toolchanger: docked heads T0–T3 at X≈297 (250/280 are the staging and
   approach waypoints, not the docks), picked up by the X carriage
-  with a lock motor (current sensing via `temperature_sensor motor_value`).
+  with a lock motor. `temperature_sensor motor_value` exists (printer.motor.cfg)
+  but the app only ever logged it -- no grab/release decision reads it; see
+  `25-app-vs-klipper-ownership.md`.
 - Bed ~250×250, 10×10 bed mesh from the carriage eddy (`[probe]`, `eboard:PG0`).
   Nozzle XY/Z offset calibration uses a different sensor: the fixed inductive
   cylinder under the bed (`[e_stop X/Y/Z]` on `levelboard:PD0`).

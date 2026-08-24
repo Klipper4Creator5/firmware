@@ -31,8 +31,10 @@ fi
 # FlashForge's firmwareExe is REPLACED, not kept: HelixScreen is the only UI.
 # If it will not start, set MOD_UI=0 in /usr/data/anvil/anvil.conf to boot
 # headless. ssh and Mainsail are your recovery path if the screen is dark, and
-# a USB stick with the STOCK FlashForge package on it is the uninstall (proven
-# by `make test-recovery`).
+# a USB stick with the STOCK FlashForge package on it is the uninstall for
+# everything that came out of a package (`make test-recovery`). Moonraker is
+# the exception: it lives only on the factory image, so a reflash cannot put
+# FlashForge's back -- see BUILD_MOONRAKER and docs/how-it-works.md.
 BUILD_KLIPPER="${BUILD_KLIPPER:-fork}"
 BUILD_TOOLCHANGE="${BUILD_TOOLCHANGE:-1}"
 BUILD_MAINSAIL="${BUILD_MAINSAIL:-1}"

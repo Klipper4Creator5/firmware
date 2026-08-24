@@ -102,7 +102,7 @@ help:
 	@echo 'listed again at the end, with its reason.'
 	@echo
 	@echo 'Other:'
-	@echo '  make vendor       download Mainsail + HelixScreen into vendor/'
+	@echo '  make vendor       download Mainsail + HelixScreen + Moonraker'
 	@echo '  make rootfs       extract the real printer rootfs (enables the replica gates)'
 	@echo '  make image        build the build container'
 	@echo '  make shell        shell inside it'
@@ -130,7 +130,7 @@ shell: image
 #  payload/ and assets/, and touches nothing under test/.
 # ===========================================================================
 
-# Mainsail and HelixScreen are not vendored in the repo. bin/build.sh fetches
+# Mainsail, HelixScreen and Moonraker are not vendored in the repo. bin/build.sh fetches
 # what the build needs; this target pre-fetches everything, and is a
 # no-op once vendor/ holds files with the sha256 that versions.env pins.
 vendor: image config.env

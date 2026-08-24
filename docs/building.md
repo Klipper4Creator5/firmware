@@ -26,14 +26,16 @@ run flags. A build cannot reach the docker daemon.
 ## The pipeline
 
 ```
-fetch-assets.sh  download Mainsail + HelixScreen into vendor/ (see below)
+fetch-assets.sh  download Mainsail + HelixScreen + Moonraker into vendor/
 unpack.sh   decrypt the stock .tgz, open the software component
 patch.sh    apply the mods to work/software/ and build work/modpayload/
 pack.sh     regenerate md5sum.list, tar, encrypt → work/out/<Model>-anvil-<date>.tgz
 verify.sh   simulate every check the printer performs, against the built file
 ```
 
-`make build` is all four. Each is idempotent and safe to re-run.
+`make build` runs the first four. `verify.sh` is NOT one of them -- run
+`make verify` after it, as the hardware checklist does. Each is idempotent and
+safe to re-run.
 
 Packages carry only the **software** component by default. The stock installer
 skips any component that is absent, so the kernel, the rootfs image and the
@@ -83,14 +85,20 @@ This distinction is the one to keep straight:
 
 ## Third-party pieces are downloaded, not vendored
 
-Mainsail and the HelixScreen build for this printer are large binaries, so the
-repo does not carry them — and never has, so there is nothing in the git
-history either. `versions.env` pins each one by version and sha256:
+Mainsail, the HelixScreen build for this printer and Moonraker are large
+third-party trees, so the repo does not carry them — and never has, so there is
+nothing in the git history either. `versions.env` pins each one by version and
+sha256:
 
 ```sh
 MAINSAIL_VERSION="v2.18.2"
-HELIX_VERSION="v0.99.115-creator5"
+HELIX_VERSION="v0.99.115-creator5.1"
+MOONRAKER_VERSION="v0.9.3"
 ```
+
+Moonraker is here because the printer's own is a 2022 build that predates the
+webcam `enabled` flag Mainsail filters on, so the camera panel never appears.
+`BUILD_MOONRAKER=0` leaves the stock server alone.
 
 `bin/fetch-assets.sh` downloads them into `vendor/` (gitignored) and refuses
 anything whose sha256 does not match the pin. A cached file with the right
@@ -103,14 +111,14 @@ set the matching sha256 to `SKIP`, and run `make vendor`. It downloads the new
 file and prints its hash for you to paste back over the `SKIP`. With a stale
 hash left in place `make vendor` fails instead of printing anything.
 
-Setting `MAINSAIL_ZIP` or `HELIX_TGZ` in `config.env` points the build at your
-own local copy. It is still checksummed against `versions.env`, and on a
+Setting `MAINSAIL_ZIP`, `HELIX_TGZ` or `MOONRAKER_TGZ` in `config.env` points
+the build at your own local copy. It is still checksummed against `versions.env`, and on a
 mismatch `fetch-assets.sh` **overwrites your file** with the pinned release —
 `SKIP` re-downloads too. To build against your own file, put its sha256 in
 `versions.env` as well; only an exact match is left alone.
 
-If the build asks for Mainsail or HelixScreen and the file is not there, it
-fails. It used to skip silently, which shipped a package with an empty
+If the build asks for Mainsail, HelixScreen or Moonraker and the file is not
+there, it fails. It used to skip silently, which shipped a package with an empty
 web root and no way to notice.
 
 ## The root password
@@ -161,14 +169,14 @@ payload/        POSIX sh, busybox ash -- runs ON the printer
   anvil.conf      runtime switches, preserved across mod updates
   run-pre.sh      backups, injected at the TOP of the stock run.sh
   run-append.sh   payload install, injected before its exit
-assets/         nginx.conf, moonraker.conf
+assets/         nginx.conf, moonraker.conf, moonraker-custom.conf
 ```
 
 **Builds it** — host-side, never installed:
 
 ```
 bin/            fetch-assets -> unpack -> patch -> pack, plus verify
-versions.env    pinned Mainsail / HelixScreen versions + sha256
+versions.env    pinned Mainsail / HelixScreen / Moonraker versions + sha256
 vendor/         where fetch-assets.sh caches them (gitignored)
 config.env      your paths, the root password hash, the model
 docker/         Dockerfile.build -- the container every target runs in

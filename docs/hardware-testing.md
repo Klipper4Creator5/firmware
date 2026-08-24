@@ -71,8 +71,9 @@ One flash brings up everything: a root password you know, Mainsail and
 moonraker, the forked Klipper with the toolchanger extras, and HelixScreen on
 the touchscreen in place of FlashForge's UI.
 
-**The root password is generated on the printer.** Nothing is baked into the
-package: the installer picks a random one, sets it, and writes it to
+**The root password.** An official release has one baked in at build time
+(`ROOT_PW_HASH`). A package you build without setting it picks a random one on
+the printer, sets it, and writes it to
 `anvil-password.txt` on the USB stick you flashed from. Pull the stick after
 the flash and read it — then save the password somewhere safe and delete the
 file. If the stick is not writable no password is set at all, and the install

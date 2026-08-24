@@ -39,7 +39,8 @@ Everything per-unit lands in printer.cfg's `SAVE_CONFIG` block. The shipped
 ```
 - Raw station-frame absolutes per tool, not T0-relative diffs: recalibrating one tool leaves
   the others valid; diffs are derived at load (`ff_toolchange._derive_offsets`).
-- `nozzle_z − station_z` is the ~3.19 mm nozzle-to-eddy-trigger gap the print-start Z offset
+- `nozzle_z − station_z` is the ~3.19 mm nozzle-to-station-trigger gap the print-start Z offset
+  (the station's own trigger plane, NOT an eddy measurement -- see `46-...md`)
   uses (`TOOLCHANGE_SET_PRINT_OFFSET`).
 - Fork constraint (`configfile.py:385`): `SAVE_CONFIG` refuses to autosave an option an
   *included* file already sets — so `nozzle_*`/`station_*` must never be written into the
