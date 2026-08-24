@@ -66,6 +66,34 @@ make release                      # both models, into dist/
 MODEL=Creator5 make build         # just the non-Pro
 ```
 
+## Cutting a release
+
+Releases are built by `.github/workflows/release.yml`, on a pushed tag:
+
+```sh
+git tag v20260824-nova-kakhovka
+git push origin v20260824-nova-kakhovka
+```
+
+The tag is `v<YYYYMMDD>-<city>`: the release date, and a Ukrainian city under
+occupation. Only the date reaches the package — FlashForge's installer reads
+the version field as a number and compares it against what is on the machine,
+so `anvil-20260824` is what the filename says and the codename lives in the
+tag and the release title. A `workflow_dispatch` run has no tag; it builds and
+uploads the packages as a workflow artefact and publishes nothing.
+
+Nothing about the release job is privileged. The stock FlashForge packages and
+the factory image it tests against are large but public (`ghzserg/FF`), pinned
+by sha256 in the workflow exactly as `ci.yml` pins them. The one secret it
+reads is `ROOT_PW_HASH`, the baked-in root password of an official build; with
+no such secret the packages fall back to a random password written to
+`anvil-password.txt` on the stick, which is the same thing a local build does.
+
+The job publishes only if the whole brick-safety suite passes on the replica,
+and then re-runs the end-to-end install against the exact `dist/*.tgz` files
+that get attached — not against a package built from the same tree, but those
+files. Releases are marked pre-release.
+
 ## Two kinds of flag
 
 This distinction is the one to keep straight:

@@ -7,19 +7,17 @@ name: release
 # installer under test runs on the printer's busybox, tar, md5sum and unTar --
 # not on Debian stand-ins. If that fails, nothing ships.
 #
-# The stock FlashForge packages are proprietary and ~93MB each, so they are
-# never in the repo. Point these repository secrets at them (pre-signed URLs,
-# a private release asset, an S3 object -- anything curl can fetch):
+# The stock FlashForge packages and the factory image are large but not
+# secret: they are published at ghzserg/FF and this workflow fetches what is
+# already public, exactly as ci.yml does. Every one is pinned by sha256 and
+# the checksum is enforced, not advisory -- an unpinned download would let the
+# archive change under us while the gates kept reporting green against a
+# different firmware than they were written for.
 #
-#   STOCK_URL_CREATOR5PRO     required
-#   STOCK_URL_CREATOR5        required
-#   FACTORY_URL               required -- the factory image, which is the
-#                             replica's real /usr/prog and /usr/data
-#   STOCK_SHA256_CREATOR5PRO  optional but recommended
-#   STOCK_SHA256_CREATOR5     optional but recommended
-#
-# Without them the job FAILS. It does not skip: a release that skipped the
-# only test that can catch a brick is worse than no release.
+# TAGS. `v<YYYYMMDD>-<city>`, e.g. v20260824-nova-kakhovka: the release date,
+# and the name of a Ukrainian city under occupation. Only the date reaches the
+# package filename -- the installer's version field is a date and nothing else
+# -- so the city is carried by the tag and the release title.
 
 on:
   push:
@@ -35,42 +33,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check the stock packages are configured
+      - name: Fetch the stock firmware and the factory image
+        # Same artefacts, same checksums as ci.yml. Enforced: a mismatch here
+        # means the thing we test against is not the thing we tested against
+        # last time, and that has to stop the release rather than colour it.
         env:
-          PRO: ${{ secrets.STOCK_URL_CREATOR5PRO }}
-          STD: ${{ secrets.STOCK_URL_CREATOR5 }}
-          FACTORY: ${{ secrets.FACTORY_URL }}
-        run: |
-          missing=
-          [ -n "$PRO" ] || missing="$missing STOCK_URL_CREATOR5PRO"
-          [ -n "$STD" ] || missing="$missing STOCK_URL_CREATOR5"
-          [ -n "$FACTORY" ] || missing="$missing FACTORY_URL"
-          if [ -n "$missing" ]; then
-            echo "::error::missing secrets:$missing"
-            echo "The printer replica cannot run without the stock packages, and"
-            echo "a release is not allowed to skip it. See the comment at the top"
-            echo "of .github/workflows/release.yml."
-            exit 1
-          fi
-
-      - name: Fetch the stock firmware
-        env:
-          PRO:     ${{ secrets.STOCK_URL_CREATOR5PRO }}
-          STD:     ${{ secrets.STOCK_URL_CREATOR5 }}
-          PRO_SHA: ${{ secrets.STOCK_SHA256_CREATOR5PRO }}
-          STD_SHA: ${{ secrets.STOCK_SHA256_CREATOR5 }}
+          STOCK_URL_CREATOR5PRO: https://github.com/ghzserg/FF/releases/download/R/Creator5Pro-1.9.7-1.2.9-20260810.tgz
+          STOCK_SHA_CREATOR5PRO: 1f3252feaae6d8fc72d7b0fd1ba832cc63d369659f8b2d2896efcf7adab2976b
+          STOCK_URL_CREATOR5: https://github.com/ghzserg/FF/releases/download/R/Creator5-1.9.7-1.2.9-20260810.tgz
+          STOCK_SHA_CREATOR5: 72009be183e74a4562050a927787ba686c6b558a075f00958892197ac52659cc
+          FACTORY_URL: https://github.com/ghzserg/FF/releases/download/R/Creator5Pro-factory.tar.xz
+          FACTORY_SHA: 45657924298a41b5cd48c0f4412b4b2fb67df624af666b494d6bcea969cc5b7b
         run: |
           set -euo pipefail
           mkdir -p stock
-          curl -fsSL "$PRO" -o stock/Creator5Pro-stock.tgz
-          curl -fsSL "$STD" -o stock/Creator5-stock.tgz
-          [ -z "$PRO_SHA" ] || echo "$PRO_SHA  stock/Creator5Pro-stock.tgz" | sha256sum -c -
-          [ -z "$STD_SHA" ] || echo "$STD_SHA  stock/Creator5-stock.tgz"    | sha256sum -c -
+          curl -fsSL "$STOCK_URL_CREATOR5PRO" -o stock/Creator5Pro-stock.tgz
+          curl -fsSL "$STOCK_URL_CREATOR5"    -o stock/Creator5-stock.tgz
+          curl -fsSL "$FACTORY_URL"           -o stock/factory.tar.xz
+          echo "$STOCK_SHA_CREATOR5PRO  stock/Creator5Pro-stock.tgz" | sha256sum -c -
+          echo "$STOCK_SHA_CREATOR5     stock/Creator5-stock.tgz"    | sha256sum -c -
+          echo "$FACTORY_SHA            stock/factory.tar.xz"        | sha256sum -c -
           ls -lh stock
 
       - name: Write test.env (the replica's /usr/prog)
         env:
-          FACTORY: ${{ secrets.FACTORY_URL }}
           # Optional repository variable: a prebuilt replica image, e.g.
           # monstrofil/creator5-printer:latest. It carries the factory
           # partitions AND the stock package already installed, which is about
@@ -80,7 +66,6 @@ jobs:
           PRINTER_IMAGE: ${{ vars.PRINTER_IMAGE }}
         run: |
           set -euo pipefail
-          curl -fsSL "$FACTORY" -o stock/factory.tar.xz
           echo "PROG_DUMP=\"$PWD/stock/factory.tar.xz\"" > test.env
           [ -z "${PRINTER_IMAGE:-}" ] || echo "PRINTER_IMAGE=\"$PRINTER_IMAGE\"" >> test.env
           cat test.env
@@ -89,10 +74,15 @@ jobs:
         run: |
           cat > config.env <<CFG
           MOD_NAME=anvil
-          # Tags are release dates: v20260823. A manual run has no tag -- and
-          # GITHUB_REF_NAME would be the branch there -- so leave it empty and
-          # let the build stamp today's UTC date itself.
-          MOD_VER=$(case "$GITHUB_REF" in refs/tags/*) echo "${GITHUB_REF_NAME#v}";; *) echo "";; esac)
+          # The tag is v<YYYYMMDD>-<city>; the package version is the date
+          # alone. FlashForge's installer reads this as the software version
+          # and it is compared as a number, so the codename stays in the tag.
+          # A manual run has no tag -- GITHUB_REF_NAME would be the branch --
+          # so leave it empty and let the build stamp today's UTC date.
+          MOD_VER=$(case "$GITHUB_REF" in
+                      refs/tags/*) echo "${GITHUB_REF_NAME#v}" | sed -n 's/^\([0-9]\{8\}\).*/\1/p' ;;
+                      *) echo "" ;;
+                    esac)
           SW_VER=""
           TARGET_MACHINE=Creator5Pro
           STOCK_TGZ_CREATOR5PRO="$PWD/stock/Creator5Pro-stock.tgz"
@@ -146,6 +136,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.tgz
+          # Every build so far is a pre-release: this replaces the stock UI on
+          # a machine whose only recovery path is a USB stick with the stock
+          # package on it. That is worth saying with the flag, not just in
+          # prose people scroll past.
+          prerelease: true
+          name: ${{ github.ref_name }}
           body: |
             Copy the file matching YOUR printer to the root of a FAT32 USB
             stick and power the machine on. A `Creator5Pro-` package will not
@@ -156,3 +152,11 @@ jobs:
             real FAT filesystem that the machine's own app_startup.sh found
             and installed -- and the machine was booted again afterwards and
             checked to come up.
+
+            **If the screen stays dark**, the UI has latched SAFE-MODE after
+            three failed boots and the printer is up headless: ssh in, or
+            reach Mainsail at `http://<printer-ip>/`. **To go back to stock**,
+            put FlashForge's own package on a USB stick and power on -- that
+            path is tested on every release too.
+
+            Releases are named for a Ukrainian city under occupation.
