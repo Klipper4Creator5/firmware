@@ -27,10 +27,10 @@ documented in the file headers.
 | [`payload/klipper/extras/ff_print.py`](../payload/klipper/extras/ff_print.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_print]` — takes over `SDCARD_PRINT_FILE` and `M23`, reads bed/nozzle/initial tool/first-layer height out of the file itself, and calls `FF_BEFORE_PRINT_START` before the file's first line and `FF_AFTER_PRINT_END` once the job leaves the printing state. Declared in `ff-print-macros.cfg`; holds no policy of its own |
 | [`payload/klipper/extras/ff_tool.py`](../payload/klipper/extras/ff_tool.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_tool n]` — one section per tool; `dock_x/dock_y`, `nozzle_x/y/z` and `z_adjust` are all autosaved (import or calibration + `SAVE_CONFIG`) |
 | [`payload/klipper/extras/ff_tool_offset.py`](../payload/klipper/extras/ff_tool_offset.py) | `/usr/prog/klipper/klippy/extras/` | `TOOL_OFFSET_CALIBRATE` / `STATION_CALIBRATE` / `TOOL_OFFSET_STATUS` — the touchscreen's nozzle XY/Z offset calibration, recovered from the binary and reimplemented in Klipper |
-| [`payload/klipper/extras/ff_legacy.py`](../payload/klipper/extras/ff_legacy.py) | `/usr/prog/klipper/klippy/extras/` | `FF_IMPORT_FIRMWARE_CONFIG` — one-shot import of the factory/touchscreen JSON into Klipper config. Needed once, at install |
+| [`payload/klipper/extras/ff_legacy.py`](../payload/klipper/extras/ff_legacy.py) | `/usr/prog/klipper/klippy/extras/` | `FF_IMPORT_FIRMWARE_CONFIG` — one-shot import of the factory/touchscreen JSON into Klipper config. Runs (and saves) by itself on the first boot; the command remains for doing it by hand |
 | [`payload/klipper/config/ff-toolchange.cfg`](../payload/klipper/config/ff-toolchange.cfg) | `/usr/data/config/` | empty `[ff_tool 0..3]` sections (the per-unit dock/nozzle data is autosaved, nothing unit-specific ships), `[ff_toolchange]` feeds/geometry, the `G28` dock-first wrapper |
 | [`payload/klipper/config/ff-tool-offset.cfg`](../payload/klipper/config/ff-tool-offset.cfg) | `/usr/data/config/` | `[ff_tool_offset]` — probe geometry and guards for the calibration commands |
-| [`payload/klipper/config/ff-legacy.cfg`](../payload/klipper/config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — stays included permanently; with `auto_import` it re-imports on every startup until a tool has a saved nozzle position, then does nothing |
+| [`payload/klipper/config/ff-legacy.cfg`](../payload/klipper/config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — stays included permanently; with `auto_import` it imports at startup until a tool has a saved nozzle position, and with `auto_save` the first import `SAVE_CONFIG`s itself (one restart, before the UI is up), after which it does nothing |
 | [`payload/klipper/config/ff-print-macros.cfg`](../payload/klipper/config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the `_FF_PREFLIGHT` calibration and tool-presence gate; declares `[ff_print]` and the `FF_BEFORE_PRINT_START` / `FF_AFTER_PRINT_END` entry points it calls |
 | [`payload/klipper/config/ff-filament.cfg`](../payload/klipper/config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
 | [`payload/klipper/config/ff-runout.cfg`](../payload/klipper/config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163, reported here in plain words); `ff_toolchange` arms only the mounted tool's sensors |
@@ -96,7 +96,8 @@ file. That is also why the includes live in `printer.base.cfg` and not there
 — and it makes the undo button work, since flashing the stock FlashForge
 package restores its own `printer.base.cfg` and the includes go with it.
 
-Flash, then jump to step 5 below to import your unit's calibration.
+Flash, and your unit's calibration imports itself on the first boot — step 5
+below says how, and step 6 how to check it.
 
 ### By hand
 
@@ -127,7 +128,7 @@ scp payload/klipper/config/ff-*.cfg \
 [include ff-print-macros.cfg]
 [include ff-runout.cfg]        ; after printer.base.cfg (overrides its sensor sections)
 [include ff-chamber.cfg]       ; M141/M191; follows whatever printer.chamber.cfg declared
-[include ff-legacy.cfg]        ; harmless to leave in — see step 8
+[include ff-legacy.cfg]        ; harmless to leave in — see step 7
 ```
 
    > **If you put these in `printer.cfg` instead, they must go ABOVE the
@@ -148,30 +149,34 @@ scp payload/klipper/config/ff-*.cfg \
 
 4. `RESTART` (or reboot).
 
-5. Import the factory/touchscreen calibration once:
+5. The factory/touchscreen calibration imports itself on that startup:
+   `[ff_legacy]` reads `extruder.json` / `test.json` / `zoffset.json`, stages
+   **your unit's** dock coordinates, nozzle and station values, station start
+   point and any per-tool Z tune, and — with `auto_save`, the default —
+   persists them with its own `SAVE_CONFIG` into `printer.cfg`'s `#*#` block.
+   That save restarts Klipper once more, straight after ready, which on a
+   flashed printer lands before HelixScreen is up: the wizard never meets an
+   uncalibrated machine. The manual form, for inspecting or with
+   `auto_save: False`:
 
    ```gcode
-   FF_IMPORT_FIRMWARE_CONFIG
+   FF_IMPORT_FIRMWARE_CONFIG            ; APPLY=0 to only print, stage nothing
+   SAVE_CONFIG
    ```
 
-   This reads `extruder.json` / `test.json` / `zoffset.json` and stages
-   **your unit's** dock coordinates, nozzle and station values, station
-   start point and any per-tool Z tune for `SAVE_CONFIG`. Nothing to
-   paste; it only prints an `[ff_toolchange]` snippet if a feed in the JSON
-   differs from the running config (it does not on a stock unit).
+   Nothing to paste either way; the import only prints an `[ff_toolchange]`
+   snippet if a feed in the JSON differs from the running config (it does not
+   on a stock unit).
 
-6. `SAVE_CONFIG` — persists the imported values into `printer.cfg`'s `#*#`
-   block and restarts.
-
-7. `TOOLCHANGE_STATUS` and `TOOL_OFFSET_STATUS` — every tool should show a
+6. `TOOLCHANGE_STATUS` and `TOOL_OFFSET_STATUS` — every tool should show a
    nozzle triple and a dock position, the station `z` must be present;
    nothing should say `NOT CALIBRATED`, "no dock position" or "unsaved
    calibration pending".
 
-8. Optionally remove the `[include ff-legacy.cfg]` line and `RESTART`. Not
-   required: the import is one-shot, and `ff_legacy`'s startup auto-import
-   returns early as soon as any tool has a nozzle position, so the section is
-   inert once step 6 has run. A flashed printer keeps it included.
+7. Optionally remove the `[include ff-legacy.cfg]` line and `RESTART`. Not
+   required: the import returns early as soon as any tool has a nozzle
+   position, so the section is inert once the import has been saved. A
+   flashed printer keeps it included.
 
 ## Verify
 

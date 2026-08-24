@@ -137,15 +137,12 @@ emergency stop within reach.
 ## Before your first print: calibrate
 
 **Prints refuse to start on an uncalibrated toolchanger — by design.** The
-sequence is short, and the first part of it may already have happened at boot;
-the status commands tell you.
+sequence is short, and the first part happens without you.
 
-1. Import your unit's factory calibration once, then persist it:
-
-   ```gcode
-   FF_IMPORT_FIRMWARE_CONFIG
-   SAVE_CONFIG
-   ```
+1. Your unit's factory calibration imports itself on the first boot after the
+   flash and is saved automatically — Klipper restarts once, before the
+   screen is up, and that is the last you hear of it. Check it took:
+   `TOOL_OFFSET_STATUS` should show a nozzle triple for every tool.
 
 2. **Take the PEI sheet off** — the calibration station sits below the bed
    plane — then home and calibrate:
