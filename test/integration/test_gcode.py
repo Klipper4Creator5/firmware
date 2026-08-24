@@ -1,45 +1,60 @@
-"""The feature-verification print must name commands this firmware has.
+"""The files in gcode/ must name commands this firmware has.
 
-bin/gen-test-gcode.py writes a print whose whole job is to exercise the macros
-the mod adds. That makes it the one artifact in the repo that goes stale
-silently: rename START_PRINT or drop TOOL_OFFSET_STATUS and the generator still
-produces a perfectly well-formed file, which then dies on the printer four
-minutes into a heat-up with a tool already grabbed.
+gcode/ holds the two files you send to a printer to prove the mod works:
+creator5-safe-moves.gcode, which is cold and stays 50 mm above the plate, and
+creator5-feature-test.gcode, which prints. They are hand-maintained G-code,
+which makes them the one artifact in the repo that goes stale silently: rename
+START_PRINT or drop TOOL_OFFSET_STATUS and both files still look perfectly
+well-formed, and then die on the printer four minutes into a heat-up with a
+tool already grabbed.
 
-So the checks here are the two the file cannot check for itself -- that every
-command in it is one the shipped configs and extras actually define, and that
-every coordinate is one the machine can reach. Both read the real payload;
-neither needs the proprietary package.
+So the checks here are the ones the files cannot make for themselves -- that
+every command in them is one the shipped configs and extras define, and that
+every coordinate is one the machine can reach. The safe file gets two more,
+because "cold, and never below Z50" is its entire reason to exist and is
+exactly the property an edit would quietly break.
+
+All of it reads the real payload; none of it needs the proprietary package.
 """
 import os
 import re
-import subprocess
-import sys
 
 import pytest
 
 from ffcfg import sections
 
-# Klipper's own commands. Everything else in the file has to come from the
+# Klipper's own commands. Everything else in the files has to come from the
 # payload, which is what test_every_command_is_defined proves.
 KLIPPER_BUILTINS = {"SET_PRESSURE_ADVANCE"}
+
+FEATURE = "creator5-feature-test.gcode"
+SAFE = "creator5-safe-moves.gcode"
+
+# The floor the safe file promises in its own header.
+SAFE_Z = 50.0
 
 MACRO = re.compile(r"^gcode_macro (\S+)$")
 REGISTERED = re.compile(r"register_command\(\s*['\"]([A-Z0-9_]+)['\"]")
 # A G-code word: G1, M106, T2. Anything else is a named command.
 GCODE_WORD = re.compile(r"^[GMT]\d+$")
-COORD = re.compile(r"\b([XYZ])(-?\d+(?:\.\d+)?)")
+COORD = re.compile(r"\b([XYZE])(-?\d+(?:\.\d+)?)")
 
 
 @pytest.fixture(scope="session")
-def generated(tmp_path_factory, root):
-    """The default file, straight from the generator."""
-    out = tmp_path_factory.mktemp("gcode") / "feature-test.gcode"
-    subprocess.run(
-        [sys.executable, os.path.join(root, "bin", "gen-test-gcode.py"),
-         "--out", str(out)],
-        check=True, capture_output=True)
-    return out.read_text(encoding="utf-8").splitlines()
+def gcodedir(root):
+    return os.path.join(root, "gcode")
+
+
+@pytest.fixture(scope="session")
+def files(gcodedir):
+    """Every shipped file, by name."""
+    out = {}
+    for name in sorted(os.listdir(gcodedir)):
+        if name.endswith(".gcode"):
+            path = os.path.join(gcodedir, name)
+            out[name] = open(path, encoding="utf-8").read().splitlines()
+    assert set(out) == {FEATURE, SAFE}, sorted(out)
+    return out
 
 
 @pytest.fixture(scope="session")
@@ -87,36 +102,71 @@ def commands(lines):
         yield n, word.upper(), rest
 
 
-def test_every_command_is_defined(generated, defined):
+@pytest.mark.parametrize("name", [FEATURE, SAFE])
+def test_every_command_is_defined(files, defined, name):
     """A macro rename must break this file here, not on the printer."""
-    unknown = sorted({word for _, word, _ in commands(generated)
+    unknown = sorted({word for _, word, _ in commands(files[name])
                       if not GCODE_WORD.match(word) and word not in defined})
     assert not unknown, (
-        "the test print calls commands nothing in payload/ defines: %s"
-        % ", ".join(unknown))
+        "%s calls commands nothing in payload/ defines: %s"
+        % (name, ", ".join(unknown)))
 
 
-def test_toolchange_macros_are_the_real_ones(generated, defined):
-    """The point of the file is the macros the mod adds -- prove it calls them.
+@pytest.mark.parametrize("name", [FEATURE, SAFE])
+def test_moves_stay_inside_the_machine(files, limits, name):
+    """Every coordinate within the axis limits Klipper is configured with.
 
-    Without this the first test passes on a file that calls nothing but
-    builtins, which is a well-formed print and a worthless verification.
+    Both files keep the printed and traversed shapes well inside the bed, but
+    the feature print's prime lines deliberately reach out to X256 where the
+    machine's own start block primes, so "inside the bed" is the wrong bound to
+    assert. The stepper limits are the real one: past them Klipper aborts.
     """
-    called = {word for _, word, _ in commands(generated)}
+    bad = []
+    for n, word, rest in commands(files[name]):
+        if word not in ("G0", "G1"):
+            continue
+        for axis, value in COORD.findall(rest):
+            if axis == "E":
+                continue
+            lo, hi = limits[axis]
+            if not lo <= float(value) <= hi:
+                bad.append("line %d: %s%s outside %s %.1f..%.1f"
+                           % (n, axis, value, axis, lo, hi))
+    assert not bad, "%s:\n%s" % (name, "\n".join(bad))
+
+
+@pytest.mark.parametrize("name", [FEATURE, SAFE])
+def test_extrusion_is_never_left_absolute(files, name):
+    """M83 is set once and must stay set.
+
+    An M82 after it turns the first E of the next move into an absolute
+    target -- a single retraction becomes a 100 mm unspooling.
+    """
+    for n, word, _ in commands(files[name]):
+        assert word != "M82", "%s line %d switches to absolute E" % (name, n)
+
+
+def test_feature_print_calls_the_macros_it_exists_to_test(files, defined):
+    """Without this the file could call nothing but builtins.
+
+    That is still a well-formed print, and a worthless verification.
+    """
+    called = {word for _, word, _ in commands(files[FEATURE])}
     for required in ("START_PRINT", "END_PRINT", "TOOLCHANGE_STATUS",
                      "TOOL_OFFSET_STATUS", "M141"):
-        assert required in called, "%s is not exercised by the test print" % required
+        assert required in called, "%s does not exercise %s" % (FEATURE, required)
 
 
-def test_tools_param_matches_the_tools_used(generated):
+def test_feature_print_declares_every_tool_it_uses(files):
     """START_PRINT TOOLS= is the preflight gate: it has to list every tool.
 
     A tool missing from TOOLS= is not purged, not wiped and not checked for
     presence -- it fails at its grab, mid-print, with filament down.
     """
-    used = {int(word[1:]) for _, word, _ in commands(generated)
+    lines = files[FEATURE]
+    used = {int(word[1:]) for _, word, _ in commands(lines)
             if re.match(r"^T\d$", word)}
-    start = [rest for _, word, rest in commands(generated) if word == "START_PRINT"]
+    start = [rest for _, word, rest in commands(lines) if word == "START_PRINT"]
     assert len(start) == 1, start
     m = re.search(r"TOOLS=(\S+)", start[0])
     assert m, start[0]
@@ -126,31 +176,39 @@ def test_tools_param_matches_the_tools_used(generated):
         % (sorted(declared), sorted(used)))
 
 
-def test_moves_stay_inside_the_machine(generated, limits):
-    """Every coordinate within the axis limits Klipper is configured with.
+def test_safe_file_never_descends_below_its_floor(files):
+    """The whole promise of the safe file, in one assertion.
 
-    The generator keeps the printed shapes well inside the bed, but the prime
-    lines deliberately reach out to X256 where the machine's own start block
-    primes, so 'inside the bed' is the wrong bound to assert. The stepper
-    limits are the real one: past them Klipper aborts the print.
+    G28 itself has to touch the eddy sensor, and carries no Z word; every
+    commanded Z after it is bounded here.
     """
     bad = []
-    for n, word, rest in commands(generated):
+    for n, word, rest in commands(files[SAFE]):
         if word not in ("G0", "G1"):
             continue
         for axis, value in COORD.findall(rest):
-            lo, hi = limits[axis]
-            if not lo <= float(value) <= hi:
-                bad.append("line %d: %s%s outside %s %.1f..%.1f"
-                           % (n, axis, value, axis, lo, hi))
+            if axis == "Z" and float(value) < SAFE_Z:
+                bad.append("line %d: Z%s is below the Z%.0f floor"
+                           % (n, value, SAFE_Z))
     assert not bad, "\n".join(bad)
 
 
-def test_relative_extrusion_is_never_left_absolute(generated):
-    """The start block sets M83 and every E in the body is an increment.
+def test_safe_file_is_cold_and_extrudes_nothing(files):
+    """No E word, and no heater ever given a target.
 
-    An M82 anywhere after it would turn the first E of the next move into an
-    absolute target -- a single retraction becomes a 100 mm unspooling.
+    "No filament needed" is a promise made to someone standing at a machine
+    they have just flashed, and an M104 slipped in later would break it
+    silently -- the file would still run, and still look safe.
     """
-    for n, word, _ in commands(generated):
-        assert word != "M82", "line %d switches to absolute E mid-file" % n
+    for n, word, rest in commands(files[SAFE]):
+        assert word not in ("M104", "M109", "M140", "M190", "M191",
+                            "SET_HEATER_TEMPERATURE"), (
+            "line %d gives a heater a target: %s %s" % (n, word, rest))
+        if word in ("G0", "G1"):
+            assert "E" not in {a for a, _ in COORD.findall(rest)}, (
+                "line %d extrudes: %s %s" % (n, word, rest))
+    # M141 is the exception and is deliberate: the chamber gate is the thing
+    # being tested, and the file sets it straight back to 0.
+    chamber = [rest for _, word, rest in commands(files[SAFE]) if word == "M141"]
+    assert chamber and chamber[-1].strip() == "S0", (
+        "the safe file must leave the chamber off, got %s" % chamber)

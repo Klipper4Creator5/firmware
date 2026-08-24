@@ -126,13 +126,38 @@ Then motion, which is the part that can damage the machine:
 - [ ] `TOOLCHANGE_STATUS` responds in the Mainsail console
 - [ ] home all axes — watch the first Z move
 - [ ] one tool change, by hand, at temperature
-- [ ] a single-tool test print — `make test-gcode TOOLS=0`
-- [ ] a multi-tool test print — `make test-gcode TOOLS=0,1`
+- [ ] `gcode/creator5-safe-moves.gcode` — cold, 50 mm above the plate
+- [ ] `gcode/creator5-feature-test.gcode` — the real thing, two tools
 
-## The feature-verification print
+## The two verification files
 
-`make test-gcode` writes `dist/creator5-feature-test-T0T1.gcode`. It is not a
-model. It is one file that drives every macro the mod adds, in the order a real
+`gcode/` holds them. They are hand-maintained G-code, not generated: send them
+to the printer the way you send any print — Mainsail's upload, or OrcaSlicer's
+Klipper/Moonraker target. Each one's own header repeats everything below, so
+whoever is standing at the machine has it in front of them.
+
+### First: `creator5-safe-moves.gcode`
+
+The feature print with the heat and the filament taken out. Once homed, no move
+in it goes below Z50; nothing extrudes and no heater is given a target. It
+answers three questions — does the `G28` wrapper home safely, docking a mounted
+tool first; does a tool change latch and release; do the fans, the chamber gate
+and `END_PRINT` do what they claim — and it answers them before a nozzle can
+reach the plate.
+
+It names no tool as a bare `Tn` and carries no `M104`/`M140`, so `ff_print`
+derives nothing from it and the implicit prepare has nothing to heat or purge.
+That makes it safe whether `FF_BEFORE_PRINT_START.prepare` is 0 or 1.
+
+Two refusals it may produce are the gates working, not faults: the calibration
+refusal from Mainsail's print entry point (override deliberately with
+`SET_GCODE_VARIABLE MACRO=_FF_JOB VARIABLE=allow_uncalibrated VALUE=1`), and
+"Refusing to home Z: cannot tell whether a tool is mounted", which means the
+dock switches disagree — run `TOOLCHANGE_STATUS` and find the one that is lying.
+
+### Then: `creator5-feature-test.gcode`
+
+Not a model. One file that drives every macro the mod adds, in the order a real
 print drives them, and leaves something on the plate you can measure:
 
 | Phase | What it proves |
@@ -152,21 +177,27 @@ a print does not have, so the file only reads the geometry. And it contains no
 `PAUSE`: press Pause in Mainsail during the tower and then Resume, which is the
 one check that wants a human at the machine.
 
-Send it to the printer the way you send any print — Mainsail's upload, or
-OrcaSlicer's Klipper/Moonraker target. Before the first run, turn the implicit
-prepare off, because this file's start block calls `START_PRINT` itself:
+Unlike the safe file, this one **needs** the implicit prepare turned off,
+because its start block calls `START_PRINT` itself:
 
 ```
 SET_GCODE_VARIABLE MACRO=FF_BEFORE_PRINT_START VARIABLE=prepare VALUE=0
 ```
 
 Preparing twice misplaces nothing, but it re-homes and re-purges every tool for
-no reason. The file's own header repeats this, along with what to watch for at
-each phase.
+no reason.
 
-`--tools`, `--nozzle`, `--bed`, `--tower-layers` and the rest are on
-`bin/gen-test-gcode.py --help`. `make test-py` checks the generated file
-against the shipped macros and the configured axis limits, so a renamed macro
+It is set up for T0 and T1 at 220 °C on a 60 °C bed. To exercise different
+tools, edit the `TOOLS=` list in `START_PRINT` and the `T<n>` lines in the body
+to match — `make test-py` will tell you if the two disagree, which is the one
+mistake that costs a print.
+
+### Keeping them honest
+
+`make test-py` checks both files against the shipped macros and the configured
+axis limits: every command in them must be one `payload/klipper/config/` or
+`payload/klipper/extras/` defines, `TOOLS=` must list every tool the feature
+print uses, and the safe file must stay cold and above Z50. A renamed macro
 breaks the suite rather than the print.
 
 The `.cfg` includes are **not** wired up automatically — a tuned `printer.cfg`
