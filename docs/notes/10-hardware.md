@@ -7,7 +7,7 @@
 | `mcu` | (main board, see printer.base.cfg on device) | X/Y/Z steppers, bed heater `PD2`, bed thermistor `PC3` |
 | `eboard` | `/dev/ttyS5` | Carriage extruder board — ONE stepper driver shared by whichever head is mounted (`PB14/PB15/PB12`) |
 | `eheaterboard` | `/dev/ttyS4` | 4 hotend heaters `PC6..PC9`, 4 thermistors `PC0/PA4/PA5/PA7`, 24V rail `PA3` |
-| `levelboard` | `/dev/ttyS7` | Eddy-current probe (bed leveling + nozzle offset sensing) |
+| `levelboard` | `/dev/ttyS7` | The fixed inductive "cylinder" under the bed — all three `[e_stop X/Y/Z]` sit on `levelboard:PD0` and drive the nozzle-offset calibration. The *carriage* eddy used for G28 Z and bed mesh is `[probe]` on `eboard:PG0` — see `25-app-vs-klipper-ownership.md` |
 
 The app pokes ttyS4/S5/S7 (sends a char, waits for "Ready") before starting Klipper.
 Other serial: `/dev/ttyS3` = drying box (own protocol, not a Klipper MCU).
@@ -88,11 +88,14 @@ sensors, max_temp 350.
 - Fans: `fan_generic fanM106` (part fan, via custom `SET_FAN_M106`), `chamber_fan`,
   `chamber_cool_fan`, `chamber_heat_fan`, `chamber_loop_fan`.
 - Buttons (`gcode_button`): `extruder_pos1..4` (head present in dock N),
-  `extruder_grab`, `extruder_grab1..4` (head on carriage), `extruder_check_pos`,
-  `servo_min`/`servo_max` (lock end positions), `frontDoor`, `topDoor`, `motor_pin`.
+  `extruder_grab1..4` (head on carriage), `frontDoor`, `topDoor`. That is the
+  whole family — confirmed against this printer's `printer.base.cfg` (see
+  `ff-toolchange.cfg`'s sensor note): there is no bare `extruder_grab`, no
+  `extruder_check_pos`, no `servo_min`/`servo_max`, and `motor_pin` is
+  commented out in `printer.motor.cfg`.
 - Filament: `filament_switch_sensor fd_ex0..3` (presence), custom motion sensors
   `fm_ex0..3`.
-- Steppers: `manual_stepper gear_stepper` (feed hub; its endstop doubles as the lock
-  status signal — see `30-toolchange.md`).
+- Steppers: `manual_stepper gear_stepper` (the tool LOCK motor, not a feeder; its
+  endstop doubles as the lock status signal — see `30-toolchange.md`).
 - Fork's `virtual_sdcard` extra status fields: `channel`, `refuelling`,
   `after_channel_g1`, `doingChangeEx`.

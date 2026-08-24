@@ -4,7 +4,7 @@
 #
 # It carries qemu-mipsel-static and nothing else of consequence: every command
 # the tests care about is executed by the printer's OWN busybox/coreutils out of
-# the extracted rootfs.squashfs, under chroot. See test/integration/printer-exec.sh.
+# the extracted rootfs.squashfs, under chroot. See test/integration/printer-exec.py.
 FROM debian:bookworm-slim
 
 RUN apt-get update -qq \

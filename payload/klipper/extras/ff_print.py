@@ -7,7 +7,7 @@
 #   that prepares the machine: something must home, clean and grab a tool
 #   BEFORE the file's first line.  The touchscreen app did exactly that -- it
 #   ran its whole prepare sequence and only then sent M23/M24 (see
-#   OKF/61-print-lifecycle-verified.md).  It never subscribed to a print-start
+#   docs/notes/50-print-lifecycle.md).  It never subscribed to a print-start
 #   event, because it *was* the thing starting the print.
 #
 #   This module restores that ordering for prints started from Moonraker /

@@ -6,12 +6,14 @@
 # /usr/data/anvil/init.d/S60web, so there is exactly one place that starts
 # nginx and moonraker and one place to restart them from over ssh.
 #
-# Two changes from stock:
+# Three changes from stock:
 #   * klipper_pri.sh is actually invoked. FlashForge ships that script but
 #     never calls it, so klippy runs at normal priority.
 #   * ff-mcu-bringup.py hands the heat and level boards over from their
 #     bootloaders. Stock never needed it here because firmwareExe did all
 #     three boards itself; replacing firmwareExe left two of them stranded.
+#   * the /tmp/uds idempotence guard below, so S70klipper's retry loop cannot
+#     start a second klippy against the same MCU.
 
 cmd_mcu write_firmware /usr/prog/libmcu-bare.bin
 cmd_mcu bootup

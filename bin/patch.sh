@@ -18,7 +18,7 @@ skip() { printf '   (skip) %s\n' "$*"; }
 MODDIR=/usr/data/anvil
 # The mod payload is built OUTSIDE the software component on purpose. The
 # software component is extracted to /usr/prog/PROGRAM/software/<ver>/ -- the
-# firmware partition, of which the installer keeps two versions. Mainsail and
+# firmware partition, of which the installer keeps only one version. Mainsail and
 # HelixScreen are ~100MB and would overflow it. They ride in the outer package
 # instead, land in /usr/data/update/ (data partition), and are moved to
 # /usr/data/anvil from there.
@@ -75,8 +75,9 @@ if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     say "Toolchange: ff_*.py + configs"
     mkdir -p "$SW/klipper/extras"
     cp -f payload/klipper/extras/ff_*.py "$SW/klipper/extras/"
-    # .cfg files belong on the data partition; run.sh installs them without
-    # clobbering a config the user already tuned.
+    # .cfg files belong on the data partition. These are mod-owned: run.sh
+    # overwrites them on every update (test_config_ownership.py enforces it).
+    # User changes go in printer.cfg, which no flash ever writes.
     cp -f payload/klipper/config/ff-*.cfg "$MP/config/"
     # Our printer.base.cfg is FlashForge's with the chamber block replaced by
     # [include printer.chamber.cfg] -- Klipper can override an option but
@@ -215,6 +216,8 @@ if [ "${BUILD_HELIX:-1}" = "1" ]; then
     mkdir -p "$MP/helixscreen/config/printer_database.d"
     cp -f payload/helixscreen/printer_database.d/*.json \
           "$MP/helixscreen/config/printer_database.d/"
+    # Optional platform hook. No such file is in the repo, so this never fires
+    # on a stock checkout -- drop one in assets/ to have it shipped.
     [ -f assets/hooks-creator5.sh ] && \
         cp -f assets/hooks-creator5.sh "$MP/helixscreen/assets/config/platform/"
     du -sh "$MP/helixscreen" | awk '{print "   "$1}'
@@ -338,4 +341,4 @@ echo
 echo "Patched."
 echo "  software component: $(du -sh "$SW" | cut -f1)  (-> /usr/prog, firmware partition)"
 echo "  mod payload:        $(du -sh "$MP" | cut -f1)  (-> /usr/data/anvil, data partition)"
-echo "Now run ./pack.sh"
+echo "Now run ./bin/pack.sh"

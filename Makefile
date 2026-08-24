@@ -79,7 +79,7 @@ help:
 	@echo 'Recovery: keep a copy of the STOCK FlashForge .tgz on a spare stick.'
 	@echo 'Flashing it restores every file the mod touches (see make test-recovery).'
 	@echo
-	@echo 'Test -- four gates, no more:'
+	@echo 'Test:'
 	@echo '  make test             all of them'
 	@echo '  make test-py          pytest: the config gate, plus rootfs paths if extracted'
 	@echo '  make test-install     end-to-end: USB stick -> update -> reboot'

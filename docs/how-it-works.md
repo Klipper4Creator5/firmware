@@ -48,8 +48,9 @@ S80ui        decides whether the UI runs; owns SAFE-MODE
 
 Everything the mod installs lives under `/usr/data/anvil` on the **data**
 partition, which a FlashForge OTA cannot delete. The software component itself
-goes to `/usr/prog` on the firmware partition, which only holds two versions
-and cannot fit ~100MB of web UI — that is why Mainsail and HelixScreen ride in
+goes to `/usr/prog` on the firmware partition, which keeps only one version
+(the installer wipes every other version directory) and cannot fit ~100MB of
+web UI — that is why Mainsail and HelixScreen ride in
 the outer package instead.
 
 ## Moonraker

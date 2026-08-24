@@ -30,7 +30,7 @@ firmwareExe (touchscreen app)
  │                            ├─ mcu           main board: X/Y/Z, bed
  │                            ├─ eboard        /dev/ttyS5 carriage extruder driver
  │                            ├─ eheaterboard  /dev/ttyS4 4 hotend heaters + 24V
- │                            └─ levelboard    /dev/ttyS7 eddy-current probe
+ │                            └─ levelboard    /dev/ttyS7 fixed under-bed cylinder
  ├─ DryingService ──/dev/ttyS3──► filament drying box (own MCU, not Klipper)
  ├─ OrcaServer / MQTT cloud / camera
  └─ /usr/data/firmwareRes/config/*.json — per-unit calibration + state
@@ -38,12 +38,16 @@ firmwareExe (touchscreen app)
 
 ## Printer facts
 
-- 4-tool toolchanger: docked heads T0–T3 at X≈250–280, picked up by the X carriage
+- 4-tool toolchanger: docked heads T0–T3 at X≈297 (250/280 are the staging and
+  approach waypoints, not the docks), picked up by the X carriage
   with a lock motor (current sensing via `temperature_sensor motor_value`).
-- Bed ~250×250, 10×10 eddy bed mesh; eddy probe also used for nozzle XY/Z offset
-  calibration.
-- 4 filament channels with feed hub (`manual_stepper gear_stepper`), presence sensors
-  `fd_ex0..3`, motion sensors `fm_ex0..3`.
+- Bed ~250×250, 10×10 bed mesh from the carriage eddy (`[probe]`, `eboard:PG0`).
+  Nozzle XY/Z offset calibration uses a different sensor: the fixed inductive
+  cylinder under the bed (`[e_stop X/Y/Z]` on `levelboard:PD0`).
+- 4 filament channels, each a direct-drive extruder on its own head — there is no
+  feed hub; `manual_stepper gear_stepper` is the tool LOCK motor (see
+  `47-filament-load-recovered.md`). Presence sensors `fd_ex0..3`, motion sensors
+  `fm_ex0..3`.
 - Chamber heater + 4 fans + LED, front/top door switches.
 
 ## Method

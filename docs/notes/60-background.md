@@ -6,7 +6,8 @@ handles all of this. Kept as reference for future work.
 ## Filament system
 
 - 4 channels; per-channel presence (`fd_ex0..3`) and motion/clog (`fm_ex0..3`)
-  sensors; feed hub `manual_stepper gear_stepper`. Errors: E0162 runout, E0163 clog.
+  sensors; `manual_stepper gear_stepper` is the tool lock motor, not a feed hub.
+  Errors: E0162 runout, E0163 clog.
 - **Runout auto-swap** (the flagship app feature): on runout mid-print the app pauses,
   finds another channel with the same material/color, switches channel (possibly a
   head change), refeeds, purges, restores position and resumes. All app-side.

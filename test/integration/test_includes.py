@@ -29,7 +29,8 @@ import pytest
 INCLUDE = re.compile(r"^\[include\s+(\S+)\]\s*$")
 
 # Everything the mod ships, in the order printer.base.cfg must list them.
-# ff-runout and ff-chamber are last because they override earlier sections.
+# ff-runout and ff-chamber come after the stock sections they override;
+# ff-legacy is last, so its import sees every [ff_tool] already declared.
 EXPECTED = [
     "ff-toolchange.cfg",
     "ff-tool-offset.cfg",

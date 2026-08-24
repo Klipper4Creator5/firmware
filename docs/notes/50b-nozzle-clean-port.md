@@ -61,7 +61,7 @@ temperature per extruder is the same information from the other side.
 
 ## OrcaSlicer
 
-`assets/orca/machine-start-gcode.txt` builds TOOLS/TEMPS from `is_extruder_used[n]` and
+A slicer-side start-gcode snippet can build TOOLS/TEMPS from `is_extruder_used[n]` and
 `nozzle_temperature_initial_layer[n]`. Verify once in your Orca version that
 `is_extruder_used` resolves (it is a PrusaSlicer-lineage placeholder); fall back to
 `TOOLS=[initial_extruder]` if the G-code export complains.

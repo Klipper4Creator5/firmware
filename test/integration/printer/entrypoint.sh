@@ -21,7 +21,7 @@ FF_KEY="${FF_KEY:-FFP0331&*%root}"
 
 # USB_STICK=1 -- build a real FAT filesystem out of the packages before the
 # machine is assembled, so app_startup.sh can find and mount it itself. See
-# assemble.sh for the loop device, and case-boot.sh for what uses it.
+# assemble.sh for the loop device, and case-install.sh for what uses it.
 if [ "${USB_STICK:-0}" = 1 ]; then
     SZ=64
     for spec in ${PKGS:-}; do

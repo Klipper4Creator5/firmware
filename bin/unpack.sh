@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # 1/3 -- decrypt the stock package and open the software component.
 #
-#   ./unpack.sh            uses $STOCK_TGZ from config.env
-#   ./unpack.sh <file>     unpack some other package
+#   ./bin/unpack.sh            uses $STOCK_TGZ from config.env
+#   ./bin/unpack.sh <file>     unpack some other package
 #
 # Result:
 #   work/outer/      the 8 top-level files (runFirmwareExe.sh, *.tar.xz, imgs)
@@ -75,6 +75,6 @@ if [ -f "$STOCK_BASE" ] && [ -f "$OURS" ]; then
 fi
 
 echo
-echo "Unpacked. Edit work/software/ then run ./pack.sh"
+echo "Unpacked. Edit work/software/ then run ./bin/pack.sh"
 echo "  stock software version: $STOCK_SW_VER"
 echo "  files: $(find work/software -type f | wc -l)"

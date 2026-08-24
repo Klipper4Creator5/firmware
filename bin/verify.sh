@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Simulate every check the printer performs, against a built package.
-#   ./verify.sh                      verify work/out/Creator5Pro-*.tgz
-#   ./verify.sh path/to/pkg.tgz
+#   ./bin/verify.sh                      verify work/out/Creator5Pro-*.tgz
+#   ./bin/verify.sh path/to/pkg.tgz
 set -uo pipefail
 . "$(dirname "$0")/common.sh"
 
 # Default to the package for the model currently selected, not a hardcoded
 # one -- otherwise a two-model release verifies the same file twice.
 PKG="${1:-$(ls -1 "work/out/${TARGET_MACHINE:-Creator5Pro}"-*.tgz 2>/dev/null | head -n1)}"
-[ -f "${PKG:-}" ] || { echo "no package; run ./pack.sh" >&2; exit 1; }
+[ -f "${PKG:-}" ] || { echo "no package; run ./bin/pack.sh" >&2; exit 1; }
 echo "verifying $PKG"; echo
 
 FAIL=0

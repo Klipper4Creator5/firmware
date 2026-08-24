@@ -3,8 +3,7 @@
 # A faithful port of firmwareExe's own sequences, recovered from the binary:
 #   CommMgr::doGrabExtruderLatest    @ 0x7a8190
 #   CommMgr::doReleaseExtruderLatest @ 0x7aa394
-# See OKF/31-recovered-toolchange-sequences.md and
-# firmwareExe-decompiled/recovered/toolchange.c.
+# See docs/notes/30-toolchange.md.
 #
 # This exists as a Python extra rather than a set of gcode_macros because the
 # original is a polling state machine: it waits for sensors, retries, and only
@@ -187,7 +186,7 @@ class FFToolchange:
 
         # Per-tool G-code offsets -- differences against a base tool, exactly
         # as CommMgr::setGrabGcodeOffsetMgr computes them. See _derive_offsets
-        # and OKF/33-per-tool-offsets.md.
+        # and docs/notes/40-offsets.md.
         self.offset_base = config.getint('offset_base', 0,
                                          minval=0, maxval=EXTRUDER_COUNT - 1)
         self.off_x = self.off_y = self.off_z = [0.0] * EXTRUDER_COUNT
@@ -1105,7 +1104,7 @@ class FFToolchange:
                   100.0 @0xedc950, cutoff 10 is the `slti 0xb` @0x9fc6c8
         The JSON-sourced factors: tempOffset (testConfig+0xc, 0.00045 here),
         t*_offset_z / z_station_pos = nozzle-touch vs eddy-touch calibration
-        against the fixed under-bed sensor. Derivation: OKF/62.
+        against the fixed under-bed sensor. Derivation: docs/notes/40-offsets.md.
 
         The gap term (nozzle_z - station_z + z_adjust) is already the grab
         offset (off_z, applied by every T<n>); this command re-asserts it and

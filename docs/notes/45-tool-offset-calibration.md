@@ -12,20 +12,25 @@ per-tool sections, modelled on `[bed_mesh <profile>]` / klipper-toolchanger's `[
 
 | file | role |
 |---|---|
-| `payload/klipper/extras/ff_tool.py` | `[ff_tool n]`: `dock_x/dock_y` hand-written; `nozzle_x/y/z` (measured) and `z_adjust` (user per-tool Z correction, `TOOL_Z_ADJUST`) autosaved |
+| `payload/klipper/extras/ff_tool.py` | `[ff_tool n]`: `dock_x/dock_y` (autosaved by `FF_IMPORT_FIRMWARE_CONFIG`), `nozzle_x/y/z` (measured) and `z_adjust` (user per-tool Z correction, `TOOL_Z_ADJUST`) all autosaved |
 | `payload/klipper/extras/ff_tool_offset.py` | `TOOL_OFFSET_CALIBRATE`, `STATION_CALIBRATE`, `TOOL_OFFSET_STATUS`; `[ff_tool_offset]` holds `station_x/y/z` (autosaved) + probe geometry |
 | `payload/klipper/extras/ff_toolchange.py` | takes docks/offsets from the `ff_tool` objects; `refresh_offsets()`; `_station_z()`; JSON reader and `TOOLCHANGE_RELOAD` removed |
 | `payload/klipper/extras/ff_legacy.py` | `FF_IMPORT_FIRMWARE_CONFIG [DIR=] [APPLY=1]` — one-shot import of extruder/test/zoffset.json |
-| `payload/klipper/config/ff-toolchange.cfg` | `[ff_tool 0..3]` with this unit's docks + `[ff_toolchange]` |
+| `payload/klipper/config/ff-toolchange.cfg` | four deliberately empty `[ff_tool 0..3]` sections + `[ff_toolchange]`. Per-unit values must NOT go here — `SAVE_CONFIG` refuses to autosave an option an include already sets |
 | `payload/klipper/config/ff-tool-offset.cfg`, `payload/klipper/config/ff-legacy.cfg` | sections for the other two extras |
 
 ## Storage layout
 
+Everything per-unit lands in printer.cfg's `SAVE_CONFIG` block. The shipped
+`ff-toolchange.cfg` sections stay empty.
+
 ```
-# hand-written (ff-toolchange.cfg)          # SAVE_CONFIG block of printer.cfg
+# shipped, empty (ff-toolchange.cfg)        # SAVE_CONFIG block of printer.cfg
 [ff_tool 1]                                 #*# [ff_tool 1]
-dock_x: 296.538940                          #*# nozzle_x = 16.407789
-dock_y: 106.336197                          #*# nozzle_y = 211.986710
+                                            #*# dock_x = 296.538940
+                                            #*# dock_y = 106.336197
+                                            #*# nozzle_x = 16.407789
+                                            #*# nozzle_y = 211.986710
                                             #*# nozzle_z = 1.426736
 [ff_tool_offset]                            #*# [ff_tool_offset]
 #cylinder_x: 28.5                           #*# station_x = 28.791826
@@ -46,20 +51,25 @@ dock_y: 106.336197                          #*# nozzle_y = 211.986710
 
 ## Install / first run
 
+A built package needs none of this — it installs the extras and
+`printer.base.cfg` ships the whole `ff-*.cfg` include block at its end. By
+hand, onto a printer that is already modded:
+
 ```
 cp payload/klipper/extras/ff_*.py /usr/prog/klipper/klippy/extras/
-# printer.cfg, after [virtual_sdcard]:
-#   [include ff-toolchange.cfg]  [include ff-tool-offset.cfg]  [include ff-legacy.cfg]
+# Nothing to add to printer.cfg: printer.base.cfg already includes the
+# ff-*.cfg set. Section order does not matter.
 RESTART
-FF_IMPORT_FIRMWARE_CONFIG        ; stages factory nozzle/station; prints dock/feed snippet
+FF_IMPORT_FIRMWARE_CONFIG        ; stages factory dock/nozzle/station
 SAVE_CONFIG
 TOOLCHANGE_STATUS                ; all four tools calibrated, station_z present
-# later, PEI off, homed:
-STATION_CALIBRATE
-TOOL_OFFSET_CALIBRATE TOOL=ALL
+# later, PEI off, homed -- both commands REFUSE without PLATE_REMOVED=1:
+STATION_CALIBRATE PLATE_REMOVED=1
+TOOL_OFFSET_CALIBRATE TOOL=ALL PLATE_REMOVED=1
 SAVE_CONFIG
 ```
-Remove `ff-legacy.cfg` afterwards; it is only needed once.
+`ff-legacy.cfg` stays included permanently: with `auto_import` (the default)
+it re-imports on every startup until a tool has a saved nozzle position.
 
 ## Safety on an uncalibrated machine (added 2026-08-21, user request)
 
@@ -95,9 +105,9 @@ points use the 3-decimal-rounded centre actually commanded; `fit_circle` is the 
 Emitted G-code order matches the recovered list; fitted centre = virtual centre; autosave
 receives exactly `nozzle_x/y/z` for the calibrated tool and `station_x/y/z`; live offsets
 update without restart; `TOOLCHANGE_SET_PRINT_OFFSET` gives 3.240 for T0/220 °C/80 °C/0.25 mm
-(OKF/62's value) and refuses without `station_z`; `TOOL_Z_ADJUST` applies live and stages;
+(the value in docs/notes/40-offsets.md) and refuses without `station_z`; `TOOL_Z_ADJUST` applies live and stages;
 PLATE_REMOVED gate, bounded Z target, gap and residual guards all fire; `FF_IMPORT_FIRMWARE_CONFIG` against
-`live/firmwareRes-config` stages 15 values and reproduces the OKF/33 offset table.
+`live/firmwareRes-config` stages 15 values and reproduces the offset table in docs/notes/40-offsets.md.
 **Not yet run on the printer.**
 
 ## Not recoverable / open

@@ -43,8 +43,10 @@ MOD_WEB="${MOD_WEB:-1}"
 # downloaded on demand rather than vendored, so the repo carries no binaries
 # and no binary history. versions.env pins the version and the sha256;
 # bin/fetch-assets.sh puts the file in vendor/. Point MAINSAIL_ZIP /
-# HELIX_TGZ / MOONRAKER_TGZ at your own build in config.env to override -- an
-# explicit path is never overwritten.
+# HELIX_TGZ / MOONRAKER_TGZ at your own build in config.env to override --
+# but an explicit path is checksummed like any other, and fetch-assets.sh
+# overwrites it with the pinned release when the hash does not match. Put
+# your file's own sha256 in versions.env to keep it.
 # shellcheck disable=SC1091
 [ -f "$ROOT/versions.env" ] && . "$ROOT/versions.env"
 MAINSAIL_ZIP="${MAINSAIL_ZIP:-$ROOT/vendor/mainsail-${MAINSAIL_VERSION:-unpinned}.zip}"

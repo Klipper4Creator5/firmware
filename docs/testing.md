@@ -8,8 +8,8 @@ is on.
 **Without firmware.** A synthetic fixture
 (`test/integration/make-stock-fixture.sh`) reproduces the package *structure*,
 so shell syntax, the bashism pass, the pytest config gate and the whole
-packaging pipeline run in CI on a clean machine. This is roughly half the
-gates, and it is the half that catches a chamber heater declared on a machine
+packaging pipeline run in CI on a clean machine. This is the half that catches
+a chamber heater declared on a machine
 that has no element for it — the replica cannot, because it never starts
 klippy.
 
@@ -53,7 +53,7 @@ make test            # everything below
 | `test-mcu` | Runs `ff-mcu-bringup.py` on the printer's **own** Python 3.8.2 in the exact environment `start.sh` sets — the only gate that executes our Python on the real interpreter, and the one that pins the `LD_LIBRARY_PATH` regression that shipped broken once | yes |
 | `test-recovery` | Installs the mod, then flashes the **stock** package, and asserts the machine is genuinely back to stock byte-for-byte and the leftover payload is inert | yes |
 
-Four gates, deliberately. `test-install` boots the machine, so it independently
+Few entry points, deliberately. `test-install` boots the machine, so it independently
 covers what `verify.sh` checks, parses every installed script with the same
 busybox that `test-ash` used, and reads `c_helper.so`'s ELF header the way
 `test-abi` did — the separate checks were the weaker copies.
@@ -65,8 +65,8 @@ half with a loud message when no stock package is configured;
 `REQUIRE_PRINTER_SIM=1` turns that skip into a failure.
 
 **A skip is not a pass.** `run-tests.py` counts skips separately and exits
-non-zero if any gate did not run. This matters more with four gates than it
-did with twelve — and it is not hypothetical, see `test-abi` below.
+non-zero if any gate did not run. This matters more the fewer gates there are
+— and it is not hypothetical, see `test-abi` below.
 
 Accepting a gap is deliberate and has two forms:
 
@@ -198,8 +198,8 @@ Tests that cannot fail are worse than no tests, because they read as coverage:
   honest but not useful enough to earn its place, and the whole check is gone.
 - **The hand-rolled bashism grep in `run-tests.sh`.** It knew five constructs;
   `shellcheck -s dash` knows the whole SC3xxx family and now stands in its
-  place. The same pass gave every replica launcher one shared
-  `test/integration/sim-image.sh` for the docker plumbing, which also fixed two `make
+  place. The same pass gave every replica launcher one shared home for the
+  docker plumbing — now `test/ffsim/replica.py` — which also fixed two `make
   test-ash` bugs: it ran without the docker socket (so it always silently
   skipped), and it never read `test.env`, so it ignored `PRINTER_IMAGE` and
   rebuilt the local sim image every run.

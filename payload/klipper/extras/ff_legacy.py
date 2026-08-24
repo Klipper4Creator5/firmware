@@ -1,8 +1,10 @@
 # One-shot migration helpers from firmwareExe's per-unit JSON to Klipper config.
 #
-# Nothing here runs during normal operation. Load it with an empty
-# [ff_legacy] section when you need it, run the command once, SAVE_CONFIG,
-# and you can remove the section again.
+# [ff_legacy] is shipped permanently (printer.base.cfg includes ff-legacy.cfg).
+# With auto_import -- the default -- _handle_ready re-imports on EVERY
+# klippy:ready until some tool has a saved nozzle position, so a fresh install
+# comes up with the calibration firmwareExe already made. Run SAVE_CONFIG once
+# to persist it; after that the import finds a saved nozzle and does nothing.
 #
 #   FF_IMPORT_FIRMWARE_CONFIG [DIR=/usr/data/firmwareRes/config] [APPLY=1]
 #
@@ -25,7 +27,7 @@
 #
 # Key names and the struct layout were read off the binary
 # (Config::loadExtruderConfig @0x64f7f8, loadTestConfig @0x654380,
-# loadZOffsetConfig @0x65621c); see OKF/32-config-provenance.md. The files
+# loadZOffsetConfig @0x65621c); see docs/notes/40-offsets.md. The files
 # are NOT strict JSON: each ends with a trailing C comment after the closing
 # brace, so we use raw_decode() and ignore the tail.
 

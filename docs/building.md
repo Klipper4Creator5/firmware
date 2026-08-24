@@ -91,12 +91,17 @@ anything whose sha256 does not match the pin. A cached file with the right
 hash is never re-downloaded, so it is a no-op on every build after the first.
 `bin/build.sh` calls it for you; `make vendor` pre-fetches everything.
 
-To bump a version: edit `versions.env`, run `make vendor`, and paste the
-sha256 it prints back into the file.
+To bump a version: edit `versions.env` — for HelixScreen that means both
+`HELIX_VERSION` and `HELIX_FILE`, which embeds the version in the filename —
+set the matching sha256 to `SKIP`, and run `make vendor`. It downloads the new
+file and prints its hash for you to paste back over the `SKIP`. With a stale
+hash left in place `make vendor` fails instead of printing anything.
 
-Setting `MAINSAIL_ZIP` or `HELIX_TGZ` in `config.env` overrides the download
-and builds against your own local copy. An explicit path is used as-is and is
-never checksummed.
+Setting `MAINSAIL_ZIP` or `HELIX_TGZ` in `config.env` points the build at your
+own local copy. It is still checksummed against `versions.env`, and on a
+mismatch `fetch-assets.sh` **overwrites your file** with the pinned release —
+`SKIP` re-downloads too. To build against your own file, put its sha256 in
+`versions.env` as well; only an exact match is left alone.
 
 If the build asks for Mainsail or HelixScreen and the file is not there, it
 fails. It used to skip silently, which shipped a package with an empty

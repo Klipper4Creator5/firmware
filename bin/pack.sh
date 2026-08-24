@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 3/3 -- repack work/software back into an installable USB package.
 #
-#   ./pack.sh              software component only (DEFAULT, ~28MB)
-#   ./pack.sh --full       also carry kernel / control / library
-#   ./pack.sh --plain      no encryption: emits runFirmwareExe.sh + payload
+#   ./bin/pack.sh              software component only (DEFAULT, ~28MB)
+#   ./bin/pack.sh --full       also carry kernel / control / library
+#   ./bin/pack.sh --plain      no encryption: emits runFirmwareExe.sh + payload
 #                          for the /mnt/runFirmwareExe.sh dev path
 #
 # Slim is the default because the stock installer skips any component that is
@@ -28,7 +28,7 @@ for a in "$@"; do
     esac
 done
 
-[ -d work/software ] || { echo "run ./unpack.sh first" >&2; exit 1; }
+[ -d work/software ] || { echo "run ./bin/unpack.sh first" >&2; exit 1; }
 STOCK_SW_VER=$(cat work/.stock_sw_ver)
 OUT_VER="${SW_VER:-$STOCK_SW_VER}"
 

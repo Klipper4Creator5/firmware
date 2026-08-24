@@ -231,8 +231,8 @@ class Port(object):
 
         (bootSerialHeatMcu and bootSerialMainEboardMcu are the same function
         with a different device path and different printf strings; the only
-        logic difference anywhere in the three is in the ready phase, noted
-        on wait_for_banner.)
+        logic difference anywhere in the three is in the ready phase, handled
+        in Port.poll().)
         """
         self.last_go = now
         for _ in range(ACK_TRIES):

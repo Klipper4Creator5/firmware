@@ -7,7 +7,7 @@
       "image": "generic-corexy.png",
       "ams_type": "tool_changer",
       "z_offset_calibration_strategy": "firmware_managed",
-      "notes": "4-tool toolchanger driven by the ff_toolchange Klipper extras (github: creator5-toolchange). The toolchanger/tool objects come from ff_toolchanger_compat; per-tool Z is managed by TOOL_Z_ADJUST and the print-start offset by TOOLCHANGE_SET_PRINT_OFFSET, so HelixScreen's probe-based Z-offset flow does not apply. Distinguished from the non-Pro only by the chamber heater: the two machines are otherwise the same hardware, and the stock firmwareExe builds differ in nothing else.",
+      "notes": "4-tool toolchanger driven by the ff_toolchange Klipper extra (github: creator5-custom-firmware). It registers the toolchanger and tool T0..T3 objects itself; per-tool Z is managed by TOOL_Z_ADJUST and the print-start offset by TOOLCHANGE_SET_PRINT_OFFSET, so HelixScreen's probe-based Z-offset flow does not apply. Distinguished from the non-Pro only by the chamber heater: the two machines are otherwise the same hardware, and the stock firmwareExe builds differ in nothing else.",
       "heuristics": [
         {
           "type": "object_exists",

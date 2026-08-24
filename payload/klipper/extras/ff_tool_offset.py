@@ -7,7 +7,7 @@
 #   CommMgr::moveCylinderPos                                  @0x789a1c / @0x78a610
 #   CommMgr::estopManager                                     @0x788738
 #   BaseFunction::fitCircleStable / fitCircleByLeastSquares   @0x6467f8 / @0x645b10
-# Full walkthrough: firmwareExe-decompiled/recovered/offset-calibration.md
+# Full walkthrough: docs/notes/46-offset-calibration-recovered.md
 #
 # The physical setup: a fixed inductive "cylinder" station under the bed
 # (levelboard PD0, exposed to Klipper as [e_stop X]/[e_stop Y]/[e_stop Z] --
@@ -16,7 +16,8 @@
 # -Y until the bore wall fires it. Four boundary points -> least-squares circle
 # -> the bore axis in this tool's nozzle frame. Done twice (the second pass is
 # centred on the first fit and re-probes Z there); the second result is stored
-# as t<n>_offset_x/y/z -- RAW machine coordinates with the G-code offset
+# as [ff_tool n]'s nozzle_x/nozzle_y/nozzle_z -- RAW machine coordinates with
+# the G-code offset
 # zeroed, nothing subtracted. Tool-to-tool differences of those are what the
 # toolchanger applies (ff_toolchange._derive_offsets).
 #
