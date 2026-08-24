@@ -103,6 +103,12 @@ jobs:
           FF_KEY='FFP0331&*%root'
           CFG
 
+      # Before the suite, not after: the replica gates run ./bin/patch.sh
+      # directly and it expects vendor/ already populated. `make release`
+      # further down would have fetched them, but that runs after the gates.
+      - name: Fetch the pinned Mainsail and HelixScreen assets
+        run: make vendor ASSET_ROOT=$PWD
+
       - name: Extract the printer rootfs
         run: make rootfs ASSET_ROOT=$PWD
 

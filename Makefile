@@ -96,7 +96,9 @@ help:
 	@echo 'which needs the stock package.'
 	@echo
 	@echo 'A gate that cannot run is reported SKIP, not ok, and make test then'
-	@echo 'fails. ALLOW_SKIP=1 accepts the gap deliberately.'
+	@echo 'fails. ALLOW_SKIP=1 accepts any gap; ALLOW_SKIP="a,b" accepts only'
+	@echo 'the gates named, which is what CI uses. Either way every skip is'
+	@echo 'listed again at the end, with its reason.'
 	@echo
 	@echo 'Other:'
 	@echo '  make vendor       download Mainsail + HelixScreen into vendor/'

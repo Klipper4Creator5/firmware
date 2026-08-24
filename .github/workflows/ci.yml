@@ -7,13 +7,36 @@ name: ci
 # not brick a printer.
 #
 # That proof needs the printer's real rootfs, and so it needs the stock
-# package. The `printer-sim` job below runs it whenever the STOCK_URL_*
-# secrets are set, and `release.yml` requires it outright.
+# package. `printer-sim` below now always runs, because the packages it needs
+# are publicly mirrored (see env: below) rather than hidden behind a secret
+# nobody had set. It used to be gated on STOCK_URL_CREATOR5PRO, which meant
+# that for its entire existence it never ran once: a grey dash beside two
+# green ticks, reading as "CI passed" while the only gates that decide
+# whether a package bricks a printer were never executed.
 on:
   push:
     branches: [ main, master ]
   pull_request:
   workflow_dispatch:
+
+# The stock packages and the factory image, from ghzserg/FF -- a public
+# archive of FlashForge firmware that this repo already points at in
+# docs/printer-replica.md. Nothing proprietary is redistributed from here; the
+# workflow fetches what is already published elsewhere.
+#
+# Every one is pinned by sha256, and the checksum is enforced, not advisory.
+# An unpinned download would let the archive change under us and the suite
+# would keep reporting green while testing a different firmware than the one
+# these gates were written against -- the same class of silent drift as a gate
+# that skips without saying so. Verified byte-for-byte against the maintainer's
+# local copies on 2026-08-24.
+env:
+  STOCK_URL_CREATOR5PRO: https://github.com/ghzserg/FF/releases/download/R/Creator5Pro-1.9.7-1.2.9-20260810.tgz
+  STOCK_SHA_CREATOR5PRO: 1f3252feaae6d8fc72d7b0fd1ba832cc63d369659f8b2d2896efcf7adab2976b
+  STOCK_URL_CREATOR5: https://github.com/ghzserg/FF/releases/download/R/Creator5-1.9.7-1.2.9-20260810.tgz
+  STOCK_SHA_CREATOR5: 72009be183e74a4562050a927787ba686c6b558a075f00958892197ac52659cc
+  FACTORY_URL: https://github.com/ghzserg/FF/releases/download/R/Creator5Pro-factory.tar.xz
+  FACTORY_SHA: 45657924298a41b5cd48c0f4412b4b2fb67df624af666b494d6bcea969cc5b7b
 
 jobs:
   test:
@@ -40,13 +63,18 @@ jobs:
           # Warnings are advisory: printed, not enforced.
           shellcheck -s sh -S warning payload/*.sh payload/init.d/S* payload/firmwareExe || true
 
-      # ALLOW_SKIP is correct HERE and nowhere else. This job has no stock
-      # package on purpose, so two gates cannot run -- the tests that read the
-      # real rootfs, and the replica itself -- and the suite refuses to call a
-      # gate it did not run a pass. The job that must not skip is printer-sim
-      # below, and release.yml, both of which set REQUIRE_PRINTER_SIM=1.
+      # This job has no stock package on purpose, so exactly two gates cannot
+      # run: the tests that read the real rootfs, and the replica itself. The
+      # suite refuses to call a gate it did not run a pass, so they have to be
+      # accepted explicitly -- BY NAME. `ALLOW_SKIP=1` would accept them and
+      # also every future skip, which would make this job green while it
+      # quietly stopped testing things. Naming them means a third skip fails
+      # here, and both are still printed and annotated on every run.
+      #
+      # The job that must not skip at all is printer-sim below, and
+      # release.yml; both set REQUIRE_PRINTER_SIM=1 and no ALLOW_SKIP.
       - name: Full test suite (fixture-based)
-        run: ALLOW_SKIP=1 ./test/run-tests.py
+        run: ALLOW_SKIP="pytest,the printer replica" ./test/run-tests.py
 
       - name: Upload built fixture packages
         if: always()
@@ -57,45 +85,74 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # Does the repo have access to the stock firmware? Secrets cannot be read
-  # from a job-level `if`, so decide it in a step and fan out from there.
-  have-firmware:
-    runs-on: ubuntu-latest
-    outputs:
-      available: ${{ steps.check.outputs.available }}
-    steps:
-      - id: check
-        env:
-          PRO: ${{ secrets.STOCK_URL_CREATOR5PRO }}
-        run: |
-          if [ -n "$PRO" ]; then echo "available=true" >> "$GITHUB_OUTPUT"
-          else echo "available=false" >> "$GITHUB_OUTPUT"; fi
-
   # The real check: install the package into a replica of the printer -- the
   # actual rootfs.squashfs under qemu-mipsel, on the printer's own busybox --
-  # and assert the machine still boots.
+  # and assert the machine still boots. No `if:` guard: this job is the point
+  # of the repo, and a version of it that can quietly not run is worse than
+  # not having it.
   printer-sim:
-    needs: have-firmware
-    if: needs.have-firmware.outputs.available == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      # ~280MB of somebody else's release assets per run, and they never
+      # change -- the cache key is their checksums, so a new pin misses and
+      # re-fetches, and an unchanged pin costs the archive nothing.
+      - name: Cache the stock firmware
+        uses: actions/cache@v4
+        with:
+          path: stock
+          key: stock-${{ env.STOCK_SHA_CREATOR5PRO }}-${{ env.STOCK_SHA_CREATOR5 }}-${{ env.FACTORY_SHA }}
+
       - name: Fetch the stock firmware
         env:
-          PRO:     ${{ secrets.STOCK_URL_CREATOR5PRO }}
-          STD:     ${{ secrets.STOCK_URL_CREATOR5 }}
-          PRO_SHA: ${{ secrets.STOCK_SHA256_CREATOR5PRO }}
+          # Secrets override the public pins, for a fork testing its own
+          # firmware. Override the URL and you must override the checksum too,
+          # or the fetch refuses to run -- an unverified download is exactly
+          # what this is meant to prevent.
+          SECRET_PRO:     ${{ secrets.STOCK_URL_CREATOR5PRO }}
+          SECRET_PRO_SHA: ${{ secrets.STOCK_SHA256_CREATOR5PRO }}
+          SECRET_STD:     ${{ secrets.STOCK_URL_CREATOR5 }}
+          SECRET_STD_SHA: ${{ secrets.STOCK_SHA256_CREATOR5 }}
         run: |
           set -euo pipefail
           mkdir -p stock
-          curl -fsSL "$PRO" -o stock/Creator5Pro-stock.tgz
-          [ -z "${STD:-}" ] || curl -fsSL "$STD" -o stock/Creator5-stock.tgz
-          [ -z "${PRO_SHA:-}" ] || echo "$PRO_SHA  stock/Creator5Pro-stock.tgz" | sha256sum -c -
+
+          get() {   # name url sha dest
+            if [ -z "$2" ]; then
+              echo "::error::no URL for $1"; exit 1
+            fi
+            if [ -z "$3" ]; then
+              echo "::error title=Unverified firmware download::$1 has a URL but no sha256. Set the matching STOCK_SHA256_* secret; an unpinned firmware would let this suite report green against bytes nobody checked."
+              exit 1
+            fi
+            if [ -f "$4" ] && echo "$3  $4" | sha256sum -c - >/dev/null 2>&1; then
+              echo "  $1: cache hit, checksum ok"
+              return
+            fi
+            echo "  $1: fetching $2"
+            curl -fsSL "$2" -o "$4"
+            echo "$3  $4" | sha256sum -c -
+          }
+
+          # Written out rather than nested in one expansion: a URL and its
+          # checksum must come from the SAME source, and a clever ${x:+y}${x:-z}
+          # pair silently pastes the URL in where the checksum belongs.
+          PRO_URL="${SECRET_PRO:-$STOCK_URL_CREATOR5PRO}"
+          if [ -n "${SECRET_PRO:-}" ]; then PRO_SHA="${SECRET_PRO_SHA:-}"
+          else PRO_SHA="$STOCK_SHA_CREATOR5PRO"; fi
+
+          STD_URL="${SECRET_STD:-$STOCK_URL_CREATOR5}"
+          if [ -n "${SECRET_STD:-}" ]; then STD_SHA="${SECRET_STD_SHA:-}"
+          else STD_SHA="$STOCK_SHA_CREATOR5"; fi
+
+          get Creator5Pro "$PRO_URL" "$PRO_SHA" stock/Creator5Pro-stock.tgz
+          get Creator5    "$STD_URL" "$STD_SHA" stock/Creator5-stock.tgz
 
       - name: Write test.env (the replica's /usr/prog)
         env:
-          FACTORY: ${{ secrets.FACTORY_URL }}
+          SECRET_FACTORY:     ${{ secrets.FACTORY_URL }}
+          SECRET_FACTORY_SHA: ${{ secrets.FACTORY_SHA256 }}
           # Optional repository variable: a prebuilt replica image, e.g.
           # monstrofil/creator5-printer:latest. It carries the factory
           # partitions AND the stock package already installed, which is about
@@ -104,12 +161,24 @@ jobs:
         run: |
           set -euo pipefail
           : > test.env
-          if [ -n "${FACTORY:-}" ]; then
-            curl -fsSL "$FACTORY" -o stock/factory.tar.xz
-            echo "PROG_DUMP=\"$PWD/stock/factory.tar.xz\"" >> test.env
-          elif [ -z "${PRINTER_IMAGE:-}" ]; then
-            echo "::warning::no FACTORY_URL secret and no PRINTER_IMAGE variable -- the replica has no real /usr/prog and will refuse to run"
+
+          URL="${SECRET_FACTORY:-$FACTORY_URL}"
+          if [ -n "${SECRET_FACTORY:-}" ]; then SHA="${SECRET_FACTORY_SHA:-}"
+          else SHA="$FACTORY_SHA"; fi
+
+          if [ -z "$SHA" ]; then
+            echo "::error title=Unverified factory image::FACTORY_URL is set without FACTORY_SHA256."
+            exit 1
           fi
+          if [ -f stock/factory.tar.xz ] && \
+             echo "$SHA  stock/factory.tar.xz" | sha256sum -c - >/dev/null 2>&1; then
+            echo "  factory image: cache hit, checksum ok"
+          else
+            curl -fsSL "$URL" -o stock/factory.tar.xz
+            echo "$SHA  stock/factory.tar.xz" | sha256sum -c -
+          fi
+          echo "PROG_DUMP=\"$PWD/stock/factory.tar.xz\"" >> test.env
+
           [ -z "${PRINTER_IMAGE:-}" ] || echo "PRINTER_IMAGE=\"$PRINTER_IMAGE\"" >> test.env
           cat test.env
 
@@ -127,6 +196,15 @@ jobs:
           ROOT_PW_HASH='\$6\$ci\$abcdefghijklmnopqrstuvwxyz'
           FF_KEY='FFP0331&*%root'
           CFG
+
+      # The replica gates run ./bin/patch.sh, which needs the real Mainsail
+      # zip and HelixScreen tarball in vendor/ -- patch.sh does not fetch them
+      # itself, bin/build.sh does, and the gates do not go through build.sh.
+      # Nothing here noticed until this job ran for the first time, because
+      # every local run already had a populated vendor/. Both are public,
+      # sha256-pinned in versions.env, and re-download only on a version bump.
+      - name: Fetch the pinned Mainsail and HelixScreen assets
+        run: make vendor ASSET_ROOT=$PWD
 
       - name: Extract the printer rootfs
         run: make rootfs ASSET_ROOT=$PWD

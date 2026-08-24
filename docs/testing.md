@@ -65,9 +65,27 @@ half with a loud message when no stock package is configured;
 `REQUIRE_PRINTER_SIM=1` turns that skip into a failure.
 
 **A skip is not a pass.** `run-tests.py` counts skips separately and exits
-non-zero if any gate did not run; `ALLOW_SKIP=1` accepts the gap deliberately.
-This matters more with four gates than it did with twelve — and it is not
-hypothetical, see `test-abi` below.
+non-zero if any gate did not run. This matters more with four gates than it
+did with twelve — and it is not hypothetical, see `test-abi` below.
+
+Accepting a gap is deliberate and has two forms:
+
+```sh
+ALLOW_SKIP=1                              accept any gate that did not run
+ALLOW_SKIP="pytest,the printer replica"   accept exactly these
+```
+
+Use the named form anywhere the setting outlives the moment — CI does. `1` is
+a standing promise never to notice a skip again: put it in a workflow and a
+replica gate that starts skipping on a machine that has the firmware is
+accepted in silence, forever. The named form fails on anything else.
+
+Either way **every skip is listed again in the summary, with its reason and
+whether it was accepted**, and under GitHub Actions each becomes an
+annotation. Nobody reads a green job's log, so a gap that exists only in
+stdout is a gap accepted invisibly — which is the failure this whole harness
+is built around. The pytest gate names the individual tests that skipped
+rather than reporting a count.
 
 <a name="why-the-harness-is-python"></a>
 ## Why the harness is Python

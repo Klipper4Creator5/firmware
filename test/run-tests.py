@@ -4,7 +4,9 @@
     ./test/run-tests.py                        runs the replica gates when a
                                                stock package is configured
     REQUIRE_PRINTER_SIM=1 ./test/run-tests.py  fails instead of skipping them
-    ALLOW_SKIP=1 ./test/run-tests.py           accepts gates that cannot run
+    ALLOW_SKIP=1 ./test/run-tests.py           accepts any gate that cannot
+                                               run; ALLOW_SKIP="a,b" accepts
+                                               exactly the gates named
 
 Ordering matters. The rootfs is extracted BEFORE pytest, so one invocation
 sees the best world available: with a stock package configured that is every
@@ -123,6 +125,17 @@ def run_pytest(r):
         failures = int(suite.get("failures", 0)) + int(suite.get("errors", 0))
         skipped = int(suite.get("skipped", 0))
 
+        # Which ones, and why. "5 skipped" says something is not being
+        # checked without saying what, which is most of the way back to the
+        # bare count this harness was rewritten to get rid of.
+        names = []
+        for case in suite.iter("testcase"):
+            mark = case.find("skipped")
+            if mark is not None:
+                names.append("%s -- %s" % (case.get("name", "?"),
+                                           (mark.get("message") or "").strip()
+                                           or "no reason given"))
+
     passed = total - failures - skipped
     if failures:
         r._say((proc.stdout or "")[-4000:])
@@ -131,8 +144,14 @@ def run_pytest(r):
     if skipped:
         # Consistent with the rest of the suite: a gate that did not fully run
         # must not read as success. Unlike the shell version, the numbers that
-        # led to the verdict are in the verdict.
-        raise Skip("%d passed, %d skipped" % (passed, skipped))
+        # led to the verdict are in the verdict -- and so are the names, so
+        # "pytest skipped" can be checked against what SHOULD be unrunnable
+        # here rather than taken on trust.
+        for line in names:
+            r._say("       %s\n" % line)
+        raise Skip("%d passed, %d skipped: %s"
+                   % (passed, skipped, "; ".join(n.split(" -- ")[0]
+                                                 for n in names)))
     r._say("  %d passed\n" % passed)
 
 
