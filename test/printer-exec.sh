@@ -22,16 +22,12 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CASE="${1:?usage: printer-exec.sh <case-script> [name=pkg.tgz ...]}"; shift
 
-# config.env and test.env, for FF_KEY, PRINTER_IMAGE and the partition sizes.
-# This used to be the caller's job, which meant the documented direct
-# invocation of this script never saw PRINTER_IMAGE and rebuilt the local
-# replica image every time. Sourcing it twice is harmless: test-env.sh lets
-# the environment win over both files, and the first pass exported them.
-# shellcheck disable=SC1091
-. "$ROOT/test/test-env.sh"
-
-# The docker plumbing (skip policy, image choice, local sim-image build) is
-# shared with the other replica launchers.
+# The config (config.env, test.env) and the docker plumbing (skip policy,
+# image choice, local sim-image build), shared with the other replica
+# launchers. Loading the config used to be the caller's job, which meant the
+# direct invocation this file documents never saw PRINTER_IMAGE and rebuilt
+# the local replica image every time. Sourcing this twice is harmless: the
+# environment wins over both files, and the first pass exported them.
 # shellcheck disable=SC1091
 . "$ROOT/test/sim-image.sh"
 

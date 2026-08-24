@@ -14,9 +14,12 @@ PKG="${1:?usage: sim-install.sh <package.tgz>}"
 PKG_ABS="$(cd "$(dirname "$PKG")" && pwd)/$(basename "$PKG")"
 
 # The baseline is the stock package for the same model: it is what makes
-# /usr/prog authentic instead of hand-written.
+# /usr/prog authentic instead of hand-written. sim-image.sh loads config.env
+# and test.env, where the STOCK_TGZ_* below come from, and settles the skip
+# policy -- so a missing docker is reported here rather than after the
+# package has been staged.
 # shellcheck disable=SC1091
-. "$ROOT/test/test-env.sh"
+. "$ROOT/test/sim-image.sh"
 case "$(basename "$PKG_ABS")" in
     Creator5Pro-*) BASE="${STOCK_TGZ_CREATOR5PRO:-}" ;;
     Creator5-*)    BASE="${STOCK_TGZ_CREATOR5:-}"    ;;

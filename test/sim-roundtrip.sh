@@ -6,8 +6,10 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MOD="${1:?usage: sim-roundtrip.sh <mod.tgz> <stock.tgz>}"
 STOCK="${2:?usage: sim-roundtrip.sh <mod.tgz> <stock.tgz>}"
+# config.env and test.env, and the skip policy. Both packages arrive as
+# arguments, so this is here for FF_KEY and PRINTER_IMAGE.
 # shellcheck disable=SC1091
-. "$ROOT/test/test-env.sh"
+. "$ROOT/test/sim-image.sh"
 
 A="$(cd "$(dirname "$MOD")" && pwd)/$(basename "$MOD")"
 B="$(cd "$(dirname "$STOCK")" && pwd)/$(basename "$STOCK")"

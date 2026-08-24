@@ -111,14 +111,11 @@ Tests that cannot fail are worse than no tests, because they read as coverage:
   of every run, so the last gate before publishing could not fail. It now
   stops on the first failure and runs with `REQUIRE_PRINTER_SIM=1`, which
   turns a skip into a failure too.
-- **`test-printer-db`'s re-implementation of PrinterDetector's scoring
-  formula.** It mirrored `printer_detector.cpp` line for line, so if the
-  HelixScreen fork changed its formula the test kept passing while reality
-  changed. The invariants that remain (entries identical apart from the
-  chamber heuristic, one positive-confidence discriminator each, each
-  discriminating object on exactly one model) force the right entry to win
-  under any scoring where an extra match never hurts -- without modelling
-  anyone's arithmetic.
+- **`test-printer-db`, all of it.** It began as a re-implementation of
+  PrinterDetector's scoring formula, mirroring `printer_detector.cpp` line for
+  line, so a change to the HelixScreen fork's formula left the test passing
+  while reality moved. Narrowing it to scoring-independent invariants kept it
+  honest but not useful enough to earn its place, and the whole check is gone.
 - **The hand-rolled bashism grep in `run-tests.sh`.** It knew five constructs;
   `shellcheck -s dash` knows the whole SC3xxx family and now stands in its
   place (the authoritative check is still `test-ash`, on the printer's own

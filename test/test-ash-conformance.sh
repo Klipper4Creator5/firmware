@@ -17,14 +17,11 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# Load test.env like the sim-* launchers do: without it this script never saw
-# PRINTER_IMAGE and rebuilt the local sim image on every run.
-# shellcheck disable=SC1091
-. "$ROOT/test/test-env.sh"
-
-# The docker plumbing (skip policy, image choice, local sim-image build) is
-# shared with the replica launchers -- including REQUIRE_PRINTER_SIM, which
-# turns these skips into failures in a release build.
+# The config and the docker plumbing (skip policy, image choice, local
+# sim-image build), shared with the replica launchers -- including
+# REQUIRE_PRINTER_SIM, which turns these skips into failures in a release
+# build, and PRINTER_IMAGE, without which this script rebuilt the local sim
+# image on every run.
 # shellcheck disable=SC1091
 . "$ROOT/test/sim-image.sh"
 

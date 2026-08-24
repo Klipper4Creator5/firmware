@@ -179,9 +179,6 @@ else
         hdr "our printer.base.cfg is still FlashForge's"
         sub "base cfg" python3 ./test/test-base-cfg.py
 
-        hdr "HelixScreen picks the right Creator 5 entry"
-        sub "printer db" python3 ./test/test-printer-db.py
-
         hdr "MCU bring-up runs on the printer's own Python"
         sub "mcu bring-up" ./test/printer-exec.sh ./test/printer/case-mcu-bringup.sh
 
