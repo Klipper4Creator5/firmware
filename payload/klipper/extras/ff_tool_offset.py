@@ -474,6 +474,12 @@ class FFToolOffset:
         configfile.set(self.name, 'station_y', "%.6f" % y)
         configfile.set(self.name, 'station_z', "%.6f" % z)
 
+    def _restore_offset_frame(self, gcmd):
+        """Undo _two_pass's SET_GCODE_OFFSET zeroing (see ff_toolchange)."""
+        if self.toolchange is not None \
+           and hasattr(self.toolchange, 'reapply_offsets_after_external_zero'):
+            self.toolchange.reapply_offsets_after_external_zero(gcmd)
+
     def _refresh_toolchange(self, gcmd):
         if self.toolchange is not None \
            and hasattr(self.toolchange, 'refresh_offsets'):
@@ -509,6 +515,24 @@ class FFToolOffset:
                              " GRAB=0 RELEASE=0." % self.name)
         self._require_plate_removed(gcmd)
         self._check_homed(gcmd)
+        # GRAB=0 means the operator mounted the tool by hand. The plate check
+        # needs an EMPTY carriage, so it starts by parking whatever is mounted
+        # -- which would silently undo that, measure the bare carriage and save
+        # it as this tool's nozzle position, ~3.2 mm out in the crash
+        # direction. Refuse instead of quietly doing the wrong thing; the gap
+        # guard only catches it once a station_z exists.
+        if not grab and self.toolchange is not None \
+           and self.toolchange.get_status(
+               self.reactor.monotonic()).get('current_tool', -1) != -1 \
+           and gcmd.get_int('PLATE_CHECK', 1 if self.plate_check else 0,
+                            minval=0, maxval=1):
+            raise gcmd.error(
+                "%s: GRAB=0 with a tool mounted, but the plate check has to"
+                " park it to measure an empty carriage -- which would"
+                " calibrate the bare carriage as T%s. Pass PLATE_CHECK=0 to"
+                " keep the tool you mounted (you have already promised"
+                " PLATE_REMOVED=1), or use GRAB=1 and let the toolchanger"
+                " pick it up." % (self.name, tools[0] if tools else '?'))
         self._run_plate_check(gcmd)
         cyl_x, cyl_y = self._cylinder()
         x0, y0 = cyl_x - self.nozzle_x_shift, cyl_y
@@ -569,6 +593,13 @@ class FFToolOffset:
             gcmd.respond_info(
                 "The SAVE_CONFIG command will update the printer config file"
                 " with the new nozzle position(s) and restart the printer.")
+        # Probing zeroed the G-code offsets to work in raw coordinates. Put
+        # the frame back before handing control to the operator: RELEASE
+        # defaults to 0, so this usually ends with a tool still on the
+        # carriage, and leaving Z=0 at the eddy plane means the next jog to
+        # Z0 -- or the next toolchange, which would carry the zeroing -- puts
+        # the nozzle into the plate.
+        self._restore_offset_frame(gcmd)
         self._report_diffs(gcmd, results)
 
     cmd_STATION_CALIBRATE_help = (
@@ -613,6 +644,10 @@ class FFToolOffset:
             gcmd.respond_info(
                 "The SAVE_CONFIG command will update the printer config file"
                 " with the new station position and restart the printer.")
+        # Runs with an empty carriage, so there is usually no tool to re-apply
+        # -- but the probing zeroed the offsets all the same, and the stale
+        # _z_tool_term it leaves behind would be carried into the next grab.
+        self._restore_offset_frame(gcmd)
 
     cmd_TOOL_OFFSET_STATUS_help = "Show the configured nozzle/station positions"
 

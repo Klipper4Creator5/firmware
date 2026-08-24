@@ -399,6 +399,34 @@ class FFToolchange:
                               % ("updated" if changed else "unchanged"))
         return changed
 
+    def reapply_offsets_after_external_zero(self, gcmd=None):
+        """Re-establish the Z frame after something zeroed the G-code offsets.
+
+        ff_tool_offset probes in RAW machine coordinates: it issues
+        SET_GCODE_OFFSET X=0 Y=0 Z=0 and never puts them back. That leaves two
+        problems. The mounted tool has no offsets, so Z=0 is the eddy frame --
+        about 3.2 mm below the bed -- and a jog to Z0 drives the nozzle into
+        the plate, which is exactly the invariant _derive_offsets promises.
+        And _z_tool_term still holds the term from BEFORE the zeroing, so the
+        next grab computes its babystep against something no longer applied
+        and carries the zeroing forward instead of curing it.
+
+        Reset the remembered term to what is actually applied (nothing), then
+        re-apply the mounted tool's offsets so Z=0 is the bed again. With the
+        term at 0 and the live offset at 0 the recovered babystep is 0, so
+        this applies exactly off_z[tool] -- the frame a fresh grab would set.
+        """
+        self._z_tool_term = 0.0
+        tool = self._current_tool_or_none()
+        if tool is None:
+            return False
+        self._apply_tool_diff_offsets(tool)
+        if gcmd is not None:
+            gcmd.respond_info(
+                "ff_toolchange: re-applied T%d's offsets -- Z=0 is the bed"
+                " again (calibration had zeroed them to probe)" % tool)
+        return True
+
     def uncalibrated_tools(self):
         return [t.index for t in self.tools if not t.calibrated()]
 
