@@ -224,8 +224,15 @@ changing: Klipper merges same-named sections and the last value wins, so
 everything you leave out keeps the shipped value and your overrides survive
 every flash. Each of those files opens with a header saying as much.
 
-`moonraker.conf` is the one exception — it has no include-and-override seam, so
-an edited copy is kept and the new version lands beside it as `.mod-new`.
+`moonraker.conf` is mod-owned too — it is overwritten on every update, which
+is how the `[webcam]` block and the API lockdown reach the printer. Its seam is
+`moonraker-custom.conf` beside it: created once, never written again, and
+included at the *end* of `moonraker.conf`, so anything you set there wins.
+Do not delete it — Moonraker treats an include that matches no file as fatal
+and will refuse to start. An empty one is fine.
+
+If you edit `moonraker.conf` itself anyway, the installer notices and keeps
+your copy, landing the new version beside it as `.mod-new`.
 
 **A bad UI is not repairable on the printer.** There is no fallback interface:
 FlashForge's binary is replaced and HelixScreen is the only thing that draws on

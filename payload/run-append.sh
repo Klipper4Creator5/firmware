@@ -162,8 +162,10 @@ fi
 # exists on the second flash, so it would land as .mod-new forever and updates
 # would silently never reach the printer.
 #
-# First install after this rule arrives has no config-installed, so an existing
-# file is treated as edited -- .mod-new, the conservative answer.
+# First install after this rule arrives has no config-installed. An existing
+# file is then treated as edited -- .mod-new, the conservative answer -- UNLESS
+# it still matches FlashForge's pristine runConfig template, which means nobody
+# has touched it and it is ours to replace. See the branch below.
 if [ -d $MODDIR/config ]; then
     mkdir -p /usr/data/config
     for f in $MODDIR/config/*; do
@@ -172,6 +174,18 @@ if [ -d $MODDIR/config ]; then
         live="/usr/data/config/$b"
         prev="$MODDIR/config-installed/$b"
         case "$b" in
+        moonraker-custom.conf)
+            # Yours, permanently. Created once so moonraker.conf's [include]
+            # resolves -- Moonraker treats an include matching no file as a
+            # fatal error -- and never touched again, not even as .mod-new.
+            if [ -f "$live" ]; then
+                echo "config: $b kept (yours; never overwritten)"
+            else
+                cp -f "$f" "$live"
+                echo "config: $b created -- put your Moonraker settings here"
+            fi
+            continue
+            ;;
         ff-*.cfg)
             # Ours. Overwrite and say so when it had drifted, so the log
             # explains where a local edit went.
@@ -182,11 +196,23 @@ if [ -d $MODDIR/config ]; then
             continue
             ;;
         esac
+        # FlashForge's own copy, straight off the factory image, is not a
+        # user edit -- and /usr/data/config/moonraker.conf IS on the factory
+        # image, so without this branch the first install lands as .mod-new,
+        # every later one compares the live factory file against the snapshot
+        # of OURS, and the shipped config could never reach the printer at all.
+        # runConfig/ holds the pristine template the machine was built with;
+        # matching it byte for byte means nobody has touched the live copy.
+        stock="/usr/prog/klipper/runConfig/$b"
         if [ ! -f "$live" ]; then
             cp -f "$f" "$live"
         elif [ -f "$prev" ] && [ "`md5sum < "$live"`" = "`md5sum < "$prev"`" ]; then
             cp -f "$f" "$live"
             echo "config: $b updated (was unmodified)"
+        elif [ ! -f "$prev" ] && [ -f "$stock" ] \
+             && [ "`md5sum < "$live"`" = "`md5sum < "$stock"`" ]; then
+            cp -f "$f" "$live"
+            echo "config: $b installed over FlashForge's untouched copy"
         else
             cp -f "$f" "$live.mod-new"
             echo "config: $b kept -- new version left as $b.mod-new"

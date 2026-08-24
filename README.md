@@ -121,9 +121,10 @@ machine:
   update, so put overrides in `printer.cfg` after the includes rather than
   editing them: Klipper merges same-named sections and the last value of an
   option wins, so you restate only what you are changing. Each of those files
-  says so in its own header. The exception is `moonraker.conf`, which has no
-  such seam — one you have edited is left alone and the new version lands
-  beside it as `.mod-new`.
+  says so in its own header. `moonraker.conf` works the same way, with
+  `moonraker-custom.conf` as its seam: that file is created once, never
+  overwritten, and included last, so your settings win. (Keep it — Moonraker
+  refuses to start if the include matches nothing.)
 * **The kernel and the motion board are never touched** by a normal package.
 
 More detail, including what to do when the printer will not boot at all:

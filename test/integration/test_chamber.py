@@ -216,3 +216,42 @@ def test_non_pro_m191_does_not_wait_forever(macros, has_heater):
 def test_pro_m191_waits_within_wait_band(macros, has_heater):
     out, _ = render(macros, has_heater["Creator5Pro"], "M191", {"S": "60"})
     assert "TEMPERATURE_WAIT" in out and "MINIMUM=58" in out, out.strip()
+
+
+# ------------------------------------------------- model-specific objects ----
+# The chamber heater exists only on the Pro: printer.chamber.cfg.creator5
+# declares a [temperature_sensor chamber] and no heater at all. Klipper renders
+# a gcode_macro's WHOLE template before executing a line of it, so a bare
+# printer["heater_generic chamber_heater"] anywhere in a macro raises on the
+# plain Creator 5 -- taking the whole macro with it, and every macro that calls
+# it. That is how LOAD_FILAMENT, PURGE and _FF_NOZZLE_CLEAN once broke
+# START_PRINT, and with it every print on a non-Pro machine.
+#
+# The guard is `'heater_generic chamber_heater' in printer` in the same macro,
+# as ff-chamber.cfg does it. This is a static check on purpose: rendering every
+# macro would need a fully populated printer object, and the failure it guards
+# against is exactly a template that cannot be rendered.
+MODEL_ONLY_OBJECT = "heater_generic chamber_heater"
+
+
+def test_model_specific_objects_are_guarded_before_use(cfgdir):
+    subscript = ('printer["%s"]' % MODEL_ONLY_OBJECT,
+                 "printer['%s']" % MODEL_ONLY_OBJECT)
+    guard = ('"%s" in printer' % MODEL_ONLY_OBJECT,
+             "'%s' in printer" % MODEL_ONLY_OBJECT)
+    unguarded = []
+    checked = 0
+    for fname, section, body in gcode_bodies(cfgdir):
+        if not any(s in body for s in subscript):
+            continue
+        checked += 1
+        if not any(g in body for g in guard):
+            unguarded.append("%s: [%s]" % (fname, section))
+    assert not unguarded, (
+        "%s is used without an `in printer` guard, so these macros raise on a "
+        "plain Creator 5:\n  " % MODEL_ONLY_OBJECT + "\n  ".join(unguarded))
+    # Vacuity guard: if the subscript is ever spelled differently this test
+    # would silently stop looking.
+    assert checked >= 2, (
+        "no macro subscripts %s -- has the spelling changed?"
+        % MODEL_ONLY_OBJECT)

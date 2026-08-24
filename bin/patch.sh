@@ -124,6 +124,10 @@ else
     skip "Mainsail"
 fi
 [ -f assets/moonraker.conf ] && cp -f assets/moonraker.conf "$MP/config/moonraker.conf"
+# The user seam for Moonraker. moonraker.conf includes it by name, and
+# run-append.sh creates it only when it is missing -- never overwrites it.
+[ -f assets/moonraker-custom.conf ] \
+    && cp -f assets/moonraker-custom.conf "$MP/config/moonraker-custom.conf"
 
 # ------------------------------------------------------------- 4. Moonraker
 # WHY THIS EXISTS -- the stock Moonraker is a 2022 build (it reports API

@@ -221,6 +221,14 @@ echo "  -- boot 2: the stick was left in the slot --"
 cp -a $APP /tmp/app_startup.after1
 [ "$WRAPPER" = 1 ] && cp -a "$FE" /tmp/firmwareExe.after1
 
+# Stand in for a user who tuned Moonraker. The whole point of the seam is that
+# this survives an update, while moonraker.conf beside it is overwritten.
+if [ -f /usr/data/config/moonraker-custom.conf ]; then
+    printf '\n[authorization]\ntrusted_clients:\n    10.9.8.0/24\n' \
+        >> /usr/data/config/moonraker-custom.conf
+    md5sum < /usr/data/config/moonraker-custom.conf > /tmp/custom.before2
+fi
+
 boot /tmp/boot2.log 900 || bad "boot 2 never settled"
 case "$BOOT_RESULT" in
     installed) ok "the second install also exited 0" ;;
@@ -228,6 +236,16 @@ case "$BOOT_RESULT" in
 esac
 cmp -s /tmp/app_startup.after1 $APP && ok "re-install is idempotent (app_startup.sh unchanged)" \
                                     || bad "re-install changed app_startup.sh again"
+if [ -f /tmp/custom.before2 ]; then
+    if [ "`md5sum < /usr/data/config/moonraker-custom.conf`" = "`cat /tmp/custom.before2`" ]; then
+        ok "moonraker-custom.conf survived the update with the edit intact"
+    else
+        bad "the update overwrote moonraker-custom.conf -- the user seam does not hold"
+    fi
+    grep -q '10.9.8.0/24' /usr/data/config/moonraker-custom.conf \
+        && ok "the user's own Moonraker setting is still there" \
+        || bad "the user's Moonraker setting was lost on update"
+fi
 [ -s "$FE" ] && ok "firmwareExe still present after re-install" \
              || bad "BRICK: re-install left no firmwareExe"
 if [ "$WRAPPER" = 1 ]; then
@@ -329,6 +347,32 @@ if [ -d $MRPKG ]; then
     [ -d $MRPKG.modold ] \
         && bad "moonraker: the swap left its rollback copy on /usr/prog" \
         || ok "moonraker: no rollback copy left behind"
+
+    # The config has to actually LAND. /usr/data/config/moonraker.conf is on
+    # the factory image, so the compare-and-.mod-new rule used to leave the
+    # factory file in place forever and write ours beside it -- Mainsail then
+    # shows no camera, which is the entire reason the Moonraker swap exists.
+    # Assert the live file is ours, not that a .mod-new appeared next to it.
+    if grep -q '^\[webcam' /usr/data/config/moonraker.conf 2>/dev/null; then
+        ok "moonraker.conf: the shipped config is live (has a [webcam] block)"
+    else
+        bad "moonraker.conf: live file has no [webcam] block -- Mainsail will show no camera"
+        [ -f /usr/data/config/moonraker.conf.mod-new ] \
+            && echo "        (ours was parked as moonraker.conf.mod-new)"
+    fi
+
+    # The user seam. moonraker.conf is mod-owned and overwritten every update,
+    # so moonraker-custom.conf is where a user's settings have to survive --
+    # and moonraker.conf [include]s it by name, which Moonraker treats as
+    # fatal if it matches nothing. So it must exist, and must NOT be replaced.
+    if [ -f /usr/data/config/moonraker-custom.conf ]; then
+        ok "moonraker-custom.conf: created for the user's own settings"
+    else
+        bad "BRICK: moonraker-custom.conf missing -- moonraker.conf includes it, Moonraker will refuse to start"
+    fi
+    grep -q '^\[include moonraker-custom.conf\]' /usr/data/config/moonraker.conf 2>/dev/null \
+        && ok "moonraker.conf includes the user seam" \
+        || bad "moonraker.conf does not include moonraker-custom.conf -- user settings have nowhere to live"
     # THE ONE THAT MATTERS. Everything above only says the right files are on
     # disk; this says the printer's own python3.8 can actually run them. We
     # ship a Moonraker newer than the machine's, on libraries FlashForge
