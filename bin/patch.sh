@@ -192,6 +192,10 @@ if [ "${BUILD_MOONRAKER:-1}" = "1" ]; then
         echo "   !! no moonraker/moonraker.py in $(basename "$MOONRAKER_TGZ")" >&2; exit 1; }
     rm -rf "$MP/moonraker"
     cp -a work/.moonraker/moonraker "$MP/moonraker"
+    # The gate run-append.sh puts in front of the swap. It reads Moonraker's
+    # own component list out of the tree beside it, so it does not need
+    # updating when the pin moves.
+    cp -f payload/moonraker-preflight.py "$MP/moonraker-preflight.py"
     # Tests never run on the printer and are a sizeable chunk of the tree.
     rm -rf "$MP/moonraker/tests"
     find "$MP/moonraker" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null

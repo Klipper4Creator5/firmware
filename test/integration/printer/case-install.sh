@@ -307,6 +307,12 @@ if [ -d $MRPKG ]; then
         grep -q "moonraker: replaced with the mod's build" /usr/data/anvil-install.log 2>/dev/null \
             && ok "moonraker: the install replaced the stock tree" \
             || bad "moonraker: run-append.sh did not report a replacement"
+        # The gate in front of the swap must actually have run. If it silently
+        # does nothing -- wrong path, missing interpreter -- the swap goes
+        # ahead unchecked and we are back to installing blind.
+        grep -q "preflight ok:" /usr/data/anvil-install.log 2>/dev/null \
+            && ok "moonraker: the pre-flight import check ran and passed" \
+            || bad "moonraker: no pre-flight result in the install log -- the swap was not gated"
         # The field the whole exercise is about. Its absence means an old tree.
         grep -q '"enabled"' $MRPKG/components/webcam.py 2>/dev/null \
             && ok "moonraker: the installed webcam component has the enabled field" \

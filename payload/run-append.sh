@@ -68,34 +68,38 @@ if [ -d $MODDIR/moonraker ]; then
         # firmware partition, so check there is room before starting.
         NEED=`du -sk $MODDIR/moonraker | cut -f1`
         FREE=`df /usr/prog | tail -1 | tr -s ' ' | cut -d' ' -f4`
-        # PRE-FLIGHT: ask THIS printer's python whether it can import the tree
-        # before anything is moved.
+        # PRE-FLIGHT: ask THIS printer's python whether it can load the tree
+        # before anything is moved. moonraker-preflight.py explains what it
+        # imports and why; the short version is that it uses Moonraker's own
+        # component list rather than one we maintain here, because a
+        # hand-written list already missed the component that mattered once.
         #
-        # This exists because reasoning about it was not enough. A build that
-        # ran on python 3.8 everywhere else still died here on
-        # "ModuleNotFoundError: No module named '_sqlite3'" -- FlashForge built
-        # their interpreter without it, and Moonraker's newer database
-        # component needs it. Installed blind, that leaves a printer with no
-        # web UI and no clue why. An import is cheap and it is the machine's
-        # own answer, not ours.
-        #
-        # moonrakerDaemon execs this interpreter and sets no library path of
-        # its own -- start.sh normally exports these first -- so the check has
-        # to export them too or it fails for the wrong reason.
+        # The library path is set explicitly rather than inherited. At boot
+        # app_startup.sh exports a dozen /usr/prog/*/lib directories and
+        # everything inherits them, but this script also has to behave when it
+        # is re-run by hand from ssh, where none of that is set -- and a check
+        # that fails for a missing libsodium would condemn a perfectly good
+        # build. Same list app_startup.sh uses.
         MRPY=/usr/prog/Python-3.8.2/bin/python3
         MRIMP=0
-        if [ -x $MRPY ]; then
+        if [ -x $MRPY ] && [ -f $MODDIR/moonraker-preflight.py ]; then
             (
                 PATH=$PATH:/usr/prog/Python-3.8.2/bin
-                LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:/usr/prog/openssl-1.0.2d/lib:/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
+                for d in /usr/prog/Python-3.8.2/lib /usr/prog/openssl-1.0.2d/lib \
+                         /usr/prog/curl-7.55.1/lib /usr/prog/ffmpeg-402/lib \
+                         /usr/prog/x264/lib /usr/prog/libffi-3.4.4/lib \
+                         /usr/prog/libsodium/lib /usr/prog/opencv-4.2/lib \
+                         /usr/prog/nim/lib /usr/prog/libzip-1.10.1/lib; do
+                    [ -d "$d" ] && LD_LIBRARY_PATH="$d:$LD_LIBRARY_PATH"
+                done
                 export PATH LD_LIBRARY_PATH
-                $MRPY -c "import sys; sys.path.insert(0, '$MODDIR'); import moonraker.server, moonraker.components.database, moonraker.components.file_manager.file_manager, moonraker.components.webcam"
+                $MRPY $MODDIR/moonraker-preflight.py $MODDIR /usr/data/config/moonraker.conf
             ) > /tmp/mr-import.log 2>&1 || MRIMP=1
+            sed 's/^/   /' /tmp/mr-import.log 2>/dev/null | tail -12
         fi
         if [ "$MRIMP" != 0 ]; then
-            echo "!! moonraker: the shipped tree does not import on this printer -- keeping the stock one"
+            echo "!! moonraker: the shipped tree does not load on this printer -- keeping the stock one"
             echo "   (nothing was moved; the web UI is unaffected)"
-            sed 's/^/   /' /tmp/mr-import.log 2>/dev/null | tail -12
         elif [ "${FREE:-0}" -lt "$NEED" ]; then
             echo "!! moonraker: only ${FREE}KB free on /usr/prog, need ${NEED}KB -- keeping the stock tree"
         else
