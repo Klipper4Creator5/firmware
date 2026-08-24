@@ -79,14 +79,28 @@ and stay next to the machine until you trust it.
   re-run step 1 after every firmware update. The `#*#` block in
   `printer.cfg` is on the data partition and survives.
 
-## Install by hand
+## Install
 
-A package built from this repo installs all of this for you — see
-[building.md](building.md). What follows is the manual route, for dropping a
-single edited file onto a printer that is already modded.
+A package built from this repo needs no config editing at all. It ships:
 
-On the printer (ssh as `pwned` — this assumes a jailbroken printer; how to
-get root/ssh access is covered in the community
+* the `ff_*.py` extras, into the Klipper tree it flashes (`bin/patch.sh`)
+* the `ff-*.cfg`, to `/usr/data/config/` (`run-append.sh`, keeping any you
+  edited and leaving the new one as `.mod-new`)
+* the `[include]` lines for all seven, at the end of `printer.base.cfg` —
+  which the stock `run.sh` force-copies to `/usr/data/config/` on every flash
+
+`printer.cfg` is never touched by any of that, by design: it is the user's
+file. That is also why the includes live in `printer.base.cfg` and not there
+— and it makes the undo button work, since flashing the stock FlashForge
+package restores its own `printer.base.cfg` and the includes go with it.
+
+Flash, then jump to step 5 below to import your unit's calibration.
+
+### By hand
+
+For dropping a single edited file onto a printer that is already modded. On
+the printer (ssh as `pwned` — this assumes a jailbroken printer; how to get
+root/ssh access is covered in the community
 [Discord](https://discord.gg/tYs3eNEDq)):
 
 ```sh
@@ -99,21 +113,36 @@ scp payload/klipper/config/ff-*.cfg \
     pwned@PRINTER:/usr/data/config/
 ```
 
-3. Append to `/usr/data/config/printer.cfg`. **All of these are required** —
-   they are not optional drop-ins, and without them Klipper comes up as a
-   plain printer with no toolchanger. Order matters: they must come AFTER
-   `[virtual_sdcard]` is defined, and must **not** go in
-   `printer.override.cfg`, which is included first:
+3. Make sure something includes them. A flashed printer already does, at the
+   end of `printer.base.cfg`. **All seven are required** — they are not
+   optional drop-ins, and without them Klipper comes up as a plain printer
+   with no toolchanger:
 
 ```ini
 [include ff-toolchange.cfg]
 [include ff-tool-offset.cfg]
 [include ff-filament.cfg]
-[include ff-print-macros.cfg]  ; after ff-filament.cfg (the nozzle clean uses it)
+[include ff-print-macros.cfg]
 [include ff-runout.cfg]        ; after printer.base.cfg (overrides its sensor sections)
 [include ff-chamber.cfg]       ; M141/M191; follows whatever printer.chamber.cfg declared
-[include ff-legacy.cfg]        ; temporary — only for step 5
+[include ff-legacy.cfg]        ; harmless to leave in — see step 8
 ```
+
+   > **If you put these in `printer.cfg` instead, they must go ABOVE the
+   > `#*# <---------------------- SAVE_CONFIG ---------------------->`
+   > marker.** Klipper treats any non-`#*#` line below that marker as
+   > corruption, discards the entire autosave block, and every calibrated
+   > value — PID, mesh, shaper, nozzle and dock positions — stops being read.
+
+   Only two ordering rules are real, and both are about one file overriding
+   another's values, which Klipper applies in include order: `ff-runout.cfg`
+   after the sensor sections in `printer.base.cfg`, and `ff-chamber.cfg`
+   after `printer.chamber.cfg`. Placement relative to `[virtual_sdcard]` does
+   **not** matter — `ff_print` takes `SDCARD_PRINT_FILE`/`M23` over at
+   `klippy:connect`, once every section is loaded — and neither does
+   placement relative to the commands the `G28` and `SHAPER_CALIBRATE`
+   wrappers rename, since `gcode_macro` defers its rename to `klippy:connect`
+   as well.
 
 4. `RESTART` (or reboot).
 
@@ -137,8 +166,10 @@ scp payload/klipper/config/ff-*.cfg \
    nothing should say `NOT CALIBRATED`, "no dock position" or "unsaved
    calibration pending".
 
-8. Remove the `[include ff-legacy.cfg]` line and `RESTART`. The import is
-   one-shot; the touchscreen's JSON is not consulted again.
+8. Optionally remove the `[include ff-legacy.cfg]` line and `RESTART`. Not
+   required: the import is one-shot, and `ff_legacy`'s startup auto-import
+   returns early as soon as any tool has a nozzle position, so the section is
+   inert once step 6 has run. A flashed printer keeps it included.
 
 ## Verify
 

@@ -88,6 +88,18 @@ grep -q 'USER-CONFIG-MUST-SURVIVE' /usr/data/config/printer.cfg 2>/dev/null \
     && ok "user printer.cfg preserved through both flashes" \
     || bad "user printer.cfg was clobbered"
 
+# The mod's Klipper config is wired in by printer.base.cfg, which the stock
+# run.sh force-copies over on every flash. That is what makes the revert
+# complete: the ff-*.cfg are left on the data partition (inert, like the rest
+# of the payload) but nothing includes them any more. If a stock reflash left
+# the includes behind, klippy would come up referencing [ff_toolchange] with
+# the extras gone from /usr/prog -- a printer that will not start.
+if grep -q '^\[include ff-' /usr/data/config/printer.base.cfg 2>/dev/null; then
+    bad "printer.base.cfg still includes the mod's ff-*.cfg after a stock flash"
+else
+    ok "printer.base.cfg restored -- nothing includes the mod's config"
+fi
+
 echo
 [ "$FAIL" = 0 ] && echo "  recovery clean: a stock package fully reverts the mod" \
                 || echo "  RECOVERY TEST FAILED"

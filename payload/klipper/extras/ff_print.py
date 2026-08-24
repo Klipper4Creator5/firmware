@@ -157,8 +157,10 @@ class FFPrint:
             prev = self.gcode.register_command(cmd, None)
             if prev is None:
                 raise self.printer.config_error(
-                    "ff_print: command '%s' is not registered -- [ff_print]"
-                    " must be loaded after [virtual_sdcard]" % (cmd,))
+                    "ff_print: command '%s' is not registered -- is there a"
+                    " [virtual_sdcard] section in the config? (Section ORDER"
+                    " does not matter: this runs at klippy:connect, after"
+                    " every section is loaded.)" % (cmd,))
             self.prev_handlers[cmd] = prev
             self.gcode.register_command(
                 cmd, self._make_handler(cmd),

@@ -62,8 +62,9 @@ STOCK_BASE=work/software/klipper/config/printer.base.cfg
 OURS=payload/klipper/config/printer.base.cfg
 if [ -f "$STOCK_BASE" ] && [ -f "$OURS" ]; then
     # Compare only the section/option lines: comments and blank lines differ by
-    # design, and our chamber include replaces their heater block.
-    strip() { grep -vE '^\s*(#|$)' "$1" | grep -vE '^\[(heater_generic|verify_heater) chamber_heater\]|^\[include printer\.chamber\.cfg\]'; }
+    # design, our chamber include replaces their heater block, and the ff-*.cfg
+    # includes at the end of the file are ours (see printer.base.cfg's tail).
+    strip() { grep -vE '^\s*(#|$)' "$1" | grep -vE '^\[(heater_generic|verify_heater) chamber_heater\]|^\[include printer\.chamber\.cfg\]|^\[include ff-[a-z-]+\.cfg\]'; }
     if strip "$STOCK_BASE" | diff -q - <(strip "$OURS") >/dev/null 2>&1; then
         echo ">> printer.base.cfg matches the stock file"
     else

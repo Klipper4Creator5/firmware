@@ -189,6 +189,22 @@ fi
 grep -q 'USER-CONFIG-MUST-SURVIVE' /usr/data/config/printer.cfg 2>/dev/null \
     && ok "user printer.cfg preserved" || bad "user printer.cfg was clobbered"
 
+# The mod's Klipper config only does anything if something includes it, and
+# printer.cfg is the user's file that the package may not write. So the
+# includes ship in printer.base.cfg. Without them the printer boots as a plain
+# machine: no toolchanger, no tool offsets, no runout handling -- and nothing
+# says so out loud, which is why this is checked here.
+MISSING=""
+for c in ff-toolchange ff-tool-offset ff-filament ff-print-macros \
+         ff-runout ff-chamber ff-legacy; do
+    [ -f "/usr/data/config/$c.cfg" ] || MISSING="$MISSING $c.cfg(file)"
+    grep -q "^\[include $c\.cfg\]" /usr/data/config/printer.base.cfg 2>/dev/null \
+        || MISSING="$MISSING $c.cfg(include)"
+done
+[ -z "$MISSING" ] \
+    && ok "printer.base.cfg includes the whole ff-*.cfg set, and all are present" \
+    || bad "the mod's Klipper config is not wired up:$MISSING"
+
 if [ -d /usr/data/anvil/backup ]; then
     n=$(find /usr/data/anvil/backup -type f | wc -l)
     [ "$n" -gt 0 ] && ok "installer wrote $n backup file(s)" || bad "backup dir is empty"
