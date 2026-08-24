@@ -254,16 +254,6 @@ if [ "$MOD_PW_AUTO" = "1" ]; then
 fi
 sync
 
-# ---- ssh host keys, once at install time -----------------------------------
-if [ -x $MODDIR/bin/dropbearkey ]; then
-    mkdir -p $MODDIR/etc/dropbear
-    for t in rsa ecdsa ed25519; do
-        [ -f $MODDIR/etc/dropbear/dropbear_${t}_host_key ] || \
-            $MODDIR/bin/dropbearkey -t $t -f $MODDIR/etc/dropbear/dropbear_${t}_host_key
-    done
-fi
-sync
-
 echo "mod installed `date 2>/dev/null`" > $MODDIR/VERSION
 echo "=== mod install done ==="
 sync

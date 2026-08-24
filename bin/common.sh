@@ -94,4 +94,3 @@ fi
 # model-specific file it contains.
 export TARGET_MACHINE TARGET_PID STOCK_TGZ PROG_DUMP
 
-WORK="${WORK:-work}"

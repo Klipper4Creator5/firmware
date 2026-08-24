@@ -71,10 +71,11 @@ import re
 
 EXTRUDER_COUNT = 4
 
-# Bounded reads: measured offsets are ~8 KB (first Tn) and ~24 KB (config
-# block) on real files; these give a wide margin without loading a 27 MB file.
+# Bounded read: everything we parse sits within ~8 KB of the start on real
+# files (the first Tn), so this is a wide margin without loading a 27 MB file.
+# Only the head is read -- the slicer's config block at the end is deliberately
+# not a source, see above.
 HEAD_BYTES = 256 * 1024
-TAIL_BYTES = 256 * 1024
 
 # print_stats states that mean the job is over (as opposed to paused mid-print).
 FINISHED_STATES = ('complete', 'cancelled', 'error')

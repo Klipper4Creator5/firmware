@@ -7,9 +7,6 @@ set -euo pipefail
 SW=work/software
 [ -d "$SW" ] || { echo "run bin/unpack.sh first" >&2; exit 1; }
 
-MARK_BEGIN="# >>> anvil begin >>>"
-MARK_END="# <<< anvil end <<<"
-
 say() { printf '>> %s\n' "$*"; }
 skip() { printf '   (skip) %s\n' "$*"; }
 
@@ -255,7 +252,6 @@ if [ -n "${ROOT_PW_HASH:-}" ]; then
     # /etc is a bind mount of /usr/prog/etc (app_startup.sh), and this file is
     # what dropbear reads at authentication time -- so this is the live shadow
     # even though dropbear started earlier from the read-only squashfs.
-    # /etc is a bind mount of /usr/prog/etc, so this file IS the live shadow.
     awk -v h="$ROOT_PW_HASH" 'BEGIN{FS=OFS=":"} $1=="root"{$2=h} {print}' \
         "$SW/shadow" > "$SW/shadow.new" && mv -f "$SW/shadow.new" "$SW/shadow"
 else

@@ -16,7 +16,7 @@ OPTION = re.compile(r"^([^:=\s][^:=]*)\s*[:=]\s*(.*)$")
 
 def sections(path):
     """Yield (section_name, {option: value}) the way Klipper's parser sees it."""
-    cur, opts, name = None, {}, None
+    cur, opts = None, {}
     key = None
     for raw in open(path, encoding="utf-8", errors="replace"):
         line = raw.rstrip("\n")

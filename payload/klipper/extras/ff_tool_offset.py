@@ -46,10 +46,11 @@ EXTRUDER_COUNT = 4
 # Constants read from the binary's .rodata (offset-calibration.md section 2):
 NOZZLE_X_SHIFT = 12.5      # @0xdfdba8  tool pass starts at cylinder_x - 12.5
 PROBE_TRAVEL = 14.0        # 7.0 + 7.0 (@0xdfdb98)  ESTOP target = centre +/- 14
-Z_TARGET_APP = -5.0        # @0xdfdb8c  the app's ESTOP Z target (tools, station pass 1)
-Z_TARGET = -3.0            # our default: the app's own station pass-2 value;
-                           # 1.3 mm below the deepest expected trigger, 2 mm
-                           # less crash depth than -5 if the plate is still on
+Z_TARGET = -3.0            # our default: the app's own station pass-2 value.
+                           # The app used -5.0 (@0xdfdb8c) for tools and for
+                           # station pass 1; -3 is 1.3 mm below the deepest
+                           # expected trigger and 2 mm less crash depth if the
+                           # plate is still on. Override with z_target.
 Z_TARGET_STATION_2 = -3.0  # station second Z probe (moveCylinderPos @0x78a610)
 Z_CLEAR = 0.6              # @0xdfdb90  probing height above the Z trigger
 Z_LIFT = 3.0               # @0xdfdba0  lift between the two passes
@@ -59,7 +60,8 @@ FEED_POSITION = 12000      # G1 X Y F12000 to the start point
 FEED_PASS1 = 1200          # returns to centre in pass 1, and all Z moves
 FEED_PASS2 = 2400          # returns to centre in pass 2
 PROBE_ACCEL = 100.0        # SET_VELOCITY_LIMIT ACCEL=100 while probing
-APP_ACCEL_RESTORE = 20000.0  # the app's literal restore value
+                           # (restored to the pre-run limit afterwards, not to
+                           # the app's literal 20000)
 
 # test.json defaults (Config::initTestConfig) for the station start point.
 CYLINDER_X_DEFAULT = 28.5

@@ -221,7 +221,7 @@ test-recovery: image config.env
 	   ./test/integration/sim-roundtrip.py "$$m" "$$STOCK_TGZ"'
 
 clean:
-	@rm -rf work/stage work/out work/uninst work/uninst-sw work/modpayload
+	@rm -rf work/stage work/out work/modpayload
 	@echo cleaned
 
 distclean:
