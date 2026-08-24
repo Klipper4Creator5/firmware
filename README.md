@@ -9,24 +9,27 @@ does the work.
 
 Packages are published on the
 [Releases page](https://github.com/Klipper4FlashForge/firmware/releases) —
-two files per release, one per model, deliberately marked *pre-release* for
-as long as the status below holds. Releases are tagged `v<date>-<city>`, each
-named for a Ukrainian city under occupation.
+two files per release, one per model, marked *pre-release* while the mod is
+young.
 
 > **Unofficial and unaffiliated with FlashForge.** It voids your warranty and
-> you are responsible for your machine. Nothing here has been installed on a
-> printer yet — see [Status](#status) before you flash anything.
+> you are responsible for your machine. See [Status](#status) for what has
+> actually been tried on hardware before you flash anything.
 
 ---
 
 ## Status
 
-**No package has been installed on a real printer yet.** The build pipeline
-and the full test suite pass — including the end-to-end update test, where the
-package sits on a real FAT filesystem in a replica of the printer and the
-machine's own boot script finds it, installs it, and boots again with the mod
-running. That replica is the printer's real filesystem running its real
-binaries. It is still not a machine.
+**It runs on a real printer.** Checked on a Creator 5 Pro, on the machine:
+flashing over the stock firmware and the migration that comes with it,
+printing — gcode straight from the slicer, nothing edited — toolchanges,
+nozzle-offset calibration, wifi, Mainsail, and the camera.
+
+<img src="docs/helixscreen-print-status.webp" width="49%" alt="HelixScreen mid-print on the Creator 5 Pro: T2 mounted, layer 2 of 173"> <img src="docs/helixscreen-bed-mesh.webp" width="49%" alt="HelixScreen's bed-mesh screen showing a probed 10x10 mesh">
+
+Not yet tried: the chamber heater, and the non-Pro **Creator 5** — its
+package builds and passes the same replica test suite, but has not touched
+hardware.
 
 Have the stock package for your model on a spare stick before you begin.
 
@@ -185,45 +188,29 @@ target or drop the file into Mainsail. Details, including the explicit
 |---|---|
 | `/usr/data/config/printer.cfg` | **Yours** — never overwritten. Overrides go here, after the includes: Klipper merges same-named sections and the last value wins, so restate only what you change. |
 | `moonraker-custom.conf` | **Yours** — created once, included last, never rewritten, so your Moonraker settings win. Do not delete it: Moonraker refuses to start if the include matches nothing. |
-| `/usr/data/anvil/anvil.conf` | **Yours** — the runtime switches: `MOD_WEB`, `MOD_CAM` (with optional `MOD_CAM_RES` / `MOD_CAM_FPS` / `MOD_CAM_PORT`), `MOD_UI`, `MOD_WIFI`. Edit over ssh, reboot. |
 | `ff-*.cfg`, `printer.base.cfg`, `moonraker.conf` | **The mod's** — overwritten on every update, so do not edit them; each file's header says so. |
 
 ### Upgrading
 
 A newer release installs exactly like the first flash: stick in, power on.
 The table above is what an upgrade does — your `printer.cfg` with its saved
-calibration, `moonraker-custom.conf`, `anvil.conf` **and your root password**
-survive; the `ff-*.cfg` family is replaced.
+calibration, `moonraker-custom.conf` **and your root password** survive; the
+`ff-*.cfg` family is replaced.
 
 ---
 
 ## If something goes wrong
 
-**Keep a copy of the stock FlashForge package for your model on a spare USB
-stick before you start.** That stick is the undo button: flashing it restores
-every file this firmware touches. It is a normal FlashForge update, so it
-installs the same way — stick in, power on.
+**Flash the stock FlashForge package for your model.** It restores every file
+this firmware touches and installs the same way — stick in, power on. Keep
+one on a spare stick before you start; the stock packages are published at
+[ghzserg/FF](https://github.com/ghzserg/FF/releases).
 
-A few things are deliberately built in so a bad flash cannot cost you the
-machine:
-
-* **A crashing UI cannot lock you out.** The screen is not how you reach the
-  printer: ssh and Mainsail come up from their own services, before and
-  independently of the UI, so a dead screen costs you the screen and nothing
-  else — you can still print. It is not repairable on the machine, though:
-  HelixScreen is the only UI there is, and getting a working screen back means
-  flashing a package again. `MOD_UI=0` in `/usr/data/anvil/anvil.conf` stops
-  it being started at all.
-* **ssh stays up** even when the screen does not, so you can get in and look.
-* **The kernel and the motion board are never touched** by a normal package.
-
-**Going back to stock** restores everything the mod replaced, with one
-exception: Moonraker ships only on the factory image, so a stock reflash has
-nothing to restore it from and the mod's build stays — it works, and Mainsail
-is happy with it. The details, including what a stock reflash leaves behind
-inert, are in [docs/how-it-works.md](docs/how-it-works.md#recovery).
-
-More detail, including what to do when the printer will not boot at all:
+One exception comes along: Moonraker ships only on the factory image, so a
+stock reflash has nothing to restore it from and the mod's build stays — it
+works, and Mainsail is happy with it
+([details](docs/how-it-works.md#recovery)). The symptom table, the logs worth
+reading, and the factory-restore last resort are in
 [docs/hardware-testing.md](docs/hardware-testing.md).
 
 ---
