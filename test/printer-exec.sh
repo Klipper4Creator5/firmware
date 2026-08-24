@@ -22,25 +22,20 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CASE="${1:?usage: printer-exec.sh <case-script> [name=pkg.tgz ...]}"; shift
 
-# A skip here is a test that did not run. That is fine on a laptop and fatal
-# in a release, so REQUIRE_PRINTER_SIM=1 turns every skip into a failure.
-skip() {
-    if [ "${REQUIRE_PRINTER_SIM:-0}" = 1 ]; then echo "  FAIL: $*" >&2; exit 1; fi
-    echo "  SKIP: $*"; exit 0
-}
+# config.env and test.env, for FF_KEY, PRINTER_IMAGE and the partition sizes.
+# This used to be the caller's job, which meant the documented direct
+# invocation of this script never saw PRINTER_IMAGE and rebuilt the local
+# replica image every time. Sourcing it twice is harmless: test-env.sh lets
+# the environment win over both files, and the first pass exported them.
+# shellcheck disable=SC1091
+. "$ROOT/test/test-env.sh"
 
-DOCKER=docker
-command -v docker >/dev/null 2>&1 || DOCKER=docker.exe
-command -v $DOCKER >/dev/null 2>&1 || skip "docker not available"
-$DOCKER info >/dev/null 2>&1 || skip "docker daemon not running"
+# The docker plumbing (skip policy, image choice, local sim-image build) is
+# shared with the other replica launchers.
+# shellcheck disable=SC1091
+. "$ROOT/test/sim-image.sh"
 
-# PRINTER_IMAGE names a prebuilt image that already carries the firmware --
-# rootfs, /usr/prog and /usr/data baked in by test/build-printer-image.sh. With
-# one, nothing local is needed and a run skips the unpack entirely.
-IMAGE="${PRINTER_IMAGE:-}"
-PREBUILT=1
-if [ -z "$IMAGE" ]; then
-    PREBUILT=0
+if [ "$PREBUILT" = 0 ]; then
     # Say why this is about to be slow. Unpacking the factory image is ~22s
     # and installing the stock baseline is ~37s, on EVERY case; the published
     # image has both done already and starts in under a second.
@@ -48,15 +43,6 @@ if [ -z "$IMAGE" ]; then
     echo "               locally -- about a minute of setup per test case. Set" >&2
     echo "               PRINTER_IMAGE=monstrofil/creator5-printer:latest in" >&2
     echo "               test.env to skip it." >&2
-    IMAGE=creator5-printer-sim
-    if [ ! -d "$ROOT/work/rootfs/bin" ]; then
-        skip "no printer rootfs -- run 'make rootfs' first (needs the stock package),
-        or set PRINTER_IMAGE to a prebuilt printer image"
-    fi
-    # Always rebuild: it is a cache hit in about a second, and a stale image
-    # silently testing yesterday's harness is not a trade worth making.
-    $DOCKER build -q -t "$IMAGE" -f "$ROOT/test/printer/Dockerfile" "$ROOT/test/printer" >/dev/null \
-        || { echo "  FAIL: could not build $IMAGE"; exit 1; }
 fi
 
 # Stage every input inside the repo: the docker daemon resolves bind-mount

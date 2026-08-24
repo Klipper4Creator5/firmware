@@ -199,8 +199,10 @@ test-lint: image
 test-model: image
 	@$(RUN) ./test/test-model-gate.sh
 
+# RUNSIM, not RUN: it starts a sibling container with the printer's busybox,
+# so it needs the docker socket. Under RUN it always skipped, silently.
 test-ash: image
-	@$(RUN) ./test/test-ash-conformance.sh
+	@$(RUNSIM) ./test/test-ash-conformance.sh
 
 test-abi: image
 	@$(RUN) ./test/test-abi.sh
@@ -224,10 +226,10 @@ test-applets: image
 	@$(RUN) python3 ./test/test-applets.py
 
 test-ui: image
-	@$(RUNSIM) ./test/sim-ui-fallback.sh
+	@$(RUNSIM) ./test/printer-exec.sh ./test/printer/case-ui.sh
 
 test-mcu: image
-	@$(RUNSIM) ./test/sim-mcu-bringup.sh
+	@$(RUNSIM) ./test/printer-exec.sh ./test/printer/case-mcu-bringup.sh
 
 # Packages land in dist/ after `make release` and in work/out after a single
 # build (pack.sh clears work/out each run, so only the last model survives

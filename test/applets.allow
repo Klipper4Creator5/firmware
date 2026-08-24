@@ -3,20 +3,14 @@
 # firmware package installs it onto /usr/prog.
 #
 # Anything added here without one of those two reasons is a boot failure
-# waiting to happen -- test/test-applets.sh exists to force this review.
-
-# shipped by the mod under /usr/data/anvil
-helix-screen
-helix-launcher.sh
-
-# installed on /usr/prog by FlashForge's own packages
-klipperDaemon
-moonrakerDaemon
-checkEboard
-nginx
-python3
-unTar
-wakeup_level
-
-# mod-internal scripts, invoked by absolute path from /usr/data/anvil
-anvil.conf
+# waiting to happen -- test/test-applets.py exists to force this review.
+#
+# The list is EMPTY, and that is the healthy state. It used to name
+# helix-screen, nginx, python3, klipperDaemon and five others, none of which
+# test-applets.py had asked about for a long time: the payload reaches all of
+# them through an absolute path (/usr/prog/nginx/sbin/nginx) or a variable
+# ($NGINX, $FF_PY), and neither form is a bare command word. Nine entries that
+# excused nothing read like nine commands under review, so they are gone.
+#
+# Add a line here only when test-applets.py actually names a word, and say
+# which of the two reasons above covers it.

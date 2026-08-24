@@ -20,9 +20,11 @@ note() { printf '  \033[90m....\033[0m  %s\n' "$*"; }
 
 TARGETS=("$@")
 if [ ${#TARGETS[@]} -eq 0 ]; then
+    # assets/mips and assets/dropbear used to be searched here. Nothing in the
+    # repo has ever produced either: the MIPS binaries the mod ships are staged
+    # by bin/patch.sh into work/modpayload, and dropbear comes from the stock
+    # rootfs, not from us. Two directory tests that could never be true.
     TARGETS=()
-    [ -d assets/mips ] && TARGETS+=(assets/mips)
-    [ -d assets/dropbear ] && TARGETS+=(assets/dropbear)
     [ -f config.env ] && . ./config.env 2>/dev/null
     [ -n "${KLIPPER_FORK:-}" ] && [ -f "$KLIPPER_FORK/klippy/chelper/c_helper.so" ] \
         && TARGETS+=("$KLIPPER_FORK/klippy/chelper/c_helper.so")

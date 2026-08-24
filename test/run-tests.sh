@@ -50,22 +50,23 @@ done
 [ -z "$SYNTAX_BAD" ] && pass "every script parses" || fail "syntax errors in:$SYNTAX_BAD"
 
 hdr "no bashisms in the on-printer payload"
-# This is a cheap heuristic that runs without the firmware. The real check is
+# The dash dialect of shellcheck knows every "not supported in POSIX sh"
+# construct (the SC3xxx family) -- this replaced a hand-rolled grep that knew
+# five. It
+# still runs without the firmware; the authoritative check remains
 # test-ash-conformance.sh, which parses these files with the printer's own
-# busybox -- but that needs the proprietary rootfs, so on a plain pull request
-# this grep is all there is.
-#
-# `local` is NOT listed: busybox ash supports it and the payload uses it.
-BASHISM_BAD=""
-for f in payload/*.sh payload/init.d/S* payload/firmwareExe; do
-    [ -f "$f" ] || continue
-    if grep -nE '\[\[|<<<|\bfunction [a-z]|\$\{[A-Za-z_]+\[|declare |\bsource ' "$f" >/dev/null 2>&1; then
-        BASHISM_BAD="$BASHISM_BAD $f"
-        grep -nE '\[\[|<<<|\bfunction [a-z]|\$\{[A-Za-z_]+\[|declare |\bsource ' "$f" | head -3 | sed 's/^/       /'
-    fi
-done
-[ -z "$BASHISM_BAD" ] && pass "no bash-only constructs in the payload" \
-                      || fail "bashisms in:$BASHISM_BAD"
+# busybox, but that needs the proprietary rootfs, so on a plain pull request
+# this is all there is. dash, not sh: busybox ash, like dash, supports
+# `local`, which the payload uses.
+if command -v shellcheck >/dev/null 2>&1; then
+    BASHISMS=$(shellcheck -s dash -f gcc payload/*.sh payload/init.d/S* payload/firmwareExe 2>&1 \
+                   | grep -E 'SC3[0-9]{3}|SC2039' || true)
+    [ -z "$BASHISMS" ] && pass "no bash-only constructs in the payload" \
+                       || { fail "bashisms in the payload"
+                            echo "$BASHISMS" | head -10 | sed 's/^/       /'; }
+else
+    fail "shellcheck not installed (the build image has it -- run through 'make test')"
+fi
 
 hdr "brick-risk lint"
 sub "lint-danger" ./test/lint-danger.sh payload payload/init.d
@@ -182,10 +183,10 @@ else
         sub "printer db" python3 ./test/test-printer-db.py
 
         hdr "MCU bring-up runs on the printer's own Python"
-        sub "mcu bring-up" ./test/sim-mcu-bringup.sh
+        sub "mcu bring-up" ./test/printer-exec.sh ./test/printer/case-mcu-bringup.sh
 
         hdr "UI decision and crash protection (on the printer's shell)"
-        sub "ui safety" ./test/sim-ui-fallback.sh
+        sub "ui safety" ./test/printer-exec.sh ./test/printer/case-ui.sh
 
         hdr "end-to-end update on the printer replica"
         run ./bin/unpack.sh
