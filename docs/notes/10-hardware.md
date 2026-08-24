@@ -12,6 +12,67 @@
 The app pokes ttyS4/S5/S7 (sends a char, waits for "Ready") before starting Klipper.
 Other serial: `/dev/ttyS3` = drying box (own protocol, not a Klipper MCU).
 
+### The bootloader handshake, as decompiled
+
+Not reconstructed from behaviour — this is `_Z17bootSerialHeatMcuv`,
+`_Z23bootSerialMainEboardMcuv` and `_Z23bootSerialLevelBoardMcuv` disassembled out
+of `usr/prog/PROGRAM/software/firmwareExe` (1.9.7). The three are the same function
+with a different device path and different printf strings; `usr/prog/klipper/checkEboard`
+is a separate, older `-O2` build of the eboard one.
+
+```
+open(dev, O_RDWR)                  # no O_NOCTTY, no O_NONBLOCK
+fcntl(fd, F_SETFL, 0)
+tcgetattr; cfmakeraw
+c_cc[VMIN]=0; c_cc[VTIME]=1        # MIPS: VMIN=4, VTIME=5
+cfsetispeed/cfsetospeed(B115200)   # 0x1002 on MIPS
+c_iflag &= ~(IGNBRK|ICRNL|IXON)    # &= ~0x501
+c_oflag &= ~OPOST
+c_cflag  = (c_cflag & ~(CRTSCTS|PARODD|CSTOPB|CSIZE)) | CLOCAL|CREAD|CS8
+c_lflag &= ~(ISIG|ICANON|ECHO|ECHOE)
+tcsetattr(fd, 0x540E, &tio)        # see below
+
+isReady = 0; isAck = 1
+for (i = 0; i < 50; i++) {         # ~5s ceiling at VTIME=1
+    n = read(fd, buf, 50)
+    if (n == 0) continue
+    if (find(buf, "Ready") != npos) { isReady = 1; break }
+    else                           { isReady = 1 }      # ttyS5/ttyS7 only
+}
+send = 'A'
+if (isReady)
+    for (j = 0; j < 50; j++) {
+        write(fd, &send, 1)
+        read(fd, &recv, 1)
+        if (recv == 6) { isAck = 1; break }
+    }
+close(fd)
+return (isReady == 1 && isAck == 1) ? 0 : -1
+```
+
+Four things worth keeping in mind, all of which bit us:
+
+- **`'A'` goes out fifty times, not once.** The board gets fifty chances.
+- **A non-0x06 reply is ignored.** `isAck` is initialised to 1 and is never assigned
+  0 anywhere in the function, so the ack byte cannot fail the handshake — it only
+  decides whether the loop stops early. The level board answers `0x01` every time.
+  Refusing the handshake over that byte is what stranded ttyS7.
+- **The ready phase differs by board.** On `ttyS4` only a literal `"Ready"` sets
+  `isReady`. On `ttyS5` and `ttyS7` *any* byte does, banner or not — which is why
+  `checkEboard` happily sends 'A' at an eboard that is already running Klipper and
+  is just returning garbage at the wrong baud. `ff-mcu-bringup.py` deliberately does
+  not copy that: only a banner earns a write.
+- **`tcsetattr(fd, 0x540E, ...)`** — that is `TCSETS`, where POSIX wants
+  `TCSANOW`/`TCSADRAIN`/`TCSAFLUSH`. Both binaries do it, so it is in FlashForge's
+  source, not a build artefact. It evidently does not fail on the printer (the
+  routines go on to print their read loop), but `ff-mcu-bringup.py` passes
+  `TCSANOW`, which is correct either way.
+
+The ready phase is only ~5s and it does **not** wait for a second banner, so stock
+only ever worked when it ran immediately after the board powered up. The bootloader
+re-sends its banner on a period longer than that, which is why a bring-up run later
+in the boot can see nothing at all and still be looking at a board in its bootloader.
+
 ## Extruder config (embedded default printer.cfg)
 
 All four `[extruderN]` sections share the same step/dir/enable pins — only the mounted

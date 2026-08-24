@@ -48,7 +48,13 @@ fi
 # which is exactly how moonrakerDaemon used to fail.
 FF_PY=/usr/prog/Python-3.8.2/bin/python3
 [ -x "$FF_PY" ] || FF_PY=python3
-if [ -x /usr/data/anvil/bin/ff-mcu-bringup.py ]; then
+#
+# Test -f, not -x. The script is handed to the interpreter by path, so its
+# execute bit is irrelevant -- and it is not always set: the payload carries
+# mode 644 in git, and the +x only happens if the file arrived through
+# patch.sh or run-append.sh. A hand-copied file is perfectly runnable and
+# used to be skipped with a "missing" message while sitting right there.
+if [ -f /usr/data/anvil/bin/ff-mcu-bringup.py ]; then
     "$FF_PY" /usr/data/anvil/bin/ff-mcu-bringup.py \
         || echo "start.sh: MCU bring-up reported a problem ($?)"
 else
