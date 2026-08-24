@@ -14,12 +14,17 @@
 # modules by hand and missed `authorization`, which is the one that fails when
 # libsodium is not on the library path. So the list is not written down here at
 # all -- it comes from Moonraker's OWN CORE_COMPONENTS, plus every section in
-# the printer's moonraker.conf. That stays correct when the pin moves and when
-# the user adds a component we never thought about.
+# the printer's moonraker.conf AND anything it [include]s. That last part
+# matters: moonraker.conf is mod-owned and ends by including
+# moonraker-custom.conf, which is exactly where a user's own sections live, so
+# without following it the components most likely to be unexpected would be the
+# ones this check missed. It stays correct when the pin moves and when the user
+# adds a component we never thought about.
 #
 #     usage: moonraker-preflight.py <dir containing the moonraker package>
 #
 # Exit 0 = safe to install. Exit 1 = do not touch the working server.
+import glob
 import importlib
 import os
 import re
@@ -44,14 +49,33 @@ def main() -> int:
     names = list(getattr(srv, "CORE_COMPONENTS", []))
     # Whatever the user has configured gets loaded too, so it gets checked too.
     # A section that is not a component (e.g. [server]) is skipped below.
-    try:
-        with open(conf) as fp:
-            for line in fp:
-                m = re.match(r"\s*\[\s*([A-Za-z0-9_]+)", line)
-                if m:
-                    names.append(m.group(1))
-    except OSError:
-        pass
+    # Follow [include ...] too. moonraker.conf is mod-owned and ends with
+    # [include moonraker-custom.conf], which is where a user's own sections
+    # live -- so without this the components most likely to be unexpected are
+    # the ones this check would miss. Moonraker resolves includes relative to
+    # the including file and globs them; so do we, one level, which is all the
+    # shipped config uses.
+    def scan(path, depth=0):
+        try:
+            with open(path) as fp:
+                lines = fp.readlines()
+        except OSError:
+            return
+        for line in lines:
+            m = re.match(r"\s*\[\s*([A-Za-z0-9_]+)", line)
+            if not m:
+                continue
+            if m.group(1) == "include":
+                inc = re.match(r"\s*\[\s*include\s+([^\]]+?)\s*\]", line)
+                if inc and depth < 3:
+                    base = os.path.dirname(os.path.abspath(path))
+                    for sub in sorted(glob.glob(os.path.join(base,
+                                                             inc.group(1)))):
+                        scan(sub, depth + 1)
+                continue
+            names.append(m.group(1))
+
+    scan(conf)
 
     failures = []
     for name in dict.fromkeys(names):          # de-duplicate, keep order
