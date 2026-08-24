@@ -233,6 +233,15 @@ class FFToolchange:
         # [printer] max_accel must not come out of a toolchange faster).
         self.accel_restore = config.getint('accel_restore', None)
 
+        # klipper-toolchanger's RESTORE_AXIS. Empty means restore nothing,
+        # which is what this machine did before the parameter existed -- a
+        # stock file's own start block places the toolhead itself, and moving
+        # it again behind the file's back would be a surprise. Set it here to
+        # give T<n> and a bare SELECT_TOOL a default.
+        self.restore_axis = self._parse_axes(
+            config.get('restore_axis', ''), config.error, 'restore_axis')
+        self.restore_feed = config.getint('restore_feed', 9000, minval=1)
+
         # Sensor names.
         #  position buttons: one per tool, PRESSED == that tool is in its dock
         #    (CommMgr::checkInLocation indexes these by tool)
@@ -310,6 +319,15 @@ class FFToolchange:
             desc=self.cmd_INITIALIZE_TOOLCHANGER_help)
         self.gcode.register_command(
             'ASSIGN_TOOL', self.cmd_ASSIGN_TOOL, desc=self.cmd_ASSIGN_TOOL_help)
+        self.gcode.register_command(
+            'SET_TOOL_TEMPERATURE', self.cmd_SET_TOOL_TEMPERATURE,
+            desc=self.cmd_SET_TOOL_TEMPERATURE_help)
+        self.gcode.register_command(
+            'VERIFY_TOOL_DETECTED', self.cmd_VERIFY_TOOL_DETECTED,
+            desc=self.cmd_VERIFY_TOOL_DETECTED_help)
+        self.gcode.register_command(
+            'SELECT_TOOL_ERROR', self.cmd_SELECT_TOOL_ERROR,
+            desc=self.cmd_SELECT_TOOL_ERROR_help)
         self.gcode.register_command(
             'FF_RUNOUT_ARM', self.cmd_FF_RUNOUT_ARM,
             desc=self.cmd_FF_RUNOUT_ARM_help)
@@ -658,6 +676,57 @@ class FFToolchange:
         toolhead = self.printer.lookup_object('toolhead')
         return toolhead.get_status(self.reactor.monotonic())['max_accel']
 
+    @staticmethod
+    def _parse_axes(raw, error, what):
+        """'xyz' -> 'XYZ', rejecting anything that is not an axis letter."""
+        axes = ''.join(sorted(set(raw.strip().upper())))
+        bad = [a for a in axes if a not in 'XYZ']
+        if bad:
+            raise error("%s: expected letters from XYZ, got '%s'"
+                        % (what, raw))
+        return axes
+
+    def _restore_axis_arg(self, gcmd):
+        return self._parse_axes(gcmd.get('RESTORE_AXIS', self.restore_axis),
+                                gcmd.error, 'RESTORE_AXIS')
+
+    def _capture_position(self):
+        """The G-code position the change is about to disturb."""
+        gm = self.printer.lookup_object('gcode_move')
+        return list(gm.get_status()['gcode_position'])
+
+    def _restore_position(self, axes, pos):
+        """Put the toolhead back where the change found it.
+
+        A GCODE position is captured and replayed, not a machine one, so it
+        is read back through whatever offsets are in force AFTER the change:
+        the new tool's nozzle goes where the old tool's nozzle was, which is
+        the point of the parameter.
+
+        X/Y first and Z last: descending before the carriage is over the
+        target would drag the nozzle across the part.
+
+        Restoring Z after a PARK is the one sharp edge. Parking zeroes the
+        tool offsets, so the same G-code Z is a different machine Z -- by
+        this tool's nozzle-to-eddy-trigger gap (~3.2 mm). Ask for Z on an
+        UNSELECT_TOOL only if you mean it; XY is the safe default.
+        """
+        if not axes:
+            return
+        xy = ' '.join('%s%.3f' % (a, pos[i])
+                      for i, a in enumerate('XY') if a in axes)
+        # The sequence has already put the modal state back; borrow it and
+        # return it rather than leaving G90 and the restore feed behind.
+        self._run('SAVE_GCODE_STATE NAME=_ff_restore_axis')
+        try:
+            self._run('G90')
+            if xy:
+                self._run('G1 %s F%d' % (xy, self.restore_feed))
+            if 'Z' in axes:
+                self._run('G1 Z%.3f F%d' % (pos[2], self.restore_feed))
+        finally:
+            self._run('RESTORE_GCODE_STATE NAME=_ff_restore_axis')
+
     @contextlib.contextmanager
     def _snapshot_motion_state(self):
         """Snapshot the motion state on entry, put it back on exit.
@@ -910,6 +979,14 @@ class FFToolchange:
         if tool < 0 or tool >= EXTRUDER_COUNT:
             raise gcmd.error("TOOLCHANGE: INDEX must be 0..%d, got %d"
                              % (EXTRUDER_COUNT - 1, tool))
+        # Resolved here rather than per command, so T<n> and TOOLCHANGE --
+        # which is what a file actually issues -- honour RESTORE_AXIS and the
+        # [ff_toolchange] restore_axis default the same way SELECT_TOOL does.
+        restore_axis = self._restore_axis_arg(gcmd)
+        # Captured before anything moves; replayed only if the change
+        # succeeded, since a half-finished sequence has no position worth
+        # returning to.
+        resume = self._capture_position() if restore_axis else None
         self.changing = True
         try:
             self._wait_moves()
@@ -940,6 +1017,8 @@ class FFToolchange:
             # extruder, which _grab (or the ACTIVATE_EXTRUDER above) has just
             # set to this tool. The stock start block's bare `M104 S<t>` lands
             # on the right hotend for exactly that reason.
+            if resume is not None:
+                self._restore_position(restore_axis, resume)
         except FFToolchangeError as e:
             raise gcmd.error(str(e))
         except self.printer.command_error:
@@ -1134,12 +1213,15 @@ class FFToolchange:
             raise gcmd.error("T must be 0..%d" % (EXTRUDER_COUNT - 1))
         return t
 
-    cmd_SELECT_TOOL_help = "Select a tool (T=<n> | TOOL=T<n>); same as T<n>"
+    cmd_SELECT_TOOL_help = ("Select a tool (T=<n> | TOOL=T<n>); same as"
+                            " T<n>. RESTORE_AXIS=<xyz> returns the toolhead")
 
     def cmd_SELECT_TOOL(self, gcmd):
         self._toolchange(gcmd, self._tool_arg(gcmd))
 
-    cmd_UNSELECT_TOOL_help = "Dock the mounted tool; same as TOOLCHANGE_PARK"
+    cmd_UNSELECT_TOOL_help = ("Dock the mounted tool; same as"
+                              " TOOLCHANGE_PARK. RESTORE_AXIS=<xyz> returns"
+                              " the toolhead")
 
     def cmd_UNSELECT_TOOL(self, gcmd):
         t = self._tool_arg(gcmd, required=False)
@@ -1168,6 +1250,63 @@ class FFToolchange:
             "ASSIGN_TOOL: logical-to-physical tool remapping is not supported"
             " here; remap in the slicer (the fork's"
             " SDCARD_SET_GCODE_EX_USED_BASE table is the future home)")
+
+    cmd_SET_TOOL_TEMPERATURE_help = (
+        "Set a tool's hotend target (T=<n> | TOOL=T<n>, default the mounted"
+        " tool); TARGET=<temp> [WAIT=1]")
+
+    def cmd_SET_TOOL_TEMPERATURE(self, gcmd):
+        """Upstream addresses a tool by name; we address the extruder behind
+        it. Naming the tool rather than the extruder is the whole point --
+        a UI knows it is heating T2, not that T2 means [extruder2]."""
+        tool = self._tool_arg(gcmd, required=False)
+        if tool is None:
+            tool, why = self._current_tool_or_none()
+            if tool is None or tool < 0:
+                raise gcmd.error("SET_TOOL_TEMPERATURE: no tool mounted, so"
+                                 " T=<n> or TOOL=T<n> is required (%s)" % why)
+        target = gcmd.get_float('TARGET', 0.)
+        heater = self._extruder_name(tool)
+        self._run('SET_HEATER_TEMPERATURE HEATER=%s TARGET=%.1f'
+                  % (heater, target))
+        # WAIT only waits for heat-UP, like Klipper's own TEMPERATURE_WAIT
+        # MINIMUM: there is nothing to wait for on the way down, and a
+        # TARGET of 0 would never be reached.
+        if gcmd.get_int('WAIT', 0) and target > 0.:
+            self._run('TEMPERATURE_WAIT SENSOR=%s MINIMUM=%.1f'
+                      % (heater, target))
+
+    cmd_VERIFY_TOOL_DETECTED_help = (
+        "Check the sensors agree with the expected tool (T=<n> | TOOL=T<n>,"
+        " default: just that the state is readable)")
+
+    def cmd_VERIFY_TOOL_DETECTED(self, gcmd):
+        """ASYNC is accepted and ignored. Upstream defers the check into the
+        motion queue; ours reads switches after a wait_moves, which costs
+        nothing to do inline."""
+        gcmd.get_int('ASYNC', 0)
+        expect = self._tool_arg(gcmd, required=False)
+        self._wait_moves()
+        cur, why = self._current_tool_or_none()
+        if cur is None:
+            raise gcmd.error("VERIFY_TOOL_DETECTED: toolchanger state not"
+                             " derivable: %s" % why)
+        if expect is not None and cur != expect:
+            raise gcmd.error("VERIFY_TOOL_DETECTED: expected T%d, sensors say"
+                             " %s (%s)"
+                             % (expect,
+                                'T%d' % cur if cur >= 0 else 'no tool', why))
+        gcmd.respond_info("detected %s (%s)"
+                          % ('T%d' % cur if cur >= 0 else 'no tool', why))
+
+    cmd_SELECT_TOOL_ERROR_help = "Abort the running script: a tool change failed"
+
+    def cmd_SELECT_TOOL_ERROR(self, gcmd):
+        """Upstream latches the changer into its error state and hands off to
+        an on_tool_change_error script. We hold no latch -- status is derived
+        from the sensors every time it is asked for -- so the useful half is
+        stopping the script that called this."""
+        raise gcmd.error(gcmd.get('MESSAGE', 'tool change failed'))
 
     cmd_FF_RUNOUT_ARM_help = ("Enable the mounted tool's runout/clog sensors"
                               " (and disable the others); TOOL= overrides")
@@ -1259,6 +1398,8 @@ class FFToolchange:
     cmd_TOOLCHANGE_PARK_help = "Dock whatever tool is currently mounted"
 
     def cmd_TOOLCHANGE_PARK(self, gcmd):
+        restore_axis = self._restore_axis_arg(gcmd)
+        resume = self._capture_position() if restore_axis else None
         try:
             self._wait_moves()
             current, why = self._derive_current_tool()
@@ -1270,6 +1411,8 @@ class FFToolchange:
         try:
             self._ensure_homed('xy')
             self._release(current)
+            if resume is not None:
+                self._restore_position(restore_axis, resume)
         except FFToolchangeError as e:
             raise gcmd.error(str(e))
 

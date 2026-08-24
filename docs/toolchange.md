@@ -420,11 +420,35 @@ for — `toolchanger` (`name`, `status`, `tool`, `tool_number`, `tool_numbers`,
 `tool T0..T3` (`active`, `mounted`, `detect_state` = `mounted|absent` from the
 tool's grab sensor, `extruder`, `heater`, `fan`, `gcode_x/y/z_offset`) — and the
 commands they send: `SELECT_TOOL T=<n>` (= `T<n>`), `UNSELECT_TOOL [T=<n>]`
-(= `TOOLCHANGE_PARK`), `INITIALIZE_TOOLCHANGER` (state check, no motion).
+(= `TOOLCHANGE_PARK`), `INITIALIZE_TOOLCHANGER` (state check, no motion),
+`SET_TOOL_TEMPERATURE [T=<n>] TARGET=<t> [WAIT=1]`,
+`VERIFY_TOOL_DETECTED [T=<n>] [ASYNC=…]` and `SELECT_TOOL_ERROR [MESSAGE=…]`.
 `status` is `changing` from before the first move until the sensors confirm
 the swap, `error` when the dock sensors disagree, else `ready`.
 We keep no commanded tool state, so `detected_tool*` always equals `tool*`:
 both are derived from the dock and grab sensors.
+
+`SELECT_TOOL`, `UNSELECT_TOOL` and `TOOLCHANGE_PARK` accept upstream's
+`RESTORE_AXIS=<xyz>`: the G-code position is captured before the change and
+replayed after it, X/Y first and Z last so the nozzle is never dragged across
+the part. A G-code position is replayed, not a machine one, so it is read back
+through the offsets in force *after* the change — the new tool's nozzle lands
+where the old one was. The default is `restore_axis` in `[ff_toolchange]`,
+itself empty: nothing is restored unless asked, which is how this machine has
+always behaved. Restoring Z after an `UNSELECT_TOOL` is the sharp edge, since
+parking zeroes the tool offsets and the same G-code Z becomes a different
+machine Z (~3.2 mm, this tool's nozzle-to-eddy-trigger gap).
+
+`SET_TOOL_TEMPERATURE` addresses the extruder behind the tool; `WAIT=1` waits
+only for heat-up, as Klipper's own `TEMPERATURE_WAIT MINIMUM` does.
+`VERIFY_TOOL_DETECTED` accepts `ASYNC` and ignores it — we read switches after
+a `wait_moves`, which costs nothing to do inline. `SELECT_TOOL_ERROR` aborts
+the running script; we hold no error latch to set, because status is derived
+from the sensors every time it is asked for.
+Upstream's docking-mode and tool-parameter commands (`TEST_TOOL_DOCKING`,
+`ENTER_DOCKING_MODE`, `SET_TOOL_PARAMETER` and friends) are deliberately
+absent: calibration here is `TOOL_OFFSET_CALIBRATE` / `STATION_CALIBRATE` /
+`TOOL_Z_ADJUST`, already tied to the factory numbers.
 `ASSIGN_TOOL` is refused — remap tools in the slicer. Nothing to enable; it is
 always on. `part_fan` in `[ff_toolchange]` is what gets reported as each
 tool's fan (shared `fan_generic fanM106` on this machine). `ff_toolchange`
