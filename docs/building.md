@@ -162,10 +162,11 @@ docker/         Dockerfile.build -- the container every target runs in
 **Tests it** — never ships, and never touched by a build:
 
 ```
-test/           run-tests.sh, and the fixtures both lanes share
-  unit/           needs nothing but this checkout: the pytest config gate
-                  and the synthetic stand-in for a stock package
-  integration/    needs the printer's real rootfs
+test/           run-tests.sh, and the shared pytest fixtures
+  integration/    the suite
+    test_chamber.py         the Klipper config gate -- no firmware needed
+    test_paths.py           payload paths against the real rootfs
+    make-stock-fixture.sh   synthetic stand-in for a stock package
     printer/        the replica itself: binfmt, mount layout, its two
                     Dockerfiles, and the cases that run inside it on the
                     printer's own binaries
@@ -176,13 +177,13 @@ test.env        replica settings only -- factory image, partition sizes
 docs/           the documentation
 ```
 
-The two lanes are separate directories because their preconditions are
-completely different, and the rest of the repo already split along that line:
-`RUN` vs `RUNSIM` in the Makefile, `test` vs `printer-sim` in CI. `test/unit`
-runs on a clean checkout of a public repo. `test/integration` cannot run at
-all without the proprietary package, and most of it also needs the docker
-socket to start the printer replica as a sibling container. Reading the
-directory name is now enough to know which one you are looking at.
+Not everything in there needs the firmware — the config gate needs only
+python3 and jinja2, and runs on a bare checkout. It briefly had a directory of
+its own, `test/unit`, so that a pull request had something to run; with one
+maintainer who always has the firmware, that was a boundary kept in sync for
+nobody. `run-tests.sh` extracts the rootfs before it runs pytest, so a single
+invocation covers as much as the machine allows and reports the rest as gates
+that did not run.
 
 Two things keep the boundary from eroding: only `payload/` and `assets/` are
 ever copied into a package by `patch.sh`, and `make verify` fails if a built

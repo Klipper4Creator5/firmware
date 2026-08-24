@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
-# Full suite, in two halves.
+# The suite. Everything lives in test/integration now.
 #
-#   1. test/unit -- static and packaging checks. Nothing proprietary needed:
-#      a synthetic fixture stands in for the stock package. These run on every
-#      pull request.
+# There used to be a second lane, test/unit, for the checks that need nothing
+# but this checkout. It was split off so a plain pull request had something to
+# run, and then dropped again because this repo has one maintainer who always
+# has the firmware to hand: a lane that only exists for a contributor who never
+# arrives is a directory to keep in sync for nobody. What was in it moved here
+# rather than going away -- the chamber config gate is the only check in the
+# suite that can catch a printer heating something it has no element for, and
+# nothing in the replica can see it, because the replica never starts klippy.
 #
-#   2. test/integration -- the printer replica. The real rootfs.squashfs is
-#      extracted from the stock package and chrooted under qemu-mipsel, so the
-#      installer runs on the printer's own busybox, tar, md5sum and unTar. This
-#      is the half that can actually tell you whether a package bricks a
-#      machine, and it needs the stock FlashForge package to exist.
+# So the ordering below matters more than it used to. The rootfs is extracted
+# BEFORE pytest runs, so that one invocation sees the best world available:
+# with a stock package configured it is all 28 tests, and without one the five
+# that read the rootfs skip and are reported as gates that did not run. Running
+# pytest twice, once per lane, is what the split used to buy.
 #
-#   The two halves are two directories: unit and integration. Everything
-#   under test/unit runs against this checkout alone; everything under
-#   test/integration needs the printer's real rootfs, and most of it also
-#   needs the docker socket to start the replica as a sibling container. This
-#   file is the only thing in test/ that spans both.
-#
-#   ./test/run-tests.sh                       runs the integration half when a
+#   ./test/run-tests.sh                       runs the replica gates when a
 #                                             stock package is configured
 #   REQUIRE_PRINTER_SIM=1 ./test/run-tests.sh fails instead of skipping it
 set -uo pipefail
@@ -69,7 +68,7 @@ FIXTURE_CFG="$TMP/config.env"
 hdr "shell syntax"
 SYNTAX_BAD=""
 for f in bin/*.sh payload/*.sh payload/init.d/S* payload/firmwareExe \
-         test/*.sh test/unit/*.sh test/integration/*.sh \
+         test/*.sh test/integration/*.sh \
          test/integration/printer/*.sh; do
     [ -f "$f" ] || continue
     bash -n "$f" 2>/dev/null || { SYNTAX_BAD="$SYNTAX_BAD $f"; bash -n "$f" 2>&1 | sed 's/^/       /'; }
@@ -96,15 +95,38 @@ else
     fail "shellcheck not installed (the build image has it -- run through 'make test')"
 fi
 
-# The unit lane. Needs no firmware -- python3, jinja2 and the configs in the
-# repo -- so it runs here, in the half that works on a plain pull request. It
-# used to sit behind the rootfs extraction, which meant the one safety-relevant
-# check in the suite (a chamber heater declared on a machine that has no
-# element for it) never ran on a PR at all. The tests that need the printer's
-# rootfs are in test/integration and are simply not named here, so a skip in this
-# lane still means something went wrong rather than being the expected state.
-hdr "python checks (klipper config)"
-sub "pytest (unit)" python3 -m pytest ./test/unit -q
+# Which stock package the replica gates will use, if any. Read in a subshell:
+# config.env is the BUILD config and sourcing it here would put MOD_NAME,
+# TARGET_MACHINE and friends into the shell that runs the fixture build a few
+# lines below, where the whole point is that the fixture config wins.
+STOCK=""
+if [ -f config.env ]; then
+    STOCK=$( . ./config.env >/dev/null 2>&1
+             echo "${STOCK_TGZ_CREATOR5PRO:-${STOCK_TGZ:-}}" )
+fi
+[ -n "$STOCK" ] && [ -f "$STOCK" ] || STOCK=""
+
+# Extract the rootfs before pytest rather than after it. test_paths.py reads
+# it directly -- it needs no docker, only the files -- so doing this first is
+# what lets a single pytest run cover both the config gate and the rootfs
+# checks. This is also the unpack the replica gates need later.
+if [ -n "$STOCK" ]; then
+    hdr "extracting the printer rootfs"
+    if [ -d work/rootfs/bin ]; then pass "rootfs already extracted"
+    else
+        run ./bin/unpack.sh
+        run ./test/integration/extract-rootfs.sh
+    fi
+fi
+
+# The config gate. Needs no firmware -- python3, jinja2 and the configs in the
+# repo -- so it runs here rather than behind the replica, which is where it sat
+# once and meant the one safety-relevant check in the suite (a chamber heater
+# declared on a machine that has no element for it) never ran unless you had
+# the proprietary package. The rootfs checks in the same run skip without one,
+# and a skip is reported as a gate that did not run.
+hdr "python checks"
+sub "pytest" python3 -m pytest ./test/integration -q
 
 # ================================================== packaging, on a fixture ==
 hdr "synthetic stock package"
@@ -112,7 +134,7 @@ hdr "synthetic stock package"
 # containers through the docker socket, and those mounts are resolved by the
 # host daemon, where a path under this container's /tmp does not exist.
 FXDIR="$ROOT/work/.fixture"
-run ./test/unit/make-stock-fixture.sh "$FXDIR"
+run ./test/integration/make-stock-fixture.sh "$FXDIR"
 FIXTURE="$FXDIR/Creator5Pro-stock-fixture.tgz"
 export TARGET_MACHINE=Creator5Pro
 [ -f "$FIXTURE" ] || { echo "no fixture -- aborting"; exit 1; }
@@ -170,14 +192,7 @@ unset CONFIG_ENV TARGET_MACHINE
 # real stock package from scratch anyway.
 rm -rf work/out work/stage work/software work/outer work/modpayload
 
-STOCK=""
-if [ -f config.env ]; then
-    # shellcheck disable=SC1091
-    . ./config.env
-    STOCK="${STOCK_TGZ_CREATOR5PRO:-${STOCK_TGZ:-}}"
-fi
-
-if [ -z "$STOCK" ] || [ ! -f "$STOCK" ]; then
+if [ -z "$STOCK" ]; then
     hdr "printer replica"
     if [ "${REQUIRE_PRINTER_SIM:-0}" = 1 ]; then
         fail "no stock package configured -- the replica tests cannot run, and this build requires them"
@@ -188,18 +203,7 @@ if [ -z "$STOCK" ] || [ ! -f "$STOCK" ]; then
         printf '  Set STOCK_TGZ_CREATOR5PRO in config.env and re-run.\n'
     fi
 else
-    hdr "extracting the printer rootfs"
-    if [ -d work/rootfs/bin ]; then pass "rootfs already extracted"
-    else
-        run ./bin/unpack.sh
-        run ./test/integration/extract-rootfs.sh
-    fi
-
     if [ -d work/rootfs/bin ]; then
-        # The rootfs exists now, so the integration lane can run.
-        hdr "python checks against the printer rootfs"
-        sub "pytest (integration)" python3 -m pytest ./test/integration -q
-
         hdr "MCU bring-up runs on the printer's own Python"
         sub "mcu bring-up" ./test/integration/printer-exec.sh ./test/integration/printer/case-mcu-bringup.sh
 

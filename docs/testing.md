@@ -1,18 +1,25 @@
 # Testing: how we know it does not brick
 
-The suite has two halves, and only one of them can answer the question. They
-are two directories — `test/unit` and `test/integration` — so which half a
-file belongs to is a fact about where it lives, not something you learn by
-reading its header or by remembering to tag it. `test/run-tests.sh` is the
-only thing in `test/` that spans both.
+Everything lives in `test/integration`, and `test/run-tests.sh` runs it. There
+is still a real seam inside it, though — what needs the proprietary firmware
+and what does not — and it is worth knowing which side of that seam a failure
+is on.
 
-**Unit — `test/unit`, static and packaging.** Needs no printer and no
-proprietary firmware: a synthetic fixture (`test/unit/make-stock-fixture.sh`)
-reproduces the package *structure*, so shell syntax, the bashism pass, the
-pytest config gate and the whole packaging pipeline run in CI on a clean
-machine.
+**Without firmware.** A synthetic fixture
+(`test/integration/make-stock-fixture.sh`) reproduces the package *structure*,
+so shell syntax, the bashism pass, the pytest config gate and the whole
+packaging pipeline run in CI on a clean machine. This is roughly half the
+gates, and it is the half that catches a chamber heater declared on a machine
+that has no element for it — the replica cannot, because it never starts
+klippy.
 
-**Integration — `test/integration`, the printer replica.** The real
+These used to live in a directory of their own, `test/unit`. The split was
+there so a plain pull request had something to run; this repo has one
+maintainer who always has the firmware to hand, so it was a boundary being
+maintained for a contributor who never arrived. The tests moved rather than
+went away.
+
+**With firmware — the printer replica.** The real
 `rootfs.squashfs`, extracted from
 the stock package, chrooted under `qemu-mipsel`, with `/usr/prog` installed by
 FlashForge's own updater. The installer under test runs on the printer's
@@ -41,7 +48,7 @@ make test            # everything below
 
 | Gate | What it does | Replica |
 |---|---|:-:|
-| `test-py` | pytest. The Klipper config gate: every `ff-*.cfg` gcode body parses in **Klipper's** Jinja dialect, and the chamber macros are rendered per model to prove a chamber target is refused on a Creator 5 that has no heating element (`test/unit`) — plus, when a rootfs has been extracted, that every absolute path the payload names exists on the printer (`test/integration`) | partly |
+| `test-py` | pytest. The Klipper config gate: every `ff-*.cfg` gcode body parses in **Klipper's** Jinja dialect, and the chamber macros are rendered per model to prove a chamber target is refused on a Creator 5 that has no heating element  — plus, when a rootfs has been extracted, that every absolute path the payload names exists on the printer | partly |
 | `test-install` | **End-to-end.** The package sits on a real FAT filesystem exposed as `/dev/sda1`, and the machine's own `app_startup.sh` runs verbatim through three boots: stick in -> it installs; stick still in -> it installs again (idempotence); stick pulled -> the machine boots with the mod running and the stock `ps`-watchdog satisfied. Asserts along the way: UI present and executable, boot scripts unmodified and still parsing, every installed script `sh -n`-clean under the printer's own busybox, Klipper owned by a service, `c_helper.so` still nan2008 MIPS, user `printer.cfg` preserved, the wrapper unchanged by a re-install | yes |
 | `test-mcu` | Runs `ff-mcu-bringup.py` on the printer's **own** Python 3.8.2 in the exact environment `start.sh` sets — the only gate that executes our Python on the real interpreter, and the one that pins the `LD_LIBRARY_PATH` regression that shipped broken once | yes |
 | `test-recovery` | Installs the mod, then flashes the **stock** package, and asserts the machine is genuinely back to stock byte-for-byte and the leftover payload is inert | yes |

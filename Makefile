@@ -81,14 +81,13 @@ help:
 	@echo
 	@echo 'Test -- four gates, no more:'
 	@echo '  make test             all of them'
-	@echo '  make test-py          pytest: test/unit always, test/integration with a rootfs'
+	@echo '  make test-py          pytest: the config gate, plus rootfs paths if extracted'
 	@echo '  make test-install     end-to-end: USB stick -> update -> reboot'
 	@echo '  make test-mcu         ff-mcu-bringup.py runs on the printer own python'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo
-	@echo 'test/unit needs nothing proprietary and runs on any checkout;'
-	@echo 'test/integration needs the printer rootfs, and its shell half the'
-	@echo 'docker socket. test-py runs the Python side of both. The other'
+	@echo 'test-py needs only python3 and jinja2 for the config gate; its'
+	@echo 'rootfs checks skip until make rootfs has run. The other'
 	@echo 'three run inside a replica of the printer: the real rootfs.squashfs'
 	@echo 'under qemu-mipsel, with /usr/prog installed by FlashForge own updater.'
 	@echo 'test-install goes the whole way -- the package sits on a real FAT'

@@ -20,10 +20,8 @@ grepping the boot log for "command not found".
 /usr/prog and /usr/data are deliberately not checked: they live on partitions
 the rootfs does not contain, and the install simulation covers them.
 
-In test/integration rather than test/unit because of that rootfs dependency. The
-two extractor guards below need no rootfs and so do not run on a plain pull
-request, which is fine: they exist only to stop the check above from passing
-vacuously, and it does not run there either.
+The two extractor guards below need no rootfs and so still run when there is
+no firmware; they exist to stop the check above from passing vacuously.
 """
 import os
 import re

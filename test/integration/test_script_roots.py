@@ -12,8 +12,8 @@ integration half cannot run without docker and the stock package, so on any
 machine missing either, five broken scripts still reported a clean skip.
 
 The check is static on purpose. It needs no docker, no firmware and no shell,
-so it runs in the lane that always runs, which is the whole point -- the bug it
-pins is one that only shows up in the lane that often does not.
+so it runs everywhere -- which is the whole point, because the bug it pins
+only shows itself in the gates that often do not run at all.
 """
 import os
 import re

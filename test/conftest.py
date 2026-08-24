@@ -1,21 +1,18 @@
 """Shared fixtures for both Python lanes.
 
-It sits at test/ rather than in either lane because both need `root`, and
-because this is what lets test/unit and test/integration import ffcfg by
-name. The old scripts were called test-chamber.py and test-macros.py, and
+It sits at test/ rather than beside the tests because that is what lets
+test/integration import ffcfg by name. The old scripts were called test-chamber.py and test-macros.py, and
 the dash made `import test_macros` impossible, so one of them reached the
 other's parser through importlib machinery. Underscores and a conftest remove the
 whole problem. pytest.ini pins the rootdir so this file is found no matter
 which lane is named on the command line.
 
-Which lane a test belongs to is decided by the directory it is in:
-
-    test/unit/          needs nothing but this checkout
-    test/integration/   needs the printer's real rootfs
-
-That used to be a `rootfs` marker with run-tests.sh passing -m expressions.
-The directory says the same thing without anyone having to remember to mark
-a new test, and a file in the wrong place is visible in `git status`.
+Everything lives in test/integration. There was briefly a second directory,
+test/unit, for the tests needing nothing but this checkout, and before that a
+`rootfs` marker doing the same job through -m expressions. Both existed to
+keep a plain pull request supplied with something to run; this repo has one
+maintainer who always has the firmware, so neither was earning the split. The
+`rootfs` fixture below skips instead, which is the honest report anyway.
 """
 import os
 import sys
