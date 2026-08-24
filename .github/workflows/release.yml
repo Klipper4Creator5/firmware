@@ -92,6 +92,11 @@ jobs:
           STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
           STOCK_TGZ=""
           KLIPPER_FORK=""
+          # The secret is INTENTIONALLY unset: a hash baked in here would be
+          # the same root password in every public release. Empty means each
+          # printer picks a random one on its first install and writes it to
+          # anvil-password.txt on the stick; updates keep it. The plumbing
+          # stays so a fork can bake one in deliberately.
           ROOT_PW_HASH='${{ secrets.ROOT_PW_HASH }}'
           FF_KEY='FFP0331&*%root'
           CFG
@@ -163,11 +168,13 @@ jobs:
           and installed -- and the machine was booted again afterwards and
           checked to come up.
 
-          **If the screen stays dark**, the UI has latched SAFE-MODE after
-          three failed boots and the printer is up headless: ssh in, or
-          reach Mainsail at `http://<printer-ip>/`. **To go back to stock**,
-          put FlashForge's own package on a USB stick and power on -- that
-          path is tested on every release too.
+          **If the screen stays dark**, the printer is still up: ssh and
+          Mainsail run from their own services, before and independently of
+          the UI, so reach it at `http://<printer-ip>/` or ssh in and read
+          `/usr/data/logs/helixscreen.log`. There is no automatic fallback --
+          set `MOD_UI=0` in `/usr/data/anvil/anvil.conf` to boot headless on
+          purpose. **To go back to stock**, put FlashForge's own package on a
+          USB stick and power on -- that path is tested on every release too.
 
           ---
 
