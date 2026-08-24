@@ -1,14 +1,18 @@
 # Testing: how we know it does not brick
 
-The suite has two halves, and only one of them can answer the question.
+The suite has two halves, and only one of them can answer the question. They
+are two directories — `test/repo` and `test/replica` — so which half a file
+belongs to is a fact about where it lives, not something you learn by reading
+its header or by remembering to tag it. `test/run-tests.sh` is the only thing
+in `test/` that spans both.
 
-**Half 1 — static and packaging.** Needs no printer and no proprietary
-firmware: a synthetic fixture (`test/fixtures/make-stock-fixture.sh`)
+**Half 1 — `test/repo`, static and packaging.** Needs no printer and no
+proprietary firmware: a synthetic fixture (`test/repo/make-stock-fixture.sh`)
 reproduces the package *structure*, so shell syntax, the bashism pass, the
 pytest config gate and the whole packaging pipeline run in CI on a clean
 machine.
 
-**Half 2 — the printer replica.** The real `rootfs.squashfs`, extracted from
+**Half 2 — `test/replica`, the printer replica.** The real `rootfs.squashfs`, extracted from
 the stock package, chrooted under `qemu-mipsel`, with `/usr/prog` installed by
 FlashForge's own updater. The installer under test runs on the printer's
 busybox, tar, md5sum and `unTar` — not on Debian stand-ins — with a read-only
@@ -36,7 +40,7 @@ make test            # everything below
 
 | Gate | What it does | Replica |
 |---|---|:-:|
-| `test-py` | pytest. The Klipper config gate: every `ff-*.cfg` gcode body parses in **Klipper's** Jinja dialect, and the chamber macros are rendered per model to prove a chamber target is refused on a Creator 5 that has no heating element — plus, with a rootfs present, that every absolute path the payload names exists on the printer | partly |
+| `test-py` | pytest. The Klipper config gate: every `ff-*.cfg` gcode body parses in **Klipper's** Jinja dialect, and the chamber macros are rendered per model to prove a chamber target is refused on a Creator 5 that has no heating element (`test/repo`) — plus, when a rootfs has been extracted, that every absolute path the payload names exists on the printer (`test/replica`) | partly |
 | `test-install` | **End-to-end.** The package sits on a real FAT filesystem exposed as `/dev/sda1`, and the machine's own `app_startup.sh` runs verbatim through three boots: stick in -> it installs; stick still in -> it installs again (idempotence); stick pulled -> the machine boots with the mod running and the stock `ps`-watchdog satisfied. Asserts along the way: UI present and executable, boot scripts unmodified and still parsing, every installed script `sh -n`-clean under the printer's own busybox, Klipper owned by a service, `c_helper.so` still nan2008 MIPS, user `printer.cfg` preserved, the wrapper unchanged by a re-install | yes |
 | `test-mcu` | Runs `ff-mcu-bringup.py` on the printer's **own** Python 3.8.2 in the exact environment `start.sh` sets — the only gate that executes our Python on the real interpreter, and the one that pins the `LD_LIBRARY_PATH` regression that shipped broken once | yes |
 | `test-recovery` | Installs the mod, then flashes the **stock** package, and asserts the machine is genuinely back to stock byte-for-byte and the leftover payload is inert | yes |
@@ -68,7 +72,7 @@ Almost all of a replica run used to be setup, repeated per test case:
 | **the test itself** (three boots, install, re-install) | ~30s |
 
 `make printer-image` does both of those once, at build time, and publishes the
-result. `test/printer/bake.sh` is the part that cannot be a `docker build`
+result. `test/replica/printer/bake.sh` is the part that cannot be a `docker build`
 step — the stock install needs `binfmt_misc` and `chroot`, so it runs in a
 privileged container and the result is committed. The md5 of the package that
 was installed is recorded in `/usr/prog/.BASELINE`; `entrypoint.sh` reinstalls
@@ -125,7 +129,7 @@ Tests that cannot fail are worse than no tests, because they read as coverage:
 - **The hand-rolled bashism grep in `run-tests.sh`.** It knew five constructs;
   `shellcheck -s dash` knows the whole SC3xxx family and now stands in its
   place. The same pass gave every replica launcher one shared
-  `test/sim-image.sh` for the docker plumbing, which also fixed two `make
+  `test/replica/sim-image.sh` for the docker plumbing, which also fixed two `make
   test-ash` bugs: it ran without the docker socket (so it always silently
   skipped), and it never read `test.env`, so it ignored `PRINTER_IMAGE` and
   rebuilt the local sim image every run.

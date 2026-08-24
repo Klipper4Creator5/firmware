@@ -162,14 +162,27 @@ docker/         Dockerfile.build -- the container every target runs in
 **Tests it** — never ships, and never touched by a build:
 
 ```
-test/           the suite: pytest for the config gate, the synthetic fixture
-  printer/        the replica: binfmt, mount layout, its two Dockerfiles,
-                  and the cases that run inside it on the printer's binaries
-  extract-rootfs.sh       pulls the real rootfs out of the stock package
-  build-printer-image.sh  bakes a prebuilt replica image
+test/           run-tests.sh, and the fixtures both lanes share
+  repo/           needs nothing but this checkout: the pytest config gate
+                  and the synthetic stand-in for a stock package
+  replica/        needs the printer's real rootfs
+    printer/        the replica itself: binfmt, mount layout, its two
+                    Dockerfiles, and the cases that run inside it on the
+                    printer's own binaries
+    extract-rootfs.sh       pulls the real rootfs out of the stock package
+    sim-*.sh, printer-exec.sh   host-side launchers, via the docker socket
+    build-printer-image.sh  bakes a prebuilt replica image
 test.env        replica settings only -- factory image, partition sizes
 docs/           the documentation
 ```
+
+The two lanes are separate directories because their preconditions are
+completely different, and the rest of the repo already split along that line:
+`RUN` vs `RUNSIM` in the Makefile, `test` vs `printer-sim` in CI. `test/repo`
+runs on a clean checkout of a public repo. `test/replica` cannot run at all
+without the proprietary package, and its shell half also needs the docker
+socket to start a sibling container. Reading the directory name is now enough
+to know which one you are looking at.
 
 Two things keep the boundary from eroding: only `payload/` and `assets/` are
 ever copied into a package by `patch.sh`, and `make verify` fails if a built

@@ -10,7 +10,8 @@
 # Everything executed inside is the printer's own MIPS userland running under
 # qemu-mipsel. See docs/printer-replica.md.
 #
-# Built by test/build-printer-image.sh, which supplies the URLs per model.
+# Built by test/replica/build-printer-image.sh, which supplies the URLs per
+# model.
 #
 # CONTAINS PROPRIETARY FLASHFORGE FIRMWARE.
 

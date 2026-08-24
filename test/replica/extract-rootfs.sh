@@ -5,7 +5,7 @@
 # -- the genuine buildroot rootfs: busybox 1.31.1, /etc/inittab, /etc/init.d
 # (including the stock S50dropbear), /usr/sbin/dropbear, the real ash.
 #
-# test/sim-install.sh uses it to run the installer inside the ACTUAL printer
+# test/replica/sim-install.sh uses it to run the installer inside the ACTUAL printer
 # userland under qemu-mipsel, where `uname -m` genuinely reports "mips" and
 # busybox applets behave exactly as they do on the machine. That is a far
 # better test than approximating with a Debian container.

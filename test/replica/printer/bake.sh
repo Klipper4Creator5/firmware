@@ -8,7 +8,8 @@
 # under a second.
 #
 # This cannot happen in a `docker build` step: the install needs binfmt_misc
-# and chroot, so it needs --privileged. test/build-printer-image.sh runs this
+# and chroot, so it needs --privileged. test/replica/build-printer-image.sh
+# runs this
 # in a container and commits the result.
 #
 #   BASE_PKG      the stock .tgz to install

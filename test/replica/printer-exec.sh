@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Host-side launcher for the printer replica.
 #
-#   test/printer-exec.sh <case-script> [name=package.tgz ...]
+#   test/replica/printer-exec.sh <case-script> [name=package.tgz ...]
 #
 # The case script is executed by the printer's own busybox inside a chroot of
 # the real extracted rootfs.squashfs, with MIPS binaries running under
@@ -29,7 +29,7 @@ CASE="${1:?usage: printer-exec.sh <case-script> [name=pkg.tgz ...]}"; shift
 # the local replica image every time. Sourcing this twice is harmless: the
 # environment wins over both files, and the first pass exported them.
 # shellcheck disable=SC1091
-. "$ROOT/test/sim-image.sh"
+. "$ROOT/test/replica/sim-image.sh"
 
 if [ "$PREBUILT" = 0 ]; then
     # Say why this is about to be slow. Unpacking the factory image is ~22s

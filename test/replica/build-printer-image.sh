@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Build a Docker image that IS the printer.
 #
-#   ./test/build-printer-image.sh            build
-#   ./test/build-printer-image.sh --push     build and push
-#   ./test/build-printer-image.sh --no-bake  skip the baseline install
+#   ./test/replica/build-printer-image.sh            build
+#   ./test/replica/build-printer-image.sh --push     build and push
+#   ./test/replica/build-printer-image.sh --no-bake  skip the baseline install
 #
 # ONE image covers both models. That is not a shortcut -- there is genuinely
 # nothing model-specific to put in a second one:
@@ -75,7 +75,7 @@ $DOCKER build -t "$RAW" \
     --build-arg "FACTORY_URL=$FACTORY_URL" \
     --build-arg "FF_KEY=${FF_KEY:-FFP0331&*%root}" \
     --build-arg "FW_VERSION=$FWVER" \
-    -f test/printer/Dockerfile.full test/printer
+    -f test/replica/printer/Dockerfile.full test/printer
 
 if [ "$BAKE" = 1 ]; then
     echo

@@ -2,7 +2,7 @@ name: ci
 
 # The stock FlashForge firmware is proprietary and ~93MB, so it is never in
 # the repo. The `test` job runs against a synthetic fixture that reproduces
-# the package STRUCTURE (see test/fixtures/make-stock-fixture.sh) -- enough
+# the package STRUCTURE (see test/repo/make-stock-fixture.sh) -- enough
 # for the static and packaging checks, but NOT enough to prove a package will
 # not brick a printer.
 #
@@ -36,7 +36,7 @@ jobs:
           # shellcheck could report anything it liked and the job stayed green.
           # payload scripts run under busybox ash on the printer.
           shellcheck -s sh   -S error payload/*.sh payload/init.d/S* payload/firmwareExe
-          shellcheck -s bash -S error bin/*.sh test/*.sh
+          shellcheck -s bash -S error bin/*.sh test/*.sh test/repo/*.sh test/replica/*.sh
           # Warnings are advisory: printed, not enforced.
           shellcheck -s sh -S warning payload/*.sh payload/init.d/S* payload/firmwareExe || true
 

@@ -1,10 +1,21 @@
-"""Shared fixtures for the Python half of the suite.
+"""Shared fixtures for both Python lanes.
 
-Being a package directory with a conftest.py is also what lets these modules
-import ffcfg by name. The old scripts were called test-chamber.py and
-test-macros.py, and the dash made `import test_macros` impossible, so one of
-them reached the other's parser through importlib machinery. Underscores and
-a conftest remove the whole problem.
+It sits at test/ rather than in either lane because both need `root`, and
+because this is what lets test/repo and test/replica import ffcfg by name.
+The old scripts were called test-chamber.py and test-macros.py, and the dash
+made `import test_macros` impossible, so one of them reached the other's
+parser through importlib machinery. Underscores and a conftest remove the
+whole problem. pytest.ini pins the rootdir so this file is found no matter
+which lane is named on the command line.
+
+Which lane a test belongs to is decided by the directory it is in:
+
+    test/repo/      needs nothing but this checkout
+    test/replica/   needs the printer's real rootfs
+
+That used to be a `rootfs` marker with run-tests.sh passing -m expressions.
+The directory says the same thing without anyone having to remember to mark
+a new test, and a file in the wrong place is visible in `git status`.
 """
 import os
 import sys
@@ -19,15 +30,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 MODELS = {"Creator5Pro": "creator5pro", "Creator5": "creator5"}
 
 HEATER = "heater_generic chamber_heater"
-
-
-def pytest_configure(config):
-    config.addinivalue_line(
-        "markers",
-        "rootfs: needs the printer's extracted rootfs, i.e. the proprietary "
-        "package. run-tests.sh runs `-m 'not rootfs'` in the half that works "
-        "on a plain pull request and `-m rootfs` once it has extracted one, "
-        "so neither lane reports skips it did not expect.")
 
 
 @pytest.fixture(scope="session")
@@ -45,9 +47,10 @@ def cfgdir():
 def rootfs():
     """The printer's real extracted rootfs, or skip.
 
-    This is the one Python fixture that needs the proprietary package. A skip
-    here is a gate that did not run: run-tests.sh reports it as SKIP rather
-    than as a pass, and refuses to call the suite clean.
+    This is the one Python fixture that needs the proprietary package, which
+    is why everything using it lives in test/replica. A skip here is a gate
+    that did not run: run-tests.sh reports it as SKIP rather than as a pass,
+    and refuses to call the suite clean.
     """
     path = os.path.join(ROOT, "work", "rootfs")
     if not os.path.isdir(os.path.join(path, "bin")):

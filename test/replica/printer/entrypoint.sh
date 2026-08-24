@@ -81,7 +81,8 @@ echo "printer-sim: $ID  (real rootfs, qemu-mipsel)"
 
 # The stock package goes on first: that is the only authentic source for
 # /usr/prog/klipper, firmwareExe, unTar, app_startup.sh and friends.
-# Already baked into the image? test/build-printer-image.sh installs the stock
+# Already baked into the image? test/replica/build-printer-image.sh installs
+# the stock
 # package once at build time and records its md5 here, because doing it per run
 # costs 37 seconds of qemu and real `sleep` calls for a result that is
 # identical every time.

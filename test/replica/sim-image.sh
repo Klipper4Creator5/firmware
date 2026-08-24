@@ -12,7 +12,7 @@
 #
 #              THE ENVIRONMENT WINS OVER BOTH FILES. `PRINTER_IMAGE=` sitting
 #              empty in test.env used to overwrite an explicit
-#              `PRINTER_IMAGE=foo ./test/sim-install.sh ...`, so the override
+#              `PRINTER_IMAGE=foo ./test/replica/sim-install.sh ...`, so the override
 #              silently did nothing and the run tested a different image than
 #              the one that was named.
 #
@@ -22,8 +22,8 @@
 #              install simulation.
 #   IMAGE      PRINTER_IMAGE names a prebuilt image that already carries the
 #              firmware (rootfs, /usr/prog, /usr/data -- see
-#              test/build-printer-image.sh); PREBUILT=1 then. Otherwise the
-#              local sim image is built from test/printer/Dockerfile, which
+#              test/replica/build-printer-image.sh); PREBUILT=1 then. Otherwise the
+#              local sim image is built from test/replica/printer/Dockerfile, which
 #              needs the extracted rootfs at work/rootfs.
 
 skip() {
@@ -74,6 +74,6 @@ if [ -z "$IMAGE" ]; then
     fi
     # Always rebuild: it is a cache hit in about a second, and a stale image
     # silently testing yesterday's harness is not a trade worth making.
-    $DOCKER build -q -t "$IMAGE" -f "$ROOT/test/printer/Dockerfile" "$ROOT/test/printer" >/dev/null \
+    $DOCKER build -q -t "$IMAGE" -f "$ROOT/test/replica/printer/Dockerfile" "$ROOT/test/printer" >/dev/null \
         || { echo "  FAIL: could not build $IMAGE"; exit 1; }
 fi
