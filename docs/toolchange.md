@@ -33,7 +33,7 @@ documented in the file headers.
 | [`payload/klipper/config/ff-legacy.cfg`](../payload/klipper/config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — include only for the import step, then remove |
 | [`payload/klipper/config/ff-print-macros.cfg`](../payload/klipper/config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the `_FF_PREFLIGHT` calibration and tool-presence gate; declares `[ff_print]` and the `FF_BEFORE_PRINT_START` / `FF_AFTER_PRINT_END` entry points it calls |
 | [`payload/klipper/config/ff-filament.cfg`](../payload/klipper/config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
-| [`payload/klipper/config/ff-runout.cfg`](../payload/klipper/config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163), optionally after printing through the PTFE buffer (`runout_distance`); `ff_toolchange` arms only the mounted tool's sensors |
+| [`payload/klipper/config/ff-runout.cfg`](../payload/klipper/config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163, reported here in plain words), optionally after printing through the PTFE buffer (`runout_distance`); `ff_toolchange` arms only the mounted tool's sensors |
 | [`payload/klipper/config/printer.base.cfg`](../payload/klipper/config/printer.base.cfg) | `/usr/prog/klipper/config/` | FlashForge's `printer.base.cfg` with the chamber block replaced by `[include printer.chamber.cfg]`. Klipper can override an option but cannot un-declare a section, and the plain Creator 5 has no chamber heating element, so its heater must be **absent** rather than neutralised. `bin/unpack.sh` compares this against each stock package it unpacks and warns if FlashForge's has changed |
 | [`printer.chamber.cfg.creator5`](../payload/klipper/config/printer.chamber.cfg.creator5) · [`.creator5pro`](../payload/klipper/config/printer.chamber.cfg.creator5pro) | `/usr/prog/klipper/config/printer.chamber.cfg` | The one per-model difference: the Pro gets `[heater_generic chamber_heater]` + `[verify_heater]` verbatim from FlashForge, the Creator 5 gets only `[temperature_sensor chamber]` on the same pin. Anything that differs between models exists once per model with a `.creator5` / `.creator5pro` suffix and is installed under its real name — **nothing is edited at build time** |
 | [`payload/klipper/config/ff-chamber.cfg`](../payload/klipper/config/ff-chamber.cfg) | `/usr/data/config/` | `M141` / `M191` for the chamber heater (Klipper has neither, and the stock app drove the chamber only from its own UI), plus the gate: the macros ask Klipper whether `heater_generic chamber_heater` exists, so a non-zero chamber target is refused on a machine that does not declare one. Nothing to keep in sync; identical in every package |
@@ -299,7 +299,7 @@ tool's two sensors on every grab, disarms everything on release, and
 re-arms on `RESUME` (the app's `setFilamentWheelManager`).
 
 Flow: sensor fires while an SD print is running and the sensor belongs to
-the mounted tool → `PAUSE`, `E0162 filament runout` / `E0163 clog` on the
+the mounted tool → `PAUSE`, `T<n> out of filament` / `T<n> clog` on the
 display and console → fix the filament → `LOAD_FILAMENT TOOL=n` (its paused
 path is the app's in-print feed: 100 mm, then 5 mm back) → `RESUME`.
 Sensors of tools that are not mounted never fire, and nothing fires
@@ -314,7 +314,7 @@ printable filament; the app paused at once and wasted it. Set
 `variable_runout_distance` in `[gcode_macro _FF_RUNOUT_CFG]` to the
 measured switch-to-gear length minus a margin (e.g. 500) and the print
 carries on, a 1 s watcher counts the mounted tool's extrusion and pauses
-with E0162 once that much has been used — extrusion by other tools in
+once that much has been used — extrusion by other tools in
 between does not count, a manual `PAUSE` freezes the countdown. 0 (the
 default) pauses immediately.
 No endless-spool: another tool is another head, not another spool of the
