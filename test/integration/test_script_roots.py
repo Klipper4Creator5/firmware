@@ -50,3 +50,60 @@ def test_some_scripts_were_actually_checked(root):
     hits = [p for p in shell_scripts(root)
             if UPWALK.search(open(p, encoding="utf-8", errors="replace").read())]
     assert hits, "no upward walks found -- regex or file walk broken?"
+
+
+# A repo-relative path naming something checked in: "$ROOT/test/integration/
+# printer", "./bin/unpack.sh", "test/integration/printer/Dockerfile".
+REPO_PATH = re.compile(r'(?:\$ROOT/|\./|(?<![\w./$-]))((?:test|bin)/[\w./-]+)')
+
+
+def host_scripts(root):
+    """The launchers, which run on the host and so name paths in this repo.
+
+    test/integration/printer/ is excluded: those run inside the container, and
+    inside a chroot of the printer's own filesystem after that, where `bin/`
+    is the printer's /bin and has nothing to do with this checkout.
+    """
+    printer = os.path.join(root, "test", "integration", "printer") + os.sep
+    return [p for p in shell_scripts(root) if not p.startswith(printer)]
+
+
+def test_named_paths_under_test_and_bin_exist(root):
+    """Every checked-in path a launcher names must actually be there.
+
+    The check above pins the `..` count; this pins the other half of the same
+    accident. Moving the replica into test/integration/ left two `docker build`
+    lines with a corrected -f Dockerfile argument and a STALE build context on
+    the very same line -- `-f test/integration/printer/Dockerfile test/printer`
+    -- because the search-and-replace matched the first path on the line and
+    not the second. docker fails outright on a context that is not there, but
+    only when PRINTER_IMAGE is unset, so anyone on the published prebuilt
+    image never reached it.
+
+    Comments are skipped. They are prose, and they legitimately name paths
+    that no longer exist -- run-tests.sh opens by explaining where test/unit
+    went.
+    """
+    missing = []
+    for path in host_scripts(root):
+        rel = os.path.relpath(path, root)
+        for n, line in enumerate(
+                open(path, encoding="utf-8", errors="replace"), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            for hit in REPO_PATH.findall(line):
+                # A glob or a shell variable is not a literal to resolve.
+                if "*" in hit or "$" in hit:
+                    continue
+                if not os.path.exists(os.path.join(root, hit)):
+                    missing.append("%s:%d: names %s, which is not there"
+                                   % (rel, n, hit))
+    assert not missing, ("scripts naming paths that do not exist:\n  "
+                         + "\n  ".join(missing))
+
+
+def test_some_paths_were_actually_checked(root):
+    """As above: a regex that matches nothing would pass silently."""
+    hits = [p for p in host_scripts(root)
+            if REPO_PATH.search(open(p, encoding="utf-8", errors="replace").read())]
+    assert hits, "no repo-relative paths found -- regex or file walk broken?"

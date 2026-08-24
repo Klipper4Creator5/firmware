@@ -74,6 +74,6 @@ if [ -z "$IMAGE" ]; then
     fi
     # Always rebuild: it is a cache hit in about a second, and a stale image
     # silently testing yesterday's harness is not a trade worth making.
-    $DOCKER build -q -t "$IMAGE" -f "$ROOT/test/integration/printer/Dockerfile" "$ROOT/test/printer" >/dev/null \
+    $DOCKER build -q -t "$IMAGE" -f "$ROOT/test/integration/printer/Dockerfile" "$ROOT/test/integration/printer" >/dev/null \
         || { echo "  FAIL: could not build $IMAGE"; exit 1; }
 fi

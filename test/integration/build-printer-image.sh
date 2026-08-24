@@ -23,7 +23,7 @@
 #
 # The Dockerfile downloads the firmware itself, so nothing has to be staged
 # locally, config.env is not needed, and the build context is just
-# test/printer. Override to build against different firmware:
+# test/integration/printer. Override to build against different firmware:
 #
 #   STOCK_URL=  FACTORY_URL=  FW_VERSION=
 #
@@ -75,7 +75,7 @@ $DOCKER build -t "$RAW" \
     --build-arg "FACTORY_URL=$FACTORY_URL" \
     --build-arg "FF_KEY=${FF_KEY:-FFP0331&*%root}" \
     --build-arg "FW_VERSION=$FWVER" \
-    -f test/integration/printer/Dockerfile.full test/printer
+    -f test/integration/printer/Dockerfile.full test/integration/printer
 
 if [ "$BAKE" = 1 ]; then
     echo
