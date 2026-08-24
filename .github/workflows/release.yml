@@ -120,13 +120,22 @@ jobs:
       - name: End-to-end update test on the packages that will actually ship
         # The suite above tested a package built from the same tree; this
         # tests the exact files that get attached to the release.
-        env:
-          REQUIRE_PRINTER_SIM: 1     # a skip here must fail the release
+        #
+        # In the build image, not on the runner: every step before this one
+        # ran as root inside that image, so work/ and dist/ belong to root and
+        # the replica -- which stages into work/.sim-* -- cannot create its
+        # own scratch directory as the runner user. It also needs the docker
+        # socket, because each case starts a printer replica container.
         run: |
-          for p in dist/*.tgz; do
-            echo "=== $p ==="
-            ./test/integration/sim-install.py "$p" || exit 1
-          done
+          docker run --rm \
+            -v "$PWD":"$PWD" -w "$PWD" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e REQUIRE_PRINTER_SIM=1 \
+            creator5-fw-build sh -c '
+              for p in dist/*.tgz; do
+                echo "=== $p ==="
+                ./test/integration/sim-install.py "$p" || exit 1
+              done'
 
       - uses: actions/upload-artifact@v4
         with:
