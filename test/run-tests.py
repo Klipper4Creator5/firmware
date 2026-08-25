@@ -229,12 +229,18 @@ def make_fixture(r, tmp):
     # ./config.env and copy it back afterwards, which put the config you
     # edited one crashed run away from being replaced by a fixture one.
     cfg = Path(tmp) / "config.env"
+    # BUILD_KLIPPER=stock, BY NAME: this job must not need the network, and
+    # the fork path needs the pinned tarball plus the ~203MB toolchain from
+    # vendor/. patch.sh no longer falls back silently -- KLIPPER_FORK="" here
+    # used to mean "quietly keep the stock tree", which is exactly how
+    # v20260824 shipped without its Klipper. The fork path is exercised where
+    # vendor/ exists: the printer-sim job and the release workflow.
     cfg.write_text(
         "MOD_NAME=anvil\n"
         "MOD_VER=ci\n"
         'SW_VER=""\n'
         'STOCK_TGZ="%s"\n'
-        'KLIPPER_FORK=""\n'
+        "BUILD_KLIPPER=stock\n"
         'HELIX_TGZ="%s"\n'
         'MAINSAIL_ZIP="%s"\n'
         'MOONRAKER_TGZ="%s"\n'
