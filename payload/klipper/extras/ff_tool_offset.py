@@ -673,21 +673,43 @@ class FFToolOffset:
         gcmd.respond_info("\n".join(lines))
 
     def _report_diffs(self, gcmd, results):
-        """Tool-to-tool differences against T0, the quantity the toolchanger
-        applies (ff_toolchange._derive_offsets, base = its offset_base option,
-        which defaults to T0 but is configurable -- with a different base this
-        report is not what the toolchanger applies)."""
-        base = None
-        if 0 in results:
-            base = results[0]
-        elif self.tools[0].calibrated():
-            base = self.tools[0].nozzle
-        if base is None:
-            return
-        lines = ["differences vs T0 (what a toolchange applies):"]
+        """What this run measured, and what a toolchange applies with it.
+
+        The measured lines are the raw fit: the station-bore centre in
+        machine coordinates and the nozzle's Z trigger height. The offsets
+        table mirrors ff_toolchange._derive_offsets exactly: X/Y are
+        differences against the toolchanger's base tool (offset_base,
+        default T0), and Z is the ABSOLUTE offset every grab applies when a
+        station calibration exists -- z_adjust + (nozzle_z - station_z),
+        the tool's nozzle-to-eddy-trigger gap -- falling back to the
+        base-relative form without one. The base tool's dX/dY are zero by
+        definition; its Z is not."""
+        base_tool = (self.toolchange.offset_base
+                     if self.toolchange is not None else 0)
+        lines = []
         for tool, (cx, cy, zp) in sorted(results.items()):
-            lines.append("  T%d: dX %+.4f  dY %+.4f  dZ %+.4f"
-                         % (tool, cx - base[0], cy - base[1], zp - base[2]))
+            lines.append("T%d measured: nozzle centre %.4f, %.4f"
+                         "  Z trigger %.4f" % (tool, cx, cy, zp))
+        base = None
+        if base_tool in results:
+            base = results[base_tool]
+        elif self.tools[base_tool].calibrated():
+            base = self.tools[base_tool].nozzle
+        z_station = self.station[2] if self.station is not None else None
+        if base is not None:
+            lines.append("offsets a toolchange applies (X/Y vs T%d; Z %s):"
+                         % (base_tool,
+                            "absolute: nozzle_z - station_z + z_adjust"
+                            if z_station is not None
+                            else "vs T%d, + z_adjust" % base_tool))
+            for tool, (cx, cy, zp) in sorted(results.items()):
+                za = self.tools[tool].z_adjust
+                if z_station is not None:
+                    z_applied = za + (zp - z_station)
+                else:
+                    z_applied = za + (zp - base[2])
+                lines.append("  T%d: dX %+.4f  dY %+.4f  Z %+.4f"
+                             % (tool, cx - base[0], cy - base[1], z_applied))
         gcmd.respond_info("\n".join(lines))
 
     def get_status(self, eventtime):
