@@ -92,8 +92,9 @@ into the printer's filesystem.
 
 ## Getting rid of the stubs entirely
 
-`/usr/prog` is a factory image that no update package contains. Two things
-supply it, and there is no third:
+`/usr/prog` is a factory image: update packages carry only slices of it, and
+the full thing ships in the factory firmware (see below — it is published).
+Two things supply it to the replica, and there is no third:
 
 1. **`PROG_DUMP`** — a real `/usr/prog` off a printer, used verbatim:
 
@@ -137,8 +138,10 @@ real implementation rather than against an assumption about it.
 
 ## What is authentic and what is not
 
-`/usr/prog` on a real printer is a factory image that no update package
-contains. The replica gets as close as the packages allow:
+`/usr/prog` on a real printer is the factory image plus every update
+installed since. The replica is assembled the same way — the published
+factory image supplies the partition, and FlashForge's own installer lays
+the update package on top:
 
 * **Installed for real, by FlashForge's own `run.sh`**: `app_startup.sh`,
   `klipper/` (klippy, extras, kinematics, `chelper/c_helper.so`), `start.sh`,
