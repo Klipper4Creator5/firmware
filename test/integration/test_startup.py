@@ -3,7 +3,7 @@
 Two contracts, and only the second is once-per-install.
 
 EVERY BOOT it waits for the printer to actually be up -- the toolhead boards
-handed over from their bootloaders by ff-mcu-bringup.py, then klipper and
+handed over from their bootloaders by ff_mcu_bringup.py, then klipper and
 moonraker ready -- and names on the panel whichever one is holding things up.
 
 FIRST BOOT, once that has happened, it runs FF_IMPORT_FIRMWARE_CONFIG +
@@ -41,8 +41,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 
 def _load():
-    path = os.path.join(ROOT, "payload", "bin", "ff-startup.py")
-    spec = importlib.util.spec_from_file_location("ff_startup", path)
+    # payload/bin goes on sys.path first, because that is what the runtime
+    # looks like: python puts a script's own directory there, and ff-startup
+    # imports ffscreen and ff_mcu_bringup by plain name on the strength of
+    # it. Loading it here without that would test a program whose siblings
+    # are missing -- which is a real failure mode, but not the usual one.
+    path = os.path.join(ROOT, "payload", "bin")
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    spec = importlib.util.spec_from_file_location(
+        "ff_startup", os.path.join(path, "ff-startup.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -520,7 +528,7 @@ def test_every_reason_is_drawable(tmp_path):
 
 # -- waiting for the toolhead boards, every boot ---------------------------
 #
-# ff-mcu-bringup.py is a module here, not a subprocess and not a file to poll:
+# ff_mcu_bringup.py is a module here, not a subprocess and not a file to poll:
 # this program owns when klippy opens the ports, so it owns handing the boards
 # over first. The callback is what makes that worth owning -- it names the
 # board being waited for while the wait is happening.
@@ -613,7 +621,7 @@ def test_every_port_the_bringup_owns_has_a_name():
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "ff_mcu_bringup",
-        os.path.join(ROOT, "payload", "bin", "ff-mcu-bringup.py"))
+        os.path.join(ROOT, "payload", "bin", "ff_mcu_bringup.py"))
     real = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(real)
     for dev in real.DEFAULT_PORTS:
@@ -787,3 +795,35 @@ def test_no_klipper_only_waits(tmp_path, stack, monkeypatch):
     with_bringup(monkeypatch, FakeBringup())
     assert imp.run(args(tmp_path, no_klipper=True)) == 0
     assert fake.starts == 0
+
+
+# -- the imports resolve when it is run the way the wrapper runs it ---------
+
+
+def test_selftest_reports_both_siblings(capsys):
+    assert imp.selftest() == 0
+    out = capsys.readouterr().out
+    assert "ffscreen: yes" in out
+    assert "ff_mcu_bringup: yes" in out
+    assert "ports: 3" in out
+    assert "selftest: ok" in out
+
+
+def test_selftest_fails_loudly_when_the_bringup_is_missing(monkeypatch, capsys):
+    # Silent is the dangerous outcome: no bring-up means klippy opens the
+    # ports at boards still sitting in their bootloaders.
+    monkeypatch.setattr(imp, "bringup", None)
+    assert imp.selftest() == 1
+    assert "ff_mcu_bringup: NO" in capsys.readouterr().out
+
+
+def test_run_by_path_from_elsewhere_finds_its_siblings(tmp_path):
+    # The whole premise of importing by plain name: python puts the SCRIPT's
+    # directory on sys.path, not the caller's. Run it from somewhere else
+    # entirely and the imports must still resolve.
+    import subprocess
+    script = os.path.join(ROOT, "payload", "bin", "ff-startup.py")
+    out = subprocess.run([sys.executable, script, "--selftest"],
+                         cwd=str(tmp_path), capture_output=True, text=True)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "selftest: ok" in out.stdout

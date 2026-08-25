@@ -205,7 +205,7 @@ logged instead.
 make rootfs          # once -- extracts rootfs.squashfs from the stock package
 make test-install    # install the built package into the replica
 make test-recovery   # mod in, stock package back out
-make test-mcu        # ff-mcu-bringup.py on the printer's own Python
+make test-mcu        # ff_mcu_bringup.py on the printer's own Python
 make test-py         # klipper config, and rootfs paths when one is present
 make test            # all of it
 ```

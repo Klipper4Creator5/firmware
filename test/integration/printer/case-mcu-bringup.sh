@@ -1,5 +1,5 @@
 #!/bin/sh
-# Can start.sh actually run ff-mcu-bringup.py on this machine?
+# Can start.sh actually run ff_mcu_bringup.py on this machine?
 #
 # The handshake logic is tested elsewhere against a pty. What is tested HERE
 # is the boring part that has already bitten us once: whether the interpreter
@@ -17,18 +17,18 @@ bad() { echo "  FAIL  $*"; FAIL=1; }
 skip() { echo "  SKIP  $*"; }
 
 MOD=/usr/data/anvil
-SCRIPT=$MOD/bin/ff-mcu-bringup.py
+SCRIPT=$MOD/bin/ff_mcu_bringup.py
 PY=/usr/prog/Python-3.8.2/bin/python3
 
 mkdir -p $MOD/bin
-cp /tmp/payload/bin/ff-mcu-bringup.py $SCRIPT 2>/dev/null
+cp /tmp/payload/bin/ff_mcu_bringup.py $SCRIPT 2>/dev/null
 chmod +x $SCRIPT 2>/dev/null
 
 if [ ! -f "$SCRIPT" ]; then
-    bad "payload does not carry bin/ff-mcu-bringup.py"
+    bad "payload does not carry bin/ff_mcu_bringup.py"
     exit 1
 fi
-ok "payload ships bin/ff-mcu-bringup.py"
+ok "payload ships bin/ff_mcu_bringup.py"
 
 if [ ! -x "$PY" ]; then
     # `exit 0` here reported a PASSING gate: Replica.run_case only reads the
@@ -108,5 +108,5 @@ else
 fi
 
 echo
-[ $FAIL -eq 0 ] && echo "  ff-mcu-bringup.py is runnable as start.sh invokes it"
+[ $FAIL -eq 0 ] && echo "  ff_mcu_bringup.py is runnable as start.sh invokes it"
 exit $FAIL

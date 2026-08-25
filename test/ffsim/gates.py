@@ -90,7 +90,7 @@ def extract_rootfs(config, on_output=None):
 # ------------------------------------------------------------- replica gates
 
 def mcu_bringup(config, on_output=None):
-    """Does start.sh's ff-mcu-bringup.py actually run on the printer's Python?"""
+    """Does start.sh's ff_mcu_bringup.py actually run on the printer's Python?"""
     replica = Replica.start(config, want_output=on_output)
     replica.run_case(_case(config, "case-mcu-bringup.sh"), on_output=on_output)
 

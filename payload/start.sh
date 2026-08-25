@@ -9,12 +9,12 @@
 # Three changes from stock:
 #   * klipper_pri.sh is actually invoked. FlashForge ships that script but
 #     never calls it, so klippy runs at normal priority.
-#   * ff-mcu-bringup.py hands the heat, eboard and level boards over from
+#   * ff_mcu_bringup.py hands the heat, eboard and level boards over from
 #     their bootloaders. Stock never needed it here because firmwareExe did
 #     all three itself; replacing firmwareExe left two of them stranded, and
 #     the third was covered by checkEboard.
 #   * checkEboard is no longer called. It is one function, hard wired to
-#     /dev/ttyS5, and an older build of the routine ff-mcu-bringup.py already
+#     /dev/ttyS5, and an older build of the routine ff_mcu_bringup.py already
 #     reimplements -- one that treats ANY byte from that port as a bootloader
 #     banner and so sends 'A' at an eboard already running Klipper. The
 #     binary is still on the firmware partition; nothing runs it.
@@ -42,9 +42,9 @@ fi
 # bootloader is told to start the application:
 #
 #   /dev/ttyS2  mcu           cmd_mcu bootup, above
-#   /dev/ttyS4  eheaterboard  ff-mcu-bringup.py   <- was nobody's job
-#   /dev/ttyS5  eboard        ff-mcu-bringup.py   <- was checkEboard
-#   /dev/ttyS7  levelboard    ff-mcu-bringup.py   <- was nobody's job
+#   /dev/ttyS4  eheaterboard  ff_mcu_bringup.py   <- was nobody's job
+#   /dev/ttyS5  eboard        ff_mcu_bringup.py   <- was checkEboard
+#   /dev/ttyS7  levelboard    ff_mcu_bringup.py   <- was nobody's job
 #
 # This runs on every klippy start, including the restarts S70klipper issues
 # when a board missed its window.
@@ -70,11 +70,11 @@ FF_PY=/usr/prog/Python-3.8.2/bin/python3
 # does the full job.
 if [ "${FF_SKIP_MCU_BRINGUP:-0}" = 1 ]; then
     echo "start.sh: MCU bring-up already done by the caller"
-elif [ -f /usr/data/anvil/bin/ff-mcu-bringup.py ]; then
-    "$FF_PY" /usr/data/anvil/bin/ff-mcu-bringup.py \
+elif [ -f /usr/data/anvil/bin/ff_mcu_bringup.py ]; then
+    "$FF_PY" /usr/data/anvil/bin/ff_mcu_bringup.py \
         || echo "start.sh: MCU bring-up reported a problem ($?)"
 else
-    echo "start.sh: ff-mcu-bringup.py missing -- the toolhead boards are not brought up"
+    echo "start.sh: ff_mcu_bringup.py missing -- the toolhead boards are not brought up"
 fi
 /usr/prog/klipper/klipperDaemon start
 

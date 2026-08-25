@@ -9,7 +9,7 @@
 #                moonraker ready -- naming on the panel whatever is being
 #                waited for. This machine takes its time: three of the four
 #                boards need a handshake before they answer (see
-#                bin/ff-mcu-bringup.py) and the heater board routinely costs
+#                bin/ff_mcu_bringup.py) and the heater board routinely costs
 #                klippy a restart or two. That wait used to happen behind a
 #                black screen with HelixScreen already up and reporting a
 #                disconnected printer, which tells an owner nothing about
@@ -32,7 +32,7 @@
 # HelixScreen:
 #
 #   1. Hand the toolhead boards over from their bootloaders, by calling
-#      ff-mcu-bringup.py directly -- it is a module here, not a subprocess --
+#      ff_mcu_bringup.py directly -- it is a module here, not a subprocess --
 #      naming on the panel whichever board is still being waited for.
 #   2. Launch klipper (start.sh, told not to redo the bring-up) and wait for
 #      klippy and moonraker to be ready. If a board never answered, klippy
@@ -81,7 +81,6 @@
 # Exit 0 = the printer came up, and the migration either was not needed or
 # succeeded. Exit 1 = something did not finish; no stamp was written.
 import argparse
-import importlib.util
 import json
 import os
 import subprocess
@@ -90,35 +89,20 @@ import time
 import urllib.error
 import urllib.request
 
+# Both sit beside this script, so running it by absolute path finds them:
+# python puts the script's own directory on sys.path. Either being absent is
+# survivable and neither is fatal -- no ffscreen means no panel, and no
+# bring-up means the boards are left to klippy, which reports a board that
+# never answered better than we could anyway.
 try:
-    # Sits beside this script, so running it by absolute path finds it.
     import ffscreen
 except ImportError:
     ffscreen = None
 
-
-def _load_bringup():
-    """Import ff-mcu-bringup.py, whose filename is not an identifier.
-
-    It is a sibling file rather than a package because start.sh also runs it
-    as a script, by path, on the fallback route. Absent, we simply do no
-    bring-up: klippy still gets started, and a board that never answered is
-    news klippy breaks better than we could.
-    """
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        'ff-mcu-bringup.py')
-    try:
-        spec = importlib.util.spec_from_file_location('ff_mcu_bringup', path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-    except Exception as exc:
-        logging_note = 'ff-mcu-bringup.py did not load (%s)' % exc
-        sys.stdout.write('ff-startup: %s\n' % logging_note)
-        return None
-
-
-bringup = _load_bringup()
+try:
+    import ff_mcu_bringup as bringup
+except ImportError:
+    bringup = None
 
 STAMP = '/usr/data/anvil/.firmware-config-imported'
 JSON_DIR = '/usr/data/firmwareRes/config'
@@ -131,7 +115,7 @@ MCU_TIMEOUT = 30.0
 KLIPPER_TRIES = 6
 EXTRUDER_COUNT = 4
 
-# What to call each board on the panel. The serial port is what ff-mcu-bringup
+# What to call each board on the panel. The serial port is what ff_mcu_bringup
 # publishes and what klipper names in its own errors; neither string means
 # anything to the person standing in front of the machine.
 BOARDS = {
@@ -635,6 +619,34 @@ def migrate(args, mr, panel):
     return 0
 
 
+def selftest():
+    """Report what this script can actually reach, and exit.
+
+    The imports above are the kind that work when a developer runs the file
+    and fail in the field: they resolve only because python puts the script's
+    own directory on sys.path, which is true when it is run by path and NOT
+    true when something loads it through importlib. So the check has to be
+    the script running itself, which is what this is for -- the replica gate
+    calls it, and it is worth having on a printer over ssh too.
+    """
+    ok = True
+    print('ffscreen: %s' % ('yes' if ffscreen is not None else 'NO'))
+    if ffscreen is None:
+        ok = False
+    print('ff_mcu_bringup: %s' % ('yes' if bringup is not None else 'NO'))
+    if bringup is None:
+        ok = False
+    else:
+        ports = list(bringup.DEFAULT_PORTS)
+        print('ports: %d (%s)' % (len(ports), ' '.join(ports)))
+        unnamed = [d for d in ports if not board_name(d).startswith('THE ')]
+        print('named: %s' % ('yes' if not unnamed else 'NO %s' % unnamed))
+        if unnamed:
+            ok = False
+    print('selftest: %s' % ('ok' if ok else 'FAILED'))
+    return 0 if ok else 1
+
+
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--stamp', default=STAMP)
@@ -658,7 +670,11 @@ def main(argv):
     ap.add_argument('--no-screen', action='store_true',
                     help='do not draw anything on the panel')
     ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--selftest', action='store_true',
+                    help='report what this script can reach, and exit')
     args = ap.parse_args(argv)
+    if args.selftest:
+        return selftest()
     try:
         return run(args)
     except KeyboardInterrupt:

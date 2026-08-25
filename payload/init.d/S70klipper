@@ -27,7 +27,7 @@
 # retry achieves: reopening the port toggles DTR/RTS and the board comes up.
 #
 # The retry is the safety net, not the fix: the actual fix is the bootloader
-# handshake (ff-mcu-bringup.py). A board that missed its window still gets
+# handshake (ff_mcu_bringup.py). A board that missed its window still gets
 # another chance on each restart here, because start.sh redoes the bring-up
 # every time it runs.
 #

@@ -89,7 +89,7 @@ help:
 	@echo '                        passes that have no target of their own'
 	@echo '  make test-py          pytest: the whole test/ tree'
 	@echo '  make test-install     end-to-end: USB stick -> update -> reboot'
-	@echo '  make test-mcu         ff-mcu-bringup.py runs on the printer own python'
+	@echo '  make test-mcu         ff_mcu_bringup.py runs on the printer own python'
 	@echo '  make test-boot-screen the first-boot screen draws on the replica fb0'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo

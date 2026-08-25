@@ -60,9 +60,9 @@ Four things worth keeping in mind, all of which bit us:
 - **The ready phase differs by board.** On `ttyS4` only a literal `"Ready"` sets
   `isReady`. On `ttyS5` and `ttyS7` *any* byte does, banner or not — which is why
   `checkEboard` happily sends 'A' at an eboard that is already running Klipper and
-  is just returning garbage at the wrong baud. `ff-mcu-bringup.py` deliberately does
+  is just returning garbage at the wrong baud. `ff_mcu_bringup.py` deliberately does
   not copy that: only a banner earns a write. **Since 2026-08-25 `checkEboard` is no
-  longer called at all** — `ff-mcu-bringup.py` covers `ttyS5` too. Dropping it loses
+  longer called at all** — `ff_mcu_bringup.py` covers `ttyS5` too. Dropping it loses
   nothing: the binary is 9KB holding one function (`_Z23bootSerialMainEboardMcuv`),
   hard-wired to `/dev/ttyS5`, importing only the tty calls and `printf`. It flashes
   no firmware and opens no other device. It is still on the firmware partition;
@@ -70,7 +70,7 @@ Four things worth keeping in mind, all of which bit us:
 - **`tcsetattr(fd, 0x540E, ...)`** — that is `TCSETS`, where POSIX wants
   `TCSANOW`/`TCSADRAIN`/`TCSAFLUSH`. Both binaries do it, so it is in FlashForge's
   source, not a build artefact. It evidently does not fail on the printer (the
-  routines go on to print their read loop), but `ff-mcu-bringup.py` passes
+  routines go on to print their read loop), but `ff_mcu_bringup.py` passes
   `TCSANOW`, which is correct either way.
 
 The ready phase is only ~5s and it does **not** wait for a second banner, so stock

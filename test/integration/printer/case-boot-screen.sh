@@ -34,7 +34,7 @@ H=800
 BPP=32
 
 mkdir -p $MOD/bin
-for f in ffscreen.py ff-startup.py ff-mcu-bringup.py; do
+for f in ffscreen.py ff-startup.py ff_mcu_bringup.py; do
     cp /tmp/payload/bin/$f $MOD/bin/$f 2>/dev/null
     if [ -f "$MOD/bin/$f" ]; then
         ok "payload ships bin/$f"
@@ -80,25 +80,18 @@ else
     bad "ffscreen does not import: `cat /tmp/imp.out`"
 fi
 
-# 2b. ff-startup.py loads ff-mcu-bringup.py as a MODULE. Its filename is not
-#     an identifier, so this goes through importlib by path -- exactly the
-#     sort of thing that works on a developer's python and not on a 3.8 built
-#     by FlashForge. If it silently returns None the boards never get handed
-#     over and klippy opens the ports at bootloaders.
-"$PY" -c "
-import importlib.util, sys
-spec = importlib.util.spec_from_file_location('s', '$MOD/bin/ff-startup.py')
-m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-print('bringup', m.bringup is not None)
-print('ports', len(m.bringup.DEFAULT_PORTS) if m.bringup else 0)
-print('named', all(m.board_name(d).startswith('THE ')
-                   for d in (m.bringup.DEFAULT_PORTS if m.bringup else [])))
-" >/tmp/mod.out 2>&1
-if grep -q "^bringup True" /tmp/mod.out && grep -q "^ports 3" /tmp/mod.out \
-   && grep -q "^named True" /tmp/mod.out; then
-    ok "ff-startup.py loads ff-mcu-bringup.py and names all 3 boards"
+# 2b. ff-startup.py imports its two siblings by plain name, which resolves
+#     ONLY because python puts a script's own directory on sys.path. That is
+#     true when the wrapper runs it by path and false the moment anything
+#     loads it some other way -- so the check has to be the script running
+#     itself, which is what --selftest is. If the bring-up import silently
+#     returned None the boards would never be handed over and klippy would
+#     open the ports at bootloaders.
+"$PY" $MOD/bin/ff-startup.py --selftest >/tmp/self.out 2>&1
+if grep -q "^selftest: ok" /tmp/self.out && grep -q "^ports: 3" /tmp/self.out; then
+    ok "ff-startup.py reaches both siblings and names all 3 boards"
 else
-    bad "the bring-up module did not load: `cat /tmp/mod.out`"
+    bad "selftest failed: `cat /tmp/self.out`"
 fi
 
 # 3. draw a real frame onto the replica's /dev/fb0.

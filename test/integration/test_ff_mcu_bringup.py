@@ -1,4 +1,4 @@
-"""ff-mcu-bringup.py's progress callback, and the ports it owns.
+"""ff_mcu_bringup.py's progress callback, and the ports it owns.
 
 The handshake itself is covered by the replica gate (make test-mcu), which
 runs it against the printer's own python. What is tested here is the small
@@ -19,7 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 
 def _load():
-    path = os.path.join(ROOT, "payload", "bin", "ff-mcu-bringup.py")
+    path = os.path.join(ROOT, "payload", "bin", "ff_mcu_bringup.py")
     spec = importlib.util.spec_from_file_location("ff_mcu_bringup", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

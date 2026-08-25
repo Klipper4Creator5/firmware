@@ -200,7 +200,7 @@ payload/        POSIX sh, busybox ash -- runs ON the printer
   firmwareExe     the wrapper that replaces the stock binary
   start.sh        replaces the stock Klipper launcher (priority, MCU bring-up)
   init.d/         S50wifi, S60web, S65camera, S70klipper, S80ui
-  bin/            ff-mcu-bringup.py, wifi-action.sh
+  bin/            ff_mcu_bringup.py, wifi-action.sh
   klipper/        extras/ff_*.py and config/ff-*.cfg + printer.base.cfg
   helixscreen/    the printer-database entry that makes it a toolchanger
   anvil.conf      runtime switches, preserved across mod updates
