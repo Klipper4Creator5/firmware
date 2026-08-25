@@ -10,7 +10,7 @@ does the work.
 Packages are published on the
 [Releases page](https://github.com/Klipper4FlashForge/firmware/releases) —
 two files per release, one per model, marked *pre-release* while the mod is
-young.
+young. Help and support: [the Discord](https://discord.gg/ggJyfgVA4v).
 
 > **Unofficial and unaffiliated with FlashForge.** It voids your warranty and
 > you are responsible for your machine. See [Status](#status) for what has
@@ -219,7 +219,8 @@ package does not carry it — only the factory image does — so the mod's build
 stays, and it works; Mainsail is happy with it
 ([details](docs/how-it-works.md#recovery)). The symptom table, the logs worth
 reading, and the factory-restore last resort are in
-[docs/hardware-testing.md](docs/hardware-testing.md).
+[docs/hardware-testing.md](docs/hardware-testing.md) — and there are people
+to ask on [the Discord](https://discord.gg/ggJyfgVA4v).
 
 ---
 
