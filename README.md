@@ -26,6 +26,8 @@ young. Help and support: [the Discord](https://discord.gg/ggJyfgVA4v).
 
 A checked box happened on that machine; an empty one has not, yet.
 
+**For everyone:**
+
 - [x] **Install and migration from stock firmware** — the printer's own
   updater does it, and your unit's factory calibration imports itself on the
   first boot
@@ -40,9 +42,6 @@ A checked box happened on that machine; an empty one has not, yet.
   firmware simply starts it
 - [x] **Wifi**
 - [x] **HelixScreen** on the printer's own screen
-- [x] **ssh as root** — a random password is chosen on the **first** install
-  and written to `anvil-password.txt` on your stick; updates keep it, and
-  nothing crackable ships in the package (`make passwd` bakes in your own)
 - [ ] **Chamber heater**
 - [ ] **Creator 5 (non-Pro)** — its package builds and passes the same
   replica test suite, but has not touched hardware
@@ -51,6 +50,12 @@ A checked box happened on that machine; an empty one has not, yet.
   package restores everything it carries; Moonraker is not in it — it ships
   only on the factory image — so the mod's build stays, and keeps working;
   see [If something goes wrong](#if-something-goes-wrong)
+
+**For the tinkerer:**
+
+- [x] **ssh as root** — a random password is chosen on the **first** install
+  and written to `anvil-password.txt` on your stick; updates keep it, and
+  nothing crackable ships in the package (`make passwd` bakes in your own)
 
 Have the stock package for your model on a spare stick before you begin.
 
