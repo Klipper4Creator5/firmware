@@ -72,6 +72,8 @@ EXTRUDER_COUNT = 4
 
 TITLE = 'SETTING UP YOUR PRINTER'
 KEEP_POWER = 'DO NOT TURN THE PRINTER OFF'
+RETRY = 'SETUP WILL RETRY ON NEXT START'
+LOGFILE = '/USR/DATA/LOGS/ANVIL-BOOT.LOG'
 
 
 def log(msg):
@@ -107,14 +109,25 @@ class Panel:
     # throws something ffscreen did not anticipate. One failure retires the
     # screen for the rest of the run rather than failing again every 2s.
 
-    def say(self, status, progress, note=KEEP_POWER):
+    def say(self, status, progress, note=KEEP_POWER, detail='', fault=False):
         if self.screen is None:
             return
         try:
-            self.screen.show(TITLE, status, note, progress)
+            self.screen.show(TITLE, status, note, progress, detail, fault)
         except Exception as exc:
             log('the boot screen stopped working (%s) -- carrying on' % exc)
             self.screen = None
+
+    def failed(self, reason):
+        """The one frame a person is actually left looking at.
+
+        "Setup will retry" on its own tells them nothing they can act on, so
+        the reason goes underneath -- and the log line goes under that,
+        because the reason has to be short and the log never is."""
+        log('giving up: %s' % reason)
+        self.say(RETRY, None, note='', fault=True,
+                 detail='%s. DETAILS IN %s' % (reason.upper().rstrip('.'),
+                                               LOGFILE))
 
     def done(self):
         if self.screen is None:
@@ -228,10 +241,19 @@ def wait_for_stack(mr, panel, deadline, started):
         if state == 'ready':
             return True
         if time.time() >= deadline:
-            panel.say('SETUP WILL RETRY ON NEXT START', None, note='')
             log('klipper and moonraker did not come up in time (moonraker=%s'
                 ' klipper=%s) -- no stamp, the next boot tries again'
                 % ('up' if state is not None else 'down', state or 'unknown'))
+            # Name the service, not the timeout: "moonraker is not
+            # responding" is something an owner can act on, and the three
+            # cases have genuinely different causes.
+            if state is None:
+                panel.failed('MOONRAKER IS NOT RESPONDING')
+            elif state == 'error':
+                panel.failed('KLIPPER REPORTED AN ERROR')
+            else:
+                panel.failed('KLIPPER DID NOT FINISH STARTING (%s)'
+                             % str(state).upper())
             return False
         time.sleep(2.0)
 
@@ -296,6 +318,7 @@ def migrate(args, mr, panel, started, deadline):
     tools = mr.tools()
     if tools is None:
         log('could not read the ff_tool objects -- no stamp')
+        panel.failed('COULD NOT READ THE TOOL SETTINGS')
         return 1
     if any_calibrated(tools):
         # Someone got there first: a hand calibration, or a restored config.
@@ -308,11 +331,13 @@ def migrate(args, mr, panel, started, deadline):
     pending = mr.save_pending()
     if pending is None:
         log('could not read save_config_pending -- no stamp')
+        panel.failed('COULD NOT READ THE PRINTER CONFIGURATION')
         return 1
     if pending:
         # SAVE_CONFIG commits EVERY staged value, so if something else is
         # already pending, the save that follows would not be ours to make.
         log('another SAVE_CONFIG is already pending -- standing down')
+        panel.failed('ANOTHER CONFIGURATION SAVE WAS ALREADY WAITING')
         return 1
 
     if args.dry_run:
@@ -323,13 +348,14 @@ def migrate(args, mr, panel, started, deadline):
     ok, detail = mr.gcode('FF_IMPORT_FIRMWARE_CONFIG')
     if not ok:
         log('FF_IMPORT_FIRMWARE_CONFIG failed: %s' % detail)
-        panel.say('SETUP WILL RETRY ON NEXT START', None, note='')
+        panel.failed('THE PRINTER REFUSED FF_IMPORT_FIRMWARE_CONFIG')
         return 1
     tools = mr.tools()
     if not any_calibrated(tools):
         # The command ran but the JSON held nothing usable. Saving now would
         # persist nothing and restart klippy for no reason.
         log('the import landed no nozzle positions -- not saving')
+        panel.failed('NO CALIBRATION FOUND IN THE FACTORY DATA')
         return 1
 
     log('imported; persisting with SAVE_CONFIG -- klipper restarts once')
@@ -342,11 +368,13 @@ def migrate(args, mr, panel, started, deadline):
     panel.say('RESTARTING THE PRINTER', 0.85)
     if not wait_for_ready(mr, max(deadline, time.time() + 90.0)):
         log('klipper did not come back after SAVE_CONFIG -- no stamp')
+        panel.failed('KLIPPER DID NOT RESTART AFTER SAVING')
         return 1
     tools = mr.tools()
     if not any_calibrated(tools):
         log('klipper came back with no saved nozzle position -- the save did'
             ' not take, no stamp')
+        panel.failed('THE CALIBRATION DID NOT SAVE')
         return 1
 
     log('done: the factory calibration is saved in printer.cfg')

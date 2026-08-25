@@ -18,6 +18,7 @@
 # It renders every phase the migration actually goes through, in order, so a
 # change that only looks right for one message is visible immediately.
 import argparse
+import glob
 import importlib.util
 import os
 import struct
@@ -36,9 +37,25 @@ PHASES = [
     ('restarting', 'RESTARTING THE PRINTER', 0.85),
     ('complete', 'SETUP COMPLETE', 1.0),
     ('already', 'ALREADY CALIBRATED', 1.0),
-    ('retry', 'SETUP WILL RETRY ON NEXT START', None),
 ]
-NO_NOTE = ('complete', 'already', 'retry')
+NO_NOTE = ('complete', 'already')
+
+# Every way the migration can end badly, with the reason it puts on the panel.
+# Kept in step with the panel.failed() calls in ff-firstboot-import.py.
+FAILURES = [
+    ('fail-moonraker', 'MOONRAKER IS NOT RESPONDING'),
+    ('fail-klipper-error', 'KLIPPER REPORTED AN ERROR'),
+    ('fail-klipper-startup', 'KLIPPER DID NOT FINISH STARTING (STARTUP)'),
+    ('fail-tools', 'COULD NOT READ THE TOOL SETTINGS'),
+    ('fail-config', 'COULD NOT READ THE PRINTER CONFIGURATION'),
+    ('fail-pending', 'ANOTHER CONFIGURATION SAVE WAS ALREADY WAITING'),
+    ('fail-refused', 'THE PRINTER REFUSED FF_IMPORT_FIRMWARE_CONFIG'),
+    ('fail-empty', 'NO CALIBRATION FOUND IN THE FACTORY DATA'),
+    ('fail-restart', 'KLIPPER DID NOT RESTART AFTER SAVING'),
+    ('fail-unsaved', 'THE CALIBRATION DID NOT SAVE'),
+]
+RETRY = 'SETUP WILL RETRY ON NEXT START'
+LOGFILE = '/USR/DATA/LOGS/ANVIL-BOOT.LOG'
 
 
 def load_ffscreen():
@@ -110,16 +127,26 @@ def main(argv):
     geometry = ffscreen.parse_geometry(args.size)
     if geometry is None:
         raise SystemExit('--size wants WxH@BPP, e.g. 1024x600@32')
+    # Clear first: a renamed or removed phase would otherwise leave its old
+    # frame lying in the directory, and a stale frame in a gallery of current
+    # ones is worse than a missing one.
     os.makedirs(args.out, exist_ok=True)
+    for stale in glob.glob(os.path.join(args.out, '*.png')):
+        os.remove(stale)
+
+    frames = [(n, s, p, '') for n, s, p in PHASES]
+    frames += [(n, RETRY, None, '%s. DETAILS IN %s' % (r, LOGFILE))
+               for n, r in FAILURES]
 
     fb = os.path.join(args.out, 'fb0.raw')
-    for name, status, progress in PHASES:
+    for name, status, progress, detail in frames:
         open(fb, 'wb').close()
         screen = ffscreen.Screen(fb, geometry=geometry, rotate=args.rotate)
         if not screen.ok:
             raise SystemExit('ffscreen refused this geometry: %s' % args.size)
-        note = '' if name in NO_NOTE else 'DO NOT TURN THE PRINTER OFF'
-        screen.show('SETTING UP YOUR PRINTER', status, note, progress)
+        note = '' if (name in NO_NOTE or detail) else 'DO NOT TURN THE PRINTER OFF'
+        screen.show('SETTING UP YOUR PRINTER', status, note, progress,
+                    detail, bool(detail))
         with open(fb, 'rb') as fh:
             buf = fh.read()
         out = os.path.join(args.out, '%s.png' % name)

@@ -338,10 +338,10 @@ class FakeScreen:
         self.frames = []
         self.cleared = 0
 
-    def show(self, title, status, note, progress):
+    def show(self, title, status, note, progress, detail="", fault=False):
         if self.explode:
             raise IOError("the panel went away")
-        self.frames.append((title, status, progress))
+        self.frames.append((title, status, progress, detail))
 
     def clear(self):
         if self.explode:
@@ -368,12 +368,12 @@ def test_the_panel_narrates_each_phase(tmp_path, stack, monkeypatch):
     screen = with_screen(monkeypatch, FakeScreen())
     a = args(tmp_path, no_screen=False)
     assert imp.run(a) == 0
-    said = [status for _, status, _ in screen.frames]
+    said = [status for _, status, _, _ in screen.frames]
     assert "READING FACTORY CALIBRATION" in said
     assert "SAVING CALIBRATION" in said
     assert "SETUP COMPLETE" in said
     # The bar only ever moves forward.
-    progress = [p for _, _, p in screen.frames if p is not None]
+    progress = [p for _, _, p, _ in screen.frames if p is not None]
     assert progress == sorted(progress)
     # and the panel is handed back black for whatever starts next
     assert screen.cleared == 1
@@ -404,4 +404,96 @@ def test_a_timeout_leaves_a_message_rather_than_a_blank_panel(
     stack.klippy_state = "startup"
     a = args(tmp_path, no_screen=False, timeout=10.0)
     assert imp.run(a) == 1
-    assert any("RETRY" in status for _, status, _ in screen.frames)
+    assert any("RETRY" in status for _, status, _, _ in screen.frames)
+
+
+# -- the failure frame says what failed ------------------------------------
+#
+# "SETUP WILL RETRY ON NEXT START" on its own tells the owner nothing they can
+# act on. Each way this can end badly names itself, and points at the log.
+
+
+def _details(screen):
+    return [d for _, _, _, d in screen.frames if d]
+
+
+@pytest.mark.parametrize("state,expect", [
+    (None, "MOONRAKER IS NOT RESPONDING"),
+    ("error", "KLIPPER REPORTED AN ERROR"),
+    ("startup", "KLIPPER DID NOT FINISH STARTING"),
+])
+def test_the_stack_timeout_names_the_service(tmp_path, stack, monkeypatch,
+                                             state, expect):
+    screen = with_screen(monkeypatch, FakeScreen())
+    if state is None:
+        stack.moonraker = False
+    else:
+        stack.klippy_state = state
+    a = args(tmp_path, no_screen=False, timeout=10.0)
+    assert imp.run(a) == 1
+    assert any(expect in d for d in _details(screen)), _details(screen)
+
+
+def test_a_refused_import_says_so(tmp_path, stack, monkeypatch):
+    screen = with_screen(monkeypatch, FakeScreen())
+    stack.import_fails = "ff_legacy: extruder.json could not be read"
+    a = args(tmp_path, no_screen=False)
+    assert imp.run(a) == 1
+    assert any("REFUSED FF_IMPORT_FIRMWARE_CONFIG" in d
+               for d in _details(screen))
+
+
+def test_empty_factory_data_says_so(tmp_path, stack, monkeypatch):
+    screen = with_screen(monkeypatch, FakeScreen())
+    stack.import_lands = False
+    a = args(tmp_path, no_screen=False)
+    assert imp.run(a) == 1
+    assert any("NO CALIBRATION FOUND" in d for d in _details(screen))
+
+
+def test_a_save_that_did_not_take_says_so(tmp_path, stack, monkeypatch):
+    screen = with_screen(monkeypatch, FakeScreen())
+    stack.save_persists = False
+    a = args(tmp_path, no_screen=False)
+    assert imp.run(a) == 1
+    assert any("DID NOT SAVE" in d for d in _details(screen))
+
+
+def test_a_pending_save_says_so(tmp_path, stack, monkeypatch):
+    screen = with_screen(monkeypatch, FakeScreen())
+    stack.save_pending = True
+    a = args(tmp_path, no_screen=False)
+    assert imp.run(a) == 1
+    assert any("ALREADY WAITING" in d for d in _details(screen))
+
+
+def test_every_reason_points_at_the_log(tmp_path, stack, monkeypatch):
+    screen = with_screen(monkeypatch, FakeScreen())
+    stack.import_lands = False
+    assert imp.run(args(tmp_path, no_screen=False)) == 1
+    assert all(imp.LOGFILE in d for d in _details(screen))
+
+
+def test_every_reason_is_drawable(tmp_path):
+    # A reason containing a character the font has no glyph for would render
+    # as a gap exactly where the explanation is.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "ffscreen", os.path.join(ROOT, "payload", "bin", "ffscreen.py"))
+    ffscreen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ffscreen)
+    reasons = [
+        "MOONRAKER IS NOT RESPONDING", "KLIPPER REPORTED AN ERROR",
+        "KLIPPER DID NOT FINISH STARTING (STARTUP)",
+        "COULD NOT READ THE TOOL SETTINGS",
+        "COULD NOT READ THE PRINTER CONFIGURATION",
+        "ANOTHER CONFIGURATION SAVE WAS ALREADY WAITING",
+        "THE PRINTER REFUSED FF_IMPORT_FIRMWARE_CONFIG",
+        "NO CALIBRATION FOUND IN THE FACTORY DATA",
+        "KLIPPER DID NOT RESTART AFTER SAVING",
+        "THE CALIBRATION DID NOT SAVE",
+        imp.LOGFILE, imp.RETRY,
+    ]
+    for reason in reasons:
+        missing = set(reason.upper()) - set(ffscreen.FONT)
+        assert not missing, "%r has no glyph for %s" % (reason, missing)

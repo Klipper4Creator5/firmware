@@ -46,6 +46,9 @@ def run():
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    # Same reason as the host preview: never leave a stale frame behind.
+    for stale in out.glob("*.png"):
+        stale.unlink()
     found = 0
     for name, blob in FRAME.findall(body):
         png = base64.b64decode("".join(blob.split()))

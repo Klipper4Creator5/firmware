@@ -29,6 +29,26 @@ mkdir -p /usr/data/logs
 exec >>/usr/data/logs/anvil-boot.log 2>&1
 echo "=== mod firmwareExe `date 2>/dev/null` ==="
 
+# ---- something on the panel, immediately ---------------------------------
+# From here until HelixScreen paints, nothing owns the screen. That gap is
+# the whole boot on EVERY start, not just the first: the migration below
+# exits at its stamp and draws nothing. FlashForge's own splash cannot fill
+# it -- /usr/prog/start.img exists, but the only two lines that would display
+# it (both in app_startup.sh) are commented out, so nothing has shown it for
+# a long time.
+FF_PY=/usr/prog/Python-3.8.2/bin/python3
+[ -x "$FF_PY" ] || FF_PY=python3
+LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:$LD_LIBRARY_PATH
+LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
+LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH
+splash() {
+    [ "${MOD_SPLASH:-1}" = 1 ] || return 0
+    [ -f $MODDIR/bin/ffscreen.py ] || return 0
+    "$FF_PY" $MODDIR/bin/ffscreen.py "$@" 2>/dev/null || true
+}
+splash --title "REFORGE" --status "STARTING THE PRINTER" --progress 0.02
+
 # ---- services ------------------------------------------------------------
 # init.d-style scripts, run in filename order. One failing service must never
 # stop the rest: Klipper has to come up even if the web stack is broken.
@@ -56,19 +76,8 @@ fi
 # removes it, so with the web stack off we tell the importer not to wait for
 # one at all. With it on, the importer waits briefly and proceeds regardless.
 if [ "${MOD_IMPORT:-1}" = 1 ] && [ -f $MODDIR/bin/ff-firstboot-import.py ]; then
-    # Same interpreter dance as klipper/start.sh: this python does not start
-    # without its own libraries on the path.
-    FF_PY=/usr/prog/Python-3.8.2/bin/python3
-    [ -x "$FF_PY" ] || FF_PY=python3
-    LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:$LD_LIBRARY_PATH
-    LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
-    LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
-    export LD_LIBRARY_PATH
-    IMPORT_WEBUI=http://127.0.0.1/
-    [ "${MOD_WEB:-1}" = 1 ] || IMPORT_WEBUI=
     "$FF_PY" $MODDIR/bin/ff-firstboot-import.py \
         --timeout "${MOD_IMPORT_TIMEOUT:-240}" \
-        --webui "$IMPORT_WEBUI" \
         || echo "ff-import: returned $? -- the next boot will try again"
 fi
 
@@ -79,6 +88,7 @@ UI_CHOICE=`cat $MODDIR/.ui-choice 2>/dev/null || echo none`
 echo "ui: choice is $UI_CHOICE"
 
 if [ "$UI_CHOICE" = helix ]; then
+    splash --title "REFORGE" --status "STARTING THE SCREEN" --progress 0.9
     HELIX_DATA_DIR=$MODDIR/helixscreen
     HELIX_LOG_DEST=file
     HELIX_LOG_FILE=/usr/data/logs/helixscreen.log
@@ -94,5 +104,8 @@ fi
 # out of this script makes app_startup.sh think the UI died and re-exec us,
 # which would restart every service. Hold the process instead; ssh and
 # Mainsail remain available.
+splash --title "REFORGE" \
+       --status "NO SCREEN" \
+       --detail "MAINSAIL AND SSH ARE RUNNING. SET MOD_UI=1 IN ANVIL.CONF TO TURN THE SCREEN ON."
 echo "ui: nothing left in the foreground -- holding process so services stay up"
 while true; do sleep 3600; done

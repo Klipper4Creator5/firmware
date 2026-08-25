@@ -95,6 +95,22 @@ FONT = {
     'X': (0x63, 0x14, 0x08, 0x14, 0x63),
     'Y': (0x03, 0x04, 0x78, 0x04, 0x03),
     'Z': (0x61, 0x51, 0x49, 0x45, 0x43),
+    # Punctuation the failure lines need: klipper names carry underscores,
+    # paths carry slashes and dots, and a reason often wants a bracket.
+    '_': (0x40, 0x40, 0x40, 0x40, 0x40),
+    ',': (0x00, 0x50, 0x30, 0x00, 0x00),
+    ';': (0x00, 0x56, 0x36, 0x00, 0x00),
+    '(': (0x00, 0x1C, 0x22, 0x41, 0x00),
+    ')': (0x00, 0x41, 0x22, 0x1C, 0x00),
+    "'": (0x00, 0x00, 0x07, 0x00, 0x00),
+    '?': (0x02, 0x01, 0x51, 0x09, 0x06),
+    '+': (0x08, 0x08, 0x3E, 0x08, 0x08),
+    '=': (0x14, 0x14, 0x14, 0x14, 0x14),
+    '<': (0x00, 0x08, 0x14, 0x22, 0x41),
+    '>': (0x00, 0x41, 0x22, 0x14, 0x08),
+    '%': (0x23, 0x13, 0x08, 0x64, 0x62),
+    '#': (0x14, 0x7F, 0x14, 0x7F, 0x14),
+    '*': (0x14, 0x08, 0x3E, 0x08, 0x14),
 }
 
 GLYPH_W = 5
@@ -104,6 +120,8 @@ SYSFS = '/sys/class/graphics/fb0'
 BACKGROUND = (0x11, 0x14, 0x1A)
 TITLE = (0xFF, 0xFF, 0xFF)
 STATUS = (0x9F, 0xB4, 0xC8)
+DETAIL = (0x74, 0x86, 0x99)
+FAULT = (0xE2, 0x6D, 0x5A)
 NOTE = (0xE0, 0xA0, 0x40)
 BAR_BG = (0x23, 0x2A, 0x33)
 BAR_FG = (0x3D, 0xA5, 0xF4)
@@ -236,14 +254,48 @@ class Screen:
             scale -= 1
         return scale
 
+    def _wrap(self, text, scale, max_lines=2, margin=40):
+        """Break a reason across at most max_lines, on spaces.
+
+        A failure line is written by the program, not by a person, so it can
+        be long -- and a line that runs off the panel would hide the very
+        word that says what went wrong. What does not fit is dropped with an
+        ellipsis rather than silently clipped by _rect."""
+        room = max(1, self.width - 2 * margin)
+        lines, current = [], ''
+        for word in text.split():
+            trial = (current + ' ' + word).strip()
+            if current and self._width_of(trial, scale) > room:
+                lines.append(current)
+                current = word
+                if len(lines) == max_lines:
+                    break
+            else:
+                current = trial
+        if len(lines) < max_lines and current:
+            lines.append(current)
+        # Anything still too wide on its own (one very long word) gets cut.
+        out = []
+        for line in lines:
+            while len(line) > 1 and self._width_of(line, scale) > room:
+                line = line[:-1]
+            out.append(line)
+        return out
+
     # -- what callers use --------------------------------------------------
 
-    def show(self, title, status='', note='', progress=None):
+    def show(self, title, status='', note='', progress=None, detail='',
+             fault=False):
         """Paint one frame. Repeating a frame identical to the last one costs
-        nothing, so callers may call this as often as they like."""
+        nothing, so callers may call this as often as they like.
+
+        detail is the line under the status: what actually went wrong, for
+        the frames where something did. fault colours it as a fault and
+        gives it room -- a failure is the one frame someone stands and reads,
+        so it should not look like the running ones."""
         if not self.ok:
             return
-        frame = (title, status, note,
+        frame = (title, status, note, detail, fault,
                  None if progress is None else round(progress, 2))
         if frame == self._last:
             return
@@ -257,14 +309,36 @@ class Screen:
             status_scale = max(2, (title_scale * 4) // 9)
             note_scale = max(1, status_scale)
 
-            # One centred column: title, status, bar, note. The gaps are in
-            # units of text height so they stay proportional when scaled.
-            title_y = int(self.height * 0.30)
+            # One centred column: title, status, detail, bar, note. The gaps
+            # are in units of text height so they stay proportional when
+            # scaled. A frame with no bar and no note is all text, so it
+            # starts lower and sits nearer the middle of the panel.
+            if progress is not None or note:
+                title_y = int(self.height * 0.30)
+            elif fault:
+                title_y = int(self.height * 0.40)
+            else:
+                title_y = int(self.height * 0.36)
             self._center(buf, title, title_y, title_scale, TITLE)
+            y = title_y + GLYPH_H * title_scale
             if status:
-                self._center(buf, status,
-                             title_y + GLYPH_H * title_scale
-                             + GLYPH_H * status_scale, status_scale, STATUS)
+                y += GLYPH_H * status_scale
+                self._center(buf, status, y, status_scale, STATUS)
+                y += GLYPH_H * status_scale
+            if detail:
+                # Dimmer than the status, and only smaller if it has to be:
+                # this is the line someone reads to find out what went wrong,
+                # so it keeps the status size whenever it still fits in two.
+                detail_scale = status_scale
+                if len(self._wrap(detail, detail_scale, 3)) > 2:
+                    detail_scale = max(1, status_scale - 1)
+                # A fault gets a clear gap under the status line rather than
+                # reading as its continuation.
+                y += GLYPH_H * detail_scale * (2 if fault else 1)
+                colour = FAULT if fault else DETAIL
+                for line in self._wrap(detail, detail_scale):
+                    self._center(buf, line, y, detail_scale, colour)
+                    y += GLYPH_H * detail_scale + 2 * detail_scale
             if progress is not None:
                 bw = int(self.width * 0.56)
                 bh = max(4, self.height // 100)
@@ -296,6 +370,42 @@ class Screen:
         self._last = None
 
 
+def main(argv):
+    """Draw one frame from the command line.
+
+    The firmwareExe wrapper uses this to put something on the panel the
+    moment it gets control. Without it the screen is black from power-on
+    until HelixScreen paints -- on EVERY boot, not just the first, because
+    the migration exits at its stamp and draws nothing.
+    """
+    import argparse
+    ap = argparse.ArgumentParser(description='draw one frame on /dev/fb0')
+    ap.add_argument('--fb', default='/dev/fb0')
+    ap.add_argument('--size', default=None, help='WxH@BPP; default: ask sysfs')
+    ap.add_argument('--rotate', type=int, default=None, choices=[0, 90, 270])
+    ap.add_argument('--title', default='')
+    ap.add_argument('--status', default='')
+    ap.add_argument('--detail', default='')
+    ap.add_argument('--note', default='')
+    ap.add_argument('--progress', type=float, default=None)
+    ap.add_argument('--fault', action='store_true')
+    ap.add_argument('--clear', action='store_true')
+    args = ap.parse_args(argv)
+    try:
+        screen = Screen(args.fb, geometry=parse_geometry(args.size),
+                        rotate=args.rotate)
+        if not screen.ok:
+            return 0        # no panel is not an error; see the header
+        if args.clear:
+            screen.clear()
+        else:
+            screen.show(args.title, args.status, args.note, args.progress,
+                        args.detail, args.fault)
+    except Exception:
+        return 0            # nor is a panel that misbehaves
+    return 0
+
+
 def parse_geometry(text):
     """'1024x600@32' -> (1024, 600, 32). Returns None for anything else, so a
     typo in a config file disables the screen instead of drawing garbage."""
@@ -307,3 +417,8 @@ def parse_geometry(text):
         return int(width), int(height), int(bpp or 32)
     except ValueError:
         return None
+
+
+if __name__ == '__main__':
+    import sys
+    sys.exit(main(sys.argv[1:]))

@@ -27,21 +27,34 @@ W, H, BPP = 480, 800, 32   # the real framebuffer: portrait
 # Keep in step with bin/preview-boot-screen.py, which renders the same list
 # on the host -- the two are expected to agree byte for byte.
 PHASES = [
-    ('starting-services', 'STARTING SERVICES', 0.05),
-    ('waiting', 'WAITING FOR THE PRINTER', 0.22),
-    ('importing', 'READING FACTORY CALIBRATION', 0.5),
-    ('saving', 'SAVING CALIBRATION', 0.7),
-    ('restarting', 'RESTARTING THE PRINTER', 0.85),
-    ('complete', 'SETUP COMPLETE', 1.0),
-    ('already', 'ALREADY CALIBRATED', 1.0),
-    ('retry', 'SETUP WILL RETRY ON NEXT START', None),
+    ('starting-services', 'STARTING SERVICES', 0.05, ''),
+    ('waiting', 'WAITING FOR THE PRINTER', 0.22, ''),
+    ('importing', 'READING FACTORY CALIBRATION', 0.5, ''),
+    ('saving', 'SAVING CALIBRATION', 0.7, ''),
+    ('restarting', 'RESTARTING THE PRINTER', 0.85, ''),
+    ('complete', 'SETUP COMPLETE', 1.0, ''),
+    ('already', 'ALREADY CALIBRATED', 1.0, ''),
 ]
-NO_NOTE = ('complete', 'already', 'retry')
-for name, status, prog in PHASES:
+RETRY = 'SETUP WILL RETRY ON NEXT START'
+LOG = '/USR/DATA/LOGS/ANVIL-BOOT.LOG'
+for slug, reason in [
+        ('fail-moonraker', 'MOONRAKER IS NOT RESPONDING'),
+        ('fail-klipper-error', 'KLIPPER REPORTED AN ERROR'),
+        ('fail-klipper-startup', 'KLIPPER DID NOT FINISH STARTING (STARTUP)'),
+        ('fail-tools', 'COULD NOT READ THE TOOL SETTINGS'),
+        ('fail-config', 'COULD NOT READ THE PRINTER CONFIGURATION'),
+        ('fail-pending', 'ANOTHER CONFIGURATION SAVE WAS ALREADY WAITING'),
+        ('fail-refused', 'THE PRINTER REFUSED FF_IMPORT_FIRMWARE_CONFIG'),
+        ('fail-empty', 'NO CALIBRATION FOUND IN THE FACTORY DATA'),
+        ('fail-restart', 'KLIPPER DID NOT RESTART AFTER SAVING'),
+        ('fail-unsaved', 'THE CALIBRATION DID NOT SAVE')]:
+    PHASES.append((slug, RETRY, None, '%s. DETAILS IN %s' % (reason, LOG)))
+NO_NOTE = ('complete', 'already')
+for name, status, prog, detail in PHASES:
     open('/tmp/fb', 'wb').close()
     s = ffscreen.Screen('/tmp/fb', geometry=(W, H, BPP))
-    note = '' if name in NO_NOTE else 'DO NOT TURN THE PRINTER OFF'
-    s.show('SETTING UP YOUR PRINTER', status, note, prog)
+    note = '' if (name in NO_NOTE or detail) else 'DO NOT TURN THE PRINTER OFF'
+    s.show('SETTING UP YOUR PRINTER', status, note, prog, detail, bool(detail))
     buf = open('/tmp/fb', 'rb').read()
 
     # Emit what the EYE sees, not the buffer: the panel is this portrait
