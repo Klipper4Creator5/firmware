@@ -172,7 +172,8 @@ def args(tmp_path, **over):
     ns = imp.argparse.Namespace(
         stamp=str(tmp_path / "stamp"), dir=str(jsondir),
         moonraker="http://127.0.0.1:7125", timeout=60.0,
-        mcu_status=str(tmp_path / "mcu.status"), mcu_timeout=20.0,
+        mcu_timeout=5.0, klipper_tries=3, no_klipper=True,
+        start_sh="/nonexistent/start.sh", daemon="/nonexistent/daemon",
         no_import=False, fb=None, fb_geometry=None, no_screen=True,
         dry_run=False)
     for k, v in over.items():
@@ -519,95 +520,104 @@ def test_every_reason_is_drawable(tmp_path):
 
 # -- waiting for the toolhead boards, every boot ---------------------------
 #
-# Three of the four boards answer only after ff-mcu-bringup.py hands them over
-# from their bootloaders, and it runs alongside this program. It publishes
-# what it is still working on; the point of reading that is to be able to say
-# WAITING FOR THE HEATER BOARD instead of showing a bar that has not moved.
+# ff-mcu-bringup.py is a module here, not a subprocess and not a file to poll:
+# this program owns when klippy opens the ports, so it owns handing the boards
+# over first. The callback is what makes that worth owning -- it names the
+# board being waited for while the wait is happening.
 
 
-def write_mcu_status(path, state, working=(), done=()):
-    lines = ["state %s" % state]
-    lines += ["%s working" % d for d in working]
-    lines += ["%s ok" % d for d in done]
-    open(path, "w").write("\n".join(lines) + "\n")
+class FakeBringup:
+    DEFAULT_PORTS = ("/dev/ttyS4", "/dev/ttyS5", "/dev/ttyS7")
+
+    def __init__(self, script=(), explode=False, result=True):
+        self.script = list(script)      # what to report, in order
+        self.explode = explode
+        self.result = result
+        self.calls = []
+
+    def bringup(self, devs, timeout, on_progress=None):
+        self.calls.append((tuple(devs), timeout))
+        if self.explode:
+            raise RuntimeError("the port went away")
+        for devs_working in self.script:
+            on_progress(list(devs_working))
+        on_progress([])
+        return self.result
+
+
+def with_bringup(monkeypatch, fake):
+    monkeypatch.setattr(imp, "bringup", fake)
+    return fake
+
+
+def test_the_boards_are_handed_over_before_klipper(tmp_path, stack, monkeypatch):
+    fake = with_bringup(monkeypatch, FakeBringup())
+    assert imp.run(args(tmp_path)) == 0
+    assert fake.calls, "the bring-up was never called"
+    assert fake.calls[0][0] == FakeBringup.DEFAULT_PORTS
 
 
 def test_the_panel_names_the_board_being_waited_for(tmp_path, stack, monkeypatch):
     screen = with_screen(monkeypatch, FakeScreen())
-    a = args(tmp_path, no_screen=False)
-    write_mcu_status(a.mcu_status, "running", working=["/dev/ttyS4"])
-    seen = []
-
-    def wake(url):
-        seen.append(url)
-        if len(seen) == 1:
-            write_mcu_status(a.mcu_status, "finished", done=["/dev/ttyS4"])
-
-    stack.on_request = wake
-    assert imp.run(a) == 0
+    with_bringup(monkeypatch, FakeBringup(script=[["/dev/ttyS4"]]))
+    assert imp.run(args(tmp_path, no_screen=False)) == 0
     assert any("THE HEATER BOARD" in s for _, s, _, _ in screen.frames)
 
 
 def test_both_boards_are_named_while_both_are_working(tmp_path, stack,
                                                       monkeypatch):
     screen = with_screen(monkeypatch, FakeScreen())
-    a = args(tmp_path, no_screen=False)
-    write_mcu_status(a.mcu_status, "running",
-                     working=["/dev/ttyS4", "/dev/ttyS7"])
-    seen = []
-
-    def wake(url):
-        seen.append(url)
-        write_mcu_status(a.mcu_status, "finished")
-
-    stack.on_request = wake
-    assert imp.run(a) == 0
+    with_bringup(monkeypatch,
+                 FakeBringup(script=[["/dev/ttyS4", "/dev/ttyS7"]]))
+    assert imp.run(args(tmp_path, no_screen=False)) == 0
     said = " ".join(s for _, s, _, _ in screen.frames)
     assert "THE HEATER BOARD" in said and "THE LEVEL BOARD" in said
 
 
-def test_a_bringup_that_never_reports_does_not_block_the_boot(tmp_path, stack):
-    # ff-mcu-bringup.py may not have written anything yet, or at all. Klippy
-    # is the real authority on whether a board answered, so this wait is one
-    # we are happy to abandon.
-    a = args(tmp_path, mcu_timeout=5.0)
-    assert imp.run(a) == 0
-    assert stack.scripts == ["FF_IMPORT_FIRMWARE_CONFIG", "SAVE_CONFIG"]
-    assert os.path.exists(a.stamp)
-
-
-def test_a_finished_bringup_is_not_waited_for_at_all(tmp_path, stack):
+def test_a_bringup_that_raises_does_not_stop_the_boot(tmp_path, stack,
+                                                      monkeypatch):
+    # A board is klippy's news to break, with a better message than we have.
+    with_bringup(monkeypatch, FakeBringup(explode=True))
     a = args(tmp_path)
-    write_mcu_status(a.mcu_status, "finished", done=["/dev/ttyS4", "/dev/ttyS7"])
     assert imp.run(a) == 0
     assert os.path.exists(a.stamp)
 
 
-@pytest.mark.parametrize("text", [
-    "", "state\n", "garbage\nlines\n", "state running\n/dev/ttyS4\n",
-])
-def test_an_unreadable_status_file_is_just_no_news(tmp_path, stack, text):
-    # A malformed hint must never be the reason a printer does not boot.
-    a = args(tmp_path, mcu_timeout=5.0)
-    open(a.mcu_status, "w").write(text)
+def test_a_bringup_reporting_a_problem_still_tries_klipper(tmp_path, stack,
+                                                           monkeypatch):
+    with_bringup(monkeypatch, FakeBringup(result=False))
+    a = args(tmp_path)
     assert imp.run(a) == 0
+    assert os.path.exists(a.stamp)
 
 
-def test_status_parsing(tmp_path):
-    path = str(tmp_path / "s")
-    write_mcu_status(path, "running", working=["/dev/ttyS7"], done=["/dev/ttyS4"])
-    assert imp.read_mcu_status(path) == ("running", ["/dev/ttyS7"])
-    write_mcu_status(path, "finished", done=["/dev/ttyS4", "/dev/ttyS7"])
-    assert imp.read_mcu_status(path) == ("finished", [])
-    assert imp.read_mcu_status(str(tmp_path / "absent")) is None
+def test_no_bringup_module_is_survivable(tmp_path, stack, monkeypatch):
+    monkeypatch.setattr(imp, "bringup", None)
+    a = args(tmp_path)
+    assert imp.run(a) == 0
+    assert os.path.exists(a.stamp)
 
 
 def test_board_names_are_human_readable():
     assert imp.board_name("/dev/ttyS4") == "THE HEATER BOARD"
     assert imp.board_name("eheaterboard") == "THE HEATER BOARD"
+    assert imp.board_name("/dev/ttyS5") == "THE EXTRUDER BOARD"
     assert imp.board_name("/dev/ttyS7") == "THE LEVEL BOARD"
     # An unknown port still says something rather than nothing.
     assert imp.board_name("/dev/ttyS9") == "/DEV/TTYS9"
+
+
+def test_every_port_the_bringup_owns_has_a_name():
+    # If the bring-up gains a port, the panel must not start showing
+    # /DEV/TTYS9 at someone.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "ff_mcu_bringup",
+        os.path.join(ROOT, "payload", "bin", "ff-mcu-bringup.py"))
+    real = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(real)
+    for dev in real.DEFAULT_PORTS:
+        assert imp.board_name(dev).startswith("THE "), dev
 
 
 # -- klippy's own error names the board ------------------------------------
@@ -636,3 +646,144 @@ def test_an_error_naming_no_board_still_reports_something(tmp_path, stack,
     a = args(tmp_path, no_screen=False, timeout=10.0)
     assert imp.run(a) == 1
     assert any("KLIPPER REPORTED AN ERROR" in d for d in _details(screen))
+
+
+# -- owning klipper's start ------------------------------------------------
+#
+# This is the job init.d/S70klipper used to do by tailing printer.log, which
+# was the only signal a shell script had. The reason it moved is that the
+# retry which actually fixes a stranded board is "hand it over again, then
+# reopen the port" -- so the thing doing the handshake has to be the thing
+# restarting klippy.
+
+
+class FakeKlipper:
+    """start.sh and klipperDaemon, as a pair of recorded commands."""
+
+    def __init__(self, stack, comes_up=True, after=1):
+        self.stack = stack
+        self.comes_up = comes_up
+        self.after = after          # how many starts before it is ready
+        self.starts = 0
+        self.stops = 0
+        self.env = []
+        self.running = False
+
+    def run(self, argv, **kw):
+        if argv[-1].endswith("start.sh"):
+            self.starts += 1
+            self.env.append(kw.get("env", {}).get("FF_SKIP_MCU_BRINGUP"))
+            self.running = True
+            if self.comes_up and self.starts >= self.after:
+                self.stack.klippy_state = "ready"
+            return _Completed(b"start.sh: klippy started")
+        if argv[-1] == "stop":
+            self.stops += 1
+            self.running = False
+            return _Completed(b"")
+        raise AssertionError("unexpected command %r" % (argv,))
+
+
+class _Completed:
+    def __init__(self, out):
+        self.stdout = out
+        self.returncode = 0
+
+
+def with_klipper(monkeypatch, fake):
+    monkeypatch.setattr(imp.subprocess, "run", fake.run)
+    monkeypatch.setattr(imp, "klippy_running", lambda: fake.running)
+    return fake
+
+
+def klipper_args(tmp_path, **over):
+    """Args pointing at a start.sh that really exists -- the program checks."""
+    start_sh = tmp_path / "start.sh"
+    start_sh.write_text("#!/bin/sh\nexit 0\n")
+    over.setdefault("no_klipper", False)
+    over.setdefault("start_sh", str(start_sh))
+    return args(tmp_path, **over)
+
+
+def test_it_starts_klipper_and_tells_it_the_bringup_is_done(tmp_path, stack,
+                                                            monkeypatch):
+    stack.klippy_state = "startup"
+    fake = with_klipper(monkeypatch, FakeKlipper(stack))
+    with_bringup(monkeypatch, FakeBringup())
+    assert imp.run(klipper_args(tmp_path)) == 0
+    assert fake.starts == 1
+    # start.sh must not redo the handshake we just did in process.
+    assert fake.env == ["1"]
+
+
+def test_klipper_already_running_is_not_started_again(tmp_path, stack,
+                                                      monkeypatch):
+    fake = with_klipper(monkeypatch, FakeKlipper(stack))
+    fake.running = True
+    with_bringup(monkeypatch, FakeBringup())
+    assert imp.run(klipper_args(tmp_path)) == 0
+    assert fake.starts == 0
+
+
+def test_a_failed_connect_is_retried_with_a_fresh_handover(tmp_path, stack,
+                                                           monkeypatch):
+    # The whole point of owning this: the retry hands the boards over again
+    # before reopening the ports, which is what gives a board that missed its
+    # window another chance.
+    stack.klippy_state = "error"
+    fake = with_klipper(monkeypatch, FakeKlipper(stack, after=3))
+    bringups = with_bringup(monkeypatch, FakeBringup())
+    assert imp.run(klipper_args(tmp_path, klipper_tries=3)) == 0
+    assert fake.starts == 3
+    assert fake.stops == 2
+    assert len(bringups.calls) == 3
+
+
+def test_it_gives_up_after_the_configured_tries(tmp_path, stack, monkeypatch):
+    stack.klippy_state = "error"
+    fake = with_klipper(monkeypatch, FakeKlipper(stack, comes_up=False))
+    with_bringup(monkeypatch, FakeBringup())
+    a = klipper_args(tmp_path, klipper_tries=2, timeout=30.0)
+    assert imp.run(a) == 1
+    assert fake.starts == 2
+    assert not os.path.exists(a.stamp)
+
+
+def test_the_fault_frame_only_appears_once_at_the_end(tmp_path, stack,
+                                                      monkeypatch):
+    # A fault frame between attempts would be replaced two seconds later and
+    # read as a failure the printer then ignored.
+    screen = with_screen(monkeypatch, FakeScreen())
+    stack.klippy_state = "error"
+    stack.state_message = "MCU 'eheaterboard' error during connect"
+    with_klipper(monkeypatch, FakeKlipper(stack, comes_up=False))
+    with_bringup(monkeypatch, FakeBringup())
+    a = klipper_args(tmp_path, no_screen=False, klipper_tries=3, timeout=30.0)
+    assert imp.run(a) == 1
+    faults = [d for _, _, _, d in screen.frames if "DETAILS IN" in d]
+    assert len(faults) == 1
+    assert "THE HEATER BOARD DID NOT ANSWER" in faults[0]
+    # and the attempts were narrated on the way
+    assert any("RETRYING" in s for _, s, _, _ in screen.frames)
+
+
+def test_start_sh_that_is_not_there_is_reported_not_ignored(tmp_path, stack,
+                                                            monkeypatch):
+    # A missing start.sh means no klipper at all, which is the worst outcome
+    # the mod has. It must reach the panel, not just the log.
+    stack.klippy_state = "startup"
+    screen = with_screen(monkeypatch, FakeScreen())
+    with_bringup(monkeypatch, FakeBringup())
+    monkeypatch.setattr(imp, "klippy_running", lambda: False)
+    a = args(tmp_path, no_screen=False, no_klipper=False, timeout=20.0,
+             start_sh=str(tmp_path / "absent.sh"))
+    assert imp.run(a) == 1
+    assert any("KLIPPER COULD NOT BE STARTED" in d for d in _details(screen))
+
+
+def test_no_klipper_only_waits(tmp_path, stack, monkeypatch):
+    # What --no-klipper is for: let something else own the start.
+    fake = with_klipper(monkeypatch, FakeKlipper(stack))
+    with_bringup(monkeypatch, FakeBringup())
+    assert imp.run(args(tmp_path, no_klipper=True)) == 0
+    assert fake.starts == 0

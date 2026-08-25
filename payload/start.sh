@@ -62,11 +62,19 @@ FF_PY=/usr/prog/Python-3.8.2/bin/python3
 # mode 644 in git, and the +x only happens if the file arrived through
 # patch.sh or run-append.sh. A hand-copied file is perfectly runnable and
 # used to be skipped with a "missing" message while sitting right there.
-if [ -f /usr/data/anvil/bin/ff-mcu-bringup.py ]; then
+#
+# FF_SKIP_MCU_BRINGUP=1 says the caller has already done it. bin/ff-startup.py
+# sets that: it owns the boot sequence, so it does the bring-up itself, in
+# process, and then runs this script to launch klippy. Nothing else sets it,
+# so a start.sh run by hand over ssh -- or by S70klipper's fallback -- still
+# does the full job.
+if [ "${FF_SKIP_MCU_BRINGUP:-0}" = 1 ]; then
+    echo "start.sh: MCU bring-up already done by the caller"
+elif [ -f /usr/data/anvil/bin/ff-mcu-bringup.py ]; then
     "$FF_PY" /usr/data/anvil/bin/ff-mcu-bringup.py \
         || echo "start.sh: MCU bring-up reported a problem ($?)"
 else
-    echo "start.sh: ff-mcu-bringup.py missing -- ttyS4/ttyS7 not brought up"
+    echo "start.sh: ff-mcu-bringup.py missing -- the toolhead boards are not brought up"
 fi
 /usr/prog/klipper/klipperDaemon start
 

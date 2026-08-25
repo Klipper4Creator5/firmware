@@ -95,13 +95,6 @@ QUIET_S = 9.0
 ACK_TRIES = 50
 DEFAULT_PORTS = ("/dev/ttyS4", "/dev/ttyS5", "/dev/ttyS7")
 
-# Where the progress of this pass is published, for anything that wants to
-# tell a person what the printer is doing. bin/ff-startup.py reads it to put
-# "WAITING FOR THE HEATER BOARD" on the panel instead of leaving them looking
-# at a bar that has not moved in a minute. It lives in /tmp on purpose: that
-# is a tmpfs, so it cannot survive a reboot and be mistaken for this boot's.
-STATUS_FILE = "/tmp/ff-mcu-bringup.status"
-
 
 def configure(fd):
     """Raw 115200, VMIN=0/VTIME=1 -- the same line settings firmwareExe uses.
@@ -298,38 +291,17 @@ class Port(object):
         self.done = True
 
 
-def publish(status_file, state, ports):
-    """Say what this pass is still working on, one line per port.
+def bringup(devs, deadline_s=DEADLINE_S, on_progress=None):
+    """Hand every board over, in one pass.
 
-    Best effort in every direction: a reader may see a half-written file and
-    must cope, and a write that fails must not disturb the bring-up. The
-    format is deliberately dumb -- "state" first, then "<dev> <word>" -- so
-    the reader needs no parser and no json.
+    on_progress(devs_still_working) is called whenever that set shrinks, so a
+    caller can say which board is being waited for. It is called from inside
+    the poll loop and must be cheap; anything it raises is the caller's
+    problem to have avoided, because a bring-up must not fail over a progress
+    note.
     """
-    if not status_file:
-        return
-    lines = ["state %s" % state]
-    for p in ports:
-        if not p.done:
-            word = "working"
-        elif p.ok:
-            word = "ok"
-        else:
-            word = "failed"
-        lines.append("%s %s" % (p.dev, word))
-    try:
-        tmp = status_file + ".new"
-        with open(tmp, "w") as fh:
-            fh.write("\n".join(lines) + "\n")
-        os.rename(tmp, status_file)      # readers never see a partial file
-    except OSError:
-        pass
-
-
-def bringup(devs, deadline_s=DEADLINE_S, status_file=STATUS_FILE):
     ports = [Port(d) for d in devs]
     live = [p for p in ports if p.open()]
-    publish(status_file, "running", ports)
     try:
         end = time.monotonic() + deadline_s
         waiting = None
@@ -337,12 +309,13 @@ def bringup(devs, deadline_s=DEADLINE_S, status_file=STATUS_FILE):
             pending = [p for p in live if not p.done]
             if not pending or time.monotonic() >= end:
                 break
-            # Republish only when the set actually shrinks: this loop spins
-            # hard, and rewriting the file every pass would be pure noise.
+            # Only when the set actually shrinks: this loop spins hard, and
+            # calling back on every pass would be pure noise.
             names = tuple(p.dev for p in pending)
             if names != waiting:
-                publish(status_file, "running", ports)
                 waiting = names
+                if on_progress is not None:
+                    on_progress(list(names))
             for p in pending:
                 p.poll(time.monotonic())
         for p in live:
@@ -350,7 +323,8 @@ def bringup(devs, deadline_s=DEADLINE_S, status_file=STATUS_FILE):
     finally:
         for p in live:
             p.close()
-        publish(status_file, "finished", ports)
+        if on_progress is not None:
+            on_progress([])
 
     ok = True
     for p in ports:

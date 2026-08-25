@@ -34,7 +34,7 @@ H=800
 BPP=32
 
 mkdir -p $MOD/bin
-for f in ffscreen.py ff-startup.py; do
+for f in ffscreen.py ff-startup.py ff-mcu-bringup.py; do
     cp /tmp/payload/bin/$f $MOD/bin/$f 2>/dev/null
     if [ -f "$MOD/bin/$f" ]; then
         ok "payload ships bin/$f"
@@ -64,8 +64,10 @@ else
     bad "ff-startup.py does not run: `cat /tmp/help.out`"
 fi
 
-# 2. it found ffscreen.py beside itself. The import is optional by design, so
-#    a missing sibling would silently mean "no screen" forever.
+# 2. it found BOTH siblings beside itself. Each import is optional by design,
+#    so a missing one silently means "no screen" or "no bring-up" forever --
+#    and the bring-up one would mean klippy opening ports at boards still
+#    sitting in their bootloaders.
 "$PY" -c "
 import sys
 sys.path.insert(0, '$MOD/bin')
@@ -76,6 +78,27 @@ if grep -q "^glyphs" /tmp/imp.out; then
     ok "ffscreen imports (`cat /tmp/imp.out`)"
 else
     bad "ffscreen does not import: `cat /tmp/imp.out`"
+fi
+
+# 2b. ff-startup.py loads ff-mcu-bringup.py as a MODULE. Its filename is not
+#     an identifier, so this goes through importlib by path -- exactly the
+#     sort of thing that works on a developer's python and not on a 3.8 built
+#     by FlashForge. If it silently returns None the boards never get handed
+#     over and klippy opens the ports at bootloaders.
+"$PY" -c "
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('s', '$MOD/bin/ff-startup.py')
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+print('bringup', m.bringup is not None)
+print('ports', len(m.bringup.DEFAULT_PORTS) if m.bringup else 0)
+print('named', all(m.board_name(d).startswith('THE ')
+                   for d in (m.bringup.DEFAULT_PORTS if m.bringup else [])))
+" >/tmp/mod.out 2>&1
+if grep -q "^bringup True" /tmp/mod.out && grep -q "^ports 3" /tmp/mod.out \
+   && grep -q "^named True" /tmp/mod.out; then
+    ok "ff-startup.py loads ff-mcu-bringup.py and names all 3 boards"
+else
+    bad "the bring-up module did not load: `cat /tmp/mod.out`"
 fi
 
 # 3. draw a real frame onto the replica's /dev/fb0.

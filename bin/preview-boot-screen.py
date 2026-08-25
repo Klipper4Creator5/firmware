@@ -31,8 +31,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # order it happens. Keep this in step with the panel.say() calls there.
 PHASES = [
     ('starting-services', 'STARTING SERVICES', 0.05),
-    ('mcu-heater', 'WAITING FOR THE HEATER BOARD', 0.05),
-    ('mcu-both', 'WAITING FOR THE HEATER BOARD AND THE LEVEL BOARD', 0.05),
+    ('mcu-boards', 'WAKING THE TOOLHEAD BOARDS', 0.05),
+    ('mcu-heater', 'WAKING THE HEATER BOARD', 0.08),
+    ('mcu-both', 'WAKING THE HEATER BOARD AND THE LEVEL BOARD', 0.08),
     ('waiting', 'WAITING FOR THE PRINTER', 0.22),
     ('importing', 'READING FACTORY CALIBRATION', 0.5),
     ('saving', 'SAVING CALIBRATION', 0.7),
@@ -48,6 +49,7 @@ FAILURES = [
     ('fail-moonraker', 'MOONRAKER IS NOT RESPONDING'),
     ('fail-klipper-error', 'KLIPPER REPORTED AN ERROR'),
     ('fail-board', 'THE HEATER BOARD DID NOT ANSWER'),
+    ('fail-nostart', 'KLIPPER COULD NOT BE STARTED'),
     ('fail-klipper-startup', 'KLIPPER DID NOT FINISH STARTING (STARTUP)'),
     ('fail-tools', 'COULD NOT READ THE TOOL SETTINGS'),
     ('fail-config', 'COULD NOT READ THE PRINTER CONFIGURATION'),

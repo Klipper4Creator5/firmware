@@ -31,15 +31,27 @@
 # So it is a separate program, run from the firmwareExe wrapper before
 # HelixScreen:
 #
-#   1. Wait for bin/ff-mcu-bringup.py, which start.sh runs alongside us, to
-#      finish handing the toolhead boards over. It publishes what it is still
-#      working on and we name that board on the panel.
-#   2. Wait for klipper ready and moonraker answering. If klippy fails, its
-#      own message names the board that did not connect, and so do we.
+#   1. Hand the toolhead boards over from their bootloaders, by calling
+#      ff-mcu-bringup.py directly -- it is a module here, not a subprocess --
+#      naming on the panel whichever board is still being waited for.
+#   2. Launch klipper (start.sh, told not to redo the bring-up) and wait for
+#      klippy and moonraker to be ready. If a board never answered, klippy
+#      says so and names it, and so do we; then stop klippy, redo the
+#      bring-up and try again, which is what reopening the port achieves.
 #   3. If the install is already stamped, stop here -- the rest is the
 #      migration, and it has been done.
 #   4. Otherwise run FF_IMPORT_FIRMWARE_CONFIG, then SAVE_CONFIG (which
 #      restarts klippy), wait for it to come back, and only then stamp.
+#
+# WHY THIS OWNS KLIPPER'S START. The bring-up has to happen before klippy
+# opens the serial ports, and the retry that actually fixes a board which
+# missed its window is "close the port, hand it over again, reopen" -- so
+# whatever does the bring-up has to be the same thing that starts and
+# restarts klippy. Splitting them across two processes meant this program
+# could only watch, through a file, work it was not allowed to do. init.d/
+# S70klipper stands aside when this program is going to run and takes the job
+# back when it cannot: klipper starting is the single most important thing
+# the mod does, and it must not depend on a python interpreter.
 #
 # Anything short of a verified success leaves NO stamp: the next boot tries
 # again. That is deliberate. The heater board on this machine routinely needs
@@ -62,14 +74,17 @@
 # turns it off.
 #
 #   usage: ff-startup.py [--stamp F] [--dir D] [--moonraker URL] [--timeout S]
-#                        [--mcu-status F] [--mcu-timeout S] [--no-import]
+#                        [--no-import] [--no-klipper] [--klipper-tries N]
+#                        [--start-sh P] [--daemon P] [--mcu-timeout S]
 #                        [--fb DEV] [--fb-geometry G] [--no-screen] [--dry-run]
 #
 # Exit 0 = the printer came up, and the migration either was not needed or
 # succeeded. Exit 1 = something did not finish; no stamp was written.
 import argparse
+import importlib.util
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -81,12 +96,39 @@ try:
 except ImportError:
     ffscreen = None
 
+
+def _load_bringup():
+    """Import ff-mcu-bringup.py, whose filename is not an identifier.
+
+    It is a sibling file rather than a package because start.sh also runs it
+    as a script, by path, on the fallback route. Absent, we simply do no
+    bring-up: klippy still gets started, and a board that never answered is
+    news klippy breaks better than we could.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        'ff-mcu-bringup.py')
+    try:
+        spec = importlib.util.spec_from_file_location('ff_mcu_bringup', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception as exc:
+        logging_note = 'ff-mcu-bringup.py did not load (%s)' % exc
+        sys.stdout.write('ff-startup: %s\n' % logging_note)
+        return None
+
+
+bringup = _load_bringup()
+
 STAMP = '/usr/data/anvil/.firmware-config-imported'
 JSON_DIR = '/usr/data/firmwareRes/config'
 MOONRAKER = 'http://127.0.0.1:7125'
-MCU_STATUS = '/tmp/ff-mcu-bringup.status'
+START_SH = '/usr/prog/klipper/start.sh'
+DAEMON = '/usr/prog/klipper/klipperDaemon'
+UDS = '/tmp/uds'
 TIMEOUT = 240.0
-MCU_TIMEOUT = 90.0
+MCU_TIMEOUT = 30.0
+KLIPPER_TRIES = 6
 EXTRUDER_COUNT = 4
 
 # What to call each board on the panel. The serial port is what ff-mcu-bringup
@@ -253,66 +295,107 @@ def any_calibrated(tools):
     return any(t and t.get('calibrated') for t in tools or [])
 
 
-def read_mcu_status(path):
-    """What ff-mcu-bringup.py is doing, or None if it has not said yet.
-
-    Returns (state, [ports still working]). Anything unparseable reads as
-    "nothing to report" -- this is a progress hint, and a malformed hint must
-    never be the reason a printer does not finish booting."""
-    try:
-        with open(path) as fh:
-            lines = fh.read().splitlines()
-    except (IOError, OSError):
-        return None
-    state, working = None, []
-    for line in lines:
-        parts = line.split()
-        if len(parts) != 2:
-            continue
-        if parts[0] == 'state':
-            state = parts[1]
-        elif parts[1] == 'working':
-            working.append(parts[0])
-    if state is None:
-        return None
-    return state, working
-
-
 def board_name(key):
     """A serial port or a klipper mcu name -> something a person can act on."""
     return BOARDS.get(key, str(key).upper())
 
 
-def wait_for_mcus(panel, path, deadline):
-    """Wait for the toolhead boards to leave their bootloaders.
+def hand_over_boards(panel, timeout):
+    """Bring the toolhead boards out of their bootloaders.
 
-    start.sh runs ff-mcu-bringup.py at the same time as this program, so its
-    status file may not exist for a moment; that is not an error, and neither
-    is it never appearing. This is a wait we are happy to abandon -- klippy is
-    the real authority on whether a board answered, and it is waited for next.
+    Called directly rather than run as a subprocess: this program owns when
+    klippy opens the ports, so it owns doing this first. The callback is the
+    whole reason it is worth owning -- it names the board still being waited
+    for while the wait is happening.
     """
-    said = None
-    while True:
-        status = read_mcu_status(path)
-        if status is not None and status[0] == 'finished':
-            log('mcu bring-up finished')
-            return True
-        if status is None:
-            detail = ''
-        else:
-            working = [board_name(d) for d in status[1]]
-            detail = ' AND '.join(working[:2])
-        if detail != said:
-            log('waiting for the boards: %s' % (detail or 'not started yet'))
-            said = detail
-        panel.say('WAITING FOR ' + detail if detail else 'STARTING SERVICES',
-                  0.05)
-        if time.time() >= deadline:
-            # Not a failure: a board that never answered is klippy's news to
-            # break, with a much better message than we could write here.
-            log('mcu bring-up did not report finishing -- going on to klipper')
-            return False
+    if bringup is None:
+        return
+    def progress(devs):
+        if not devs:
+            return
+        names = [board_name(d) for d in devs]
+        panel.say('WAKING ' + ' AND '.join(names[:2]), 0.08)
+    panel.say('WAKING THE TOOLHEAD BOARDS', 0.05)
+    try:
+        ok = bringup.bringup(list(bringup.DEFAULT_PORTS), timeout,
+                             on_progress=progress)
+    except Exception as exc:
+        # A board is klippy's problem to report; ours is to not die here.
+        log('mcu bring-up raised (%s) -- going on to klipper' % exc)
+        return
+    log('mcu bring-up %s' % ('ok' if ok else 'reported a problem'))
+
+
+# --------------------------------------------------------------- klipper
+
+def klippy_running():
+    """Is there a klippy? The socket first, then /proc -- pgrep is not
+    guaranteed to exist on this rootfs and this is cheaper anyway."""
+    if os.path.exists(UDS):
+        return True
+    try:
+        pids = [p for p in os.listdir('/proc') if p.isdigit()]
+    except OSError:
+        return False
+    for pid in pids:
+        try:
+            with open('/proc/%s/cmdline' % pid, 'rb') as fh:
+                if b'klippy.py' in fh.read():
+                    return True
+        except (IOError, OSError):
+            continue
+    return False
+
+
+def start_klipper(args):
+    """Run start.sh, telling it the bring-up is already done.
+
+    It is not left to run in the background: everything it does after the
+    bring-up we skipped is quick, and knowing it finished is what makes the
+    wait that follows meaningful."""
+    if not os.path.exists(args.start_sh):
+        log('no %s -- cannot start klipper' % args.start_sh)
+        return False
+    env = dict(os.environ)
+    env['FF_SKIP_MCU_BRINGUP'] = '1'
+    log('starting klipper (%s)' % args.start_sh)
+    try:
+        proc = subprocess.run(['/bin/sh', args.start_sh], env=env,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=120)
+    except subprocess.TimeoutExpired:
+        log('start.sh did not return within 120s')
+        return False
+    except Exception as exc:
+        log('start.sh could not be run (%s)' % exc)
+        return False
+    for line in (proc.stdout or b'').decode('utf-8', 'replace').splitlines():
+        log('  start.sh: %s' % line)
+    return True
+
+
+def stop_klipper(args):
+    """Stop klippy and wait for it to actually go.
+
+    Reopening the port is what toggles DTR/RTS and gives a board that missed
+    its window another chance, so the stop has to be real before the next
+    attempt is worth making."""
+    try:
+        subprocess.run([args.daemon, 'stop'], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=30)
+    except Exception as exc:
+        log('klipperDaemon stop failed (%s)' % exc)
+    for _ in range(15):
+        if not klippy_running():
+            break
         time.sleep(1.0)
+    # start.sh refuses to run while the socket is there, so clear a stale one
+    # -- but only once klippy is definitely gone.
+    if not klippy_running():
+        try:
+            os.remove(UDS)
+        except OSError:
+            pass
 
 
 def klippy_fault(mr):
@@ -331,7 +414,23 @@ def klippy_fault(mr):
     return None
 
 
-def wait_for_stack(mr, panel, deadline, started):
+def report_stack_failure(mr, panel):
+    """The one frame someone is left looking at, naming what did not come up."""
+    state = mr.klippy_state()
+    if state is None:
+        panel.failed('MOONRAKER IS NOT RESPONDING')
+    elif state == 'error':
+        board = klippy_fault(mr)
+        if board:
+            panel.failed('%s DID NOT ANSWER' % board)
+        else:
+            panel.failed('KLIPPER REPORTED AN ERROR')
+    else:
+        panel.failed('KLIPPER DID NOT FINISH STARTING (%s)'
+                     % str(state).upper())
+
+
+def wait_for_stack(mr, panel, deadline, started, quiet=False):
     """Block until klipper and moonraker are both up, or time runs out.
     Reports their state once per change so the boot log says which one
     everybody is waiting on, and creeps the panel's bar along with the wait
@@ -351,24 +450,21 @@ def wait_for_stack(mr, panel, deadline, started):
                       0.05 + 0.3 * (time.time() - started) / span)
         if state == 'ready':
             return True
+        if state == 'error' and quiet:
+            # A failed connect is final until something reopens the ports,
+            # so waiting out the deadline here only delays the retry that
+            # can actually fix it.
+            log('klipper reported an error -- not waiting it out')
+            return False
         if time.time() >= deadline:
             log('klipper and moonraker did not come up in time (moonraker=%s'
-                ' klipper=%s) -- no stamp, the next boot tries again'
+                ' klipper=%s)'
                 % ('up' if state is not None else 'down', state or 'unknown'))
-            # Name the service, not the timeout: "moonraker is not
-            # responding" is something an owner can act on, and the three
-            # cases have genuinely different causes.
-            if state is None:
-                panel.failed('MOONRAKER IS NOT RESPONDING')
-            elif state == 'error':
-                board = klippy_fault(mr)
-                if board:
-                    panel.failed('%s DID NOT ANSWER' % board)
-                else:
-                    panel.failed('KLIPPER REPORTED AN ERROR')
-            else:
-                panel.failed('KLIPPER DID NOT FINISH STARTING (%s)'
-                             % str(state).upper())
+            # Between retries the caller stays quiet: a fault frame that is
+            # replaced two seconds later by another attempt reads as a
+            # failure the printer then ignored.
+            if not quiet:
+                report_stack_failure(mr, panel)
             return False
         time.sleep(2.0)
 
@@ -415,11 +511,42 @@ def run(args):
         panel.done()
 
 
+def bring_up_printer(args, mr, panel, started, deadline):
+    """Boards out of their bootloaders, klippy up, and retry until it is.
+
+    This is what init.d/S70klipper's supervise() used to do by tailing
+    printer.log for markers, which was the only signal a shell script had.
+    Here the signal is moonraker's, and the retry can do the thing that
+    actually helps: hand the boards over again before reopening the ports.
+    """
+    for attempt in range(1, args.klipper_tries + 1):
+        if not klippy_running():
+            hand_over_boards(panel, min(args.mcu_timeout,
+                                        max(1.0, deadline - time.time())))
+            if not args.no_klipper and not start_klipper(args):
+                panel.failed('KLIPPER COULD NOT BE STARTED')
+                return False
+        if wait_for_stack(mr, panel, deadline, started, quiet=True):
+            return True
+        if time.time() >= deadline or attempt == args.klipper_tries:
+            break
+        # Reopening the port toggles DTR/RTS, which is what gives a board
+        # that missed its window another chance -- so the restart is the
+        # fix, not merely another go at the same thing.
+        board = klippy_fault(mr)
+        log('attempt %d/%d failed (%s) -- restarting klipper'
+            % (attempt, args.klipper_tries, board or 'no board named'))
+        panel.say('RETRYING %s' % (board or 'THE PRINTER'), 0.15,
+                  detail='ATTEMPT %d OF %d' % (attempt + 1,
+                                               args.klipper_tries))
+        stop_klipper(args)
+    report_stack_failure(mr, panel)
+    return False
+
+
 def startup(args, mr, panel, started, deadline):
     # -- every boot ------------------------------------------------------
-    wait_for_mcus(panel, args.mcu_status,
-                  min(deadline, started + args.mcu_timeout))
-    if not wait_for_stack(mr, panel, deadline, started):
+    if not bring_up_printer(args, mr, panel, started, deadline):
         return 1
 
     # -- first boot only -------------------------------------------------
@@ -514,12 +641,16 @@ def main(argv):
     ap.add_argument('--dir', default=JSON_DIR)
     ap.add_argument('--moonraker', default=MOONRAKER)
     ap.add_argument('--timeout', type=float, default=TIMEOUT)
-    ap.add_argument('--mcu-status', default=MCU_STATUS,
-                    help="where ff-mcu-bringup.py publishes its progress")
     ap.add_argument('--mcu-timeout', type=float, default=MCU_TIMEOUT,
-                    help="how long to wait for the boards before going on")
+                    help="how long one bring-up pass may take")
+    ap.add_argument('--klipper-tries', type=int, default=KLIPPER_TRIES,
+                    help="how many times to hand the boards over and retry")
+    ap.add_argument('--start-sh', default=START_SH)
+    ap.add_argument('--daemon', default=DAEMON)
+    ap.add_argument('--no-klipper', action='store_true',
+                    help="do not start klipper; only wait for it")
     ap.add_argument('--no-import', action='store_true',
-                    help="only wait for the printer; never migrate")
+                    help="only bring the printer up; never migrate")
     ap.add_argument('--fb', default=None,
                     help='framebuffer to draw the boot screen on')
     ap.add_argument('--fb-geometry', default=None,

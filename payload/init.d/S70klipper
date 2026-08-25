@@ -27,9 +27,24 @@
 # retry achieves: reopening the port toggles DTR/RTS and the board comes up.
 #
 # The retry is the safety net, not the fix: the actual fix is the bootloader
-# handshake that start.sh now performs (ff-mcu-bringup.py). A board that
-# missed its window still gets another chance on each restart here, because
-# start.sh redoes the bring-up every time it runs.
+# handshake (ff-mcu-bringup.py). A board that missed its window still gets
+# another chance on each restart here, because start.sh redoes the bring-up
+# every time it runs.
+#
+# WHO NORMALLY DOES ALL THIS NOW. bin/ff-startup.py, which runs from the
+# firmwareExe wrapper right after these init scripts. It owns the sequence
+# because the bring-up has to happen before klippy opens the ports and the
+# retry that fixes a stranded board is "hand it over again, then reopen" --
+# so the thing doing the handshake has to be the thing restarting klippy. It
+# also has moonraker to ask, instead of tailing printer.log for markers, and
+# a screen to say which board is missing.
+#
+# This script therefore STANDS ASIDE when that program is going to run, and
+# does the whole job itself when it cannot -- no interpreter, no script,
+# MOD_STARTUP=0. Klipper starting is the single most important thing the mod
+# does and it must not come to depend on python. `force-start` ignores the
+# hand-off; the wrapper uses it as a last resort if ff-startup returned and
+# left no klippy behind.
 #
 # It is not a GPIO poke: firmwareExe drives only PB07 (wifi module power) and
 # gpios 34/35, and that pair is the NRST/BOOT0 of the /dev/ttyS3 board, driven
@@ -104,9 +119,23 @@ supervise() {
     return 1
 }
 
+# Is bin/ff-startup.py actually going to run and do this? Every condition the
+# wrapper checks, checked the same way -- if any of them is false this script
+# keeps the job.
+startup_owns_klipper() {
+    [ "${MOD_STARTUP:-1}" = 1 ] || return 1
+    [ -f $MODDIR/bin/ff-startup.py ] || return 1
+    [ -x /usr/prog/Python-3.8.2/bin/python3 ] || command -v python3 >/dev/null 2>&1 || return 1
+    return 0
+}
+
 start() {
     if klippy_running; then
         echo "klipper: already running"
+        return 0
+    fi
+    if [ "$1" != force ] && startup_owns_klipper; then
+        echo "klipper: left to ff-startup.py (it does the MCU bring-up first)"
         return 0
     fi
     [ -x /usr/prog/klipper/start.sh ] || { echo "klipper: start.sh missing"; return 1; }
@@ -122,9 +151,10 @@ stop() {
     echo "klipper: stopped"
 }
 case "$1" in
-    start|'') start ;;
-    stop)     stop ;;
-    restart)  stop; sleep 2; start ;;
-    status)   klippy_running && echo "klipper: running" || echo "klipper: not running" ;;
-    *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+    start|'')   start ;;
+    force-start) start force ;;
+    stop)       stop ;;
+    restart)    stop; sleep 2; start force ;;
+    status)     klippy_running && echo "klipper: running" || echo "klipper: not running" ;;
+    *) echo "usage: $0 {start|force-start|stop|restart|status}"; exit 1 ;;
 esac
