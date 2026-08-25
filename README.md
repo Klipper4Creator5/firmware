@@ -228,10 +228,10 @@ reading, and the factory-restore last resort are in
 | Component | Pinned at |
 |---|---|
 | Stock FlashForge base | `1.9.7-1.2.9-20260810`, fetched from [ghzserg/FF](https://github.com/ghzserg/FF) at build time |
-| Klipper | a current fork with the `ff_*` toolchanger extras |
-| Mainsail | `v2.18.2` |
-| Moonraker | commit `9d0d09d` — a commit, not a release, for a hard reason: [docs/how-it-works.md](docs/how-it-works.md#moonraker) |
-| HelixScreen | `v0.99.115-creator5.1` |
+| [Klipper](https://github.com/Klipper4FlashForge/klipper/tree/creator5) | a current fork (branch `creator5`) with the `ff_*` toolchanger extras |
+| [Mainsail](https://github.com/mainsail-crew/mainsail) | [`v2.18.2`](https://github.com/mainsail-crew/mainsail/releases/tag/v2.18.2) |
+| [Moonraker](https://github.com/Arksine/moonraker) | commit [`9d0d09d`](https://github.com/Arksine/moonraker/commit/9d0d09de8063922696359c1b88c86a86d6fdb296) — a commit, not a release, for a hard reason: [docs/how-it-works.md](docs/how-it-works.md#moonraker) |
+| [HelixScreen](https://github.com/Klipper4FlashForge/helixscreen) | [`v0.99.115-creator5.1`](https://github.com/Klipper4FlashForge/helixscreen/releases/tag/v0.99.115-creator5.1) |
 
 ---
 
@@ -257,7 +257,7 @@ Built on the work of others: [ghzserg/FF](https://github.com/ghzserg/FF)
 publishes the stock packages and factory image everything here starts from;
 [Mainsail](https://github.com/mainsail-crew/mainsail),
 [Moonraker](https://github.com/Arksine/moonraker) and
-[HelixScreen](https://github.com/Klipper4Creator5/helixscreen) are shipped as
+[HelixScreen](https://github.com/Klipper4FlashForge/helixscreen) are shipped as
 released; the toolchanger status API follows
 [viesturz/klipper-toolchanger](https://github.com/viesturz/klipper-toolchanger)
 so tool-aware UIs work unchanged.
