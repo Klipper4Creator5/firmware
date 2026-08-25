@@ -82,7 +82,15 @@ klippy_verdict() {
 supervise() {
     n=1
     while [ $n -le $KLIPPER_TRIES ]; do
-        mark=`wc -l < "$PRINTER_LOG" 2>/dev/null || echo 0`
+        # NOT `wc -l < "$PRINTER_LOG" 2>/dev/null`: redirections are applied
+        # left to right, so the input redirect fails and the shell prints
+        # "can't open ...: no such file" BEFORE 2>/dev/null is in effect. On
+        # a first boot printer.log does not exist yet, so that message landed
+        # in the boot log every time, interleaved with whatever else was
+        # writing -- which is what made one user's log unreadable at exactly
+        # the point they were trying to diagnose.
+        mark=`cat "$PRINTER_LOG" 2>/dev/null | wc -l`
+        [ -n "$mark" ] || mark=0
         # A failed connect takes ~90s to be reported, so wait out more than
         # that before concluding anything.
         w=0
