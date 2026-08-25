@@ -20,31 +20,39 @@ young.
 
 ## Status
 
-**It runs on a real printer.** Checked on a Creator 5 Pro, on the machine:
-flashing over the stock firmware and the migration that comes with it,
-printing — gcode straight from the slicer, nothing edited — toolchanges,
-nozzle-offset calibration, wifi, Mainsail, and the camera.
+**It runs on a real printer** — a Creator 5 Pro, flashed and printing:
 
 <img src="docs/helixscreen-print-status.webp" width="49%" alt="HelixScreen mid-print on the Creator 5 Pro: T2 mounted, layer 2 of 173"> <img src="docs/helixscreen-bed-mesh.webp" width="49%" alt="HelixScreen's bed-mesh screen showing a probed 10x10 mesh">
 
-Not yet tried: the chamber heater, and the non-Pro **Creator 5** — its
-package builds and passes the same replica test suite, but has not touched
-hardware.
+A checked box happened on that machine; an empty one has not, yet.
+
+- [x] **Install and migration from stock firmware** — the printer's own
+  updater does it, and your unit's factory calibration imports itself on the
+  first boot
+- [x] **Printing** — gcode straight from the slicer, nothing edited
+- [x] **Toolchanges** — a current Klipper with real toolchanger support, in
+  place of the 0.12-era tree FlashForge ships
+- [x] **Nozzle-offset calibration**
+- [x] **Mainsail** at `http://<printer-ip>/`, with a current Moonraker behind
+  it — anything that speaks the Klipper API works (FlashForge's 2022 build is
+  too old for today's Mainsail to even show the camera panel)
+- [x] **Camera** — mjpg-streamer was already on the printer, unused; this
+  firmware simply starts it
+- [x] **Wifi**
+- [x] **HelixScreen** on the printer's own screen
+- [x] **ssh as root** — a random password is chosen on the **first** install
+  and written to `anvil-password.txt` on your stick; updates keep it, and
+  nothing crackable ships in the package (`make passwd` bakes in your own)
+- [ ] **Chamber heater**
+- [ ] **Creator 5 (non-Pro)** — its package builds and passes the same
+  replica test suite, but has not touched hardware
+- [ ] **Going back to stock** — proven on the printer replica
+  (`make test-recovery`), not yet needed on the machine. Flashing the stock
+  package restores everything it carries; Moonraker is not in it — it ships
+  only on the factory image — so the mod's build stays, and keeps working;
+  see [If something goes wrong](#if-something-goes-wrong)
 
 Have the stock package for your model on a spare stick before you begin.
-
----
-
-## What you get
-
-| | |
-|---|---|
-| **Mainsail in your browser** | The full Klipper web interface at `http://<printer-ip>/` — upload gcode, watch the print, tune on the fly. Moonraker comes with it, so anything that speaks the Klipper API works. |
-| **A shell on your printer** | ssh as root. Dropbear is already running on stock firmware; this simply gives you a password you know. Every package -- the releases here included -- picks its own random root password on the **first** install and writes it to `anvil-password.txt` on your USB stick; read it there, then pull the stick. Updates keep the password the printer already has, so the stick sees it exactly once. Nothing crackable is shipped in the package. Build with `ROOT_PW_HASH` set (`make passwd`) to bake in a password of your own instead. |
-| **Real toolchanger Klipper** | A current Klipper with proper tool-change support, replacing the 0.12-era tree FlashForge ships. |
-| **A current Moonraker** | Replacing the 2022 build FlashForge ships, which is too old for today's Mainsail — with it, the camera panel never appears at all. |
-| **A modern touchscreen UI** | HelixScreen replaces the stock interface on the printer's own screen. |
-| **Nothing you cannot undo** | Flashing the stock FlashForge package restores every file the mod replaced, and the printer behaves as it did before — with one exception, Moonraker; see [If something goes wrong](#if-something-goes-wrong). |
 
 How the mod hooks in — one file, `firmwareExe`, with the stock boot scripts,
 updater and recovery path left untouched — is
@@ -201,14 +209,14 @@ calibration, `moonraker-custom.conf` **and your root password** survive; the
 
 ## If something goes wrong
 
-**Flash the stock FlashForge package for your model.** It restores every file
-this firmware touches and installs the same way — stick in, power on. Keep
-one on a spare stick before you start; the stock packages are published at
+**Flash the stock FlashForge package for your model.** It restores everything
+it carries and installs the same way — stick in, power on. Keep one on a
+spare stick before you start; the stock packages are published at
 [ghzserg/FF](https://github.com/ghzserg/FF/releases).
 
-One exception comes along: Moonraker ships only on the factory image, so a
-stock reflash has nothing to restore it from and the mod's build stays — it
-works, and Mainsail is happy with it
+The one thing it cannot bring back is FlashForge's Moonraker: the stock
+package does not carry it — only the factory image does — so the mod's build
+stays, and it works; Mainsail is happy with it
 ([details](docs/how-it-works.md#recovery)). The symptom table, the logs worth
 reading, and the factory-restore last resort are in
 [docs/hardware-testing.md](docs/hardware-testing.md).
