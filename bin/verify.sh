@@ -82,6 +82,18 @@ if [ -f "$T/sw/app_startup.sh" ]; then
 fi
 
 # 7 ------------------------------------------------- MIPS ABI of any binaries
+# A fork build that ships no fork is a broken package, not an optional check:
+# the v20260824 release passed here precisely because everything below was
+# conditional on files that the broken build simply did not contain.
+if [ "${BUILD_KLIPPER:-fork}" = "fork" ]; then
+    if [ -f "$T/sw/klipper/klippy/chelper/__init__.py" ]; then
+        ok "package carries the fork klippy tree"
+    else
+        bad "BUILD_KLIPPER=fork but no klippy tree in the package -- this is the stock-overlay build that shipped as v20260824"
+    fi
+    [ -f "$T/sw/klipper/chelper.tar" ] \
+        || bad "BUILD_KLIPPER=fork but no chelper.tar in the package"
+fi
 if [ -f "$T/sw/klipper/chelper.tar" ]; then
     mkdir -p "$T/ch" && tar -xf "$T/sw/klipper/chelper.tar" -C "$T/ch"
     CH=$(find "$T/ch" -name 'c_helper.so' | head -n1)
@@ -95,6 +107,16 @@ if [ -f "$T/sw/klipper/chelper.tar" ]; then
         else
             bad "c_helper.so is NOT nan2008 -- kernel returns ENOEXEC, klippy dies"
         fi
+        # The failure mode that reached a printer: a .so from older sources
+        # than the klippy tree beside it. cffi resolves lazily, so only a
+        # symbol-table check catches it before the machine does.
+        if [ -f "$T/sw/klipper/klippy/chelper/__init__.py" ]; then
+            if python3 "$ROOT/test/test-chelper.py" "$T/sw/klipper" >/dev/null 2>&1; then
+                ok "c_helper.so exports everything the shipped klippy declares"
+            else
+                bad "c_helper.so does not match the shipped klippy tree (stale build)"
+            fi
+        fi
     fi
 fi
 
@@ -105,23 +127,28 @@ if [ -f "$T/anvil.tar.xz" ]; then
     else bad "anvil.tar.xz is neither valid xz nor tar"; fi
 
     LIST=$(xz -dc "$T/anvil.tar.xz" 2>/dev/null | tar -tf - 2>/dev/null || tar -tf "$T/anvil.tar.xz" 2>/dev/null)
-    echo "$LIST" | grep -q 'init.d/S80ui' && ok "mod payload has the service scripts" \
+    # Herestrings, NOT `echo "$LIST" | grep -q`: under pipefail, grep -q
+    # exiting at an early match SIGPIPEs the echo and the pipeline returns
+    # 141 -- a race that stayed invisible until the fork klippy tree tripled
+    # the listing, then intermittently reported Mainsail/Moonraker missing
+    # from packages that carried both.
+    grep -q 'init.d/S80ui' <<<"$LIST" && ok "mod payload has the service scripts" \
                                           || bad "mod payload missing init.d services"
-    echo "$LIST" | grep -q 'init.d/S70klipper' && ok "mod payload owns Klipper startup" \
+    grep -q 'init.d/S70klipper' <<<"$LIST" && ok "mod payload owns Klipper startup" \
                                           || bad "mod payload missing S70klipper -- Klipper would never start"
-    echo "$LIST" | grep -q 'mainsail/index.html' && ok "Mainsail present" || warn "no Mainsail in payload"
-    echo "$LIST" | grep -q 'helixscreen/bin/helix-screen' && ok "HelixScreen present" || warn "no HelixScreen in payload"
+    grep -q 'mainsail/index.html' <<<"$LIST" && ok "Mainsail present" || warn "no Mainsail in payload"
+    grep -q 'helixscreen/bin/helix-screen' <<<"$LIST" && ok "HelixScreen present" || warn "no HelixScreen in payload"
     # We deliberately ship no dropbear: the stock rootfs already has one, with
     # an enabled S50dropbear, so ssh is up before the mod does anything. A
     # dropbear in the payload would mean something unexpected, not something
     # missing -- hence the check reads the way round it does.
-    echo "$LIST" | grep -q 'bin/dropbear' \
+    grep -q 'bin/dropbear' <<<"$LIST" \
         && warn "dropbear in the payload -- we ship none; stock S50dropbear provides ssh" \
         || ok "no dropbear in the payload (stock S50dropbear provides ssh)"
     # moonraker.py is the file moonrakerDaemon execs by absolute path; a
     # payload with the directory but not that file installs a Moonraker that
     # cannot start, which looks identical to a dead printer from the outside.
-    echo "$LIST" | grep -q 'moonraker/moonraker.py' && ok "Moonraker present" \
+    grep -q 'moonraker/moonraker.py' <<<"$LIST" && ok "Moonraker present" \
                                           || warn "no Moonraker in payload -- the stock 2022 build stays, and Mainsail will hide the webcam"
 else
     warn "no anvil.tar.xz -- scripts only"

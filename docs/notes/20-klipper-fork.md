@@ -37,17 +37,27 @@ when `pa_enable == 1` (479-487). `ff_toolchange.py` used to issue
 ("upstream needs no channel") and appears nowhere in `payload/` now — the upstream
 `virtual_sdcard` we ship does neither rewrite, so there is no channel to sync.
 
-### `c_helper.so` is no longer checked against its klippy
+### `c_helper.so` is built from the tree it ships with
 
-When a fork tree is shipped (`BUILD_KLIPPER=fork`), `patch.sh` still refuses a
-`c_helper.so` that is not MIPS32r2/nan2008/o32, but nothing compares its
-exported symbols against the klippy tree travelling with it. cffi resolves
-symbols lazily, so a .so built from older sources imports cleanly, passes the
-ABI check, installs and boots, then dies at `Unhandled exception during
-connect` pointing at cffi rather than at the stale build — which is how it
-shipped once before. The `test-chelper` check and its `ALLOW_STALE_CHELPER`
-escape hatch were dropped on 2026-08-24 as the fork path winds down. Rebuild
-the .so first if klippy ever fails at connect.
+`patch.sh` cross-compiles the .so from the chelper sources of the tree being
+shipped (pinned tarball or `KLIPPER_FORK` checkout) whenever it is missing or
+older than those sources, using the Ingenic toolchain pinned in
+`versions.env`, and gates the result on both the ELF flags
+(MIPS32r2/nan2008/o32) and `test/test-chelper.py`'s symbol check.
+
+The symbol check was dropped on 2026-08-24 as "the fork path winds down" —
+and the very next release, v20260824-nova-kakhovka, shipped the OPPOSITE
+failure: CI set `KLIPPER_FORK=""`, `patch.sh` silently kept the stock tree,
+and the stock 0.12-era klippy overlay half-overwrote the fork on modded
+printers. klippy then died at connect with a cffi **arg-count** error
+(`expects 4 arguments, got 3` — upstream c84d78f3f widened
+`extruder_set_pressure_advance`). Diagnostic note for next time: an
+arg-count TypeError is Python-vs-Python — a mixed klippy tree — because the
+cdef and the caller both live in the tree; a stale .so shows up as a missing
+symbol (`AttributeError`) instead, since cffi resolves symbols lazily.
+`patch.sh` now refuses a fork build with no fork tree, `verify.sh` fails a
+fork package that lacks the klippy tree or `chelper.tar`, and the compile-
+from-shipped-sources rule makes a stale .so unrepresentable in a release.
 
 ## Custom commands (by area)
 

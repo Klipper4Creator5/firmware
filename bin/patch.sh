@@ -24,46 +24,100 @@ rm -rf "$MP" "$SW/mod"   # $SW/mod: leftover from an older layout
 mkdir -p "$MP/bin" "$MP/nginx" "$MP/www" "$MP/config"
 
 # ---------------------------------------------------------------- 1. Klipper
-if [ "${BUILD_KLIPPER:-fork}" = "fork" ] && [ -d "${KLIPPER_FORK:-}/klippy" ]; then
-    say "Klipper: installing fork tree from $KLIPPER_FORK"
+# BUILD_KLIPPER=fork (the default) ships the creator5 Klipper tree; =stock
+# keeps FlashForge's, and has to be asked for by name. There is no silent
+# middle: a "fork" build quietly falling back to stock is exactly what
+# shipped as v20260824-nova-kakhovka -- KLIPPER_FORK was empty in CI, this
+# block skipped itself, and the stock 0.12-era overlay half-overwrote the
+# v0.13 tree on already-modded printers. klippy died at connect with
+# "'void(*)(struct stepper_kinematics *, double, double, double)' expects 4
+# arguments, got 3": a v0.12 extruder.py calling the v0.13 chelper cdef
+# (upstream c84d78f3f widened extruder_set_pressure_advance).
+case "${BUILD_KLIPPER:-fork}" in
+fork)
+    if [ -d "${KLIPPER_FORK:-}/klippy" ]; then
+        # A local checkout, for working on the fork itself.
+        FORK="$KLIPPER_FORK"
+        say "Klipper: fork tree from local checkout $FORK"
+    else
+        # No checkout: the commit pinned in versions.env, fetched into
+        # vendor/ by bin/fetch-assets.sh. This is the path releases take.
+        [ -f "${KLIPPER_TGZ:-}" ] || {
+            echo "   !! BUILD_KLIPPER=fork but no fork tree:" >&2
+            echo "      KLIPPER_FORK is not a checkout and $KLIPPER_TGZ is missing." >&2
+            echo "      Run ./bin/fetch-assets.sh (or set KLIPPER_FORK in config.env)." >&2
+            exit 1; }
+        FORK=work/klipper-fork
+        if [ ! -f "$FORK/.version" ] \
+           || [ "$(cat "$FORK/.version")" != "$KLIPPER_VERSION" ]; then
+            rm -rf "$FORK"
+            mkdir -p "$FORK"
+            tar -xzf "$KLIPPER_TGZ" -C "$FORK" --strip-components=1
+            echo "$KLIPPER_VERSION" > "$FORK/.version"
+        fi
+        say "Klipper: fork tree from pinned commit ${KLIPPER_VERSION:0:8}"
+    fi
+
+    # c_helper.so is built HERE, from the same sources that ship, whenever it
+    # is missing or older than any chelper source. A prebuilt .so that merely
+    # exists is not trusted with the tree's freshness: one that outlived its
+    # sources is how a v0.12-generation binary once shipped under a v0.13
+    # klippy (see test/test-chelper.py's docstring).
+    CH="$FORK/klippy/chelper/c_helper.so"
+    if [ ! -f "$CH" ] || [ -n "$(find "$FORK/klippy/chelper" \
+           \( -name '*.c' -o -name '*.h' \) -newer "$CH" -print -quit)" ]; then
+        GCC="work/.mips-toolchain/mips-gcc720-glibc229/bin/mips-linux-gnu-gcc"
+        if [ ! -x "$GCC" ]; then
+            [ -f "${MIPS_TOOLCHAIN_TGZ:-}" ] || {
+                echo "   !! c_helper.so needs (re)building and there is no toolchain:" >&2
+                echo "      $MIPS_TOOLCHAIN_TGZ is missing. Run ./bin/fetch-assets.sh." >&2
+                exit 1; }
+            say "Klipper: unpacking the Ingenic MIPS toolchain"
+            mkdir -p work/.mips-toolchain
+            tar -xzf "$MIPS_TOOLCHAIN_TGZ" -C work/.mips-toolchain
+        fi
+        say "Klipper: cross-compiling c_helper.so from the fork's sources"
+        # Flags mirror COMPILE_ARGS in klippy/chelper/__init__.py: what the
+        # printer would use if it could compile, which it cannot.
+        "$GCC" -Wall -g -O2 -shared -fPIC \
+            -flto -fwhole-program -fno-use-linker-plugin \
+            -o "$CH" "$FORK"/klippy/chelper/*.c
+    fi
+
+    # The gates. ABI: the kernel refuses anything but MIPS32r2/nan2008/o32.
+    # Symbols: cffi resolves lazily, so a stale .so dies at connect on the
+    # printer instead of at import in the build -- catch it here.
+    if ! readelf -h "$CH" 2>/dev/null | grep -q nan2008; then
+        echo "   !! c_helper.so is NOT nan2008 -- the kernel will refuse it" >&2
+        exit 1
+    fi
+    say "Klipper: c_helper.so is nan2008 MIPS32r2 -- good"
+    python3 test/test-chelper.py "$FORK" || exit 1
+
     # Stock ships only a handful of klippy files as an overlay; the fork is a
     # different Klipper generation (v0.13 vs v0.12), so ship the WHOLE tree.
     rm -rf "$SW/klipper/klippy"
     mkdir -p "$SW/klipper/klippy"
-    ( cd "$KLIPPER_FORK/klippy" && tar -cf - \
+    ( cd "$FORK/klippy" && tar -cf - \
         --exclude='__pycache__' --exclude='*.pyc' --exclude='chelper/*.o' . ) \
       | tar -xf - -C "$SW/klipper/klippy"
-
-    # c_helper.so must be MIPS32r2 / nan2008 / o32 or klippy dies on import.
-    CH="$KLIPPER_FORK/klippy/chelper/c_helper.so"
-    if [ -f "$CH" ]; then
-        # Only the ABI is checked here. A symbol-level check against the
-        # klippy tree beside it used to run too, because cffi resolves symbols
-        # lazily and a .so older than its sources installs, boots and then
-        # dies at connect. That check is gone; if klippy ever fails at connect
-        # with a cffi traceback, a stale c_helper.so is the first thing to
-        # suspect and rebuilding it is the fix.
-        if readelf -h "$CH" 2>/dev/null | grep -q nan2008; then
-            say "Klipper: c_helper.so is nan2008 MIPS32r2 -- good"
-            mkdir -p work/.chelper/chelper
-            cp -f "$CH" work/.chelper/chelper/c_helper.so
-            tar -cf "$SW/klipper/chelper.tar" -C work/.chelper chelper
-            rm -rf work/.chelper
-        else
-            echo "   !! c_helper.so is NOT nan2008 -- the kernel will refuse it" >&2
-            exit 1
-        fi
-    else
-        echo "   !! no c_helper.so in the fork; see docs/building.md 'Rebuilding chelper'" >&2
-        exit 1
-    fi
+    mkdir -p work/.chelper/chelper
+    cp -f "$CH" work/.chelper/chelper/c_helper.so
+    tar -cf "$SW/klipper/chelper.tar" -C work/.chelper chelper
+    rm -rf work/.chelper
     # klippy/ now contains the fork's own extras+kinematics, so the stock
     # overlay dirs would only re-inject 0.12-era files on top. Drop them.
     rm -rf "$SW/klipper/extras" "$SW/klipper/kinematics"
     mkdir -p "$SW/klipper/extras"
-else
-    skip "Klipper: keeping stock tree"
-fi
+    ;;
+stock)
+    skip "Klipper: keeping stock tree (BUILD_KLIPPER=stock)"
+    ;;
+*)
+    echo "BUILD_KLIPPER must be 'fork' or 'stock' (got '${BUILD_KLIPPER:-}')" >&2
+    exit 1
+    ;;
+esac
 
 # ----------------------------------------------------------- 2. Toolchanger
 # Lives in this repo under payload/klipper/ -- it used to be the separate

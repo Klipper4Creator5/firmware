@@ -53,8 +53,21 @@ if [ "$ALL" = 1 ] || [ "${BUILD_MAINSAIL:-0}" = "1" ]; then
 fi
 
 if [ "$ALL" = 1 ] || [ "${BUILD_HELIX:-0}" = "1" ]; then
-    get "https://github.com/Klipper4Creator5/helixscreen/releases/download/$HELIX_VERSION/$HELIX_FILE" \
+    # Klipper4FlashForge is the org's current name; the old Klipper4Creator5
+    # URL only worked through GitHub's rename redirect, which dies the day
+    # someone claims the old handle.
+    get "https://github.com/Klipper4FlashForge/helixscreen/releases/download/$HELIX_VERSION/$HELIX_FILE" \
         "$HELIX_TGZ" "$HELIX_SHA256"
+fi
+
+# The Klipper fork sources and the toolchain that compiles chelper for the
+# printer. Skipped when config.env points KLIPPER_FORK at a local checkout:
+# that path brings its own tree, and the toolchain tarball is ~203MB.
+if [ "$ALL" = 1 ] || { [ "${BUILD_KLIPPER:-0}" = "fork" ] && [ ! -d "${KLIPPER_FORK:-}/klippy" ]; }; then
+    get "https://github.com/Klipper4FlashForge/klipper/archive/$KLIPPER_VERSION.tar.gz" \
+        "$KLIPPER_TGZ" "$KLIPPER_SHA256"
+    get "https://github.com/ballaswag/k1-discovery/releases/download/$MIPS_TOOLCHAIN_VERSION/$MIPS_TOOLCHAIN_FILE" \
+        "$MIPS_TOOLCHAIN_TGZ" "$MIPS_TOOLCHAIN_SHA256"
 fi
 
 if [ "$ALL" = 1 ] || [ "${BUILD_MOONRAKER:-0}" = "1" ]; then

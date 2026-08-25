@@ -91,7 +91,12 @@ jobs:
           STOCK_TGZ_CREATOR5PRO="$PWD/stock/Creator5Pro-stock.tgz"
           STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
           STOCK_TGZ=""
-          KLIPPER_FORK=""
+          # KLIPPER_FORK is deliberately NOT set: with no local checkout,
+          # patch.sh builds from the commit pinned in versions.env and
+          # cross-compiles c_helper.so from those same sources. Setting it to
+          # "" here is what made v20260824 ship the stock 0.12-era klippy --
+          # patch.sh now hard-fails on a fork build without a fork instead of
+          # skipping, so that cannot recur silently.
           # The secret is INTENTIONALLY unset: a hash baked in here would be
           # the same root password in every public release. Empty means each
           # printer picks a random one on its first install and writes it to
@@ -104,7 +109,17 @@ jobs:
       # Before the suite, not after: the replica gates run ./bin/patch.sh
       # directly and it expects vendor/ already populated. `make release`
       # further down would have fetched them, but that runs after the gates.
-      - name: Fetch the pinned Mainsail and HelixScreen assets
+      #
+      # Cached because the set now includes the Klipper fork and the ~203MB
+      # MIPS toolchain that compiles its chelper; the key is the pin file, so
+      # a version bump refetches and anything else reuses.
+      - name: Cache the pinned vendor assets
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: vendor-${{ hashFiles('versions.env') }}
+
+      - name: Fetch the pinned Mainsail, HelixScreen, Moonraker and Klipper assets
         run: make vendor ASSET_ROOT=$PWD
 
       - name: Extract the printer rootfs
