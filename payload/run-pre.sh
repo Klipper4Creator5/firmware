@@ -14,10 +14,11 @@ mkdir -p "$MODDIR" "$BACKUP"
   echo "=== mod install $STAMP ==="
   # app_startup.sh is deliberately NOT in this list: the mod replaces
   # firmwareExe instead, so the stock boot scripts are never modified.
-  for f in /usr/prog/klipper/start.sh /usr/prog/etc/passwd /usr/prog/etc/shadow; do
-      if [ -e "$f" ]; then
-          d="$BACKUP`dirname $f`"
-          mkdir -p "$d" && cp -a "$f" "$d/" && echo "backed up $f"
+  for file in /usr/prog/klipper/start.sh /usr/prog/etc/passwd \
+              /usr/prog/etc/shadow; do
+      if [ -e "$file" ]; then
+          dest="$BACKUP`dirname $file`"
+          mkdir -p "$dest" && cp -a "$file" "$dest/" && echo "backed up $file"
       fi
   done
   # NOTE: we deliberately do NOT try to back up the previous firmwareExe here.

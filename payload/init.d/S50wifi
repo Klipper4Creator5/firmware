@@ -47,11 +47,11 @@ supplicant_running() {
 connect() {
     # app_startup.sh insmods 8821cu just before us, but the interface takes a
     # moment to register.
-    i=0
-    while [ $i -lt 15 ]; do
+    waited=0
+    while [ $waited -lt 15 ]; do
         [ -d /sys/class/net/$IFACE ] && break
         sleep 1
-        i=$((i + 1))
+        waited=$((waited + 1))
     done
     if [ ! -d /sys/class/net/$IFACE ]; then
         echo "wifi: $IFACE never appeared -- is 8821cu.ko loaded?"
@@ -71,11 +71,11 @@ connect() {
     fi
 
     # Give association a chance before asking for a lease.
-    i=0
-    while [ $i -lt 20 ]; do
+    waited=0
+    while [ $waited -lt 20 ]; do
         /usr/sbin/wpa_cli -i $IFACE status 2>/dev/null | grep -q '^wpa_state=COMPLETED' && break
         sleep 1
-        i=$((i + 1))
+        waited=$((waited + 1))
     done
     /sbin/udhcpc -i $IFACE -b -t 5 >/dev/null 2>&1 &
     echo "wifi: udhcpc requesting a lease on $IFACE"

@@ -155,9 +155,9 @@ class Screen:
             self.stride = 0
         else:
             try:
-                xres, yres = _read(
+                width_text, height_text = _read(
                     os.path.join(sysfs, 'virtual_size')).split(',')
-                self.buf_w, self.buf_h = int(xres), int(yres)
+                self.buf_w, self.buf_h = int(width_text), int(height_text)
                 self.bpp = int(_read(os.path.join(sysfs, 'bits_per_pixel')))
             except Exception:
                 return
@@ -193,8 +193,8 @@ class Screen:
         if self.bpp == 32:
             # The usual Linux packing: B, G, R, then an ignored byte.
             return bytes((b, g, r, 0xFF))
-        v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-        return bytes((v & 0xFF, v >> 8))
+        packed = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+        return bytes((packed & 0xFF, packed >> 8))
 
     def _blank(self):
         row = self._pixel(BACKGROUND) * self.buf_w
@@ -214,22 +214,22 @@ class Screen:
         w, h = x1 - x0, y1 - y0
         if self.rotate == 90:
             # display(x, y) lives at buffer(y, buf_h - 1 - x)
-            bx, by, bw, bh = y0, self.buf_h - x0 - w, h, w
+            dest_x, dest_y, dest_w, dest_h = y0, self.buf_h - x0 - w, h, w
         elif self.rotate == 270:
-            bx, by, bw, bh = self.buf_w - y0 - h, x0, h, w
+            dest_x, dest_y, dest_w, dest_h = self.buf_w - y0 - h, x0, h, w
         else:
-            bx, by, bw, bh = x0, y0, w, h
+            dest_x, dest_y, dest_w, dest_h = x0, y0, w, h
 
-        px = self._pixel(rgb)
-        span = px * bw
-        step = self.bpp // 8
-        for row in range(by, by + bh):
-            start = row * self.stride + bx * step
-            buf[start:start + len(span)] = span
+        pixel = self._pixel(rgb)
+        row_bytes = pixel * dest_w
+        bytes_per_pixel = self.bpp // 8
+        for row in range(dest_y, dest_y + dest_h):
+            offset = row * self.stride + dest_x * bytes_per_pixel
+            buf[offset:offset + len(row_bytes)] = row_bytes
 
     def _text(self, buf, x, y, text, scale, rgb):
-        for ch in text.upper():
-            glyph = FONT.get(ch)
+        for char in text.upper():
+            glyph = FONT.get(char)
             if glyph:
                 for col in range(GLYPH_W):
                     bits = glyph[col]
@@ -275,12 +275,12 @@ class Screen:
         if len(lines) < max_lines and current:
             lines.append(current)
         # Anything still too wide on its own (one very long word) gets cut.
-        out = []
+        clipped = []
         for line in lines:
             while len(line) > 1 and self._width_of(line, scale) > room:
                 line = line[:-1]
-            out.append(line)
-        return out
+            clipped.append(line)
+        return clipped
 
     # -- what callers use --------------------------------------------------
 
@@ -340,13 +340,13 @@ class Screen:
                     self._center(buf, line, y, detail_scale, colour)
                     y += GLYPH_H * detail_scale + 2 * detail_scale
             if progress is not None:
-                bw = int(self.width * 0.56)
-                bh = max(4, self.height // 100)
-                bx = (self.width - bw) // 2
-                by = int(self.height * 0.58)
-                self._rect(buf, bx, by, bw, bh, BAR_BG)
-                filled = int(bw * min(1.0, max(0.0, progress)))
-                self._rect(buf, bx, by, filled, bh, BAR_FG)
+                bar_width = int(self.width * 0.56)
+                bar_height = max(4, self.height // 100)
+                bar_x = (self.width - bar_width) // 2
+                bar_y = int(self.height * 0.58)
+                self._rect(buf, bar_x, bar_y, bar_width, bar_height, BAR_BG)
+                filled = int(bar_width * min(1.0, max(0.0, progress)))
+                self._rect(buf, bar_x, bar_y, filled, bar_height, BAR_FG)
             if note:
                 self._center(buf, note, int(self.height * 0.78),
                              note_scale, NOTE)
@@ -379,18 +379,20 @@ def main(argv):
     the migration exits at its stamp and draws nothing.
     """
     import argparse
-    ap = argparse.ArgumentParser(description='draw one frame on /dev/fb0')
-    ap.add_argument('--fb', default='/dev/fb0')
-    ap.add_argument('--size', default=None, help='WxH@BPP; default: ask sysfs')
-    ap.add_argument('--rotate', type=int, default=None, choices=[0, 90, 270])
-    ap.add_argument('--title', default='')
-    ap.add_argument('--status', default='')
-    ap.add_argument('--detail', default='')
-    ap.add_argument('--note', default='')
-    ap.add_argument('--progress', type=float, default=None)
-    ap.add_argument('--fault', action='store_true')
-    ap.add_argument('--clear', action='store_true')
-    args = ap.parse_args(argv)
+    parser = argparse.ArgumentParser(description='draw one frame on /dev/fb0')
+    parser.add_argument('--fb', default='/dev/fb0')
+    parser.add_argument('--size', default=None,
+                        help='WxH@BPP; default: ask sysfs')
+    parser.add_argument('--rotate', type=int, default=None,
+                        choices=[0, 90, 270])
+    parser.add_argument('--title', default='')
+    parser.add_argument('--status', default='')
+    parser.add_argument('--detail', default='')
+    parser.add_argument('--note', default='')
+    parser.add_argument('--progress', type=float, default=None)
+    parser.add_argument('--fault', action='store_true')
+    parser.add_argument('--clear', action='store_true')
+    args = parser.parse_args(argv)
     try:
         screen = Screen(args.fb, geometry=parse_geometry(args.size),
                         rotate=args.rotate)

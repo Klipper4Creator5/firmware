@@ -91,7 +91,7 @@ def test_the_two_things_the_daemon_did_are_kept():
     # moonraker's temporary files -- uploads included -- off /tmp, which is a
     # ramdisk here. Dropping either was the reason not to do this before.
     text = code(S60WEB)
-    assert "start-stop-daemon -S" in text and "-p $MR_PID" in text
+    assert "start-stop-daemon -S" in text and "-p $MOONRAKER_PID" in text
     assert "start-stop-daemon -K" in text
     assert "TMPDIR" in text
 
@@ -111,4 +111,4 @@ def test_a_dead_moonraker_is_reported_in_the_boot_log():
     # opens a browser. The boot log is the only place that can say so.
     text = code(S60WEB)
     assert "moonraker_check" in text
-    assert "moonraker.log" in text or "MR_LOG" in text
+    assert "moonraker.log" in text or "MOONRAKER_LOG" in text

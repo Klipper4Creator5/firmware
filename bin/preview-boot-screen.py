@@ -66,24 +66,24 @@ LOGFILE = '/USR/DATA/LOGS/ANVIL-BOOT.LOG'
 def load_ffscreen():
     path = os.path.join(ROOT, 'payload', 'bin', 'ffscreen.py')
     spec = importlib.util.spec_from_file_location('ffscreen', path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def png(path, width, height, rgb_rows):
     def chunk(tag, data):
-        body = tag + data
-        return (struct.pack('>I', len(data)) + body
-                + struct.pack('>I', zlib.crc32(body)))
+        tagged = tag + data
+        return (struct.pack('>I', len(data)) + tagged
+                + struct.pack('>I', zlib.crc32(tagged)))
 
     # One filter byte (0 = none) per scanline, then the raw RGB triples.
-    raw = b''.join(b'\x00' + row for row in rgb_rows)
+    scanlines = b''.join(b'\x00' + row for row in rgb_rows)
     with open(path, 'wb') as fh:
         fh.write(b'\x89PNG\r\n\x1a\n')
         fh.write(chunk(b'IHDR', struct.pack('>IIBBBBB', width, height,
                                             8, 2, 0, 0, 0)))
-        fh.write(chunk(b'IDAT', zlib.compress(raw, 6)))
+        fh.write(chunk(b'IDAT', zlib.compress(scanlines, 6)))
         fh.write(chunk(b'IEND', b''))
 
 
@@ -93,17 +93,17 @@ def to_rows(buf, screen):
     The buffer is read in its own orientation and then turned by whatever
     the panel turns it by, so the PNG matches the screen and not the memory.
     """
-    step = screen.bpp // 8
+    bytes_per_pixel = screen.bpp // 8
 
-    def pixel(bx, by):
-        off = by * screen.stride + bx * step
-        px = buf[off:off + step]
-        if step == 4:
-            return bytes((px[2], px[1], px[0]))         # B,G,R,X on the wire
-        v = px[0] | (px[1] << 8)                        # RGB565
-        return bytes((((v >> 11) & 0x1F) << 3,
-                      ((v >> 5) & 0x3F) << 2,
-                      (v & 0x1F) << 3))
+    def pixel(buf_x, buf_y):
+        offset = buf_y * screen.stride + buf_x * bytes_per_pixel
+        raw = buf[offset:offset + bytes_per_pixel]
+        if bytes_per_pixel == 4:
+            return bytes((raw[2], raw[1], raw[0]))      # B,G,R,X on the wire
+        packed = raw[0] | (raw[1] << 8)                 # RGB565
+        return bytes((((packed >> 11) & 0x1F) << 3,
+                      ((packed >> 5) & 0x3F) << 2,
+                      (packed & 0x1F) << 3))
 
     # The inverse of the mapping in ffscreen._rect.
     rows = []
@@ -121,12 +121,16 @@ def to_rows(buf, screen):
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(description='render the first-boot screen')
-    ap.add_argument('--out', default=os.path.join(ROOT, 'work', 'boot-screen'))
-    ap.add_argument('--size', default='480x800@32',
-                    help='the FRAMEBUFFER, not the panel (default: the real one)')
-    ap.add_argument('--rotate', type=int, default=None, choices=[0, 90, 270])
-    args = ap.parse_args(argv)
+    parser = argparse.ArgumentParser(
+        description='render the first-boot screen')
+    parser.add_argument('--out',
+                        default=os.path.join(ROOT, 'work', 'boot-screen'))
+    parser.add_argument(
+        '--size', default='480x800@32',
+        help='the FRAMEBUFFER, not the panel (default: the real one)')
+    parser.add_argument('--rotate', type=int, default=None,
+                        choices=[0, 90, 270])
+    args = parser.parse_args(argv)
 
     ffscreen = load_ffscreen()
     geometry = ffscreen.parse_geometry(args.size)

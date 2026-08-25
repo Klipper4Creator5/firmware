@@ -102,7 +102,8 @@ def configure(fd):
     VMIN=0 with VTIME=1 is what makes every read return after 0.1s whether or
     not the board said anything, which is what paces the poll below.
     """
-    iflag, oflag, cflag, lflag, _ispeed, _ospeed, cc = termios.tcgetattr(fd)
+    (iflag, oflag, cflag, lflag,
+     _ispeed, _ospeed, control_chars) = termios.tcgetattr(fd)
 
     iflag &= ~(termios.IGNBRK | termios.BRKINT | termios.PARMRK
                | termios.ISTRIP | termios.INLCR | termios.IGNCR
@@ -117,26 +118,26 @@ def configure(fd):
     # just started.
     cflag &= ~termios.HUPCL
 
-    cc = list(cc)
-    cc[termios.VMIN] = 0
-    cc[termios.VTIME] = 1
+    control_chars = list(control_chars)
+    control_chars[termios.VMIN] = 0
+    control_chars[termios.VTIME] = 1
 
     termios.tcsetattr(fd, termios.TCSANOW,
                       [iflag, oflag, cflag, lflag,
-                       termios.B115200, termios.B115200, cc])
+                       termios.B115200, termios.B115200, control_chars])
 
 
 class Port(object):
     """One serial port, held open for the whole pass."""
 
-    def __init__(self, dev):
-        self.dev = dev
+    def __init__(self, device):
+        self.device = device
         self.fd = None
         self.done = False          # no more work to do on this port
         self.verdict = None        # what to print at the end
         self.ok = True             # counts towards the exit status
         self.banners = 0
-        self.gos = 0               # how many 'A' have gone out
+        self.a_sent = 0            # how many 'A' have gone out
         self.acks = []
         self.bytes_seen = 0
         self.last_go = None        # when 'A' was last sent
@@ -146,21 +147,21 @@ class Port(object):
 
     def open(self):
         try:
-            self.fd = os.open(self.dev, os.O_RDWR | os.O_NOCTTY)
-        except OSError as e:
-            self.fail("%s" % e.strerror)
+            self.fd = os.open(self.device, os.O_RDWR | os.O_NOCTTY)
+        except OSError as err:
+            self.fail("%s" % err.strerror)
             return False
         try:
             configure(self.fd)
-        except termios.error as e:
-            self.fail("cannot configure: %s" % e)
+        except termios.error as err:
+            self.fail("cannot configure: %s" % err)
             return False
         return True
 
-    def fail(self, msg):
+    def fail(self, reason):
         self.done = True
         self.ok = False
-        self.verdict = msg
+        self.verdict = reason
         self.close()
 
     def close(self):
@@ -171,8 +172,8 @@ class Port(object):
     def read(self, size=64):
         try:
             return os.read(self.fd, size)
-        except OSError as e:
-            self.fail("read failed: %s" % e.strerror)
+        except OSError as err:
+            self.fail("read failed: %s" % err.strerror)
             return None
 
     def poll(self, now):
@@ -182,8 +183,8 @@ class Port(object):
             return
         if data:
             self.bytes_seen += len(data)
-        buf = self.tail + data
-        self.tail = buf[-(len(BANNER) - 1):] if len(BANNER) > 1 else b""
+        seen = self.tail + data
+        self.tail = seen[-(len(BANNER) - 1):] if len(BANNER) > 1 else b""
 
         # Deliberately stricter than stock. firmwareExe only requires a
         # literal "Ready" on the heat board; on ttyS5 and ttyS7 its ready
@@ -191,7 +192,7 @@ class Port(object):
         # on the strength of that. We will not: a board that is already
         # running is speaking the Klipper protocol, and 'A' has no business
         # on that wire. The banner is the only thing that earns a write.
-        if BANNER in buf:
+        if BANNER in seen:
             self.banners += 1
             self.handshake(now)
             return
@@ -203,11 +204,11 @@ class Port(object):
                 self.verdict = ("started its application (ack 0x%02x, not "
                                 "0x%02x -- but the banner stopped after %d "
                                 "'A', so it did leave the bootloader)"
-                                % (ack, GOOD_ACK, self.gos))
+                                % (ack, GOOD_ACK, self.a_sent))
             else:
                 self.verdict = ("no ack to %d 'A', but the banner stopped "
                                 "-- assuming it left the bootloader"
-                                % self.gos)
+                                % self.a_sent)
             self.done = True
 
     def handshake(self, now):
@@ -250,7 +251,7 @@ class Port(object):
         self.last_go = now
         for _ in range(ACK_TRIES):
             os.write(self.fd, GO)
-            self.gos += 1
+            self.a_sent += 1
             # Each read is one VTIME tick, so this paces itself at ~10 'A'/s
             # and the whole loop is bounded by 50 * 0.1s = 5s.
             ack = self.read(1)
@@ -261,7 +262,7 @@ class Port(object):
                 if ack[0] == GOOD_ACK:
                     self.verdict = ("started its application (ack 0x%02x "
                                     "after %d 'A', %d banner(s))"
-                                    % (ack[0], self.gos, self.banners))
+                                    % (ack[0], self.a_sent, self.banners))
                     self.done = True
                     return
         # Drop anything left over from the banner so the next poll does not
@@ -277,7 +278,7 @@ class Port(object):
             ack = self.acks[-1] if self.acks else None
             self.verdict = ("still bannering after %d 'A' (%d banners, last "
                             "ack %s) -- did NOT leave the bootloader"
-                            % (self.gos, self.banners,
+                            % (self.a_sent, self.banners,
                                "0x%02x" % ack if ack is not None else "none"))
             self.ok = False
         elif self.bytes_seen:
@@ -291,47 +292,48 @@ class Port(object):
         self.done = True
 
 
-def bringup(devs, deadline_s=DEADLINE_S, on_progress=None):
+def bringup(devices, deadline_s=DEADLINE_S, on_progress=None):
     """Hand every board over, in one pass.
 
-    on_progress(devs_still_working) is called whenever that set shrinks, so a
+    on_progress(devices_still_working) is called whenever that set
+    shrinks, so a
     caller can say which board is being waited for. It is called from inside
     the poll loop and must be cheap; anything it raises is the caller's
     problem to have avoided, because a bring-up must not fail over a progress
     note.
     """
-    ports = [Port(d) for d in devs]
-    live = [p for p in ports if p.open()]
+    ports = [Port(device) for device in devices]
+    live = [port for port in ports if port.open()]
     try:
-        end = time.monotonic() + deadline_s
+        deadline = time.monotonic() + deadline_s
         waiting = None
         while True:
-            pending = [p for p in live if not p.done]
-            if not pending or time.monotonic() >= end:
+            pending = [port for port in live if not port.done]
+            if not pending or time.monotonic() >= deadline:
                 break
             # Only when the set actually shrinks: this loop spins hard, and
             # calling back on every pass would be pure noise.
-            names = tuple(p.dev for p in pending)
+            names = tuple(port.device for port in pending)
             if names != waiting:
                 waiting = names
                 if on_progress is not None:
                     on_progress(list(names))
-            for p in pending:
-                p.poll(time.monotonic())
-        for p in live:
-            p.finish(deadline_s)
+            for port in pending:
+                port.poll(time.monotonic())
+        for port in live:
+            port.finish(deadline_s)
     finally:
-        for p in live:
-            p.close()
+        for port in live:
+            port.close()
         if on_progress is not None:
             on_progress([])
 
-    ok = True
-    for p in ports:
-        print("mcu-bringup: %s %s" % (p.dev, p.verdict))
-        if not p.ok:
-            ok = False
-    return ok
+    all_ok = True
+    for port in ports:
+        print("mcu-bringup: %s %s" % (port.device, port.verdict))
+        if not port.ok:
+            all_ok = False
+    return all_ok
 
 
 def main(argv):

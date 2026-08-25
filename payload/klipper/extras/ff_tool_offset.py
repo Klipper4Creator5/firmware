@@ -74,56 +74,64 @@ CYLINDER_Y_DEFAULT = 214.5
 # Port of BaseFunction::fitCircleStable @0x6467f8 (centroid-shifted algebraic
 # least squares, cv::solve DECOMP_LU on the 3x3 normal equations):
 #     A = [2x', 2y', 1],  b = x'^2 + y'^2,  (A^T A) p = A^T b
-#     centre = (p0 + xbar, p1 + ybar),  r = sqrt(p2 + p0^2 + p1^2)
+#     centre = (p0 + centroid_x, p1 + centroid_y),  r = sqrt(p2 + p0^2 + p1^2)
 # The shipped variant calls fitCircleByLeastSquares @0x645b10, the same
 # algebraic fit without the centroid shift; for the 4 symmetric points the
-# sequence produces both reduce to cx = (px1+px3)/2, cy = (py2+py4)/2. We
+# sequence produces both reduce to centre_x = (x_plus+x_minus)/2,
+# centre_y = (y_plus+y_minus)/2. We
 # keep the shifted form for numerical hygiene and accept >= 3 points.
 # Pure Python on purpose: numpy is not guaranteed on the X2000 rootfs.
 # ---------------------------------------------------------------------------
 
 def fit_circle(points):
-    """Return (cx, cy, r, residuals); raise ValueError if unfittable."""
-    n = len(points)
-    if n < 3:
-        raise ValueError("circle fit needs at least 3 points, got %d" % n)
-    xbar = sum(p[0] for p in points) / n
-    ybar = sum(p[1] for p in points) / n
-    m = [[0.0] * 3 for _ in range(3)]
-    v = [0.0] * 3
+    """Return (center_x, center_y, radius, residuals); raise ValueError if
+    unfittable."""
+    point_count = len(points)
+    if point_count < 3:
+        raise ValueError("circle fit needs at least 3 points, got %d"
+                         % point_count)
+    centroid_x = sum(point[0] for point in points) / point_count
+    centroid_y = sum(point[1] for point in points) / point_count
+    normal_matrix = [[0.0] * 3 for _ in range(3)]
+    normal_rhs = [0.0] * 3
     for x, y in points:
-        xs, ys = x - xbar, y - ybar
-        row = (2.0 * xs, 2.0 * ys, 1.0)
-        b = xs * xs + ys * ys
+        shifted_x, shifted_y = x - centroid_x, y - centroid_y
+        design_row = (2.0 * shifted_x, 2.0 * shifted_y, 1.0)
+        squared_radius_term = shifted_x * shifted_x + shifted_y * shifted_y
         for i in range(3):
-            v[i] += row[i] * b
+            normal_rhs[i] += design_row[i] * squared_radius_term
             for j in range(3):
-                m[i][j] += row[i] * row[j]
-    p = _solve3(m, v)
-    if p is None:
+                normal_matrix[i][j] += design_row[i] * design_row[j]
+    solution = _solve3(normal_matrix, normal_rhs)
+    if solution is None:
         raise ValueError("circle fit is singular (points collinear?)")
-    cx, cy = p[0] + xbar, p[1] + ybar
-    rr = p[2] + p[0] * p[0] + p[1] * p[1]
-    if rr <= 0.0:
-        raise ValueError("circle fit gave radius^2 = %.6f" % rr)
-    r = math.sqrt(rr)
-    resid = [math.hypot(x - cx, y - cy) - r for x, y in points]
-    return cx, cy, r, resid
+    center_x = solution[0] + centroid_x
+    center_y = solution[1] + centroid_y
+    radius_squared = (solution[2] + solution[0] * solution[0]
+                      + solution[1] * solution[1])
+    if radius_squared <= 0.0:
+        raise ValueError("circle fit gave radius^2 = %.6f" % radius_squared)
+    radius = math.sqrt(radius_squared)
+    residuals = [math.hypot(x - center_x, y - center_y) - radius
+                 for x, y in points]
+    return center_x, center_y, radius, residuals
 
 
-def _solve3(m, v):
-    a = [m[i][:] + [v[i]] for i in range(3)]
-    for c in range(3):
-        piv = max(range(c, 3), key=lambda r: abs(a[r][c]))
-        if abs(a[piv][c]) < 1e-12:
+def _solve3(matrix, rhs):
+    """Gauss-Jordan with partial pivoting on the augmented 3x4 system."""
+    augmented = [matrix[i][:] + [rhs[i]] for i in range(3)]
+    for col in range(3):
+        pivot_row = max(range(col, 3), key=lambda r: abs(augmented[r][col]))
+        if abs(augmented[pivot_row][col]) < 1e-12:
             return None
-        a[c], a[piv] = a[piv], a[c]
-        for r in range(3):
-            if r != c:
-                f = a[r][c] / a[c][c]
-                for k in range(c, 4):
-                    a[r][k] -= f * a[c][k]
-    return [a[i][3] / a[i][i] for i in range(3)]
+        augmented[col], augmented[pivot_row] = (augmented[pivot_row],
+                                                augmented[col])
+        for row in range(3):
+            if row != col:
+                factor = augmented[row][col] / augmented[col][col]
+                for term in range(col, 4):
+                    augmented[row][term] -= factor * augmented[col][term]
+    return [augmented[i][3] / augmented[i][i] for i in range(3)]
 
 
 class FFToolOffsetError(Exception):
@@ -187,13 +195,14 @@ class FFToolOffset:
 
         # Station position measured with the empty carriage
         # (STATION_CALIBRATE), autosaved here as station_x/y/z.
-        sx = config.getfloat('station_x', None)
-        sy = config.getfloat('station_y', None)
-        sz = config.getfloat('station_z', None)
-        if (sx, sy, sz) != (None, None, None) and None in (sx, sy, sz):
+        station_x = config.getfloat('station_x', None)
+        station_y = config.getfloat('station_y', None)
+        station_z = config.getfloat('station_z', None)
+        station = (station_x, station_y, station_z)
+        if station != (None, None, None) and None in station:
             raise config.error("%s: station_x, station_y and station_z must"
                                " be set together" % self.name)
-        self.station = None if sx is None else (sx, sy, sz)
+        self.station = None if station_x is None else station
 
         self.estop = {}
         self.tools = []
@@ -219,10 +228,10 @@ class FFToolOffset:
     def _handle_connect(self):
         missing = []
         for axis in 'XYZ':
-            obj = self.printer.lookup_object('e_stop %s' % axis, None)
-            if obj is None or not hasattr(obj, 'run_probe'):
+            axis_probe = self.printer.lookup_object('e_stop %s' % axis, None)
+            if axis_probe is None or not hasattr(axis_probe, 'run_probe'):
                 missing.append('e_stop %s' % axis)
-            self.estop[axis] = obj
+            self.estop[axis] = axis_probe
         if missing:
             raise self.printer.config_error(
                 "%s: required sections not found: %s (the station sensor is"
@@ -245,15 +254,15 @@ class FFToolOffset:
         return x, y
 
     def _check_homed(self, gcmd):
-        th = self.printer.lookup_object('toolhead')
-        homed = th.get_status(self.reactor.monotonic())['homed_axes']
-        if not all(a in homed for a in 'xyz'):
+        toolhead = self.printer.lookup_object('toolhead')
+        homed = toolhead.get_status(self.reactor.monotonic())['homed_axes']
+        if not all(axis in homed for axis in 'xyz'):
             raise gcmd.error("%s: home all axes first (homed: '%s')"
                              % (self.name, homed))
 
     def _current_accel(self):
-        th = self.printer.lookup_object('toolhead')
-        return th.get_status(self.reactor.monotonic())['max_accel']
+        toolhead = self.printer.lookup_object('toolhead')
+        return toolhead.get_status(self.reactor.monotonic())['max_accel']
 
     def _estop(self, gcmd, axis, target):
         """One ESTOP AXES=<axis> TARGET=<target>, calling the fork's e_stop
@@ -261,16 +270,16 @@ class FFToolOffset:
         the command: run_probe() takes sub_cycle_cnt samples (3 in
         printer.base.cfg) each retracting back_v, rejects a spread above
         error_v, and raises on no-trigger / triggered-before-move."""
-        obj = self.estop[axis]
-        obj.position_offset = target
+        axis_probe = self.estop[axis]
+        axis_probe.position_offset = target
         try:
-            pos = obj.run_probe(gcmd)
-        except self.printer.command_error as e:
+            triggered_at = axis_probe.run_probe(gcmd)
+        except self.printer.command_error as err:
             raise FFToolOffsetError("ESTOP %s TARGET=%.3f failed: %s"
-                                    % (axis, target, e))
-        if pos is None:
+                                    % (axis, target, err))
+        if triggered_at is None:
             raise FFToolOffsetError("ESTOP %s returned no position" % axis)
-        return float(pos)
+        return float(triggered_at)
 
     # ---------------- the recovered sequence ----------------
 
@@ -288,34 +297,38 @@ class FFToolOffset:
                 self._run('G1 X%.3f Y%.3f F%d' % (x0, y0, return_feed))
             self._run('M400')
 
-        d = self.probe_travel
-        px1 = self._estop(gcmd, 'X', x0 + d)
+        reach = self.probe_travel
+        x_plus = self._estop(gcmd, 'X', x0 + reach)
         back()
-        py2 = self._estop(gcmd, 'Y', y0 + d)
+        y_plus = self._estop(gcmd, 'Y', y0 + reach)
         back()
-        px3 = self._estop(gcmd, 'X', x0 - d)
+        x_minus = self._estop(gcmd, 'X', x0 - reach)
         back()
-        py4 = self._estop(gcmd, 'Y', y0 - d)
+        y_minus = self._estop(gcmd, 'Y', y0 - reach)
         back()
-        pts = [(px1, y0), (x0, py2), (px3, y0), (x0, py4)]
-        for i, p in enumerate(pts):
-            gcmd.respond_info("  Point%d: %.4f, %.4f" % (i + 1, p[0], p[1]))
+        points = [(x_plus, y0), (x0, y_plus), (x_minus, y0), (x0, y_minus)]
+        for index, point in enumerate(points):
+            gcmd.respond_info("  Point%d: %.4f, %.4f"
+                              % (index + 1, point[0], point[1]))
         try:
-            cx, cy, r, resid = fit_circle(pts)
-        except ValueError as e:
-            raise FFToolOffsetError("circle fit failed: %s" % e)
-        worst = max(abs(e) for e in resid)
+            center_x, center_y, radius, residuals = fit_circle(points)
+        except ValueError as err:
+            raise FFToolOffsetError("circle fit failed: %s" % err)
+        worst_residual = max(abs(residual) for residual in residuals)
         gcmd.respond_info("  centre %.4f, %.4f  radius %.4f  max residual %.4f"
-                          % (cx, cy, r, worst))
-        if self.max_residual and worst > self.max_residual:
+                          % (center_x, center_y, radius, worst_residual))
+        if self.max_residual and worst_residual > self.max_residual:
             raise FFToolOffsetError(
                 "fit residual %.4f exceeds max_residual %.4f -- a probe"
-                " mis-triggered; nothing saved" % (worst, self.max_residual))
-        if self.min_radius and r < self.min_radius:
-            raise FFToolOffsetError("fitted radius %.4f below min_radius" % r)
-        if self.max_radius and r > self.max_radius:
-            raise FFToolOffsetError("fitted radius %.4f above max_radius" % r)
-        return cx, cy, r
+                " mis-triggered; nothing saved"
+                % (worst_residual, self.max_residual))
+        if self.min_radius and radius < self.min_radius:
+            raise FFToolOffsetError("fitted radius %.4f below min_radius"
+                                    % radius)
+        if self.max_radius and radius > self.max_radius:
+            raise FFToolOffsetError("fitted radius %.4f above max_radius"
+                                    % radius)
+        return center_x, center_y, radius
 
     def _z_target_for(self, nominal, expected):
         """Stop z_margin below a known trigger height instead of going all
@@ -339,42 +352,46 @@ class FFToolOffset:
         sideways probe finds no edge. Raises FFToolOffsetError either way,
         so nothing is damaged and nothing is saved. Runs inside
         _with_accel_guard."""
-        cyl_x, cyl_y = self._cylinder()
-        expected = self.station[2] if self.station is not None else None
-        z_t = self._z_target_for(self.z_target, expected)
+        cylinder_x, cylinder_y = self._cylinder()
+        expected_z = self.station[2] if self.station is not None else None
+        z_target = self._z_target_for(self.z_target, expected_z)
         self._run('SET_GCODE_OFFSET X=0 Y=0 Z=0 MOVE=0 MOVE_SPEED=600')
         self._run('M400')
         self._run('G1 Z%.3f F%d' % (self.z_start, FEED_PASS1))
-        self._run('G1 X%.3f Y%.3f F%d' % (cyl_x, cyl_y, FEED_POSITION))
+        self._run('G1 X%.3f Y%.3f F%d'
+                  % (cylinder_x, cylinder_y, FEED_POSITION))
         self._run('SET_VELOCITY_LIMIT ACCEL=%.0f' % self.probe_accel)
         self._run('M400')
         hint = (" -- is the build plate still on? Nothing has moved with"
                 " a nozzle. Remove the plate, or plate_check: False in"
                 " [ff_tool_offset] if you are sure.")
         try:
-            zp = self._estop(gcmd, 'Z', z_t)
-        except FFToolOffsetError as e:
+            station_z = self._estop(gcmd, 'Z', z_target)
+        except FFToolOffsetError as err:
             raise FFToolOffsetError("plate check: station Z probe failed"
-                                    " (%s)%s" % (e, hint))
-        gcmd.respond_info("  plate check: station Z %.3f" % zp)
-        if expected is not None and zp > expected + self.plate_z_tolerance:
+                                    " (%s)%s" % (err, hint))
+        gcmd.respond_info("  plate check: station Z %.3f" % station_z)
+        if expected_z is not None \
+           and station_z > expected_z + self.plate_z_tolerance:
             raise FFToolOffsetError(
                 "plate check: station Z %.3f is %.2f mm above the"
-                " calibrated %.3f%s" % (zp, zp - expected, expected, hint))
-        self._run('G1 X%.3f Y%.3f F%d' % (cyl_x, cyl_y, FEED_PASS1))
-        self._run('G1 Z%.3f F%d' % (zp + self.z_clear, FEED_PASS1))
+                " calibrated %.3f%s"
+                % (station_z, station_z - expected_z, expected_z, hint))
+        self._run('G1 X%.3f Y%.3f F%d' % (cylinder_x, cylinder_y, FEED_PASS1))
+        self._run('G1 Z%.3f F%d' % (z_trigger + self.z_clear, FEED_PASS1))
         self._run('M400')
         try:
-            px = self._estop(gcmd, 'X', cyl_x + self.probe_travel)
-        except FFToolOffsetError as e:
+            edge_x = self._estop(gcmd, 'X', cylinder_x + self.probe_travel)
+        except FFToolOffsetError as err:
             raise FFToolOffsetError(
                 "plate check: no circle edge within %.0f mm of the start"
-                " point (%s)%s" % (self.probe_travel, e, hint))
-        self._run('G1 X%.3f F%d' % (cyl_x, FEED_PASS1))
+                " point (%s)%s" % (self.probe_travel, err, hint))
+        self._run('G1 X%.3f F%d' % (cylinder_x, FEED_PASS1))
         self._run('G1 Z%.3f F%d' % (self.z_start, FEED_PASS1))
         self._run('M400')
         gcmd.respond_info("  plate check: circle edge at X %.3f (%+.2f from"
-                          " the start point) -- plate is off" % (px, px - cyl_x))
+                          " the start point) -- plate is off"
+                          % (edge_x, edge_x - cylinder_x))
 
     def _run_plate_check(self, gcmd):
         """Park whatever is mounted, then _plate_check. Shared prologue of
@@ -383,25 +400,29 @@ class FFToolOffset:
                             minval=0, maxval=1):
             return
         if self.toolchange is not None:
-            cur = self.toolchange.get_status(self.reactor.monotonic())
-            if cur.get('current_tool', -1) != -1:
+            carriage = self.toolchange.get_status(self.reactor.monotonic())
+            if carriage.get('current_tool', -1) != -1:
                 self._run('TOOLCHANGE_PARK')
                 self._wait_moves()
-            cur = self.toolchange.get_status(self.reactor.monotonic())
-            if cur.get('current_tool', -1) != -1 or not cur.get('state_ok'):
+            carriage = self.toolchange.get_status(self.reactor.monotonic())
+            if carriage.get('current_tool', -1) != -1 \
+               or not carriage.get('state_ok'):
                 raise gcmd.error(
                     "%s: carriage is not verifiably empty (%s) -- cannot run"
-                    " the plate check" % (self.name, cur.get('state_reason')))
+                    " the plate check"
+                    % (self.name, carriage.get('state_reason')))
         self._with_accel_guard(gcmd, lambda: self._plate_check(gcmd))
 
     def _two_pass(self, gcmd, x0, y0, z_target_2, expected_z=None):
-        """moveCylinderPos + both passes. Returns (cx2, cy2, zP2).
+        """moveCylinderPos + both passes.
+
+        Returns (center_x_pass2, center_y_pass2, z_trigger_pass2).
 
         Caller has already put the right thing on the carriage (tool or
         nothing) and ensured we are homed. expected_z, when known, bounds
         both Z probes to expected_z - z_margin."""
-        z_t1 = self._z_target_for(self.z_target, expected_z)
-        z_t2 = self._z_target_for(z_target_2, expected_z)
+        z_target_pass1 = self._z_target_for(self.z_target, expected_z)
+        z_target_pass2 = self._z_target_for(z_target_2, expected_z)
         # moveCylinderPos: zero the G-code offset (the grab applied this
         # tool's SET_GCODE_OFFSET), lift, travel, Z probe.
         self._run('SET_GCODE_OFFSET X=0 Y=0 Z=0 MOVE=0 MOVE_SPEED=600')
@@ -411,38 +432,43 @@ class FFToolOffset:
         self._run('SET_VELOCITY_LIMIT ACCEL=%.0f' % self.probe_accel)
         self._run('M400')
         self._run('G1 Z%.3f F%d' % (self.z_start, FEED_PASS1))
-        gcmd.respond_info("  Z probe to %.3f" % z_t1)
-        zp = self._estop(gcmd, 'Z', z_t1)
-        gcmd.respond_info("  Z probe pos: %.4f" % zp)
+        gcmd.respond_info("  Z probe to %.3f" % z_target_pass1)
+        z_trigger = self._estop(gcmd, 'Z', z_target_pass1)
+        gcmd.respond_info("  Z probe pos: %.4f" % z_trigger)
 
         # pass 1
         self._run('G1 X%.3f Y%.3f F%d' % (x0, y0, FEED_PASS1))
-        self._run('G1 Z%.3f F%d' % (zp + self.z_clear, FEED_PASS1))
+        self._run('G1 Z%.3f F%d' % (z_trigger + self.z_clear, FEED_PASS1))
         self._run('M400')
         gcmd.respond_info(" pass 1 around %.3f, %.3f at Z %.3f"
-                          % (x0, y0, zp + self.z_clear))
-        cx, cy, _r = self._four_points(gcmd, x0, y0, FEED_PASS1, False)
+                          % (x0, y0, z_trigger + self.z_clear))
+        center_x, center_y, _radius = self._four_points(
+            gcmd, x0, y0, FEED_PASS1, False)
         # G-code is formatted to 3 decimals (the app's float_to_string(v, 3)),
         # so the centre we actually return to is the rounded one; use that
         # for the pass-2 point coordinates too.
-        cx, cy = round(cx, 3), round(cy, 3)
+        center_x, center_y = round(center_x, 3), round(center_y, 3)
 
         # pass 2: centred on the fit, Z re-probed there
-        self._run('G1 Z%.3f F%d' % (zp + self.z_lift, FEED_PASS1))
-        self._run('G1 Y%.3f F%d' % (cy, FEED_PASS2))
-        self._run('G1 X%.3f F%d' % (cx, FEED_PASS2))
+        self._run('G1 Z%.3f F%d' % (z_trigger + self.z_lift, FEED_PASS1))
+        self._run('G1 Y%.3f F%d' % (center_y, FEED_PASS2))
+        self._run('G1 X%.3f F%d' % (center_x, FEED_PASS2))
         self._run('M400')
-        zp2 = self._estop(gcmd, 'Z', self._z_target_for(z_t2, zp))
-        gcmd.respond_info("  double Z probe pos: %.4f" % zp2)
-        self._run('G1 Z%.3f F%d' % (zp2 + self.z_clear, FEED_PASS1))
+        z_trigger_pass2 = self._estop(
+            gcmd, 'Z', self._z_target_for(z_target_pass2, z_trigger))
+        gcmd.respond_info("  double Z probe pos: %.4f" % z_trigger_pass2)
+        self._run('G1 Z%.3f F%d'
+                  % (z_trigger_pass2 + self.z_clear, FEED_PASS1))
         self._run('M400')
         gcmd.respond_info(" pass 2 around %.3f, %.3f at Z %.3f"
-                          % (cx, cy, zp2 + self.z_clear))
-        cx2, cy2, _r2 = self._four_points(gcmd, cx, cy, FEED_PASS2, True)
+                          % (center_x, center_y,
+                             z_trigger_pass2 + self.z_clear))
+        center_x_pass2, center_y_pass2, _radius_pass2 = self._four_points(
+            gcmd, center_x, center_y, FEED_PASS2, True)
 
         self._run('G1 Z%.3f F%d' % (self.z_final, FEED_PASS1))
         self._run('M400')
-        return cx2, cy2, zp2
+        return center_x_pass2, center_y_pass2, z_trigger_pass2
 
     def _with_accel_guard(self, gcmd, body):
         """Run body() with the app's exit block guaranteed: lift, restore
@@ -452,13 +478,13 @@ class FFToolOffset:
             restore = self._current_accel()
         try:
             return body()
-        except FFToolOffsetError as e:
+        except FFToolOffsetError as err:
             try:
                 self._run('G1 Z%.3f F%d' % (self.z_start, FEED_PASS1))
                 self._run('M400')
             except self.printer.command_error:
                 pass
-            raise gcmd.error("%s: %s" % (self.name, e))
+            raise gcmd.error("%s: %s" % (self.name, err))
         finally:
             try:
                 self._run('SET_VELOCITY_LIMIT ACCEL=%.0f' % restore)
@@ -493,19 +519,19 @@ class FFToolOffset:
         " [PLATE_CHECK=1])")
 
     def cmd_TOOL_OFFSET_CALIBRATE(self, gcmd):
-        raw = gcmd.get('TOOL')
-        if raw.upper() == 'ALL':
+        requested = gcmd.get('TOOL')
+        if requested.upper() == 'ALL':
             tools = list(range(EXTRUDER_COUNT))
         else:
             try:
-                t = int(raw)
+                tool_index = int(requested)
             except ValueError:
                 raise gcmd.error("TOOL must be 0..%d or ALL"
                                  % (EXTRUDER_COUNT - 1))
-            if not 0 <= t < EXTRUDER_COUNT:
+            if not 0 <= tool_index < EXTRUDER_COUNT:
                 raise gcmd.error("TOOL must be 0..%d or ALL"
                                  % (EXTRUDER_COUNT - 1))
-            tools = [t]
+            tools = [tool_index]
         grab = gcmd.get_int('GRAB', 1, minval=0, maxval=1)
         release = gcmd.get_int('RELEASE', 0, minval=0, maxval=1)
         save = gcmd.get_int('SAVE', 1, minval=0, maxval=1)
@@ -534,8 +560,8 @@ class FFToolOffset:
                 " PLATE_REMOVED=1), or use GRAB=1 and let the toolchanger"
                 " pick it up." % (self.name, tools[0] if tools else '?'))
         self._run_plate_check(gcmd)
-        cyl_x, cyl_y = self._cylinder()
-        x0, y0 = cyl_x - self.nozzle_x_shift, cyl_y
+        cylinder_x, cylinder_y = self._cylinder()
+        x0, y0 = cylinder_x - self.nozzle_x_shift, cylinder_y
 
         results = {}
         for tool in tools:
@@ -548,8 +574,9 @@ class FFToolOffset:
                 self._run('T%d' % tool)
                 self._wait_moves()
 
-            t = self.tools[tool]
-            expected_z = t.nozzle[2] if t.calibrated() else None
+            tool_object = self.tools[tool]
+            expected_z = (tool_object.nozzle[2]
+                          if tool_object.calibrated() else None)
             if expected_z is None and self.station is not None:
                 # nozzle fires ~3.2 mm above the empty-carriage trigger
                 expected_z = self.station[2] + 0.5 * (self.gap_min
@@ -558,20 +585,20 @@ class FFToolOffset:
             def body():
                 return self._two_pass(gcmd, x0, y0, self.z_target,
                                       expected_z)
-            cx, cy, zp = self._with_accel_guard(gcmd, body)
+            center_x, center_y, z_trigger = self._with_accel_guard(gcmd, body)
             if self.station is not None and (self.gap_min or self.gap_max):
-                gap = zp - self.station[2]
+                gap = z_trigger - self.station[2]
                 if gap < self.gap_min or gap > self.gap_max:
                     raise gcmd.error(
                         "%s: T%d nozzle_z %.3f is %.3f above station_z %.3f,"
                         " outside gap_min/gap_max [%.2f, %.2f] -- probe"
                         " mis-trigger suspected, nothing saved"
-                        % (self.name, tool, zp, gap, self.station[2],
+                        % (self.name, tool, z_trigger, gap, self.station[2],
                            self.gap_min, self.gap_max))
-            results[tool] = (cx, cy, zp)
-            self.last['t%d' % tool] = (cx, cy, zp)
+            results[tool] = (center_x, center_y, z_trigger)
+            self.last['t%d' % tool] = (center_x, center_y, z_trigger)
             gcmd.respond_info("T%d: offset = (%.4f, %.4f, %.4f)"
-                              % (tool, cx, cy, zp))
+                              % (tool, center_x, center_y, z_trigger))
             if release:
                 self._run('TOOLCHANGE_PARK')
                 self._wait_moves()
@@ -580,8 +607,8 @@ class FFToolOffset:
         # part-way through TOOL=ALL really does leave nothing saved -- which is
         # what the guard messages above promise.
         if save:
-            for tool, (cx, cy, zp) in results.items():
-                self.tools[tool].set_nozzle(cx, cy, zp)
+            for tool, (center_x, center_y, z_trigger) in results.items():
+                self.tools[tool].set_nozzle(center_x, center_y, z_trigger)
 
         # the app's exit block: heater off for the tool(s), Z15
         for tool in tools:
@@ -616,30 +643,32 @@ class FFToolOffset:
                 # releaseFourExtruder: the carriage must be empty for TS.
                 self._run('TOOLCHANGE_PARK')
                 self._wait_moves()
-            cur = self.toolchange.get_status(self.reactor.monotonic())
-            if cur.get('current_tool', -1) != -1 or not cur.get('state_ok'):
+            carriage = self.toolchange.get_status(self.reactor.monotonic())
+            if carriage.get('current_tool', -1) != -1 \
+               or not carriage.get('state_ok'):
                 raise gcmd.error(
                     "%s: carriage is not verifiably empty (%s) -- the station"
                     " pass must run with no tool mounted"
-                    % (self.name, cur.get('state_reason')))
+                    % (self.name, carriage.get('state_reason')))
         elif park:
             raise gcmd.error("%s: [ff_toolchange] not loaded -- park the tool"
                              " by hand and pass PARK=0." % self.name)
         self._run_plate_check(gcmd)
-        cyl_x, cyl_y = self._cylinder()
+        cylinder_x, cylinder_y = self._cylinder()
         gcmd.respond_info("station calibration, start %.3f, %.3f"
-                          % (cyl_x, cyl_y))
+                          % (cylinder_x, cylinder_y))
 
         expected_z = self.station[2] if self.station is not None else None
 
         def body():
-            return self._two_pass(gcmd, cyl_x, cyl_y, self.z_target_station_2,
-                                  expected_z)
-        cx, cy, zp = self._with_accel_guard(gcmd, body)
-        self.last['station'] = (cx, cy, zp)
-        gcmd.respond_info("station = (%.4f, %.4f, %.4f)" % (cx, cy, zp))
+            return self._two_pass(gcmd, cylinder_x, cylinder_y,
+                                  self.z_target_station_2, expected_z)
+        center_x, center_y, z_trigger = self._with_accel_guard(gcmd, body)
+        self.last['station'] = (center_x, center_y, z_trigger)
+        gcmd.respond_info("station = (%.4f, %.4f, %.4f)"
+                          % (center_x, center_y, z_trigger))
         if save:
-            self.set_station(cx, cy, zp)
+            self.set_station(center_x, center_y, z_trigger)
             self._refresh_toolchange(gcmd)
             gcmd.respond_info(
                 "The SAVE_CONFIG command will update the printer config file"
@@ -652,23 +681,24 @@ class FFToolOffset:
     cmd_TOOL_OFFSET_STATUS_help = "Show the configured nozzle/station positions"
 
     def cmd_TOOL_OFFSET_STATUS(self, gcmd):
-        cyl_x, cyl_y = self._cylinder()
-        lines = ["station start (cylinder_x/y): %.3f, %.3f" % (cyl_x, cyl_y)]
-        for t in self.tools:
-            if t.calibrated():
+        cylinder_x, cylinder_y = self._cylinder()
+        lines = ["station start (cylinder_x/y): %.3f, %.3f"
+                 % (cylinder_x, cylinder_y)]
+        for tool in self.tools:
+            if tool.calibrated():
                 lines.append("[ff_tool %d] nozzle %.4f, %.4f, %.4f"
-                             % (t.index, t.nozzle[0], t.nozzle[1],
-                                t.nozzle[2]))
+                             % (tool.index, tool.nozzle[0], tool.nozzle[1],
+                                tool.nozzle[2]))
             else:
-                lines.append("[ff_tool %d] nozzle NOT CALIBRATED" % t.index)
+                lines.append("[ff_tool %d] nozzle NOT CALIBRATED" % tool.index)
         if self.station is not None:
             lines.append("[%s] station %.4f, %.4f, %.4f"
                          % ((self.name,) + self.station))
         else:
             lines.append("[%s] station NOT CALIBRATED" % self.name)
         configfile = self.printer.lookup_object('configfile')
-        st = configfile.get_status(self.reactor.monotonic())
-        if st.get('save_config_pending'):
+        configfile_status = configfile.get_status(self.reactor.monotonic())
+        if configfile_status.get('save_config_pending'):
             lines.append("! unsaved calibration pending -- run SAVE_CONFIG")
         gcmd.respond_info("\n".join(lines))
 
@@ -687,38 +717,43 @@ class FFToolOffset:
         base_tool = (self.toolchange.offset_base
                      if self.toolchange is not None else 0)
         lines = []
-        for tool, (cx, cy, zp) in sorted(results.items()):
+        for tool, (center_x, center_y, z_trigger) in sorted(results.items()):
             lines.append("T%d measured: nozzle centre %.4f, %.4f"
-                         "  Z trigger %.4f" % (tool, cx, cy, zp))
-        base = None
+                         "  Z trigger %.4f"
+                         % (tool, center_x, center_y, z_trigger))
+        base_nozzle = None
         if base_tool in results:
-            base = results[base_tool]
+            base_nozzle = results[base_tool]
         elif self.tools[base_tool].calibrated():
-            base = self.tools[base_tool].nozzle
+            base_nozzle = self.tools[base_tool].nozzle
         z_station = self.station[2] if self.station is not None else None
-        if base is not None:
+        if base_nozzle is not None:
             lines.append("offsets a toolchange applies (X/Y vs T%d; Z %s):"
                          % (base_tool,
                             "absolute: nozzle_z - station_z + z_adjust"
                             if z_station is not None
                             else "vs T%d, + z_adjust" % base_tool))
-            for tool, (cx, cy, zp) in sorted(results.items()):
-                za = self.tools[tool].z_adjust
+            for tool, (center_x, center_y, z_trigger) in sorted(
+                    results.items()):
+                z_adjust = self.tools[tool].z_adjust
                 if z_station is not None:
-                    z_applied = za + (zp - z_station)
+                    z_applied = z_adjust + (z_trigger - z_station)
                 else:
-                    z_applied = za + (zp - base[2])
+                    z_applied = z_adjust + (z_trigger - base_nozzle[2])
                 lines.append("  T%d: dX %+.4f  dY %+.4f  Z %+.4f"
-                             % (tool, cx - base[0], cy - base[1], z_applied))
+                             % (tool, center_x - base_nozzle[0],
+                                center_y - base_nozzle[1], z_applied))
         gcmd.respond_info("\n".join(lines))
 
     def get_status(self, eventtime):
-        out = {}
-        for k, v in self.last.items():
-            out[k] = {'x': v[0], 'y': v[1], 'z': v[2]}
-        sx, sy, sz = self.station if self.station else (None, None, None)
-        return {'last': out, 'station_x': sx, 'station_y': sy,
-                'station_z': sz}
+        measured = {}
+        for what, position in self.last.items():
+            measured[what] = {'x': position[0], 'y': position[1],
+                              'z': position[2]}
+        station_x, station_y, station_z = (self.station if self.station
+                                           else (None, None, None))
+        return {'last': measured, 'station_x': station_x,
+                'station_y': station_y, 'station_z': station_z}
 
 
 def load_config(config):

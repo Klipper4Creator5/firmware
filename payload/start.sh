@@ -54,8 +54,8 @@ fi
 # is the one step Klipper cannot start without, so do not depend on a lookup.
 # LD_LIBRARY_PATH still matters: this interpreter does not start without it,
 # which is exactly how moonrakerDaemon used to fail.
-FF_PY=/usr/prog/Python-3.8.2/bin/python3
-[ -x "$FF_PY" ] || FF_PY=python3
+FF_PYTHON=/usr/prog/Python-3.8.2/bin/python3
+[ -x "$FF_PYTHON" ] || FF_PYTHON=python3
 #
 # Test -f, not -x. The script is handed to the interpreter by path, so its
 # execute bit is irrelevant -- and it is not always set: the payload carries
@@ -71,7 +71,7 @@ FF_PY=/usr/prog/Python-3.8.2/bin/python3
 if [ "${FF_SKIP_MCU_BRINGUP:-0}" = 1 ]; then
     echo "start.sh: MCU bring-up already done by the caller"
 elif [ -f /usr/data/anvil/bin/ff_mcu_bringup.py ]; then
-    "$FF_PY" /usr/data/anvil/bin/ff_mcu_bringup.py \
+    "$FF_PYTHON" /usr/data/anvil/bin/ff_mcu_bringup.py \
         || echo "start.sh: MCU bring-up reported a problem ($?)"
 else
     echo "start.sh: ff_mcu_bringup.py missing -- the toolhead boards are not brought up"

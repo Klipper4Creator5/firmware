@@ -4,8 +4,8 @@
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 
-SW=work/software
-[ -d "$SW" ] || { echo "run bin/unpack.sh first" >&2; exit 1; }
+SOFTWARE_DIR=work/software
+[ -d "$SOFTWARE_DIR" ] || { echo "run bin/unpack.sh first" >&2; exit 1; }
 
 say() { printf '>> %s\n' "$*"; }
 skip() { printf '   (skip) %s\n' "$*"; }
@@ -19,9 +19,9 @@ MODDIR=/usr/data/anvil
 # HelixScreen are ~100MB and would overflow it. They ride in the outer package
 # instead, land in /usr/data/update/ (data partition), and are moved to
 # /usr/data/anvil from there.
-MP=work/modpayload
-rm -rf "$MP" "$SW/mod"   # $SW/mod: leftover from an older layout
-mkdir -p "$MP/bin" "$MP/nginx" "$MP/www" "$MP/config"
+MOD_PAYLOAD=work/modpayload
+rm -rf "$MOD_PAYLOAD" "$SOFTWARE_DIR/mod"   # $SOFTWARE_DIR/mod: leftover from an older layout
+mkdir -p "$MOD_PAYLOAD/bin" "$MOD_PAYLOAD/nginx" "$MOD_PAYLOAD/www" "$MOD_PAYLOAD/config"
 
 # ---------------------------------------------------------------- 1. Klipper
 # BUILD_KLIPPER=fork (the default) ships the creator5 Klipper tree; =stock
@@ -63,9 +63,9 @@ fork)
     # exists is not trusted with the tree's freshness: one that outlived its
     # sources is how a v0.12-generation binary once shipped under a v0.13
     # klippy (see test/test-chelper.py's docstring).
-    CH="$FORK/klippy/chelper/c_helper.so"
-    if [ ! -f "$CH" ] || [ -n "$(find "$FORK/klippy/chelper" \
-           \( -name '*.c' -o -name '*.h' \) -newer "$CH" -print -quit)" ]; then
+    CHELPER="$FORK/klippy/chelper/c_helper.so"
+    if [ ! -f "$CHELPER" ] || [ -n "$(find "$FORK/klippy/chelper" \
+           \( -name '*.c' -o -name '*.h' \) -newer "$CHELPER" -print -quit)" ]; then
         GCC="work/.mips-toolchain/mips-gcc720-glibc229/bin/mips-linux-gnu-gcc"
         if [ ! -x "$GCC" ]; then
             [ -f "${MIPS_TOOLCHAIN_TGZ:-}" ] || {
@@ -81,13 +81,13 @@ fork)
         # printer would use if it could compile, which it cannot.
         "$GCC" -Wall -g -O2 -shared -fPIC \
             -flto -fwhole-program -fno-use-linker-plugin \
-            -o "$CH" "$FORK"/klippy/chelper/*.c
+            -o "$CHELPER" "$FORK"/klippy/chelper/*.c
     fi
 
     # The gates. ABI: the kernel refuses anything but MIPS32r2/nan2008/o32.
     # Symbols: cffi resolves lazily, so a stale .so dies at connect on the
     # printer instead of at import in the build -- catch it here.
-    if ! readelf -h "$CH" 2>/dev/null | grep -q nan2008; then
+    if ! readelf -h "$CHELPER" 2>/dev/null | grep -q nan2008; then
         echo "   !! c_helper.so is NOT nan2008 -- the kernel will refuse it" >&2
         exit 1
     fi
@@ -96,19 +96,19 @@ fork)
 
     # Stock ships only a handful of klippy files as an overlay; the fork is a
     # different Klipper generation (v0.13 vs v0.12), so ship the WHOLE tree.
-    rm -rf "$SW/klipper/klippy"
-    mkdir -p "$SW/klipper/klippy"
+    rm -rf "$SOFTWARE_DIR/klipper/klippy"
+    mkdir -p "$SOFTWARE_DIR/klipper/klippy"
     ( cd "$FORK/klippy" && tar -cf - \
         --exclude='__pycache__' --exclude='*.pyc' --exclude='chelper/*.o' . ) \
-      | tar -xf - -C "$SW/klipper/klippy"
+      | tar -xf - -C "$SOFTWARE_DIR/klipper/klippy"
     mkdir -p work/.chelper/chelper
-    cp -f "$CH" work/.chelper/chelper/c_helper.so
-    tar -cf "$SW/klipper/chelper.tar" -C work/.chelper chelper
+    cp -f "$CHELPER" work/.chelper/chelper/c_helper.so
+    tar -cf "$SOFTWARE_DIR/klipper/chelper.tar" -C work/.chelper chelper
     rm -rf work/.chelper
     # klippy/ now contains the fork's own extras+kinematics, so the stock
     # overlay dirs would only re-inject 0.12-era files on top. Drop them.
-    rm -rf "$SW/klipper/extras" "$SW/klipper/kinematics"
-    mkdir -p "$SW/klipper/extras"
+    rm -rf "$SOFTWARE_DIR/klipper/extras" "$SOFTWARE_DIR/klipper/kinematics"
+    mkdir -p "$SOFTWARE_DIR/klipper/extras"
     ;;
 stock)
     skip "Klipper: keeping stock tree (BUILD_KLIPPER=stock)"
@@ -124,12 +124,12 @@ esac
 # creator5-toolchange checkout, pointed at by TOOLCHANGE= in config.env.
 if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     say "Toolchange: ff_*.py + configs"
-    mkdir -p "$SW/klipper/extras"
-    cp -f payload/klipper/extras/ff_*.py "$SW/klipper/extras/"
+    mkdir -p "$SOFTWARE_DIR/klipper/extras"
+    cp -f payload/klipper/extras/ff_*.py "$SOFTWARE_DIR/klipper/extras/"
     # .cfg files belong on the data partition. These are mod-owned: run.sh
     # overwrites them on every update (test_config_ownership.py enforces it).
     # User changes go in printer.cfg, which no flash ever writes.
-    cp -f payload/klipper/config/ff-*.cfg "$MP/config/"
+    cp -f payload/klipper/config/ff-*.cfg "$MOD_PAYLOAD/config/"
     # Our printer.base.cfg is FlashForge's with the chamber block replaced by
     # [include printer.chamber.cfg] -- Klipper can override an option but
     # cannot un-declare a section, and the plain Creator 5 has no chamber
@@ -137,7 +137,7 @@ if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     # NOTE: this cp is why the stock-drift check lives in bin/unpack.sh and
     # not in a test -- it overwrites the pristine copy, and the test that used
     # to read it afterwards was comparing our file against itself.
-    cp -f payload/klipper/config/printer.base.cfg "$SW/klipper/config/printer.base.cfg"
+    cp -f payload/klipper/config/printer.base.cfg "$SOFTWARE_DIR/klipper/config/printer.base.cfg"
 
     # Anything that differs between models exists once per model, named
     # <file>.creator5 / <file>.creator5pro, and the matching one is installed
@@ -149,15 +149,15 @@ if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
         [ -e "$variant" ] || continue
         base=$(basename "$variant" ".$SUFFIX")
         case "$base" in
-            printer.*) dest="$SW/klipper/config/$base" ;;
-            *)         dest="$MP/config/$base" ;;
+            printer.*) dest="$SOFTWARE_DIR/klipper/config/$base" ;;
+            *)         dest="$MOD_PAYLOAD/config/$base" ;;
         esac
         cp -f "$variant" "$dest"
         say "Model: $base for $TARGET_MACHINE"
     done
     # printer.base.cfg includes it unconditionally, so without it klippy will
     # not start at all. A broken build, not a silent default.
-    [ -f "$SW/klipper/config/printer.chamber.cfg" ] \
+    [ -f "$SOFTWARE_DIR/klipper/config/printer.chamber.cfg" ] \
         || { echo "no printer.chamber.cfg.$SUFFIX for TARGET_MACHINE=$TARGET_MACHINE" >&2; exit 1; }
 else
     skip "Toolchange"
@@ -170,18 +170,18 @@ if [ "${BUILD_MAINSAIL:-1}" = "1" ]; then
     # should have put it here.
     [ -f "${MAINSAIL_ZIP:-}" ] || { echo "BUILD_MAINSAIL=1 but no Mainsail zip at '${MAINSAIL_ZIP:-}' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
     say "Mainsail: unpacking $(basename "$MAINSAIL_ZIP")"
-    mkdir -p "$MP/www/mainsail"
-    unzip -q -o "$MAINSAIL_ZIP" -d "$MP/www/mainsail"
-    cp -f assets/nginx.conf "$MP/nginx/nginx.conf"
-    du -sh "$MP/www/mainsail" | awk '{print "   "$1}'
+    mkdir -p "$MOD_PAYLOAD/www/mainsail"
+    unzip -q -o "$MAINSAIL_ZIP" -d "$MOD_PAYLOAD/www/mainsail"
+    cp -f assets/nginx.conf "$MOD_PAYLOAD/nginx/nginx.conf"
+    du -sh "$MOD_PAYLOAD/www/mainsail" | awk '{print "   "$1}'
 else
     skip "Mainsail"
 fi
-[ -f assets/moonraker.conf ] && cp -f assets/moonraker.conf "$MP/config/moonraker.conf"
+[ -f assets/moonraker.conf ] && cp -f assets/moonraker.conf "$MOD_PAYLOAD/config/moonraker.conf"
 # The user seam for Moonraker. moonraker.conf includes it by name, and
 # run-append.sh creates it only when it is missing -- never overwrites it.
 [ -f assets/moonraker-custom.conf ] \
-    && cp -f assets/moonraker-custom.conf "$MP/config/moonraker-custom.conf"
+    && cp -f assets/moonraker-custom.conf "$MOD_PAYLOAD/config/moonraker-custom.conf"
 
 # ------------------------------------------------------------- 4. Moonraker
 # WHY THIS EXISTS -- the stock Moonraker is a 2022 build (it reports API
@@ -246,17 +246,17 @@ if [ "${BUILD_MOONRAKER:-1}" = "1" ]; then
     # shipping nothing here would look like a clean build and a dead UI.
     [ -f work/.moonraker/moonraker/moonraker.py ] || {
         echo "   !! no moonraker/moonraker.py in $(basename "$MOONRAKER_TGZ")" >&2; exit 1; }
-    rm -rf "$MP/moonraker"
-    cp -a work/.moonraker/moonraker "$MP/moonraker"
+    rm -rf "$MOD_PAYLOAD/moonraker"
+    cp -a work/.moonraker/moonraker "$MOD_PAYLOAD/moonraker"
     # The gate run-append.sh puts in front of the swap. It reads Moonraker's
     # own component list out of the tree beside it, so it does not need
     # updating when the pin moves.
-    cp -f payload/moonraker-preflight.py "$MP/moonraker-preflight.py"
+    cp -f payload/moonraker-preflight.py "$MOD_PAYLOAD/moonraker-preflight.py"
     # Tests never run on the printer and are a sizeable chunk of the tree.
-    rm -rf "$MP/moonraker/tests"
-    find "$MP/moonraker" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
+    rm -rf "$MOD_PAYLOAD/moonraker/tests"
+    find "$MOD_PAYLOAD/moonraker" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
     rm -rf work/.moonraker
-    du -sh "$MP/moonraker" | awk '{print "   "$1}'
+    du -sh "$MOD_PAYLOAD/moonraker" | awk '{print "   "$1}'
 else
     skip "Moonraker: keeping the stock 2022 build"
 fi
@@ -265,17 +265,17 @@ fi
 if [ "${BUILD_HELIX:-1}" = "1" ]; then
     [ -f "${HELIX_TGZ:-}" ] || { echo "BUILD_HELIX=1 but no HelixScreen tarball at '${HELIX_TGZ:-}' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
     say "HelixScreen: unpacking $(basename "$HELIX_TGZ")"
-    mkdir -p "$MP/helixscreen"
-    tar -xzf "$HELIX_TGZ" -C "$MP" # yields $MP/helixscreen/
+    mkdir -p "$MOD_PAYLOAD/helixscreen"
+    tar -xzf "$HELIX_TGZ" -C "$MOD_PAYLOAD" # yields $MOD_PAYLOAD/helixscreen/
     # Printer-database entry so it detects the Creator 5 Pro as a tool changer
-    mkdir -p "$MP/helixscreen/config/printer_database.d"
+    mkdir -p "$MOD_PAYLOAD/helixscreen/config/printer_database.d"
     cp -f payload/helixscreen/printer_database.d/*.json \
-          "$MP/helixscreen/config/printer_database.d/"
+          "$MOD_PAYLOAD/helixscreen/config/printer_database.d/"
     # Optional platform hook. No such file is in the repo, so this never fires
     # on a stock checkout -- drop one in assets/ to have it shipped.
     [ -f assets/hooks-creator5.sh ] && \
-        cp -f assets/hooks-creator5.sh "$MP/helixscreen/assets/config/platform/"
-    du -sh "$MP/helixscreen" | awk '{print "   "$1}'
+        cp -f assets/hooks-creator5.sh "$MOD_PAYLOAD/helixscreen/assets/config/platform/"
+    du -sh "$MOD_PAYLOAD/helixscreen" | awk '{print "   "$1}'
 else
     skip "HelixScreen"
 fi
@@ -301,7 +301,7 @@ else
     skip "SSH"
 fi
 if [ -n "${BUSYBOX_BIN:-}" ] && [ -f "$BUSYBOX_BIN" ]; then
-    cp -f "$BUSYBOX_BIN" "$MP/bin/busybox"; chmod +x "$MP/bin/busybox"
+    cp -f "$BUSYBOX_BIN" "$MOD_PAYLOAD/bin/busybox"; chmod +x "$MOD_PAYLOAD/bin/busybox"
 fi
 
 # --------------------------------------------------------- 7. root password
@@ -311,15 +311,15 @@ if [ -n "${ROOT_PW_HASH:-}" ]; then
     # what dropbear reads at authentication time -- so this is the live shadow
     # even though dropbear started earlier from the read-only squashfs.
     awk -v h="$ROOT_PW_HASH" 'BEGIN{FS=OFS=":"} $1=="root"{$2=h} {print}' \
-        "$SW/shadow" > "$SW/shadow.new" && mv -f "$SW/shadow.new" "$SW/shadow"
+        "$SOFTWARE_DIR/shadow" > "$SOFTWARE_DIR/shadow.new" && mv -f "$SOFTWARE_DIR/shadow.new" "$SOFTWARE_DIR/shadow"
 else
     skip "root password (set ROOT_PW_HASH)"
 fi
 
 # ------------------------------------------------ 8. start.sh (web stack on)
 say "start.sh: enabling nginx + moonraker"
-cp -f payload/start.sh "$SW/start.sh"
-chmod +x "$SW/start.sh"
+cp -f payload/start.sh "$SOFTWARE_DIR/start.sh"
+chmod +x "$SOFTWARE_DIR/start.sh"
 
 # ------------------------------------- 9. firmwareExe -> our wrapper script
 # The stock chain is rcS -> S99factory_test_shell -> app_startup.sh ->
@@ -332,20 +332,20 @@ chmod +x "$SW/start.sh"
 # here could ever be a reliable backup. Flashing the stock FlashForge package
 # -- which still ships the binary -- is the uninstall.
 say "firmwareExe: installing wrapper (replaces the stock binary)"
-cp -f payload/firmwareExe "$SW/firmwareExe"
-chmod +x "$SW/firmwareExe"
+cp -f payload/firmwareExe "$SOFTWARE_DIR/firmwareExe"
+chmod +x "$SOFTWARE_DIR/firmwareExe"
 
 # ----------------------------------------------------- 10. mod service dir
-mkdir -p "$MP/init.d"
-[ -d payload/bin ] && cp -f payload/bin/* "$MP/bin/" && chmod +x "$MP/bin"/*
-cp -f payload/init.d/S* "$MP/init.d/"
-chmod +x "$MP/init.d"/S*
+mkdir -p "$MOD_PAYLOAD/init.d"
+[ -d payload/bin ] && cp -f payload/bin/* "$MOD_PAYLOAD/bin/" && chmod +x "$MOD_PAYLOAD/bin"/*
+cp -f payload/init.d/S* "$MOD_PAYLOAD/init.d/"
+chmod +x "$MOD_PAYLOAD/init.d"/S*
 sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
     -e "s/^MOD_CAM=.*/MOD_CAM=${MOD_CAM:-1}/" \
     -e "s/^MOD_UI=.*/MOD_UI=${MOD_UI:-1}/" \
     -e "s/^MOD_SSH=.*/MOD_SSH=${MOD_SSH:-1}/" \
     -e "s/^MOD_WIFI=.*/MOD_WIFI=${MOD_WIFI:-1}/" \
-    payload/anvil.conf > "$MP/anvil.conf"
+    payload/anvil.conf > "$MOD_PAYLOAD/anvil.conf"
 
 # --------------------------------------------------- 11. run.sh install step
 say "run.sh: injecting mod install blocks (pre + post)"
@@ -361,7 +361,7 @@ else
 fi
 sed -e "s/^MOD_PW_AUTO=.*/MOD_PW_AUTO=$PW_AUTO/" \
     payload/run-append.sh > "$POST"
-python3 - "$SW/run.sh" payload/run-pre.sh "$POST" <<'PY'
+python3 - "$SOFTWARE_DIR/run.sh" payload/run-pre.sh "$POST" <<'PY'
 import sys, re
 run, pre_f, post_f = sys.argv[1], sys.argv[2], sys.argv[3]
 B1, E1 = "# >>> anvil pre >>>",  "# <<< anvil pre <<<"
@@ -389,11 +389,11 @@ src = src[:j] + post + src[j:]
 print("   post-block inserted before exit")
 open(run, 'w', encoding='utf-8', errors='surrogateescape').write(src)
 PY
-chmod +x "$SW/run.sh"
+chmod +x "$SOFTWARE_DIR/run.sh"
 rm -f "$POST"
 
 echo
 echo "Patched."
-echo "  software component: $(du -sh "$SW" | cut -f1)  (-> /usr/prog, firmware partition)"
-echo "  mod payload:        $(du -sh "$MP" | cut -f1)  (-> /usr/data/anvil, data partition)"
+echo "  software component: $(du -sh "$SOFTWARE_DIR" | cut -f1)  (-> /usr/prog, firmware partition)"
+echo "  mod payload:        $(du -sh "$MOD_PAYLOAD" | cut -f1)  (-> /usr/data/anvil, data partition)"
 echo "Now run ./bin/pack.sh"

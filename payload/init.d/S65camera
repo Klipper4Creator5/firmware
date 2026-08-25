@@ -41,10 +41,10 @@ streamer_running() {
 # The part that waits. Detached from the boot sequence, so nothing reads its
 # exit code -- it reports through the boot log only.
 supervise() {
-    i=0
-    while [ ! -e "$VIDEO" ] && [ $i -lt 30 ]; do
+    waited=0
+    while [ ! -e "$VIDEO" ] && [ $waited -lt 30 ]; do
         sleep 1
-        i=$((i + 1))
+        waited=$((waited + 1))
     done
     if [ ! -e "$VIDEO" ]; then
         echo "camera: $VIDEO never appeared -- no camera plugged in?"

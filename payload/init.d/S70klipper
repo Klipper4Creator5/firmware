@@ -80,8 +80,8 @@ klippy_verdict() {
 }
 
 supervise() {
-    n=1
-    while [ $n -le $KLIPPER_TRIES ]; do
+    attempt=1
+    while [ $attempt -le $KLIPPER_TRIES ]; do
         # NOT `wc -l < "$PRINTER_LOG" 2>/dev/null`: redirections are applied
         # left to right, so the input redirect fails and the shell prints
         # "can't open ...: no such file" BEFORE 2>/dev/null is in effect. On
@@ -89,39 +89,42 @@ supervise() {
         # in the boot log every time, interleaved with whatever else was
         # writing -- which is what made one user's log unreadable at exactly
         # the point they were trying to diagnose.
-        mark=`cat "$PRINTER_LOG" 2>/dev/null | wc -l`
-        [ -n "$mark" ] || mark=0
+        log_lines=`cat "$PRINTER_LOG" 2>/dev/null | wc -l`
+        [ -n "$log_lines" ] || log_lines=0
         # A failed connect takes ~90s to be reported, so wait out more than
         # that before concluding anything.
-        w=0
+        waited=0
         verdict=""
-        while [ $w -lt 30 ]; do
+        while [ $waited -lt 30 ]; do
             sleep 5
-            w=$((w + 1))
-            verdict=`klippy_verdict "$mark"`
+            waited=$((waited + 1))
+            verdict=`klippy_verdict "$log_lines"`
             [ -n "$verdict" ] && break
         done
         case "$verdict" in
             ready)
-                echo "klipper: ready (attempt $n)"
+                echo "klipper: ready (attempt $attempt)"
                 return 0
                 ;;
             "")
                 # Neither marker showed up. Something other than an MCU
                 # connect is going on; restarting would only hide it.
-                echo "klipper: no verdict after attempt $n -- leaving it alone"
+                echo "klipper: no verdict after attempt $attempt -- leaving it alone"
                 return 0
                 ;;
         esac
-        echo "klipper: MCU connect failed (attempt $n/$KLIPPER_TRIES) -- restarting"
+        echo "klipper: MCU connect failed (attempt $attempt/$KLIPPER_TRIES) -- restarting"
         [ -x /usr/prog/klipper/klipperDaemon ] && /usr/prog/klipper/klipperDaemon stop
-        g=0
-        while klippy_proc && [ $g -lt 15 ]; do sleep 1; g=$((g + 1)); done
+        stopping=0
+        while klippy_proc && [ $stopping -lt 15 ]; do
+            sleep 1
+            stopping=$((stopping + 1))
+        done
         # start.sh bails out if the socket is still there, so clear a stale
         # one -- but only once klippy is definitely gone.
         klippy_proc || rm -f /tmp/uds
         /usr/prog/klipper/start.sh
-        n=$((n + 1))
+        attempt=$((attempt + 1))
     done
     echo "klipper: still no MCU after $KLIPPER_TRIES attempts -- giving up"
     return 1

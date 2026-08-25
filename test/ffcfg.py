@@ -16,26 +16,26 @@ OPTION = re.compile(r"^([^:=\s][^:=]*)\s*[:=]\s*(.*)$")
 
 def sections(path):
     """Yield (section_name, {option: value}) the way Klipper's parser sees it."""
-    cur, opts = None, {}
+    section, options = None, {}
     key = None
     for raw in open(path, encoding="utf-8", errors="replace"):
         line = raw.rstrip("\n")
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        m = SECTION.match(line.strip())
-        if m:
-            if cur:
-                yield cur, opts
-            cur, opts, key = m.group(1), {}, None
+        header = SECTION.match(line.strip())
+        if header:
+            if section:
+                yield section, options
+            section, options, key = header.group(1), {}, None
             continue
-        if cur is None:
+        if section is None:
             continue
         if line[:1] in " \t" and key:            # continuation line
-            opts[key] += "\n" + line
+            options[key] += "\n" + line
             continue
-        m = OPTION.match(line)
-        if m:
-            key = m.group(1).strip()
-            opts[key] = m.group(2)
-    if cur:
-        yield cur, opts
+        option = OPTION.match(line)
+        if option:
+            key = option.group(1).strip()
+            options[key] = option.group(2)
+    if section:
+        yield section, options

@@ -79,12 +79,12 @@ class Replica:
                 "in test.env to skip it.")
 
         image = "creator5-printer-sim"
-        ctx = config.root / "test" / "integration" / "printer"
+        build_dir = config.root / "test" / "integration" / "printer"
         # Always rebuild: a cache hit takes about a second, and a stale image
         # silently testing yesterday's harness is not a trade worth making.
         built = subprocess.run(
             [docker, "build", "-q", "-t", image,
-             "-f", str(ctx / "Dockerfile"), str(ctx)],
+             "-f", str(build_dir / "Dockerfile"), str(build_dir)],
             capture_output=True, text=True)
         if built.returncode != 0:
             raise Fail("could not build %s:\n%s" % (image, built.stderr.strip()))
@@ -101,7 +101,7 @@ class Replica:
         """
         packages = packages or {}
         stage = stage or self.stage_dir()
-        cfg = self.config
+        config = self.config
 
         argv = [self.docker, "run", "--rm", "-i", "--privileged"]
         if not self.prebuilt:
@@ -111,7 +111,7 @@ class Replica:
             "-v", "%s/pkgs:/pkgs:ro" % stage,
             "-v", "%s/case.sh:/case.sh:ro" % stage,
             "-v", "%s/payload:/payload:ro" % self.root,
-            "-e", "FF_KEY=%s" % cfg.ff_key,
+            "-e", "FF_KEY=%s" % config.ff_key,
             "-e", "BASE_PKG=%s" % ("/pkgs/base.tgz" if base_pkg else ""),
             "-e", "PKGS=%s" % "".join(" %s=/pkgs/%s" % (n, n) for n in packages),
         ]
@@ -119,16 +119,16 @@ class Replica:
         # A real /usr/prog taken off a printer. Only for a locally built
         # replica: a prebuilt image already has one baked in, and mounting
         # over it would replace the genuine tree with an older copy.
-        dump = cfg.get("PROG_DUMP")
-        if not self.prebuilt and dump and os.path.exists(dump):
-            dump_abs = os.path.abspath(dump)
+        prog_dump = config.get("PROG_DUMP")
+        if not self.prebuilt and prog_dump and os.path.exists(prog_dump):
+            dump_abs = os.path.abspath(prog_dump)
             argv += ["-e", "PROG_DUMP=/progdump", "-v", "%s:/progdump:ro" % dump_abs]
         else:
             argv += ["-e", "PROG_DUMP="]
 
         argv += [
-            "-e", "PROG_MB=%s" % cfg.get("PROG_MB"),
-            "-e", "DATA_MB=%s" % cfg.get("DATA_MB"),
+            "-e", "PROG_MB=%s" % config.get("PROG_MB"),
+            "-e", "DATA_MB=%s" % config.get("DATA_MB"),
             "-e", "SIM_VERBOSE=%s" % os.environ.get("SIM_VERBOSE", "0"),
             "-e", "USB_STICK=%s" % ("1" if usb_stick else "0"),
             self.image, "/case.sh",
@@ -170,14 +170,14 @@ class Replica:
                 shutil.copy(base_pkg, str(stage / "pkgs" / "base.tgz"))
 
             argv = self.command(case, packages, base_pkg, usb_stick, stage)
-            proc = subprocess.run(argv, capture_output=True, text=True)
-            body = (proc.stdout or "") + (proc.stderr or "")
-            if on_output and body.strip():
-                on_output(body)
-            if proc.returncode != 0:
+            completed = subprocess.run(argv, capture_output=True, text=True)
+            output = (completed.stdout or "") + (completed.stderr or "")
+            if on_output and output.strip():
+                on_output(output)
+            if completed.returncode != 0:
                 raise Fail("%s exited %d" % (os.path.basename(case),
-                                             proc.returncode))
-            return body
+                                             completed.returncode))
+            return output
         finally:
             # The staged packages are ~80MB each.
             shutil.rmtree(str(stage), ignore_errors=True)

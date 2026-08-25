@@ -36,17 +36,18 @@ def main() -> int:
         print("usage: moonraker-preflight.py <parent-dir-of-moonraker-package>")
         return 1
     sys.path.insert(0, sys.argv[1])
-    conf = sys.argv[2] if len(sys.argv) > 2 else "/usr/data/config/moonraker.conf"
+    conf_path = (sys.argv[2] if len(sys.argv) > 2
+                 else "/usr/data/config/moonraker.conf")
 
     # Importing the server module first is itself a check, and it is where the
     # component list comes from.
     try:
-        import moonraker.server as srv
+        import moonraker.server as server
     except Exception as exc:
         print("moonraker.server does not import: %r" % (exc,))
         return 1
 
-    names = list(getattr(srv, "CORE_COMPONENTS", []))
+    names = list(getattr(server, "CORE_COMPONENTS", []))
     # Whatever the user has configured gets loaded too, so it gets checked too.
     # A section that is not a component (e.g. [server]) is skipped below.
     # Follow [include ...] too. moonraker.conf is mod-owned and ends with
@@ -62,20 +63,21 @@ def main() -> int:
         except OSError:
             return
         for line in lines:
-            m = re.match(r"\s*\[\s*([A-Za-z0-9_]+)", line)
-            if not m:
+            section = re.match(r"\s*\[\s*([A-Za-z0-9_]+)", line)
+            if not section:
                 continue
-            if m.group(1) == "include":
-                inc = re.match(r"\s*\[\s*include\s+([^\]]+?)\s*\]", line)
-                if inc and depth < 3:
-                    base = os.path.dirname(os.path.abspath(path))
-                    for sub in sorted(glob.glob(os.path.join(base,
-                                                             inc.group(1)))):
-                        scan(sub, depth + 1)
+            if section.group(1) == "include":
+                include = re.match(r"\s*\[\s*include\s+([^\]]+?)\s*\]",
+                                   line)
+                if include and depth < 3:
+                    including_dir = os.path.dirname(os.path.abspath(path))
+                    for included in sorted(glob.glob(
+                            os.path.join(including_dir, include.group(1)))):
+                        scan(included, depth + 1)
                 continue
-            names.append(m.group(1))
+            names.append(section.group(1))
 
-    scan(conf)
+    scan(conf_path)
 
     failures = []
     for name in dict.fromkeys(names):          # de-duplicate, keep order

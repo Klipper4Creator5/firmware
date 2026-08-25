@@ -12,12 +12,12 @@
 MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 NGINX=/usr/prog/nginx/sbin/nginx
-NGX_PID=$MODDIR/nginx/logs/nginx.pid
-MR_PID=/run/moonraker.pid
-MR_LOG=/usr/data/logs/moonraker.log
-MR_TMP=/usr/data/tmp
-MR_DATA=/usr/data
-MR_PY=/usr/prog/Python-3.8.2/bin/python3
+NGINX_PID=$MODDIR/nginx/logs/nginx.pid
+MOONRAKER_PID=/run/moonraker.pid
+MOONRAKER_LOG=/usr/data/logs/moonraker.log
+MOONRAKER_TMP=/usr/data/tmp
+MOONRAKER_DATA=/usr/data
+MOONRAKER_PYTHON=/usr/prog/Python-3.8.2/bin/python3
 
 # Which moonraker actually runs. The INSTALLED tree first: run-append.sh
 # already decided what belongs there -- the mod's build if it passed the
@@ -25,8 +25,8 @@ MR_PY=/usr/prog/Python-3.8.2/bin/python3
 # that decision here would defeat the rollback it exists to provide. The copy
 # on the data partition is the fallback for a printer where /usr/prog has no
 # moonraker at all.
-MR_MAIN=/usr/prog/moonraker/moonraker/moonraker/moonraker.py
-[ -f "$MR_MAIN" ] || MR_MAIN=$MODDIR/moonraker/moonraker.py
+MOONRAKER_MAIN=/usr/prog/moonraker/moonraker/moonraker/moonraker.py
+[ -f "$MOONRAKER_MAIN" ] || MOONRAKER_MAIN=$MODDIR/moonraker/moonraker.py
 
 start() {
     [ "${MOD_WEB:-1}" = "1" ] || { echo "web: disabled in anvil.conf"; return 0; }
@@ -37,7 +37,7 @@ start() {
     else
         echo "nginx: not available"
     fi
-    if [ -x "$MR_PY" ]; then
+    if [ -x "$MOONRAKER_PYTHON" ]; then
         # This interpreter does not start without its own libraries on the
         # path: without them python3 dies on "libpython3.8.so.1.0: cannot
         # open shared object file", moonraker never listens on 7125, and
@@ -72,11 +72,13 @@ start() {
         #   * TMPDIR. Moonraker writes temporary files -- uploads among them
         #     -- and /tmp here is a ramdisk, so a large upload without this
         #     fills memory instead of the data partition.
-        rm -rf $MR_TMP && mkdir -p $MR_TMP
-        export TMPDIR=$MR_TMP
-        if [ -f "$MR_MAIN" ]; then
-            start-stop-daemon -S -b -m -p $MR_PID --exec $MR_PY \
-                -- $MR_MAIN -d $MR_DATA && echo "moonraker: started ($MR_MAIN)"
+        rm -rf $MOONRAKER_TMP && mkdir -p $MOONRAKER_TMP
+        export TMPDIR=$MOONRAKER_TMP
+        if [ -f "$MOONRAKER_MAIN" ]; then
+            start-stop-daemon -S -b -m -p $MOONRAKER_PID \
+                --exec $MOONRAKER_PYTHON \
+                -- $MOONRAKER_MAIN -d $MOONRAKER_DATA \
+                && echo "moonraker: started ($MOONRAKER_MAIN)"
             moonraker_check &
         else
             echo "moonraker: no moonraker.py found -- not started"
@@ -89,33 +91,33 @@ start() {
 # boot log, with the reason, because "moonraker did not start" is otherwise a
 # support conversation rather than a log line.
 moonraker_alive() {
-    [ -f "$MR_PID" ] || return 1
-    kill -0 `cat "$MR_PID"` 2>/dev/null
+    [ -f "$MOONRAKER_PID" ] || return 1
+    kill -0 `cat "$MOONRAKER_PID"` 2>/dev/null
 }
 
 moonraker_check() {
-    n=0
-    while [ $n -lt 30 ]; do
+    waited=0
+    while [ $waited -lt 30 ]; do
         sleep 2
-        n=$((n + 1))
+        waited=$((waited + 1))
         moonraker_alive && continue
-        echo "moonraker: NOT running after $((n * 2))s -- last words:"
-        tail -n 15 "$MR_LOG" 2>/dev/null | sed 's/^/    /'
+        echo "moonraker: NOT running after $((waited * 2))s -- last words:"
+        tail -n 15 "$MOONRAKER_LOG" 2>/dev/null | sed 's/^/    /'
         return 1
     done
     echo "moonraker: up"
     return 0
 }
 stop() {
-    [ -f "$NGX_PID" ] && kill `cat $NGX_PID` 2>/dev/null
-    [ -f "$MR_PID" ] && start-stop-daemon -K -p $MR_PID 2>/dev/null
+    [ -f "$NGINX_PID" ] && kill `cat $NGINX_PID` 2>/dev/null
+    [ -f "$MOONRAKER_PID" ] && start-stop-daemon -K -p $MOONRAKER_PID 2>/dev/null
     echo "web: stopped"
 }
 case "$1" in
     start|'') start ;;
     stop)     stop ;;
     restart)  stop; sleep 2; start ;;
-    status)   [ -f "$NGX_PID" ] && echo "nginx: running" || echo "nginx: not running"
+    status)   [ -f "$NGINX_PID" ] && echo "nginx: running" || echo "nginx: not running"
               moonraker_alive && echo "moonraker: running" || echo "moonraker: not running" ;;
     *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
 esac

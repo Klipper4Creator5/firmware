@@ -57,7 +57,8 @@ class FFTool:
         self.extruder_name = ('extruder' if self.index == 0
                               else 'extruder%d' % self.index)
         # Measured (TOOL_OFFSET_CALIBRATE) -- one probe run yields all three.
-        nozzle = [config.getfloat('nozzle_' + a, None) for a in 'xyz']
+        nozzle = [config.getfloat('nozzle_' + axis, None)
+                  for axis in 'xyz']
         if None in nozzle and nozzle != [None, None, None]:
             raise config.error("%s: nozzle_x, nozzle_y and nozzle_z must be"
                                " set together" % self.name)
@@ -101,11 +102,14 @@ class FFTool:
         configfile.set(self.name, 'z_adjust', "%.6f" % z)
 
     def get_status(self, eventtime):
-        nx, ny, nz = self.nozzle if self.nozzle else (None, None, None)
+        nozzle_x, nozzle_y, nozzle_z = (self.nozzle if self.nozzle
+                                        else (None, None, None))
         return {'index': self.index, 'dock_x': self.dock_x,
                 'dock_y': self.dock_y, 'extruder': self.extruder_name,
-                'z_adjust': self.z_adjust, 'calibrated': self.nozzle is not None,
-                'nozzle_x': nx, 'nozzle_y': ny, 'nozzle_z': nz}
+                'z_adjust': self.z_adjust,
+                'calibrated': self.nozzle is not None,
+                'nozzle_x': nozzle_x, 'nozzle_y': nozzle_y,
+                'nozzle_z': nozzle_z}
 
 
 def load_config_prefix(config):

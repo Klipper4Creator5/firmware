@@ -5,8 +5,8 @@
 #   ./bin/build.sh --full           options are passed through to pack.sh
 #                                   (--slim is accepted but is the default)
 set -euo pipefail
-D="$(dirname "$0")"
-"$D/fetch-assets.sh"
-"$D/unpack.sh"
-"$D/patch.sh"
-"$D/pack.sh" "$@"
+SCRIPT_DIR="$(dirname "$0")"
+"$SCRIPT_DIR/fetch-assets.sh"
+"$SCRIPT_DIR/unpack.sh"
+"$SCRIPT_DIR/patch.sh"
+"$SCRIPT_DIR/pack.sh" "$@"

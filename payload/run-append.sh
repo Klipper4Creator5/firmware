@@ -19,11 +19,11 @@ for c in /usr/data/update/anvil.tar.xz /mnt/anvil.tar.xz $WORK_DIR/anvil.tar.xz;
 done
 
 if [ -n "$MODTAR" ]; then
-    NEED=`ls -l "$MODTAR" | tr -s ' ' | cut -d' ' -f5`
-    NEED=$((NEED / 1024 * 4))          # xz payload expands ~3-4x
-    FREE=`df /usr/data | tail -1 | tr -s ' ' | cut -d' ' -f4`
-    echo "mod payload: $MODTAR (need ~${NEED}KB, free ${FREE}KB)"
-    if [ "${FREE:-0}" -lt "$NEED" ]; then
+    NEED_KB=`ls -l "$MODTAR" | tr -s ' ' | cut -d' ' -f5`
+    NEED_KB=$((NEED_KB / 1024 * 4))          # xz payload expands ~3-4x
+    FREE_KB=`df /usr/data | tail -1 | tr -s ' ' | cut -d' ' -f4`
+    echo "mod payload: $MODTAR (need ~${NEED_KB}KB, free ${FREE_KB}KB)"
+    if [ "${FREE_KB:-0}" -lt "$NEED_KB" ]; then
         echo "!! not enough space on /usr/data -- skipping mod payload"
     else
         # Keep user-editable state; replace everything we own.
@@ -62,12 +62,12 @@ sync
 # whose Moonraker did not survive an update has no web UI at all, and the
 # screen would be the only way to notice.
 if [ -d $MODDIR/moonraker ]; then
-    MRROOT=/usr/prog/moonraker/moonraker
-    if [ -d $MRROOT/moonraker ]; then
+    MOONRAKER_ROOT=/usr/prog/moonraker/moonraker
+    if [ -d $MOONRAKER_ROOT/moonraker ]; then
         # Both trees exist at once during the swap; /usr/prog is the small
         # firmware partition, so check there is room before starting.
-        NEED=`du -sk $MODDIR/moonraker | cut -f1`
-        FREE=`df /usr/prog | tail -1 | tr -s ' ' | cut -d' ' -f4`
+        NEED_KB=`du -sk $MODDIR/moonraker | cut -f1`
+        FREE_KB=`df /usr/prog | tail -1 | tr -s ' ' | cut -d' ' -f4`
         # PRE-FLIGHT: ask THIS printer's python whether it can load the tree
         # before anything is moved. moonraker-preflight.py explains what it
         # imports and why; the short version is that it uses Moonraker's own
@@ -80,41 +80,43 @@ if [ -d $MODDIR/moonraker ]; then
         # is re-run by hand from ssh, where none of that is set -- and a check
         # that fails for a missing libsodium would condemn a perfectly good
         # build. Same list app_startup.sh uses.
-        MRPY=/usr/prog/Python-3.8.2/bin/python3
-        MRIMP=0
-        if [ -x $MRPY ] && [ -f $MODDIR/moonraker-preflight.py ]; then
+        MOONRAKER_PYTHON=/usr/prog/Python-3.8.2/bin/python3
+        MOONRAKER_PREFLIGHT_FAILED=0
+        if [ -x $MOONRAKER_PYTHON ] && [ -f $MODDIR/moonraker-preflight.py ]; then
             (
                 PATH=$PATH:/usr/prog/Python-3.8.2/bin
-                for d in /usr/prog/Python-3.8.2/lib /usr/prog/openssl-1.0.2d/lib \
+                for libdir in /usr/prog/Python-3.8.2/lib \
+                         /usr/prog/openssl-1.0.2d/lib \
                          /usr/prog/curl-7.55.1/lib /usr/prog/ffmpeg-402/lib \
                          /usr/prog/x264/lib /usr/prog/libffi-3.4.4/lib \
                          /usr/prog/libsodium/lib /usr/prog/opencv-4.2/lib \
                          /usr/prog/nim/lib /usr/prog/libzip-1.10.1/lib; do
-                    [ -d "$d" ] && LD_LIBRARY_PATH="$d:$LD_LIBRARY_PATH"
+                    [ -d "$libdir" ] \
+                        && LD_LIBRARY_PATH="$libdir:$LD_LIBRARY_PATH"
                 done
                 export PATH LD_LIBRARY_PATH
-                $MRPY $MODDIR/moonraker-preflight.py $MODDIR /usr/data/config/moonraker.conf
-            ) > /tmp/mr-import.log 2>&1 || MRIMP=1
+                $MOONRAKER_PYTHON $MODDIR/moonraker-preflight.py $MODDIR /usr/data/config/moonraker.conf
+            ) > /tmp/mr-import.log 2>&1 || MOONRAKER_PREFLIGHT_FAILED=1
             sed 's/^/   /' /tmp/mr-import.log 2>/dev/null | tail -12
         fi
-        if [ "$MRIMP" != 0 ]; then
+        if [ "$MOONRAKER_PREFLIGHT_FAILED" != 0 ]; then
             echo "!! moonraker: the shipped tree does not load on this printer -- keeping the stock one"
             echo "   (nothing was moved; the web UI is unaffected)"
-        elif [ "${FREE:-0}" -lt "$NEED" ]; then
-            echo "!! moonraker: only ${FREE}KB free on /usr/prog, need ${NEED}KB -- keeping the stock tree"
+        elif [ "${FREE_KB:-0}" -lt "$NEED_KB" ]; then
+            echo "!! moonraker: only ${FREE_KB}KB free on /usr/prog, need ${NEED_KB}KB -- keeping the stock tree"
         else
-            rm -rf $MRROOT/moonraker.modold
-            if mv $MRROOT/moonraker $MRROOT/moonraker.modold; then
-                if cp -a $MODDIR/moonraker $MRROOT/moonraker; then
+            rm -rf $MOONRAKER_ROOT/moonraker.modold
+            if mv $MOONRAKER_ROOT/moonraker $MOONRAKER_ROOT/moonraker.modold; then
+                if cp -a $MODDIR/moonraker $MOONRAKER_ROOT/moonraker; then
                     sync
                     # Bytecode from the FlashForge build would otherwise be
                     # the first thing imported. Same trap as klippy below.
-                    find $MRROOT/moonraker -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
-                    rm -rf $MRROOT/moonraker.modold
+                    find $MOONRAKER_ROOT/moonraker -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
+                    rm -rf $MOONRAKER_ROOT/moonraker.modold
                     echo "moonraker: replaced with the mod's build"
                 else
-                    rm -rf $MRROOT/moonraker
-                    mv $MRROOT/moonraker.modold $MRROOT/moonraker
+                    rm -rf $MOONRAKER_ROOT/moonraker
+                    mv $MOONRAKER_ROOT/moonraker.modold $MOONRAKER_ROOT/moonraker
                     echo "!! moonraker: copy failed -- rolled back to the stock tree"
                 fi
             else
@@ -122,7 +124,7 @@ if [ -d $MODDIR/moonraker ]; then
             fi
         fi
     else
-        echo "!! moonraker: no $MRROOT/moonraker on this printer -- nothing replaced"
+        echo "!! moonraker: no $MOONRAKER_ROOT/moonraker on this printer -- nothing replaced"
     fi
     sync
 fi
@@ -168,31 +170,31 @@ fi
 # has touched it and it is ours to replace. See the branch below.
 if [ -d $MODDIR/config ]; then
     mkdir -p /usr/data/config
-    for f in $MODDIR/config/*; do
-        [ -f "$f" ] || continue
-        b=`basename "$f"`
-        live="/usr/data/config/$b"
-        prev="$MODDIR/config-installed/$b"
-        case "$b" in
+    for source in $MODDIR/config/*; do
+        [ -f "$source" ] || continue
+        name=`basename "$source"`
+        live="/usr/data/config/$name"
+        prev="$MODDIR/config-installed/$name"
+        case "$name" in
         moonraker-custom.conf)
             # Yours, permanently. Created once so moonraker.conf's [include]
             # resolves -- Moonraker treats an include matching no file as a
             # fatal error -- and never touched again, not even as .mod-new.
             if [ -f "$live" ]; then
-                echo "config: $b kept (yours; never overwritten)"
+                echo "config: $name kept (yours; never overwritten)"
             else
-                cp -f "$f" "$live"
-                echo "config: $b created -- put your Moonraker settings here"
+                cp -f "$source" "$live"
+                echo "config: $name created -- put your Moonraker settings here"
             fi
             continue
             ;;
         ff-*.cfg)
             # Ours. Overwrite and say so when it had drifted, so the log
             # explains where a local edit went.
-            if [ -f "$live" ] && [ "`md5sum < "$live"`" != "`md5sum < "$f"`" ]; then
-                echo "config: $b overwritten (mod-owned; override it from printer.cfg)"
+            if [ -f "$live" ] && [ "`md5sum < "$live"`" != "`md5sum < "$source"`" ]; then
+                echo "config: $name overwritten (mod-owned; override it from printer.cfg)"
             fi
-            cp -f "$f" "$live"
+            cp -f "$source" "$live"
             continue
             ;;
         esac
@@ -203,19 +205,19 @@ if [ -d $MODDIR/config ]; then
         # of OURS, and the shipped config could never reach the printer at all.
         # runConfig/ holds the pristine template the machine was built with;
         # matching it byte for byte means nobody has touched the live copy.
-        stock="/usr/prog/klipper/runConfig/$b"
+        stock="/usr/prog/klipper/runConfig/$name"
         if [ ! -f "$live" ]; then
-            cp -f "$f" "$live"
+            cp -f "$source" "$live"
         elif [ -f "$prev" ] && [ "`md5sum < "$live"`" = "`md5sum < "$prev"`" ]; then
-            cp -f "$f" "$live"
-            echo "config: $b updated (was unmodified)"
+            cp -f "$source" "$live"
+            echo "config: $name updated (was unmodified)"
         elif [ ! -f "$prev" ] && [ -f "$stock" ] \
              && [ "`md5sum < "$live"`" = "`md5sum < "$stock"`" ]; then
-            cp -f "$f" "$live"
-            echo "config: $b installed over FlashForge's untouched copy"
+            cp -f "$source" "$live"
+            echo "config: $name installed over FlashForge's untouched copy"
         else
-            cp -f "$f" "$live.mod-new"
-            echo "config: $b kept -- new version left as $b.mod-new"
+            cp -f "$source" "$live.mod-new"
+            echo "config: $name kept -- new version left as $name.mod-new"
         fi
     done
     # Snapshot what we just shipped, for the NEXT update to compare against.
@@ -251,19 +253,19 @@ sync
 # unchanged. The stick only ever sees a password once, on the first install.
 PW_KEEP=""
 if [ "$MOD_PW_AUTO" = "1" ] && [ -f $MODDIR/.prev-root-hash ]; then
-    PREV=`cat $MODDIR/.prev-root-hash 2>/dev/null`
+    PREV_HASH=`cat $MODDIR/.prev-root-hash 2>/dev/null`
     # Compare against the hash the PACKAGE ships ($WORK_DIR is the stock
     # run.sh's own variable, still in scope here), not the live file: the
     # stock installer has already copied the shipped shadow over the live one
     # by now, and if that copy ever fails the live file still holds the old
     # password -- which must read as "set by someone", not as "fresh".
-    SHIP=""
+    SHIPPED_HASH=""
     [ -n "${WORK_DIR:-}" ] && [ -f "$WORK_DIR/shadow" ] &&
-        SHIP=`awk 'BEGIN{FS=":"} $1=="root"{print $2}' "$WORK_DIR/shadow" 2>/dev/null`
-    [ -n "$SHIP" ] ||
-        SHIP=`awk 'BEGIN{FS=":"} $1=="root"{print $2}' /usr/prog/etc/shadow 2>/dev/null`
-    case "$PREV" in
-    '$'*) [ "$PREV" != "$SHIP" ] && PW_KEEP="$PREV" ;;
+        SHIPPED_HASH=`awk 'BEGIN{FS=":"} $1=="root"{print $2}' "$WORK_DIR/shadow" 2>/dev/null`
+    [ -n "$SHIPPED_HASH" ] ||
+        SHIPPED_HASH=`awk 'BEGIN{FS=":"} $1=="root"{print $2}' /usr/prog/etc/shadow 2>/dev/null`
+    case "$PREV_HASH" in
+    '$'*) [ "$PREV_HASH" != "$SHIPPED_HASH" ] && PW_KEEP="$PREV_HASH" ;;
     esac
 fi
 rm -f $MODDIR/.prev-root-hash
@@ -278,16 +280,16 @@ if [ -n "$PW_KEEP" ]; then
         echo "!! root password is the stock one -- no ssh login"
     fi
 elif [ "$MOD_PW_AUTO" = "1" ]; then
-    PW=`tr -dc A-Za-z0-9 < /dev/urandom 2>/dev/null | head -c 14`
-    H=""
-    [ -n "$PW" ] && H=`mkpasswd -m sha512 "$PW" 2>/dev/null`
-    case "$H" in
+    NEW_PASSWORD=`tr -dc A-Za-z0-9 < /dev/urandom 2>/dev/null | head -c 14`
+    NEW_HASH=""
+    [ -n "$NEW_PASSWORD" ] && NEW_HASH=`mkpasswd -m sha512 "$NEW_PASSWORD" 2>/dev/null`
+    case "$NEW_HASH" in
     '$6$'*)
         PWFILE=/mnt/anvil-password.txt
         {   echo "anvil -- the root password for this printer"
             echo
             echo "    ssh root@<printer-ip>"
-            echo "    password: $PW"
+            echo "    password: $NEW_PASSWORD"
             echo
             echo "Save it somewhere safe and delete this file."
             echo "To change it, run  passwd  on the printer."
@@ -295,10 +297,10 @@ elif [ "$MOD_PW_AUTO" = "1" ]; then
         sync
         # Read it back off the stick: proves the write survived, not just that
         # the shell accepted the redirect.
-        if grep -q "password: $PW" $PWFILE 2>/dev/null; then
+        if grep -q "password: $NEW_PASSWORD" $PWFILE 2>/dev/null; then
             # /etc is a bind mount of /usr/prog/etc, so this IS the live file
             # dropbear authenticates against.
-            awk -v h="$H" 'BEGIN{FS=OFS=":"} $1=="root"{$2=h} {print}' \
+            awk -v h="$NEW_HASH" 'BEGIN{FS=OFS=":"} $1=="root"{$2=h} {print}' \
                 /usr/prog/etc/shadow > /usr/prog/etc/shadow.new &&
                 mv -f /usr/prog/etc/shadow.new /usr/prog/etc/shadow
             chmod 600 /usr/prog/etc/shadow

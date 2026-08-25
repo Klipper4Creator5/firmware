@@ -44,9 +44,9 @@ set -a
 if [ -f "$1" ]; then . "$1" || exit 91; fi
 if [ -f "$2" ]; then . "$2" || exit 92; fi
 set +a
-for k in %s; do
-    eval "v=\${$k-}"
-    printf '%%s=%%s\0' "$k" "$v"
+for key in %s; do
+    eval "value=\${$key-}"
+    printf '%%s=%%s\0' "$key" "$value"
 done
 ''' % " ".join(WANTED)
 
@@ -66,31 +66,31 @@ class Config:
         config_env = os.environ.get("CONFIG_ENV") or str(root / "config.env")
         test_env = os.environ.get("TEST_ENV") or str(root / "test.env")
 
-        proc = subprocess.run(
+        dumped = subprocess.run(
             ["bash", "-c", _DUMP, "ffsim", config_env, test_env],
             cwd=str(root), capture_output=True, text=True)
-        if proc.returncode != 0:
+        if dumped.returncode != 0:
             # A syntax error in config.env is a BROKEN harness, not a missing
             # precondition. The shell version could not tell the two apart:
             # the half-sourced file left STOCK_TGZ_* empty, the launcher
             # concluded there was nothing to test, and it reported a clean
             # skip. Naming the file that failed is the entire point.
-            which = {91: config_env, 92: test_env}.get(proc.returncode)
+            which = {91: config_env, 92: test_env}.get(dumped.returncode)
             raise Fail("could not read %s:\n%s"
                        % (which or ("%s / %s" % (config_env, test_env)),
-                          proc.stderr.strip()))
+                          dumped.stderr.strip()))
 
         values = {}
-        for item in proc.stdout.split("\0"):
+        for item in dumped.stdout.split("\0"):
             if "=" in item:
-                k, _, v = item.partition("=")
-                values[k] = v
+                key, _, value = item.partition("=")
+                values[key] = value
 
         # The environment wins -- see the module docstring. Being SET is what
         # counts, so this tests membership rather than truthiness.
-        for k in OVERRIDABLE:
-            if k in os.environ:
-                values[k] = os.environ[k]
+        for key in OVERRIDABLE:
+            if key in os.environ:
+                values[key] = os.environ[key]
 
         return cls(values, root, config_env, test_env)
 

@@ -25,7 +25,7 @@ skip() { echo "  SKIP  $*"; }
 
 PY=/usr/prog/Python-3.8.2/bin/python3
 MR=/usr/prog/moonraker/moonraker
-MR_MAIN=/usr/prog/moonraker/moonraker/moonraker/moonraker.py
+MOONRAKER_MAIN=/usr/prog/moonraker/moonraker/moonraker/moonraker.py
 S60=/tmp/payload/init.d/S60web
 
 [ -x "$PY" ] || { bad "no interpreter at $PY"; exit 1; }
@@ -100,9 +100,9 @@ fi
 # 3. S60web now starts moonraker itself, so the entry point it names has to
 #    be there and the tools it uses have to exist. A path that is wrong here
 #    means no web UI at all, and the failure would be a silent one.
-[ -f "$MR_MAIN" ] \
-    && ok "the entry point S60web names is present ($MR_MAIN)" \
-    || bad "no moonraker.py at $MR_MAIN"
+[ -f "$MOONRAKER_MAIN" ] \
+    && ok "the entry point S60web names is present ($MOONRAKER_MAIN)" \
+    || bad "no moonraker.py at $MOONRAKER_MAIN"
 
 command -v start-stop-daemon >/dev/null 2>&1 \
     && ok "start-stop-daemon is available for the pidfile" \

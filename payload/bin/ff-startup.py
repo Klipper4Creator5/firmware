@@ -204,17 +204,17 @@ class Moonraker:
     def __init__(self, base):
         self.base = base.rstrip('/')
 
-    def _open(self, req, timeout):
-        return urllib.request.urlopen(req, timeout=timeout)
+    def _open(self, request, timeout):
+        return urllib.request.urlopen(request, timeout=timeout)
 
     def get(self, path, timeout=5.0):
         """Return an endpoint's "result" object, or None if it is not there
         yet. Every failure mode -- connection refused, a timeout, an HTTP
         error, a body that is not JSON -- means the same thing to us (not
         ready), so they collapse into one None."""
-        req = urllib.request.Request(self.base + path, method='GET')
+        request = urllib.request.Request(self.base + path, method='GET')
         try:
-            with self._open(req, timeout) as fh:
+            with self._open(request, timeout) as fh:
                 body = fh.read()
         except Exception:
             return None
@@ -230,12 +230,12 @@ class Moonraker:
         request open, so a timeout or a dropped connection here is not an
         error -- it is the expected shape of success. The caller decides;
         we only report what happened."""
-        data = json.dumps({'script': script}).encode('utf-8')
-        req = urllib.request.Request(
-            self.base + '/printer/gcode/script', data=data,
+        payload = json.dumps({'script': script}).encode('utf-8')
+        request = urllib.request.Request(
+            self.base + '/printer/gcode/script', data=payload,
             headers={'Content-Type': 'application/json'}, method='POST')
         try:
-            with self._open(req, timeout) as fh:
+            with self._open(request, timeout) as fh:
                 fh.read()
             return True, 'ok'
         except urllib.error.HTTPError as exc:
@@ -253,30 +253,33 @@ class Moonraker:
     # -- the two questions we ask about klipper's state --------------------
 
     def klippy_state(self):
-        info = self.get('/server/info')
-        if info is None:
+        server_info = self.get('/server/info')
+        if server_info is None:
             return None
-        return info.get('klippy_state')
+        return server_info.get('klippy_state')
 
     def tools(self):
         """[ff_tool n] status for every tool, as a list of dicts (or None)."""
-        query = '&'.join('ff_tool%%20%d' % n for n in range(EXTRUDER_COUNT))
-        res = self.get('/printer/objects/query?' + query)
-        if res is None:
+        query = '&'.join('ff_tool%%20%d' % index
+                         for index in range(EXTRUDER_COUNT))
+        result = self.get('/printer/objects/query?' + query)
+        if result is None:
             return None
-        status = res.get('status', {})
-        return [status.get('ff_tool %d' % n) for n in range(EXTRUDER_COUNT)]
+        status = result.get('status', {})
+        return [status.get('ff_tool %d' % index)
+                for index in range(EXTRUDER_COUNT)]
 
     def save_pending(self):
-        res = self.get('/printer/objects/query?configfile=save_config_pending')
-        if res is None:
+        result = self.get(
+            '/printer/objects/query?configfile=save_config_pending')
+        if result is None:
             return None
-        cf = res.get('status', {}).get('configfile', {})
-        return bool(cf.get('save_config_pending'))
+        configfile = result.get('status', {}).get('configfile', {})
+        return bool(configfile.get('save_config_pending'))
 
 
 def any_calibrated(tools):
-    return any(t and t.get('calibrated') for t in tools or [])
+    return any(tool and tool.get('calibrated') for tool in tools or [])
 
 
 def board_name(key):
@@ -294,20 +297,20 @@ def hand_over_boards(panel, timeout):
     """
     if bringup is None:
         return
-    def progress(devs):
-        if not devs:
+    def progress(devices):
+        if not devices:
             return
-        names = [board_name(d) for d in devs]
+        names = [board_name(device) for device in devices]
         panel.say('WAKING ' + ' AND '.join(names[:2]), 0.08)
     panel.say('WAKING THE TOOLHEAD BOARDS', 0.05)
     try:
-        ok = bringup.bringup(list(bringup.DEFAULT_PORTS), timeout,
-                             on_progress=progress)
+        all_awake = bringup.bringup(list(bringup.DEFAULT_PORTS), timeout,
+                                    on_progress=progress)
     except Exception as exc:
         # A board is klippy's problem to report; ours is to not die here.
         log('mcu bring-up raised (%s) -- going on to klipper' % exc)
         return
-    log('mcu bring-up %s' % ('ok' if ok else 'reported a problem'))
+    log('mcu bring-up %s' % ('ok' if all_awake else 'reported a problem'))
 
 
 # --------------------------------------------------------------- klipper
@@ -318,7 +321,7 @@ def klippy_running():
     if os.path.exists(UDS):
         return True
     try:
-        pids = [p for p in os.listdir('/proc') if p.isdigit()]
+        pids = [entry for entry in os.listdir('/proc') if entry.isdigit()]
     except OSError:
         return False
     for pid in pids:
@@ -344,16 +347,17 @@ def start_klipper(args):
     env['FF_SKIP_MCU_BRINGUP'] = '1'
     log('starting klipper (%s)' % args.start_sh)
     try:
-        proc = subprocess.run(['/bin/sh', args.start_sh], env=env,
-                              stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, timeout=120)
+        completed = subprocess.run(['/bin/sh', args.start_sh], env=env,
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, timeout=120)
     except subprocess.TimeoutExpired:
         log('start.sh did not return within 120s')
         return False
     except Exception as exc:
         log('start.sh could not be run (%s)' % exc)
         return False
-    for line in (proc.stdout or b'').decode('utf-8', 'replace').splitlines():
+    for line in (completed.stdout
+                 or b'').decode('utf-8', 'replace').splitlines():
         log('  start.sh: %s' % line)
     return True
 
@@ -382,29 +386,29 @@ def stop_klipper(args):
             pass
 
 
-def klippy_fault(mr):
+def klippy_fault(moonraker):
     """The board klippy is complaining about, if it names one.
 
     On a failed connect klippy's state_message is "MCU 'eheaterboard' error
     during connect ..." -- the only place the guilty board is named, and
     exactly what an owner needs to know."""
-    info = mr.get('/printer/info')
-    if not info:
+    printer_info = moonraker.get('/printer/info')
+    if not printer_info:
         return None
-    message = info.get('state_message') or ''
+    message = printer_info.get('state_message') or ''
     for key in BOARDS:
         if "'%s'" % key in message:
             return board_name(key)
     return None
 
 
-def report_stack_failure(mr, panel):
+def report_stack_failure(moonraker, panel):
     """The one frame someone is left looking at, naming what did not come up."""
-    state = mr.klippy_state()
+    state = moonraker.klippy_state()
     if state is None:
         panel.failed('MOONRAKER IS NOT RESPONDING')
     elif state == 'error':
-        board = klippy_fault(mr)
+        board = klippy_fault(moonraker)
         if board:
             panel.failed('%s DID NOT ANSWER' % board)
         else:
@@ -414,24 +418,24 @@ def report_stack_failure(mr, panel):
                      % str(state).upper())
 
 
-def wait_for_stack(mr, panel, deadline, started, quiet=False):
+def wait_for_stack(moonraker, panel, deadline, started, quiet=False):
     """Block until klipper and moonraker are both up, or time runs out.
     Reports their state once per change so the boot log says which one
     everybody is waiting on, and creeps the panel's bar along with the wait
     so a long MCU hunt still looks like progress rather than a freeze."""
-    last = None
-    span = max(1.0, deadline - started)
+    last_state = None
+    window = max(1.0, deadline - started)
     while True:
-        state = mr.klippy_state()
-        if state != last:
+        state = moonraker.klippy_state()
+        if state != last_state:
             log('waiting: moonraker=%s klipper=%s'
                 % ('up' if state is not None else 'down', state or 'unknown'))
-            last = state
+            last_state = state
+        elapsed_fraction = 0.3 * (time.time() - started) / window
         if state is None:
-            panel.say('STARTING SERVICES', 0.05 + 0.3 * (time.time() - started) / span)
+            panel.say('STARTING SERVICES', 0.05 + elapsed_fraction)
         elif state != 'ready':
-            panel.say('WAITING FOR THE PRINTER',
-                      0.05 + 0.3 * (time.time() - started) / span)
+            panel.say('WAITING FOR THE PRINTER', 0.05 + elapsed_fraction)
         if state == 'ready':
             return True
         if state == 'error' and quiet:
@@ -448,16 +452,16 @@ def wait_for_stack(mr, panel, deadline, started, quiet=False):
             # replaced two seconds later by another attempt reads as a
             # failure the printer then ignored.
             if not quiet:
-                report_stack_failure(mr, panel)
+                report_stack_failure(moonraker, panel)
             return False
         time.sleep(2.0)
 
 
-def wait_for_ready(mr, deadline):
+def wait_for_ready(moonraker, deadline):
     """Wait for klippy alone -- used after the SAVE_CONFIG restart, where
     moonraker never went away and mainsail was never in question."""
     while True:
-        if mr.klippy_state() == 'ready':
+        if moonraker.klippy_state() == 'ready':
             return True
         if time.time() >= deadline:
             return False
@@ -485,17 +489,17 @@ def stamp(path, note):
 def run(args):
     started = time.time()
     deadline = started + args.timeout
-    mr = Moonraker(args.moonraker)
+    moonraker = Moonraker(args.moonraker)
     panel = Panel(args.fb, args.fb_geometry, enabled=not args.no_screen)
     panel.say('STARTING SERVICES', 0.05)
     try:
-        return startup(args, mr, panel, started, deadline)
+        return startup(args, moonraker, panel, started, deadline)
     finally:
         # Whatever happened, hand HelixScreen a clean panel.
         panel.done()
 
 
-def bring_up_printer(args, mr, panel, started, deadline):
+def bring_up_printer(args, moonraker, panel, started, deadline):
     """Boards out of their bootloaders, klippy up, and retry until it is.
 
     This is what init.d/S70klipper's supervise() used to do by tailing
@@ -510,27 +514,27 @@ def bring_up_printer(args, mr, panel, started, deadline):
             if not args.no_klipper and not start_klipper(args):
                 panel.failed('KLIPPER COULD NOT BE STARTED')
                 return False
-        if wait_for_stack(mr, panel, deadline, started, quiet=True):
+        if wait_for_stack(moonraker, panel, deadline, started, quiet=True):
             return True
         if time.time() >= deadline or attempt == args.klipper_tries:
             break
         # Reopening the port toggles DTR/RTS, which is what gives a board
         # that missed its window another chance -- so the restart is the
         # fix, not merely another go at the same thing.
-        board = klippy_fault(mr)
+        board = klippy_fault(moonraker)
         log('attempt %d/%d failed (%s) -- restarting klipper'
             % (attempt, args.klipper_tries, board or 'no board named'))
         panel.say('RETRYING %s' % (board or 'THE PRINTER'), 0.15,
                   detail='ATTEMPT %d OF %d' % (attempt + 1,
                                                args.klipper_tries))
         stop_klipper(args)
-    report_stack_failure(mr, panel)
+    report_stack_failure(moonraker, panel)
     return False
 
 
-def startup(args, mr, panel, started, deadline):
+def startup(args, moonraker, panel, started, deadline):
     # -- every boot ------------------------------------------------------
-    if not bring_up_printer(args, mr, panel, started, deadline):
+    if not bring_up_printer(args, moonraker, panel, started, deadline):
         return 1
 
     # -- first boot only -------------------------------------------------
@@ -546,12 +550,12 @@ def startup(args, mr, panel, started, deadline):
         return 0
     log('first boot: importing this unit\'s factory calibration from %s'
         % args.dir)
-    return migrate(args, mr, panel)
+    return migrate(args, moonraker, panel)
 
 
-def migrate(args, mr, panel):
+def migrate(args, moonraker, panel):
     deadline = time.time() + args.timeout
-    tools = mr.tools()
+    tools = moonraker.tools()
     if tools is None:
         log('could not read the ff_tool objects -- no stamp')
         panel.failed('COULD NOT READ THE TOOL SETTINGS')
@@ -564,7 +568,7 @@ def migrate(args, mr, panel):
         stamp(args.stamp, 'already calibrated; nothing imported')
         return 0
 
-    pending = mr.save_pending()
+    pending = moonraker.save_pending()
     if pending is None:
         log('could not read save_config_pending -- no stamp')
         panel.failed('COULD NOT READ THE PRINTER CONFIGURATION')
@@ -581,12 +585,12 @@ def migrate(args, mr, panel):
         return 0
 
     panel.say('READING FACTORY CALIBRATION', 0.5)
-    ok, detail = mr.gcode('FF_IMPORT_FIRMWARE_CONFIG')
-    if not ok:
+    applied, detail = moonraker.gcode('FF_IMPORT_FIRMWARE_CONFIG')
+    if not applied:
         log('FF_IMPORT_FIRMWARE_CONFIG failed: %s' % detail)
         panel.failed('THE PRINTER REFUSED FF_IMPORT_FIRMWARE_CONFIG')
         return 1
-    tools = mr.tools()
+    tools = moonraker.tools()
     if not any_calibrated(tools):
         # The command ran but the JSON held nothing usable. Saving now would
         # persist nothing and restart klippy for no reason.
@@ -596,17 +600,17 @@ def migrate(args, mr, panel):
 
     log('imported; persisting with SAVE_CONFIG -- klipper restarts once')
     panel.say('SAVING CALIBRATION', 0.7)
-    ok, detail = mr.gcode('SAVE_CONFIG', timeout=20.0)
-    if not ok:
+    applied, detail = moonraker.gcode('SAVE_CONFIG', timeout=20.0)
+    if not applied:
         # Expected: the restart cuts the connection before moonraker answers.
         log('SAVE_CONFIG did not answer (%s) -- klipper is restarting' % detail)
 
     panel.say('RESTARTING THE PRINTER', 0.85)
-    if not wait_for_ready(mr, max(deadline, time.time() + 90.0)):
+    if not wait_for_ready(moonraker, max(deadline, time.time() + 90.0)):
         log('klipper did not come back after SAVE_CONFIG -- no stamp')
         panel.failed('KLIPPER DID NOT RESTART AFTER SAVING')
         return 1
-    tools = mr.tools()
+    tools = moonraker.tools()
     if not any_calibrated(tools):
         log('klipper came back with no saved nozzle position -- the save did'
             ' not take, no stamp')
@@ -629,50 +633,51 @@ def selftest():
     the script running itself, which is what this is for -- the replica gate
     calls it, and it is worth having on a printer over ssh too.
     """
-    ok = True
+    passed = True
     print('ffscreen: %s' % ('yes' if ffscreen is not None else 'NO'))
     if ffscreen is None:
-        ok = False
+        passed = False
     print('ff_mcu_bringup: %s' % ('yes' if bringup is not None else 'NO'))
     if bringup is None:
-        ok = False
+        passed = False
     else:
         ports = list(bringup.DEFAULT_PORTS)
         print('ports: %d (%s)' % (len(ports), ' '.join(ports)))
-        unnamed = [d for d in ports if not board_name(d).startswith('THE ')]
+        unnamed = [port for port in ports
+                   if not board_name(port).startswith('THE ')]
         print('named: %s' % ('yes' if not unnamed else 'NO %s' % unnamed))
         if unnamed:
-            ok = False
-    print('selftest: %s' % ('ok' if ok else 'FAILED'))
-    return 0 if ok else 1
+            passed = False
+    print('selftest: %s' % ('ok' if passed else 'FAILED'))
+    return 0 if passed else 1
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--stamp', default=STAMP)
-    ap.add_argument('--dir', default=JSON_DIR)
-    ap.add_argument('--moonraker', default=MOONRAKER)
-    ap.add_argument('--timeout', type=float, default=TIMEOUT)
-    ap.add_argument('--mcu-timeout', type=float, default=MCU_TIMEOUT,
-                    help="how long one bring-up pass may take")
-    ap.add_argument('--klipper-tries', type=int, default=KLIPPER_TRIES,
-                    help="how many times to hand the boards over and retry")
-    ap.add_argument('--start-sh', default=START_SH)
-    ap.add_argument('--daemon', default=DAEMON)
-    ap.add_argument('--no-klipper', action='store_true',
-                    help="do not start klipper; only wait for it")
-    ap.add_argument('--no-import', action='store_true',
-                    help="only bring the printer up; never migrate")
-    ap.add_argument('--fb', default=None,
-                    help='framebuffer to draw the boot screen on')
-    ap.add_argument('--fb-geometry', default=None,
-                    help="panel size as WxH@BPP, skipping the sysfs probe")
-    ap.add_argument('--no-screen', action='store_true',
-                    help='do not draw anything on the panel')
-    ap.add_argument('--dry-run', action='store_true')
-    ap.add_argument('--selftest', action='store_true',
-                    help='report what this script can reach, and exit')
-    args = ap.parse_args(argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--stamp', default=STAMP)
+    parser.add_argument('--dir', default=JSON_DIR)
+    parser.add_argument('--moonraker', default=MOONRAKER)
+    parser.add_argument('--timeout', type=float, default=TIMEOUT)
+    parser.add_argument('--mcu-timeout', type=float, default=MCU_TIMEOUT,
+                        help="how long one bring-up pass may take")
+    parser.add_argument('--klipper-tries', type=int, default=KLIPPER_TRIES,
+                        help="how many times to hand the boards over and retry")
+    parser.add_argument('--start-sh', default=START_SH)
+    parser.add_argument('--daemon', default=DAEMON)
+    parser.add_argument('--no-klipper', action='store_true',
+                        help="do not start klipper; only wait for it")
+    parser.add_argument('--no-import', action='store_true',
+                        help="only bring the printer up; never migrate")
+    parser.add_argument('--fb', default=None,
+                        help='framebuffer to draw the boot screen on')
+    parser.add_argument('--fb-geometry', default=None,
+                        help="panel size as WxH@BPP, skipping the sysfs probe")
+    parser.add_argument('--no-screen', action='store_true',
+                        help='do not draw anything on the panel')
+    parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--selftest', action='store_true',
+                        help='report what this script can reach, and exit')
+    args = parser.parse_args(argv)
     if args.selftest:
         return selftest()
     try:

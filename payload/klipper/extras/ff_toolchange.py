@@ -86,15 +86,15 @@ ERR_RELEASE_STATE = 144         # E0144    state error after release verify
 # ---------------------------------------------------------------------------
 
 class _ToolchangerView:
-    def __init__(self, tc):
-        self.tc = tc
+    def __init__(self, toolchanger):
+        self.toolchanger = toolchanger
 
     def get_status(self, eventtime):
-        st = self.tc.get_status(eventtime)
-        cur = st['current_tool']
-        if self.tc.changing:
+        own = self.toolchanger.get_status(eventtime)
+        mounted = own['current_tool']
+        if self.toolchanger.changing:
             status = 'changing'
-        elif not st['state_ok']:
+        elif not own['state_ok']:
             status = 'error'
         else:
             status = 'ready'
@@ -104,55 +104,57 @@ class _ToolchangerView:
         # and grab sensors, so the two are the same value by construction.
         # They are reported separately anyway, because a UI that only reads
         # detected_* must still see a tool.
-        name = 'T%d' % cur if cur >= 0 else None
+        name = 'T%d' % mounted if mounted >= 0 else None
         return {'name': 'toolchanger',
                 'status': status,
-                'tool_number': cur,
+                'tool_number': mounted,
                 'tool_numbers': list(range(EXTRUDER_COUNT)),
                 'tool_names': ['T%d' % i for i in range(EXTRUDER_COUNT)],
                 'tool': name,
                 'detected_tool': name,
-                'detected_tool_number': cur,
+                'detected_tool_number': mounted,
                 'has_detection': True,
-                'state_reason': st['state_reason'],
-                'print_offset_ready': st['print_offset_ready']}
+                'state_reason': own['state_reason'],
+                'print_offset_ready': own['print_offset_ready']}
 
 
 class _ToolView:
-    def __init__(self, tc, index):
-        self.tc = tc
+    def __init__(self, toolchanger, index):
+        self.toolchanger = toolchanger
         self.index = index
 
     def get_status(self, eventtime):
-        tc = self.tc
-        cur = tc.get_status(eventtime)['current_tool']
-        t = tc.tools[self.index]
+        toolchanger = self.toolchanger
+        mounted = toolchanger.get_status(eventtime)['current_tool']
+        tool = toolchanger.tools[self.index]
         # klipper-toolchanger's detect_state: is THIS tool seen on the
         # carriage -- our per-tool grab sensor. 'unavailable' if unreadable.
         # 'mounted' is upstream's spelling of present (DETECT_PRESENT).
         try:
-            detect = ('mounted' if tc._sensor(tc.grab_sensors[self.index],
-                                              eventtime) else 'absent')
+            detect = ('mounted'
+                      if toolchanger._sensor(
+                          toolchanger.grab_sensors[self.index], eventtime)
+                      else 'absent')
         except (FFToolchangeError, IndexError):
             detect = 'unavailable'
         return {'tool_number': self.index,
                 'name': 'T%d' % self.index,
                 'toolchanger': 'toolchanger',
-                'active': cur == self.index,
-                'mounted': cur == self.index,
+                'active': mounted == self.index,
+                'mounted': mounted == self.index,
                 'detect_state': detect,
-                'extruder': t.extruder_name,
+                'extruder': tool.extruder_name,
                 # In Klipper the extruder object IS its heater, and this
                 # machine has no separate [extruder_stepper] sections, so
                 # upstream's third name has nothing to point at.
-                'heater': t.extruder_name,
+                'heater': tool.extruder_name,
                 'extruder_stepper': None,
-                'fan': tc.part_fan,
+                'fan': toolchanger.part_fan,
                 # the differences actually applied on a grab
-                'gcode_x_offset': tc.off_x[self.index],
-                'gcode_y_offset': tc.off_y[self.index],
-                'gcode_z_offset': tc.off_z[self.index],
-                'calibrated': t.calibrated()}
+                'gcode_x_offset': toolchanger.offset_x[self.index],
+                'gcode_y_offset': toolchanger.offset_y[self.index],
+                'gcode_z_offset': toolchanger.offset_z[self.index],
+                'calibrated': tool.calibrated()}
 
 
 class FFToolchangeError(Exception):
@@ -189,7 +191,7 @@ class FFToolchange:
         # and docs/notes/40-offsets.md.
         self.offset_base = config.getint('offset_base', 0,
                                          minval=0, maxval=EXTRUDER_COUNT - 1)
-        self.off_x = self.off_y = self.off_z = [0.0] * EXTRUDER_COUNT
+        self.offset_x = self.offset_y = self.offset_z = [0.0] * EXTRUDER_COUNT
         self.refresh_offsets()
         # True while a T<n>/TOOLCHANGE sequence is running (reported as
         # toolchanger.status = 'changing').
@@ -372,28 +374,32 @@ class FFToolchange:
         tools = self.tools
         z_station = self._station_z()
         base_ok = tools[base].calibrated()
-        bx, by, bz = tools[base].nozzle if base_ok else (0.0, 0.0, 0.0)
-        xs, ys, zs = [], [], []
-        for t in tools:
-            if t.calibrated() and base_ok:
-                xs.append(t.nozzle[0] - bx)
-                ys.append(t.nozzle[1] - by)
+        base_x, base_y, base_z = (tools[base].nozzle if base_ok
+                                  else (0.0, 0.0, 0.0))
+        x_offsets, y_offsets, z_offsets = [], [], []
+        for tool in tools:
+            if tool.calibrated() and base_ok:
+                x_offsets.append(tool.nozzle[0] - base_x)
+                y_offsets.append(tool.nozzle[1] - base_y)
             else:
-                xs.append(0.0)
-                ys.append(0.0)
-            if t.calibrated() and z_station is not None:
-                zs.append(t.z_adjust + (t.nozzle[2] - z_station))
-            elif t.calibrated() and base_ok:
-                zs.append(t.z_adjust + (t.nozzle[2] - bz))
+                x_offsets.append(0.0)
+                y_offsets.append(0.0)
+            if tool.calibrated() and z_station is not None:
+                z_offsets.append(tool.z_adjust + (tool.nozzle[2] - z_station))
+            elif tool.calibrated() and base_ok:
+                z_offsets.append(tool.z_adjust + (tool.nozzle[2] - base_z))
             else:
-                zs.append(t.z_adjust)
-        return xs, ys, zs
+                z_offsets.append(tool.z_adjust)
+        return x_offsets, y_offsets, z_offsets
 
     def refresh_offsets(self, gcmd=None):
         """Re-derive after a calibration changed an [ff_tool] live."""
-        fx, fy, fz = self._derive_offsets(self.offset_base)
-        changed = (fx, fy, fz) != (self.off_x, self.off_y, self.off_z)
-        self.off_x, self.off_y, self.off_z = fx, fy, fz
+        derived_x, derived_y, derived_z = self._derive_offsets(
+            self.offset_base)
+        changed = ((derived_x, derived_y, derived_z)
+                   != (self.offset_x, self.offset_y, self.offset_z))
+        self.offset_x, self.offset_y, self.offset_z = (derived_x, derived_y,
+                                                       derived_z)
         if gcmd is not None:
             gcmd.respond_info("ff_toolchange: offsets %s"
                               % ("updated" if changed else "unchanged"))
@@ -414,10 +420,11 @@ class FFToolchange:
         Reset the remembered term to what is actually applied (nothing), then
         re-apply the mounted tool's offsets so Z=0 is the bed again. With the
         term at 0 and the live offset at 0 the recovered babystep is 0, so
-        this applies exactly off_z[tool] -- the frame a fresh grab would set.
+        this applies exactly offset_z[tool] -- the frame a fresh grab
+        would set.
         """
         self._z_tool_term = 0.0
-        tool, _why = self._current_tool_or_none()
+        tool, _reason = self._current_tool_or_none()
         if tool is None or tool < 0:
             return False
         self._apply_tool_diff_offsets(tool)
@@ -428,14 +435,14 @@ class FFToolchange:
         return True
 
     def uncalibrated_tools(self):
-        return [t.index for t in self.tools if not t.calibrated()]
+        return [tool.index for tool in self.tools if not tool.calibrated()]
 
     def _station_z(self):
         """station_z from [ff_tool_offset] (STATION_CALIBRATE), or None."""
-        st = self.printer.lookup_object('ff_tool_offset', None)
-        if st is None or st.station is None:
+        offsets = self.printer.lookup_object('ff_tool_offset', None)
+        if offsets is None or offsets.station is None:
             return None
-        return st.station[2]
+        return offsets.station[2]
 
     # ---------------- plumbing ----------------
 
@@ -456,24 +463,25 @@ class FFToolchange:
                 missing.append("gcode_button %s" % name)
 
         for tool in range(EXTRUDER_COUNT):
-            ename = self._extruder_name(tool)
-            if self.printer.lookup_object(ename, None) is None:
-                missing.append(ename)
+            extruder_name = self._extruder_name(tool)
+            if self.printer.lookup_object(extruder_name, None) is None:
+                missing.append(extruder_name)
 
         # gcode_macro objects keep the section name's casing, but the command
         # each registers is name.upper() (gcode_macro.py: alias = name.upper())
         # -- so compare case-insensitively against the registered macros.
         macros = set()
-        for oname, _obj in self.printer.lookup_objects(module='gcode_macro'):
-            parts = oname.split(None, 1)
-            if len(parts) == 2:
-                macros.add(parts[1].upper())
+        for object_name, _obj in self.printer.lookup_objects(
+                module='gcode_macro'):
+            section_words = object_name.split(None, 1)
+            if len(section_words) == 2:
+                macros.add(section_words[1].upper())
 
-        for mname in (self.grab_macro, self.grab2_macro,
-                      self.release_macro, self.stop_macro):
-            cmd = mname.split()[0]
-            if cmd.upper() not in macros:
-                missing.append("gcode_macro %s" % cmd)
+        for macro_name in (self.grab_macro, self.grab2_macro,
+                           self.release_macro, self.stop_macro):
+            command = macro_name.split()[0]
+            if command.upper() not in macros:
+                missing.append("gcode_macro %s" % command)
 
         self.runout_switch = self._resolve_runout_sensors(
             'filament_switch_sensor', self.runout_switch_prefix, missing)
@@ -505,7 +513,7 @@ class FFToolchange:
         # Mirror the sensors to whatever is on the carriage after a
         # restart (the app re-arms at print start only; arming outside a
         # print is harmless -- _FF_RUNOUT ignores it unless printing).
-        tool, _why = self._current_tool_or_none()
+        tool, _reason = self._current_tool_or_none()
         if tool is None or tool < 0:
             self._disarm_runout()
         else:
@@ -688,16 +696,16 @@ class FFToolchange:
         """Non-throwing variant, for reporting only."""
         try:
             return self._derive_current_tool(eventtime)
-        except FFToolchangeError as e:
-            return None, str(e)
+        except FFToolchangeError as err:
+            return None, str(err)
 
     def _dock(self, tool):
-        t = self.tools[tool]
-        if not t.has_dock():
+        tool_object = self.tools[tool]
+        if not tool_object.has_dock():
             raise FFToolchangeError(
                 "T%d has no dock position ([ff_tool %d] dock_x/dock_y) --"
                 " run FF_IMPORT_FIRMWARE_CONFIG and SAVE_CONFIG" % (tool, tool))
-        return t.dock_x + self.x_correction, t.dock_y
+        return tool_object.dock_x + self.x_correction, tool_object.dock_y
 
     def _extruder_name(self, tool):
         return self.tools[tool].extruder_name
@@ -710,8 +718,8 @@ class FFToolchange:
     def _parse_axes(raw, error, what):
         """'xyz' -> 'XYZ', rejecting anything that is not an axis letter."""
         axes = ''.join(sorted(set(raw.strip().upper())))
-        bad = [a for a in axes if a not in 'XYZ']
-        if bad:
+        not_axis_letters = [letter for letter in axes if letter not in 'XYZ']
+        if not_axis_letters:
             raise error("%s: expected letters from XYZ, got '%s'"
                         % (what, raw))
         return axes
@@ -722,8 +730,8 @@ class FFToolchange:
 
     def _capture_position(self):
         """The G-code position the change is about to disturb."""
-        gm = self.printer.lookup_object('gcode_move')
-        return list(gm.get_status()['gcode_position'])
+        gcode_move = self.printer.lookup_object('gcode_move')
+        return list(gcode_move.get_status()['gcode_position'])
 
     def _restore_position(self, axes, pos):
         """Put the toolhead back where the change found it.
@@ -743,15 +751,15 @@ class FFToolchange:
         """
         if not axes:
             return
-        xy = ' '.join('%s%.3f' % (a, pos[i])
-                      for i, a in enumerate('XY') if a in axes)
+        xy_move = ' '.join('%s%.3f' % (letter, pos[i])
+                           for i, letter in enumerate('XY') if letter in axes)
         # The sequence has already put the modal state back; borrow it and
         # return it rather than leaving G90 and the restore feed behind.
         self._run('SAVE_GCODE_STATE NAME=_ff_restore_axis')
         try:
             self._run('G90')
-            if xy:
-                self._run('G1 %s F%d' % (xy, self.restore_feed))
+            if xy_move:
+                self._run('G1 %s F%d' % (xy_move, self.restore_feed))
             if 'Z' in axes:
                 self._run('G1 Z%.3f F%d' % (pos[2], self.restore_feed))
         finally:
@@ -775,15 +783,15 @@ class FFToolchange:
         restores the pre-sequence mode and feedrate."""
         # gcode_move always exists -- toolhead.py:297 loads it
         # unconditionally with its other standard modules.
-        st = self.printer.lookup_object('gcode_move').get_status()
-        absolute, speed = (st['absolute_coordinates'], st['speed'])
+        modal = self.printer.lookup_object('gcode_move').get_status()
+        absolute, speed = (modal['absolute_coordinates'], modal['speed'])
 
-        accel = self.accel_restore or self._current_max_accel()
+        restore_accel = self.accel_restore or self._current_max_accel()
         try:
             yield
         finally:
             self._run(self.stop_macro)
-            self._run('SET_VELOCITY_LIMIT ACCEL=%d' % accel)
+            self._run('SET_VELOCITY_LIMIT ACCEL=%d' % restore_accel)
 
             if not absolute:
                 self._run('G91')
@@ -807,7 +815,7 @@ class FFToolchange:
 
     def _grab(self, tool):
         """Port of CommMgr::doGrabExtruderLatest @0x7a8190."""
-        dx, dy = self._dock(tool)
+        dock_x, dock_y = self._dock(tool)
 
         # Precheck: the target must be detected in its dock (20 x 50 ms).
         # No motion at all on failure.
@@ -823,7 +831,7 @@ class FFToolchange:
             self._run('SET_GCODE_OFFSET X=0 Y=0 MOVE=1 MOVE_SPEED=100')
             self._run('G90')
             self._run('G1 X%.3f F%d' % (self.x_safe, self.fast_feed))
-            self._run('G1 Y%.3f' % dy)
+            self._run('G1 Y%.3f' % dock_y)
             self._run('G1 X%.3f' % self.x_approach)
 
             # Up to 3 attempts; within each, poll up to 1 s for the grab
@@ -835,7 +843,7 @@ class FFToolchange:
                 # back-off to x_approach below is undone before the next
                 # round of polling. Without it, attempts 2 and 3 poll from
                 # the backed-off position and can never mate.
-                self._run('G1 X%.3f F%d' % (dx, self.slow_feed))
+                self._run('G1 X%.3f F%d' % (dock_x, self.slow_feed))
                 self._wait_moves()
 
                 # the app sleeps before its first poll
@@ -847,7 +855,7 @@ class FFToolchange:
                     # The pullback feed is the app's literal F4800
                     # (@0x7a9074), NOT the calibrated slow feed.
                     self._run('G1 X%.3f F%d'
-                              % (dx - self.grab_pullback, PULLBACK_FEED))
+                              % (dock_x - self.grab_pullback, PULLBACK_FEED))
                     self._run(self.grab2_macro)
                     break
 
@@ -869,10 +877,10 @@ class FFToolchange:
 
             # Verify: the tool must have LEFT its dock and the grab sensor
             # must be engaged. (doGrabExtruderLatest: !inLocation && grab)
-            ok = self._poll_until(
+            triggered = self._poll_until(
                 lambda: (not self._in_location(tool)) and self._grab_sensor(),
                 VERIFY_TIMEOUT)
-            if not ok:
+            if not triggered:
                 raise FFToolchangeError(
                     "T%d pickup could not be verified: in_dock=%s"
                     " grab_sensor=%s (firmware error E%04d)"
@@ -910,7 +918,7 @@ class FFToolchange:
         MOTOR_RELEASE it never supervises (it re-issues before checking its
         counter); we stop at three rather than energise the motor with no one
         watching."""
-        dx, dy = self._dock(tool)
+        dock_x, dock_y = self._dock(tool)
 
         # Sensors off first (changeExtruderChannel @0x79750c disarms before
         # the head swap): nothing the carriage does at the dock may fire a
@@ -935,14 +943,14 @@ class FFToolchange:
             # loop. There is NO X280 stage here -- that is grab-only; the
             # release staging point is dockX-10 below.
             self._run('G1 X%.3f F%d' % (self.x_safe, self.fast_feed))
-            self._run('G1 Y%.3f' % dy)
+            self._run('G1 Y%.3f' % dock_y)
 
             for attempt in range(RELEASE_ATTEMPTS):
                 # The app emits G1 X<dock-10> with NO F (inheriting the
                 # modal feed: fast on attempt 1, the slow feed on retries)
                 # and the final mate at the release slow feed.
-                self._run('G1 X%.3f' % (dx - RELEASE_STAGE_BACKOFF))
-                self._run('G1 X%.3f F%d' % (dx, self.release_slow_feed))
+                self._run('G1 X%.3f' % (dock_x - RELEASE_STAGE_BACKOFF))
+                self._run('G1 X%.3f F%d' % (dock_x, self.release_slow_feed))
                 self._wait_moves()
 
                 # Unlock only once the dock sensor confirms the tool has
@@ -988,10 +996,10 @@ class FFToolchange:
 
             # Verify: tool in its dock AND nothing held.
             # (doReleaseExtruderLatest: inLocation && !grab)
-            ok = self._poll_until(
+            triggered = self._poll_until(
                 lambda: self._in_location(tool) and not self._grab_sensor(),
                 VERIFY_TIMEOUT)
-            if not ok:
+            if not triggered:
                 raise FFToolchangeError(
                     "state error after releasing T%d: in_dock=%s"
                     " grab_sensor=%s (firmware error E%04d)"
@@ -1049,8 +1057,8 @@ class FFToolchange:
             # on the right hotend for exactly that reason.
             if resume is not None:
                 self._restore_position(restore_axis, resume)
-        except FFToolchangeError as e:
-            raise gcmd.error(str(e))
+        except FFToolchangeError as err:
+            raise gcmd.error(str(err))
         except self.printer.command_error:
             # A raw Klipper error (move out of range, shutdown, macro fault)
             # escaped the sequence. The finally-clauses restored accel,
@@ -1073,16 +1081,17 @@ class FFToolchange:
         """Apply this tool's offsets after a successful grab.
         Port of CommMgr::setGrabGcodeOffsetMgr(tool, onlyZ=false).
 
-        off_x/off_y are small tool-to-tool DIFFERENCES against the base
-        tool; off_z is this tool's ABSOLUTE gap to the bed plane (~+3.2 mm,
+        offset_x/offset_y are small tool-to-tool DIFFERENCES against the base
+        tool; offset_z is this tool's ABSOLUTE gap to the bed plane (~+3.2 mm,
         see _derive_offsets). Unlike the app, which sets that gap once per
         print (setZOffsetWhenPrint) and carries it across changes, every
         grab establishes it here -- so the only thing carried is whatever
         sits on top of it: TOOLCHANGE_SET_PRINT_OFFSET's job terms and the
         user's live babystep.
 
-            new Z = off_z[new] + (old Z - off_z[old])
-                  = [t_new_z - z_station + zoff[new]] + job terms + babystep
+            new Z = offset_z[new] + (old Z - offset_z[old])
+                  = [t_new_z - z_station + z_adjust[new]] + job terms
+                    + babystep
 
         The app sends two commands, different move speeds, 3-decimal
         formatting (BaseFunction::float_to_string(v, 3)):
@@ -1105,9 +1114,9 @@ class FFToolchange:
         to plain tool diffs in the raw frame, which is what the stock app's
         calibration flows expect."""
         babystep = self._gcode_z_offset() - self._z_tool_term
-        z_term = self.off_z[tool]
+        z_term = self.offset_z[tool]
         self._run('SET_GCODE_OFFSET X=%.3f Y=%.3f MOVE=1 MOVE_SPEED=100'
-                  % (self.off_x[tool], self.off_y[tool]))
+                  % (self.offset_x[tool], self.offset_y[tool]))
         self._run('SET_GCODE_OFFSET Z=%.3f MOVE=1 MOVE_SPEED=40'
                   % (z_term + babystep))
         self._z_tool_term = z_term
@@ -1138,7 +1147,8 @@ class FFToolchange:
         against the fixed under-bed sensor. Derivation: docs/notes/40-offsets.md.
 
         The gap term (nozzle_z - station_z + z_adjust) is already the grab
-        offset (off_z, applied by every T<n>); this command re-asserts it and
+        offset (offset_z, applied by every T<n>); this command re-asserts
+        it and
         adds the job terms, which the next _apply_tool_diff_offsets then
         carries as "babystep" -- the app re-adds m_zOffset on every grab.
         END/CANCEL must reset with SET_GCODE_OFFSET Z=0 MOVE=1 (app exit
@@ -1148,7 +1158,7 @@ class FFToolchange:
         layer = gcmd.get_float('LAYER', 0.)
         tool = gcmd.get_int('TOOL', -1, minval=-1, maxval=EXTRUDER_COUNT - 1)
         if tool < 0:
-            current, _why = self._current_tool_or_none()
+            current, _reason = self._current_tool_or_none()
             tool = current if current is not None and current >= 0 else 0
 
         z_station = self._station_z()
@@ -1161,28 +1171,29 @@ class FFToolchange:
                 " several mm too low; NOT printing is the safe choice. Run"
                 " STATION_CALIBRATE / TOOL_OFFSET_CALIBRATE (or"
                 " FF_IMPORT_FIRMWARE_CONFIG) and SAVE_CONFIG." % tool)
-        tools = [t.nozzle or (0.0, 0.0, 0.0) for t in self.tools]
-        zoff = [t.z_adjust for t in self.tools]
-        z = tools[tool][2] - z_station + (nozzle - 120.0) * temp_coeff
+        nozzles = [tool_object.nozzle or (0.0, 0.0, 0.0)
+                   for tool_object in self.tools]
+        z_adjusts = [tool_object.z_adjust for tool_object in self.tools]
+        z = nozzles[tool][2] - z_station + (nozzle - 120.0) * temp_coeff
         if bed >= 100.0:
             z += 0.08
         int_layer = int(layer * 100.0)
         if 0 < int_layer <= 10:
             z += -0.06
-        z += zoff[tool]
+        z += z_adjusts[tool]
         gcmd.respond_info(
             "print Z offset for T%d: %.3f (gap %.3f, temp %+.3f,"
             " bed %+.2f, layer %+.2f, user %+.3f)"
-            % (tool, z, tools[tool][2] - z_station,
+            % (tool, z, nozzles[tool][2] - z_station,
                (nozzle - 120.0) * temp_coeff,
                0.08 if bed >= 100.0 else 0.0,
-               -0.06 if 0 < int_layer <= 10 else 0.0, zoff[tool]))
+               -0.06 if 0 < int_layer <= 10 else 0.0, z_adjusts[tool]))
         self._run('SET_GCODE_OFFSET X=%.3f Y=%.3f Z=%.3f'
                   ' MOVE=1 MOVE_SPEED=100'
-                  % (self.off_x[tool], self.off_y[tool], z))
-        # off_z[tool] is the gap + z_adjust part of z (station_z and the
+                  % (self.offset_x[tool], self.offset_y[tool], z))
+        # offset_z[tool] is the gap + z_adjust part of z (station_z and the
         # calibration were checked above); the remainder is the job terms.
-        self._z_tool_term = self.off_z[tool]
+        self._z_tool_term = self.offset_z[tool]
 
     cmd_TOOL_Z_ADJUST_help = (
         "Per-tool persistent Z correction: TOOL_Z_ADJUST TOOL=<0..3> "
@@ -1202,15 +1213,15 @@ class FFToolchange:
         if (adjust is None) == (value is None):
             raise gcmd.error("TOOL_Z_ADJUST: give exactly one of ADJUST= or"
                              " VALUE=")
-        t = self.tools[tool]
-        old = t.z_adjust
-        new = value if value is not None else old + adjust
-        t.set_z_adjust(new)
+        tool_object = self.tools[tool]
+        previous = tool_object.z_adjust
+        updated = value if value is not None else previous + adjust
+        tool_object.set_z_adjust(updated)
         self.refresh_offsets()
         applied = ""
         try:
             self._wait_moves()
-            current, _why = self._current_tool_or_none()
+            current, _reason = self._current_tool_or_none()
         except FFToolchangeError:
             current = None
         if current == tool:
@@ -1219,29 +1230,29 @@ class FFToolchange:
         gcmd.respond_info(
             "T%d z_adjust %.3f -> %.3f%s. The SAVE_CONFIG command will update"
             " the printer config file and restart the printer."
-            % (tool, old, new, applied))
+            % (tool, previous, updated, applied))
 
     # ---------------- klipper-toolchanger command aliases ----------------
 
     def _tool_arg(self, gcmd, required=True):
         """klipper-toolchanger accepts T=<number> or TOOL=<name>."""
-        t = gcmd.get_int('T', None)
-        if t is None:
+        tool = gcmd.get_int('T', None)
+        if tool is None:
             name = gcmd.get('TOOL', None)
             if name is not None:
                 name = name.strip()
                 if name.upper().startswith('T') and name[1:].isdigit():
-                    t = int(name[1:])
+                    tool = int(name[1:])
                 else:
                     raise gcmd.error("TOOL must be T0..T%d, got '%s'"
                                      % (EXTRUDER_COUNT - 1, name))
-        if t is None:
+        if tool is None:
             if required:
                 raise gcmd.error("T=<n> or TOOL=T<n> is required")
             return None
-        if not 0 <= t < EXTRUDER_COUNT:
+        if not 0 <= tool < EXTRUDER_COUNT:
             raise gcmd.error("T must be 0..%d" % (EXTRUDER_COUNT - 1))
-        return t
+        return tool
 
     cmd_SELECT_TOOL_help = ("Select a tool (T=<n> | TOOL=T<n>); same as"
                             " T<n>. RESTORE_AXIS=<xyz> returns the toolhead")
@@ -1254,12 +1265,12 @@ class FFToolchange:
                               " the toolhead")
 
     def cmd_UNSELECT_TOOL(self, gcmd):
-        t = self._tool_arg(gcmd, required=False)
-        if t is not None:
-            cur, _why = self._current_tool_or_none()
-            if cur != t:
+        tool = self._tool_arg(gcmd, required=False)
+        if tool is not None:
+            mounted, _reason = self._current_tool_or_none()
+            if mounted != tool:
                 raise gcmd.error("UNSELECT_TOOL: T%d is not the mounted tool"
-                                 " (current %s)" % (t, cur))
+                                 " (current %s)" % (tool, mounted))
         self.cmd_TOOLCHANGE_PARK(gcmd)
 
     cmd_INITIALIZE_TOOLCHANGER_help = (
@@ -1267,11 +1278,11 @@ class FFToolchange:
 
     def cmd_INITIALIZE_TOOLCHANGER(self, gcmd):
         self._wait_moves()
-        cur, why = self._current_tool_or_none()
-        if cur is None:
-            raise gcmd.error("toolchanger state not derivable: %s" % why)
+        mounted, reason = self._current_tool_or_none()
+        if mounted is None:
+            raise gcmd.error("toolchanger state not derivable: %s" % reason)
         gcmd.respond_info("toolchanger ready, tool_number=%d (%s)"
-                          % (cur, why))
+                          % (mounted, reason))
 
     cmd_ASSIGN_TOOL_help = "Not supported on this toolchanger"
 
@@ -1291,10 +1302,11 @@ class FFToolchange:
         a UI knows it is heating T2, not that T2 means [extruder2]."""
         tool = self._tool_arg(gcmd, required=False)
         if tool is None:
-            tool, why = self._current_tool_or_none()
+            tool, reason = self._current_tool_or_none()
             if tool is None or tool < 0:
                 raise gcmd.error("SET_TOOL_TEMPERATURE: no tool mounted, so"
-                                 " T=<n> or TOOL=T<n> is required (%s)" % why)
+                                 " T=<n> or TOOL=T<n> is required (%s)"
+                                 % reason)
         target = gcmd.get_float('TARGET', 0.)
         heater = self._extruder_name(tool)
         self._run('SET_HEATER_TEMPERATURE HEATER=%s TARGET=%.1f'
@@ -1317,17 +1329,19 @@ class FFToolchange:
         gcmd.get_int('ASYNC', 0)
         expect = self._tool_arg(gcmd, required=False)
         self._wait_moves()
-        cur, why = self._current_tool_or_none()
-        if cur is None:
+        mounted, reason = self._current_tool_or_none()
+        if mounted is None:
             raise gcmd.error("VERIFY_TOOL_DETECTED: toolchanger state not"
-                             " derivable: %s" % why)
-        if expect is not None and cur != expect:
+                             " derivable: %s" % reason)
+        if expect is not None and mounted != expect:
             raise gcmd.error("VERIFY_TOOL_DETECTED: expected T%d, sensors say"
                              " %s (%s)"
                              % (expect,
-                                'T%d' % cur if cur >= 0 else 'no tool', why))
+                                'T%d' % mounted if mounted >= 0
+                                else 'no tool', reason))
         gcmd.respond_info("detected %s (%s)"
-                          % ('T%d' % cur if cur >= 0 else 'no tool', why))
+                          % ('T%d' % mounted if mounted >= 0 else 'no tool',
+                             reason))
 
     cmd_SELECT_TOOL_ERROR_help = "Abort the running script: a tool change failed"
 
@@ -1344,9 +1358,10 @@ class FFToolchange:
     def cmd_FF_RUNOUT_ARM(self, gcmd):
         tool = gcmd.get_int('TOOL', -1)
         if tool < 0:
-            tool, why = self._current_tool_or_none()
+            tool, reason = self._current_tool_or_none()
             if tool is None or tool < 0:
-                raise gcmd.error("FF_RUNOUT_ARM: no tool mounted (%s)" % why)
+                raise gcmd.error("FF_RUNOUT_ARM: no tool mounted (%s)"
+                                 % reason)
         elif tool >= EXTRUDER_COUNT:
             raise gcmd.error("FF_RUNOUT_ARM: TOOL must be 0..%d"
                              % (EXTRUDER_COUNT - 1))
@@ -1367,57 +1382,64 @@ class FFToolchange:
 
     def cmd_TOOLCHANGE_STATUS(self, gcmd):
         self._wait_moves()
-        tool, why = self._current_tool_or_none()
+        tool, reason = self._current_tool_or_none()
         if tool is None:
-            lines = ["current_tool=UNKNOWN", "  ! %s" % why]
+            lines = ["current_tool=UNKNOWN", "  ! %s" % reason]
         else:
-            lines = ["current_tool=%d  (%s)" % (tool, why)]
+            lines = ["current_tool=%d  (%s)" % (tool, reason)]
         lines.append("  (derived from the dock sensors; nothing is stored)")
         if self.runout_switch or self.runout_motion:
             lines.append("  runout sensors armed: %s"
                          % (", ".join(self._armed_sensors()) or "none"))
-        for i, n in enumerate(self.dock_sensors):
+        for i, sensor in enumerate(self.dock_sensors):
             try:
                 lines.append("  T%d in dock (%s): %s"
-                             % (i, n, self._sensor(n)))
-            except FFToolchangeError as e:
-                lines.append("  T%d (%s): %s" % (i, n, e))
-        for n in self.grab_sensors:
+                             % (i, sensor, self._sensor(sensor)))
+            except FFToolchangeError as err:
+                lines.append("  T%d (%s): %s" % (i, sensor, err))
+        for sensor in self.grab_sensors:
             try:
-                lines.append("  grab (%s): %s" % (n, self._sensor(n)))
-            except FFToolchangeError as e:
-                lines.append("  grab (%s): %s" % (n, e))
+                lines.append("  grab (%s): %s"
+                             % (sensor, self._sensor(sensor)))
+            except FFToolchangeError as err:
+                lines.append("  grab (%s): %s" % (sensor, err))
 
         lines.append("geometry ([ff_tool n] / [ff_toolchange]):")
-        for t in self.tools:
-            if t.calibrated():
+        for tool_object in self.tools:
+            if tool_object.calibrated():
                 lines.append("  T%d nozzle (%.4f, %.4f, %.4f)  z_adjust %+.3f"
-                             % (t.index, t.nozzle[0], t.nozzle[1],
-                                t.nozzle[2], t.z_adjust))
+                             % (tool_object.index, tool_object.nozzle[0],
+                                tool_object.nozzle[1], tool_object.nozzle[2],
+                                tool_object.z_adjust))
             else:
                 lines.append("  T%d nozzle NOT CALIBRATED"
                              " (zero X/Y, z_adjust only in Z)"
-                             % t.index)
-        sz = self._station_z()
+                             % tool_object.index)
+        station_z = self._station_z()
         lines.append("  station_z     %s"
-                     % ("%.4f" % sz if sz is not None else "NOT CALIBRATED"))
+                     % ("%.4f" % station_z if station_z is not None
+                        else "NOT CALIBRATED"))
 
         def series_line(option, values):
             lines.append("  %-14s[%s]"
-                         % (option, ", ".join("%.4f" % v for v in values)))
+                         % (option,
+                            ", ".join("%.4f" % value for value in values)))
 
-        series_line('dock_x', [t.dock_x if t.has_dock() else float('nan')
-                               for t in self.tools])
-        series_line('dock_y', [t.dock_y if t.has_dock() else float('nan')
-                               for t in self.tools])
-        missing = [t.index for t in self.tools if not t.has_dock()]
+        series_line('dock_x',
+                    [tool_object.dock_x if tool_object.has_dock()
+                     else float('nan') for tool_object in self.tools])
+        series_line('dock_y',
+                    [tool_object.dock_y if tool_object.has_dock()
+                     else float('nan') for tool_object in self.tools])
+        missing = [tool_object.index for tool_object in self.tools
+                   if not tool_object.has_dock()]
         if missing:
             lines.append("  ! no dock position for T%s -- run"
                          " FF_IMPORT_FIRMWARE_CONFIG and SAVE_CONFIG"
                          % ", T".join(str(i) for i in missing))
-        series_line('offset_z', self.off_z)
-        series_line('offset_x', self.off_x)
-        series_line('offset_y', self.off_y)
+        series_line('offset_z', self.offset_z)
+        series_line('offset_x', self.offset_x)
+        series_line('offset_y', self.offset_y)
         lines.append("  offset_base   T%d" % self.offset_base)
         lines.append("  x_correction  %.4f" % self.x_correction)
         lines.append("  fast_feed     %d" % self.fast_feed)
@@ -1433,19 +1455,19 @@ class FFToolchange:
         resume = self._capture_position() if restore_axis else None
         try:
             self._wait_moves()
-            current, why = self._derive_current_tool()
-        except FFToolchangeError as e:
-            raise gcmd.error(str(e))
+            current, reason = self._derive_current_tool()
+        except FFToolchangeError as err:
+            raise gcmd.error(str(err))
         if current < 0:
-            gcmd.respond_info("no tool mounted (%s)" % why)
+            gcmd.respond_info("no tool mounted (%s)" % reason)
             return
         try:
             self._ensure_homed('xy')
             self._release(current)
             if resume is not None:
                 self._restore_position(restore_axis, resume)
-        except FFToolchangeError as e:
-            raise gcmd.error(str(e))
+        except FFToolchangeError as err:
+            raise gcmd.error(str(err))
 
     def print_offset_ready(self, tool=None):
         """Can TOOLCHANGE_SET_PRINT_OFFSET succeed? Needs station_z and
@@ -1457,12 +1479,13 @@ class FFToolchange:
         return self.tools[tool].calibrated()
 
     def get_status(self, eventtime):
-        tool, why = self._current_tool_or_none(eventtime)
+        tool, reason = self._current_tool_or_none(eventtime)
         return {'current_tool': -1 if tool is None else tool,
                 'state_ok': tool is not None,
-                'state_reason': why,
-                'calibrated_tools': [t.index for t in self.tools
-                                     if t.calibrated()],
+                'state_reason': reason,
+                'calibrated_tools': [tool_object.index
+                                     for tool_object in self.tools
+                                     if tool_object.calibrated()],
                 'station_z': self._station_z(),
                 # True when every tool and the station are calibrated, i.e.
                 # a print's Z frame can be established for any tool.

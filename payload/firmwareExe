@@ -36,8 +36,8 @@ echo "=== mod firmwareExe `date 2>/dev/null` ==="
 # it -- /usr/prog/start.img exists, but the only two lines that would display
 # it (both in app_startup.sh) are commented out, so nothing has shown it for
 # a long time.
-FF_PY=/usr/prog/Python-3.8.2/bin/python3
-[ -x "$FF_PY" ] || FF_PY=python3
+FF_PYTHON=/usr/prog/Python-3.8.2/bin/python3
+[ -x "$FF_PYTHON" ] || FF_PYTHON=python3
 LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:$LD_LIBRARY_PATH
 LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
 LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
@@ -45,7 +45,7 @@ export LD_LIBRARY_PATH
 splash() {
     [ "${MOD_SPLASH:-1}" = 1 ] || return 0
     [ -f $MODDIR/bin/ffscreen.py ] || return 0
-    "$FF_PY" $MODDIR/bin/ffscreen.py "$@" 2>/dev/null || true
+    "$FF_PYTHON" $MODDIR/bin/ffscreen.py "$@" 2>/dev/null || true
 }
 splash --title "REFORGE" --status "STARTING THE PRINTER" --progress 0.02
 
@@ -53,10 +53,10 @@ splash --title "REFORGE" --status "STARTING THE PRINTER" --progress 0.02
 # init.d-style scripts, run in filename order. One failing service must never
 # stop the rest: Klipper has to come up even if the web stack is broken.
 if [ -d $MODDIR/init.d ]; then
-    for s in $MODDIR/init.d/S*; do
-        [ -x "$s" ] || continue
-        echo "--- `basename $s` ---"
-        "$s" start || echo "`basename $s`: returned $?"
+    for service in $MODDIR/init.d/S*; do
+        [ -x "$service" ] || continue
+        echo "--- `basename $service` ---"
+        "$service" start || echo "`basename $service`: returned $?"
     done
 fi
 
@@ -78,7 +78,7 @@ if [ "${MOD_STARTUP:-1}" = 1 ] && [ -f $MODDIR/bin/ff-startup.py ]; then
     STARTUP_ARGS="--timeout ${MOD_STARTUP_TIMEOUT:-240}"
     STARTUP_ARGS="$STARTUP_ARGS --klipper-tries ${MOD_KLIPPER_TRIES:-6}"
     [ "${MOD_IMPORT:-1}" = 1 ] || STARTUP_ARGS="$STARTUP_ARGS --no-import"
-    "$FF_PY" $MODDIR/bin/ff-startup.py $STARTUP_ARGS \
+    "$FF_PYTHON" $MODDIR/bin/ff-startup.py $STARTUP_ARGS \
         || echo "ff-startup: returned $? -- the next boot will try again"
 fi
 

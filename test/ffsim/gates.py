@@ -45,7 +45,7 @@ def extract_rootfs(config, on_output=None):
     kernels = sorted(outer.glob("kernel-*.tar.xz"))
     if not kernels:
         raise Fail("no kernel-*.tar.xz in the package (a --slim build has none)")
-    kern = kernels[0]
+    kernel_tarball = kernels[0]
 
     kerndir = root / "work" / "kern"
     rootfs = root / "work" / "rootfs"
@@ -54,7 +54,7 @@ def extract_rootfs(config, on_output=None):
             _rmtree(d)
     kerndir.mkdir(parents=True)
 
-    with tarfile.open(str(kern)) as tf:
+    with tarfile.open(str(kernel_tarball)) as tf:
         _extract_all(tf, kerndir)
 
     squash = None
@@ -62,15 +62,15 @@ def extract_rootfs(config, on_output=None):
         squash = path
         break
     if squash is None:
-        raise Fail("no rootfs.squashfs inside %s" % kern.name)
+        raise Fail("no rootfs.squashfs inside %s" % kernel_tarball.name)
 
     if on_output:
         on_output(">> %s" % squash.name)
-    proc = subprocess.run(
+    completed = subprocess.run(
         ["unsquashfs", "-q", "-d", str(rootfs), str(squash)],
         capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise Fail("unsquashfs failed:\n%s" % proc.stderr.strip())
+    if completed.returncode != 0:
+        raise Fail("unsquashfs failed:\n%s" % completed.stderr.strip())
     _rmtree(kerndir)
 
     if not (rootfs / "bin").is_dir():

@@ -88,42 +88,43 @@ def _parse_metadata(path):
     not present.  Never raises -- a file we cannot read just yields {}, and
     the macro then runs with no derived parameters."""
     try:
-        with open(path, 'rb') as f:
-            head = f.read(HEAD_BYTES).decode('utf-8', 'replace')
+        with open(path, 'rb') as fh:
+            head = fh.read(HEAD_BYTES).decode('utf-8', 'replace')
     except Exception:
         logging.exception("ff_print: cannot read '%s'", path)
         return {}
 
-    meta = {}
+    metadata = {}
 
     # Bed and nozzle: the file's own first heat command, the way the app's
     # parser did it (it scanned M104/M109/M140/M190/M141/M191 and reported
     # nozzleTemp / bedTemp / chamberTemp).
-    bed = re.search(r'^M1[49]0 S([0-9]+(?:\.[0-9]+)?)', head, re.M)
-    if bed is not None and float(bed.group(1)) > 0:
-        meta['bed'] = int(float(bed.group(1)))
-    hot = re.search(r'^M10[49] S([0-9]+(?:\.[0-9]+)?)', head, re.M)
-    if hot is not None and float(hot.group(1)) > 0:
-        meta['nozzle'] = int(float(hot.group(1)))
+    bed_match = re.search(r'^M1[49]0 S([0-9]+(?:\.[0-9]+)?)', head, re.M)
+    if bed_match is not None and float(bed_match.group(1)) > 0:
+        metadata['bed'] = int(float(bed_match.group(1)))
+    nozzle_match = re.search(r'^M10[49] S([0-9]+(?:\.[0-9]+)?)', head, re.M)
+    if nozzle_match is not None and float(nozzle_match.group(1)) > 0:
+        metadata['nozzle'] = int(float(nozzle_match.group(1)))
 
     # The file's initial extruder (the app's "fisrNozzleIndex", sic).
-    first = re.search(r'^T([0-%d])\b' % (EXTRUDER_COUNT - 1), head, re.M)
-    if first is not None:
-        meta['tool'] = int(first.group(1))
+    tool_match = re.search(r'^T([0-%d])\b' % (EXTRUDER_COUNT - 1),
+                           head, re.M)
+    if tool_match is not None:
+        metadata['tool'] = int(tool_match.group(1))
 
     # First-layer height, from the per-layer marker the slicer emits in the
     # body -- one of the three keys the app looked for, and the only one that
     # appears near the start of the file.  This feeds the print Z offset's
     # thin-layer term, which is a FIRST-layer correction, so the first layer's
     # height is the value that belongs there.
-    layer = re.search(r'^;HEIGHT:([0-9.]+)', head, re.M)
-    if layer is not None:
+    layer_match = re.search(r'^;HEIGHT:([0-9.]+)', head, re.M)
+    if layer_match is not None:
         try:
-            meta['layer'] = float(layer.group(1))
+            metadata['layer'] = float(layer_match.group(1))
         except ValueError:
             pass
 
-    return meta
+    return metadata
 
 
 class FFPrint:
@@ -137,8 +138,8 @@ class FFPrint:
                               in config.getlist('hook_commands',
                                                 ['SDCARD_PRINT_FILE', 'M23'])
                               if c.strip()]
-        self.prev_handlers = {}
-        self.meta = {}
+        self.previous_handlers = {}
+        self.metadata = {}
         self.filename = None
         self.origin = None
         # Latch: only a print WE announced may fire the end macro.
@@ -154,14 +155,14 @@ class FFPrint:
         # Same rename dance gcode_macro uses for rename_existing: take the
         # command over and keep the previous handler to chain to.
         for cmd in self.hook_commands:
-            prev = self.gcode.register_command(cmd, None)
-            if prev is None:
+            previous = self.gcode.register_command(cmd, None)
+            if previous is None:
                 raise self.printer.config_error(
                     "ff_print: command '%s' is not registered -- is there a"
                     " [virtual_sdcard] section in the config? (Section ORDER"
                     " does not matter: this runs at klippy:connect, after"
                     " every section is loaded.)" % (cmd,))
-            self.prev_handlers[cmd] = prev
+            self.previous_handlers[cmd] = previous
             self.gcode.register_command(
                 cmd, self._make_handler(cmd),
                 desc="%s (ff_print: runs %s first)"
@@ -178,10 +179,10 @@ class FFPrint:
             'filename': self.filename,
             'origin': self.origin,
             'active': self.active,
-            'tool': self.meta.get('tool'),
-            'nozzle': self.meta.get('nozzle'),
-            'bed': self.meta.get('bed'),
-            'layer': self.meta.get('layer'),
+            'tool': self.metadata.get('tool'),
+            'nozzle': self.metadata.get('nozzle'),
+            'bed': self.metadata.get('bed'),
+            'layer': self.metadata.get('layer'),
         }
 
     def _resolve(self, gcmd, cmd):
@@ -196,18 +197,18 @@ class FFPrint:
             name = name[1:]
         if not name:
             return None
-        vsd = self.printer.lookup_object('virtual_sdcard', None)
-        if vsd is None:
+        virtual_sdcard = self.printer.lookup_object('virtual_sdcard', None)
+        if virtual_sdcard is None:
             return None
-        return os.path.join(vsd.sdcard_dirname, name)
+        return os.path.join(virtual_sdcard.sdcard_dirname, name)
 
     def _cmd_start(self, cmd, gcmd):
         path = self._resolve(gcmd, cmd)
         self.filename = path
         self.origin = cmd
-        self.meta = _parse_metadata(path) if path else {}
-        if self.meta:
-            logging.info("ff_print: %s -> %s", path, self.meta)
+        self.metadata = _parse_metadata(path) if path else {}
+        if self.metadata:
+            logging.info("ff_print: %s -> %s", path, self.metadata)
         else:
             logging.info("ff_print: %s -> no slicer metadata found", path)
 
@@ -215,8 +216,8 @@ class FFPrint:
         for key, name, fmt in (('bed', 'BED', '%d'), ('tool', 'TOOL', '%d'),
                                ('nozzle', 'NOZZLE', '%d'),
                                ('layer', 'LAYER', '%s')):
-            if self.meta.get(key) is not None:
-                params.append('%s=%s' % (name, fmt % (self.meta[key],)))
+            if self.metadata.get(key) is not None:
+                params.append('%s=%s' % (name, fmt % (self.metadata[key],)))
 
         # Let the macro raise: a refusal here must stop the print BEFORE the
         # base command loads and resumes the file.
@@ -224,7 +225,7 @@ class FFPrint:
             '%s %s' % (self.before_macro, ' '.join(params)))
         # Arm the end latch only once prepare succeeded.
         self.active = True
-        self.prev_handlers[cmd](gcmd)
+        self.previous_handlers[cmd](gcmd)
 
     def _handle_ready(self, print_time):
         """idle_timeout:ready fires whenever the queue drains -- including a

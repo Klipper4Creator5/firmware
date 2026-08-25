@@ -62,65 +62,67 @@ class FFFirmwareConfig:
             try:
                 with open(path, 'r') as fh:
                     text = fh.read()
-            except IOError as e:
-                self.errors.append("%s: %s" % (path, e))
+            except IOError as err:
+                self.errors.append("%s: %s" % (path, err))
                 continue
             try:
-                obj, _ = json.JSONDecoder().raw_decode(text.lstrip())
-            except ValueError as e:
-                self.errors.append("%s: not valid JSON (%s)" % (path, e))
+                decoded, _tail = json.JSONDecoder().raw_decode(text.lstrip())
+            except ValueError as err:
+                self.errors.append("%s: not valid JSON (%s)" % (path, err))
                 continue
-            if not isinstance(obj, dict):
+            if not isinstance(decoded, dict):
                 self.errors.append("%s: expected a JSON object" % path)
                 continue
-            self.files[name] = obj
+            self.files[name] = decoded
 
-    def num(self, fname, key):
-        obj = self.files.get(fname)
-        if obj is None:
+    def num(self, file_name, key):
+        contents = self.files.get(file_name)
+        if contents is None:
             return None
 
-        val = obj.get(key)
-        if isinstance(val, bool) or not isinstance(val, (int, float)):
+        value = contents.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
             return None
 
-        if not math.isfinite(val):
+        if not math.isfinite(value):
             return None
 
-        return float(val)
+        return float(value)
 
     def tool_offsets(self):
         rows = []
         for index in range(EXTRUDER_COUNT):
-            offset = [self.num('extruder', 't%d_offset_%s' % (index, axis)) for axis in 'xyz']
+            offset = [self.num('extruder', 't%d_offset_%s' % (index, axis))
+                      for axis in 'xyz']
             rows.append(None if None in offset else tuple(offset))
         return rows
 
     def docks(self):
         rows = []
-        for n in range(EXTRUDER_COUNT):
+        for index in range(EXTRUDER_COUNT):
             # first extruder is just "extruder", next is "extruder1"
-            sfx = '' if n == 0 else '%d' % n
-            x = self.num('extruder', 'x_check_pos' + sfx)
-            y = self.num('extruder', 'y_check_pos' + sfx)
-            rows.append(None if None in (x, y) else (x, y))
+            suffix = '' if index == 0 else '%d' % index
+            dock_x = self.num('extruder', 'x_check_pos' + suffix)
+            dock_y = self.num('extruder', 'y_check_pos' + suffix)
+            rows.append(None if None in (dock_x, dock_y) else (dock_x, dock_y))
         return rows
 
     def station(self):
-        v = [self.num('extruder', '%s_station_pos' % a) for a in 'xyz']
-        return None if None in v else tuple(v)
+        position = [self.num('extruder', '%s_station_pos' % axis)
+                    for axis in 'xyz']
+        return None if None in position else tuple(position)
 
     def z_adjust(self):
         # zoffset.json is 1-BASED: z_offset_t1 is tool 0.
-        return [self.num('zoffset', 'z_offset_t%d' % (n + 1))
-                for n in range(EXTRUDER_COUNT)]
+        return [self.num('zoffset', 'z_offset_t%d' % (index + 1))
+                for index in range(EXTRUDER_COUNT)]
 
     def speed(self, key):
         # mm/s in the file; the app multiplies by 60 and ignores <= 0.
-        v = self.num('test', key)
-        if v is None or v <= 0:
+        mm_per_second = self.num('test', key)
+        if mm_per_second is None or mm_per_second <= 0:
             return None
-        return int(round(v * 60.0))
+        return int(round(mm_per_second * 60.0))
 
 
 class FFLegacy:
@@ -144,19 +146,19 @@ class FFLegacy:
         directory = gcmd.get('DIR', self.default_dir)
         apply = gcmd.get_int('APPLY', 1, minval=0, maxval=1)
         try:
-            out = self._import(directory, apply)
-        except ValueError as e:
-            raise gcmd.error(str(e))
-        gcmd.respond_info("\n".join(out))
-        logging.info("%s: %s", self.name, "\n".join(out))
+            report = self._import(directory, apply)
+        except ValueError as err:
+            raise gcmd.error(str(err))
+        gcmd.respond_info("\n".join(report))
+        logging.info("%s: %s", self.name, "\n".join(report))
 
     def _import(self, directory, apply):
-        fw = FFFirmwareConfig(directory)
-        out = ["import from %s" % directory]
-        out += ["  ! %s" % e for e in fw.errors]
-        if 'extruder' not in fw.files:
+        firmware = FFFirmwareConfig(directory)
+        report = ["import from %s" % directory]
+        report += ["  ! %s" % problem for problem in firmware.errors]
+        if 'extruder' not in firmware.files:
             raise ValueError("%s: extruder.json could not be read (%s)"
-                             % (self.name, "; ".join(fw.errors)))
+                             % (self.name, "; ".join(firmware.errors)))
 
         configfile = self.printer.lookup_object('configfile')
         staged = []
@@ -167,87 +169,92 @@ class FFLegacy:
             staged.append("  [%s] %s = %.6f" % (section, option, value))
 
         # -- per-unit data -> autosave -----------------------------------
-        tools = fw.tool_offsets()
-        zadj = fw.z_adjust()
-        docks = fw.docks()
-        for n in range(EXTRUDER_COUNT):
-            sec = 'ff_tool %d' % n
-            if docks[n] is not None:
-                stage(sec, 'dock_x', docks[n][0])
-                stage(sec, 'dock_y', docks[n][1])
-                obj = self.printer.lookup_object(sec, None)
-                if apply and obj is not None:
-                    obj.dock_x, obj.dock_y = docks[n]
+        nozzles = firmware.tool_offsets()
+        z_adjusts = firmware.z_adjust()
+        docks = firmware.docks()
+        for index in range(EXTRUDER_COUNT):
+            section = 'ff_tool %d' % index
+            if docks[index] is not None:
+                stage(section, 'dock_x', docks[index][0])
+                stage(section, 'dock_y', docks[index][1])
+                tool_object = self.printer.lookup_object(section, None)
+                if apply and tool_object is not None:
+                    tool_object.dock_x, tool_object.dock_y = docks[index]
             else:
-                out.append("  ! x/y_check_pos%s missing -- T%d dock not imported"
-                           % ('' if n == 0 else n, n))
-            if tools[n] is not None:
-                stage(sec, 'nozzle_x', tools[n][0])
-                stage(sec, 'nozzle_y', tools[n][1])
-                stage(sec, 'nozzle_z', tools[n][2])
-                obj = self.printer.lookup_object(sec, None)
-                if apply and obj is not None:
-                    obj.nozzle = tools[n]
+                report.append("  ! x/y_check_pos%s missing -- T%d dock not"
+                              " imported"
+                              % ('' if index == 0 else index, index))
+            if nozzles[index] is not None:
+                stage(section, 'nozzle_x', nozzles[index][0])
+                stage(section, 'nozzle_y', nozzles[index][1])
+                stage(section, 'nozzle_z', nozzles[index][2])
+                tool_object = self.printer.lookup_object(section, None)
+                if apply and tool_object is not None:
+                    tool_object.nozzle = nozzles[index]
             else:
-                out.append("  ! t%d_offset_x/y/z missing -- T%d not imported"
-                           % (n, n))
-            if zadj[n]:
-                stage(sec, 'z_adjust', zadj[n])
-                obj = self.printer.lookup_object(sec, None)
-                if apply and obj is not None:
-                    obj.z_adjust = zadj[n]
-        st = fw.station()
-        if st is not None:
-            stage('ff_tool_offset', 'station_x', st[0])
-            stage('ff_tool_offset', 'station_y', st[1])
-            stage('ff_tool_offset', 'station_z', st[2])
-            obj = self.printer.lookup_object('ff_tool_offset', None)
-            if apply and obj is not None:
-                obj.station = st
+                report.append("  ! t%d_offset_x/y/z missing -- T%d not"
+                              " imported" % (index, index))
+            if z_adjusts[index]:
+                stage(section, 'z_adjust', z_adjusts[index])
+                tool_object = self.printer.lookup_object(section, None)
+                if apply and tool_object is not None:
+                    tool_object.z_adjust = z_adjusts[index]
+        station = firmware.station()
+        if station is not None:
+            stage('ff_tool_offset', 'station_x', station[0])
+            stage('ff_tool_offset', 'station_y', station[1])
+            stage('ff_tool_offset', 'station_z', station[2])
+            offsets = self.printer.lookup_object('ff_tool_offset', None)
+            if apply and offsets is not None:
+                offsets.station = station
         else:
-            out.append("  ! x/y/z_station_pos missing -- station not imported")
-        obj = self.printer.lookup_object('ff_tool_offset', None)
-        for opt, attr in (('cylinder_x', 'cfg_cylinder_x'),
-                          ('cylinder_y', 'cfg_cylinder_y')):
-            v = fw.num('test', opt)
-            if v is not None:
-                stage('ff_tool_offset', opt, v)
-                if apply and obj is not None:
-                    setattr(obj, attr, v)
+            report.append("  ! x/y/z_station_pos missing -- station not"
+                          " imported")
+        offsets = self.printer.lookup_object('ff_tool_offset', None)
+        for option, attribute in (('cylinder_x', 'cfg_cylinder_x'),
+                                  ('cylinder_y', 'cfg_cylinder_y')):
+            value = firmware.num('test', option)
+            if value is not None:
+                stage('ff_tool_offset', option, value)
+                if apply and offsets is not None:
+                    setattr(offsets, attribute, value)
 
-        tc = self.printer.lookup_object('ff_toolchange', None)
-        if apply and tc is not None and hasattr(tc, 'refresh_offsets'):
-            tc.refresh_offsets()
+        toolchange = self.printer.lookup_object('ff_toolchange', None)
+        if apply and toolchange is not None \
+           and hasattr(toolchange, 'refresh_offsets'):
+            toolchange.refresh_offsets()
 
-        out.append("%s for SAVE_CONFIG:" % ("staged" if apply else "would stage"))
-        out += staged or ["  (nothing)"]
+        report.append("%s for SAVE_CONFIG:"
+                      % ("staged" if apply else "would stage"))
+        report += staged or ["  (nothing)"]
 
         # -- plain [ff_toolchange] settings -> snippet, only if different --
         wanted = []
-        for opt, key in (('x_correction', 'grabOffset'),
-                         ('temp_offset', 'tempOffset')):
-            v = fw.num('test', key)
-            if v is not None:
-                wanted.append((opt, v, "%.6g"))
-        fast = fw.speed('grabSpeed')
-        slow = fw.speed('grabSpeedSlow')
-        if fast is not None:
-            wanted.append(('fast_feed', fast, "%d"))
-        if slow is not None:
-            wanted.append(('slow_feed', slow, "%d"))
-            wanted.append(('release_slow_feed', slow, "%d"))
+        for option, key in (('x_correction', 'grabOffset'),
+                            ('temp_offset', 'tempOffset')):
+            value = firmware.num('test', key)
+            if value is not None:
+                wanted.append((option, value, "%.6g"))
+        fast_feed = firmware.speed('grabSpeed')
+        slow_feed = firmware.speed('grabSpeedSlow')
+        if fast_feed is not None:
+            wanted.append(('fast_feed', fast_feed, "%d"))
+        if slow_feed is not None:
+            wanted.append(('slow_feed', slow_feed, "%d"))
+            wanted.append(('release_slow_feed', slow_feed, "%d"))
         snippet = []
-        for opt, v, fmt in wanted:
-            cur = getattr(tc, opt, None) if tc is not None else None
-            if cur is None or abs(float(cur) - float(v)) > 1e-9:
-                snippet.append(("%s: " + fmt) % (opt, v))
+        for option, value, fmt in wanted:
+            running = (getattr(toolchange, option, None)
+                       if toolchange is not None else None)
+            if running is None or abs(float(running) - float(value)) > 1e-9:
+                snippet.append(("%s: " + fmt) % (option, value))
         if snippet:
-            out.append("[ff_toolchange] differs from the factory JSON --"
-                       " set by hand in ff-toolchange.cfg if intended:")
-            out += ["  " + l for l in snippet]
+            report.append("[ff_toolchange] differs from the factory JSON --"
+                          " set by hand in ff-toolchange.cfg if intended:")
+            report += ["  " + line for line in snippet]
         if apply and staged:
-            out.append("Then run SAVE_CONFIG to persist the staged values.")
-        return out
+            report.append("Then run SAVE_CONFIG to persist the staged values.")
+        return report
 
 
 def load_config(config):
