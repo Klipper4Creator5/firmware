@@ -220,3 +220,87 @@ def test_an_explicit_geometry_is_still_checked(tmp_path):
 def test_geometry_parsing(text, want):
     # A typo must disable the screen, never draw diagonally across it.
     assert ffscreen.parse_geometry(text) == want
+
+
+# -- the panel is mounted sideways -----------------------------------------
+#
+# This machine's framebuffer is PORTRAIT 480x800 while the screen is landscape
+# 800x480: the display is the buffer turned 90 degrees clockwise. Established
+# from FlashForge's own /usr/prog/start.img, which is 1536000 bytes and only
+# decodes into a picture at 480x800x4. Drawing landscape text straight into
+# that buffer would put every word on the panel sideways.
+
+
+def test_a_portrait_framebuffer_is_treated_as_a_turned_panel(tmp_path):
+    screen, _ = panel(tmp_path, width=480, height=800)
+    assert screen.ok
+    assert (screen.buf_w, screen.buf_h) == (480, 800)
+    # what callers draw on is the landscape surface
+    assert (screen.width, screen.height) == (800, 480)
+    assert screen.rotate == 90
+    assert screen.stride == 480 * 4
+
+
+def test_a_landscape_framebuffer_is_left_alone(tmp_path):
+    screen, _ = panel(tmp_path, width=1024, height=600)
+    assert screen.rotate == 0
+    assert (screen.width, screen.height) == (1024, 600)
+
+
+def test_rotation_can_be_forced_either_way(tmp_path):
+    dev = tmp_path / "fb0"
+    dev.write_bytes(b"")
+    for rotate in (0, 90, 270):
+        screen = ffscreen.Screen(str(dev), geometry=(480, 800, 32),
+                                 rotate=rotate)
+        assert screen.rotate == rotate
+        expect = (800, 480) if rotate else (480, 800)
+        assert (screen.width, screen.height) == expect
+    assert not ffscreen.Screen(str(dev), geometry=(480, 800, 32),
+                               rotate=45).ok
+
+
+def _at(buf, screen, bx, by):
+    step = screen.bpp // 8
+    off = by * screen.stride + bx * step
+    return bytes(buf[off:off + step])
+
+
+def test_a_rotated_rectangle_lands_where_the_eye_expects(tmp_path):
+    # The whole rotation reduces to this: the top-left of what a person sees
+    # must be the bottom-left of the buffer for a 90-degree clockwise panel.
+    dev = tmp_path / "fb0"
+    dev.write_bytes(b"")
+    screen = ffscreen.Screen(str(dev), geometry=(480, 800, 32), rotate=90)
+    buf = screen._blank()
+    mark = ffscreen.TITLE
+    screen._rect(buf, 0, 0, 4, 4, mark)          # display top-left
+    assert _at(buf, screen, 0, screen.buf_h - 1) == screen._pixel(mark)
+    assert _at(buf, screen, 0, 0) == screen._pixel(ffscreen.BACKGROUND)
+    # and a display-x move walks DOWN the buffer, not across it
+    buf = screen._blank()
+    screen._rect(buf, 100, 0, 4, 4, mark)
+    assert _at(buf, screen, 0, screen.buf_h - 101) == screen._pixel(mark)
+
+
+def test_270_is_the_mirror_of_90(tmp_path):
+    dev = tmp_path / "fb0"
+    dev.write_bytes(b"")
+    screen = ffscreen.Screen(str(dev), geometry=(480, 800, 32), rotate=270)
+    buf = screen._blank()
+    screen._rect(buf, 0, 0, 4, 4, ffscreen.TITLE)
+    assert _at(buf, screen, screen.buf_w - 1, 0) == screen._pixel(ffscreen.TITLE)
+
+
+def test_a_rotated_frame_is_still_exactly_one_screen(tmp_path):
+    screen, dev = panel(tmp_path, width=480, height=800)
+    screen.show("SETTING UP YOUR PRINTER", "READING FACTORY CALIBRATION",
+                "DO NOT TURN THE PRINTER OFF", 0.5)
+    assert len(dev.read_bytes()) == 480 * 800 * 4
+
+
+def test_text_fits_the_landscape_width_not_the_buffer_width(tmp_path):
+    # 480 wide would force the title down to an unreadable scale; the fit has
+    # to be against the 800 the viewer actually has.
+    screen, _ = panel(tmp_path, width=480, height=800)
+    assert screen._fit("SETTING UP YOUR PRINTER", 4) == 4

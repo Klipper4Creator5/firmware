@@ -23,7 +23,7 @@ import base64, struct, sys, zlib
 sys.path.insert(0, '/usr/data/anvil/bin')
 import ffscreen
 
-W, H, BPP = 1024, 600, 32
+W, H, BPP = 480, 800, 32   # the real framebuffer: portrait
 # Keep in step with bin/preview-boot-screen.py, which renders the same list
 # on the host -- the two are expected to agree byte for byte.
 PHASES = [
@@ -43,13 +43,19 @@ for name, status, prog in PHASES:
     note = '' if name in NO_NOTE else 'DO NOT TURN THE PRINTER OFF'
     s.show('SETTING UP YOUR PRINTER', status, note, prog)
     buf = open('/tmp/fb', 'rb').read()
+
+    # Emit what the EYE sees, not the buffer: the panel is this portrait
+    # buffer turned 90 degrees clockwise, so undo that on the way out.
+    def px(bx, by):
+        off = by * s.stride + bx * 4
+        b, g, r, _ = buf[off:off + 4]
+        return bytes((r, g, b))
+
     rows = []
-    for y in range(H):
-        line = buf[y * s.stride:y * s.stride + W * 4]
+    for y in range(s.height):
         row = bytearray(b'\x00')
-        for x in range(W):
-            b, g, r, _ = line[x * 4:x * 4 + 4]
-            row += bytes((r, g, b))
+        for x in range(s.width):
+            row += px(y, s.buf_h - 1 - x)
         rows.append(bytes(row))
 
     def chunk(tag, data):
@@ -57,7 +63,8 @@ for name, status, prog in PHASES:
         return struct.pack('>I', len(data)) + body + struct.pack('>I', zlib.crc32(body))
 
     png = (b'\x89PNG\r\n\x1a\n'
-           + chunk(b'IHDR', struct.pack('>IIBBBBB', W, H, 8, 2, 0, 0, 0))
+           + chunk(b'IHDR', struct.pack('>IIBBBBB', s.width, s.height,
+                                        8, 2, 0, 0, 0))
            + chunk(b'IDAT', zlib.compress(b''.join(rows), 9))
            + chunk(b'IEND', b''))
     print('PNGSTART %s' % name)

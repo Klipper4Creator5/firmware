@@ -15,7 +15,11 @@
 # The replica's /dev/fb0 is a regular file, which is exactly what a
 # framebuffer is from a writer's point of view, so this is the real code path.
 # Geometry is passed EXPLICITLY: the replica mounts the host's /sys read-only,
-# so a sysfs probe here would describe the developer's monitor.
+# so a sysfs probe here would describe the developer's monitor. The numbers
+# are the machine's real ones -- a PORTRAIT 480x800 framebuffer at 32bpp,
+# shown on a landscape 800x480 panel turned 90 degrees clockwise. Both come
+# from FlashForge's own /usr/prog/start.img, which is 1536000 bytes and only
+# decodes into a picture when read that way.
 #
 # The payload under test is mounted at /tmp/payload.
 FAIL=0
@@ -25,8 +29,8 @@ bad() { echo "  FAIL  $*"; FAIL=1; }
 MOD=/usr/data/anvil
 PY=/usr/prog/Python-3.8.2/bin/python3
 FB=/dev/fb0
-W=1024
-H=600
+W=480
+H=800
 BPP=32
 
 mkdir -p $MOD/bin
@@ -115,9 +119,15 @@ bg = s._pixel(ffscreen.BACKGROUND)
 fg = s._pixel(ffscreen.TITLE)
 bar = s._pixel(ffscreen.BAR_FG)
 print('corner', buf[:len(bg)] == bg)
+print('rotated', s.rotate == 90 and (s.width, s.height) == (800, 480))
 print('title', buf.count(fg) > 0)
 print('bar', buf.count(bar) > 0)
 " >/tmp/check.out 2>&1
+if grep -q "^rotated True" /tmp/check.out; then
+    ok "drawing is rotated for the panel (800x480 seen, 480x800 stored)"
+else
+    bad "rotation is not in effect: `cat /tmp/check.out`"
+fi
 for what in corner title bar; do
     if grep -q "^$what True" /tmp/check.out; then
         ok "frame has its $what"

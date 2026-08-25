@@ -20,6 +20,27 @@
 # error: this is decoration on top of a migration that must finish regardless.
 # A printer that cannot draw still gets its calibration.
 #
+# THE PANEL IS MOUNTED SIDEWAYS. This machine's framebuffer is 480x800 at
+# 32bpp -- PORTRAIT -- while the screen you look at is landscape 800x480. The
+# display is the buffer rotated 90 degrees clockwise. Established from
+# FlashForge's own boot splash: /usr/prog/start.img is 1536000 bytes, which
+# the stock installer writes with `cat start.img > /dev/fb0`, and it only
+# decodes into a picture at 480x800x4 -- read as landscape it comes out as
+# five sheared copies. Decoded correctly it is their "Upgrading, please
+# wait..." screen, and it is upright only after a 90-degree clockwise turn.
+#
+# So everything below draws in LANDSCAPE coordinates -- self.width x
+# self.height is what the eye sees -- and _rect turns each rectangle into
+# buffer coordinates on the way out. A 90-degree rotation maps an
+# axis-aligned rectangle to an axis-aligned rectangle, so this costs a few
+# lines of arithmetic per rectangle and nothing per pixel. Rotating a
+# finished frame instead would mean a per-pixel Python loop over 384000
+# pixels every repaint, on a 1GHz MIPS core.
+#
+# A portrait framebuffer is taken to mean a rotated panel, which is true for
+# this machine and is what makes the default work with no configuration.
+# rotate=0 forces the raw orientation.
+#
 # GEOMETRY CAN ALSO BE GIVEN. sysfs is the right source on the machine, but it
 # is not always the truth elsewhere: the printer replica mounts the HOST's
 # /sys read-only and makes /dev/fb0 a plain file, so probing there would
@@ -100,19 +121,25 @@ class Screen:
     no-op, which is exactly what the caller wants when there is no panel, no
     permission, or an unfamiliar pixel format."""
 
-    def __init__(self, device='/dev/fb0', sysfs=SYSFS, geometry=None):
+    def __init__(self, device='/dev/fb0', sysfs=SYSFS, geometry=None,
+                 rotate=None):
         self.device = device
         self.ok = False
-        self.width = self.height = self.bpp = self.stride = 0
+        # buf_* is the framebuffer as the kernel has it; width/height are the
+        # landscape surface everything above _rect draws on. They differ
+        # whenever the panel is mounted rotated, which here it is.
+        self.buf_w = self.buf_h = self.bpp = self.stride = 0
+        self.width = self.height = 0
+        self.rotate = 0
         self._last = None
         if geometry is not None:
-            self.width, self.height, self.bpp = geometry
+            self.buf_w, self.buf_h, self.bpp = geometry
             self.stride = 0
         else:
             try:
                 xres, yres = _read(
                     os.path.join(sysfs, 'virtual_size')).split(',')
-                self.width, self.height = int(xres), int(yres)
+                self.buf_w, self.buf_h = int(xres), int(yres)
                 self.bpp = int(_read(os.path.join(sysfs, 'bits_per_pixel')))
             except Exception:
                 return
@@ -123,9 +150,19 @@ class Screen:
             except Exception:
                 self.stride = 0
         if self.stride <= 0:
-            self.stride = self.width * (self.bpp // 8)
-        if self.bpp not in (16, 32) or self.width <= 0 or self.height <= 0:
+            self.stride = self.buf_w * (self.bpp // 8)
+        if self.bpp not in (16, 32) or self.buf_w <= 0 or self.buf_h <= 0:
             return
+        if rotate is None:
+            # Taller than wide means the panel is turned; see the header.
+            rotate = 90 if self.buf_h > self.buf_w else 0
+        if rotate not in (0, 90, 270):
+            return
+        self.rotate = rotate
+        if rotate:
+            self.width, self.height = self.buf_h, self.buf_w
+        else:
+            self.width, self.height = self.buf_w, self.buf_h
         if not os.path.exists(self.device):
             return
         self.ok = True
@@ -142,20 +179,34 @@ class Screen:
         return bytes((v & 0xFF, v >> 8))
 
     def _blank(self):
-        row = self._pixel(BACKGROUND) * self.width
+        row = self._pixel(BACKGROUND) * self.buf_w
         pad = b'\x00' * (self.stride - len(row))
-        return bytearray((row + pad) * self.height)
+        return bytearray((row + pad) * self.buf_h)
 
     def _rect(self, buf, x, y, w, h, rgb):
-        px = self._pixel(rgb)
+        """Fill a rectangle given in LANDSCAPE coordinates.
+
+        Clipping happens in those coordinates, then the surviving rectangle
+        is turned into buffer coordinates -- which stays a rectangle, because
+        the rotation is a right angle."""
         x0, y0 = max(0, x), max(0, y)
         x1, y1 = min(self.width, x + w), min(self.height, y + h)
         if x1 <= x0 or y1 <= y0:
             return
-        span = px * (x1 - x0)
+        w, h = x1 - x0, y1 - y0
+        if self.rotate == 90:
+            # display(x, y) lives at buffer(y, buf_h - 1 - x)
+            bx, by, bw, bh = y0, self.buf_h - x0 - w, h, w
+        elif self.rotate == 270:
+            bx, by, bw, bh = self.buf_w - y0 - h, x0, h, w
+        else:
+            bx, by, bw, bh = x0, y0, w, h
+
+        px = self._pixel(rgb)
+        span = px * bw
         step = self.bpp // 8
-        for row in range(y0, y1):
-            start = row * self.stride + x0 * step
+        for row in range(by, by + bh):
+            start = row * self.stride + bx * step
             buf[start:start + len(span)] = span
 
     def _text(self, buf, x, y, text, scale, rgb):
@@ -239,7 +290,7 @@ class Screen:
             return
         try:
             with open(self.device, 'wb') as fh:
-                fh.write(bytearray(self.stride * self.height))
+                fh.write(bytearray(self.stride * self.buf_h))
         except Exception:
             pass
         self._last = None

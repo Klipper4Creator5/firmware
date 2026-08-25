@@ -7,7 +7,13 @@
 # the result to a PNG with nothing but the standard library, so reviewing a
 # layout change does not require a printer, a replica, or Pillow.
 #
-#     ./bin/preview-boot-screen.py [--out DIR] [--size 1024x600@32]
+#     ./bin/preview-boot-screen.py [--out DIR] [--size 480x800@32]
+#
+# The default size is the real one: this machine's framebuffer is PORTRAIT
+# 480x800, and the panel is that buffer turned 90 degrees clockwise. What gets
+# written here is therefore rotated back before it becomes a PNG, so the file
+# shows what a person standing at the printer would see rather than the
+# sideways buffer behind it.
 #
 # It renders every phase the migration actually goes through, in order, so a
 # change that only looks right for one message is visible immediately.
@@ -60,21 +66,34 @@ def png(path, width, height, rgb_rows):
 
 
 def to_rows(buf, screen):
-    """Framebuffer bytes -> one RGB triple per pixel, per row."""
+    """Framebuffer bytes -> one RGB triple per pixel, per row, AS DISPLAYED.
+
+    The buffer is read in its own orientation and then turned by whatever
+    the panel turns it by, so the PNG matches the screen and not the memory.
+    """
     step = screen.bpp // 8
+
+    def pixel(bx, by):
+        off = by * screen.stride + bx * step
+        px = buf[off:off + step]
+        if step == 4:
+            return bytes((px[2], px[1], px[0]))         # B,G,R,X on the wire
+        v = px[0] | (px[1] << 8)                        # RGB565
+        return bytes((((v >> 11) & 0x1F) << 3,
+                      ((v >> 5) & 0x3F) << 2,
+                      (v & 0x1F) << 3))
+
+    # The inverse of the mapping in ffscreen._rect.
     rows = []
     for y in range(screen.height):
-        line = buf[y * screen.stride:y * screen.stride + screen.width * step]
         row = bytearray()
         for x in range(screen.width):
-            px = line[x * step:(x + 1) * step]
-            if step == 4:
-                row += bytes((px[2], px[1], px[0]))     # B,G,R,X on the wire
+            if screen.rotate == 90:
+                row += pixel(y, screen.buf_h - 1 - x)
+            elif screen.rotate == 270:
+                row += pixel(screen.buf_w - 1 - y, x)
             else:
-                v = px[0] | (px[1] << 8)                # RGB565
-                row += bytes((((v >> 11) & 0x1F) << 3,
-                              ((v >> 5) & 0x3F) << 2,
-                              (v & 0x1F) << 3))
+                row += pixel(x, y)
         rows.append(bytes(row))
     return rows
 
@@ -82,7 +101,9 @@ def to_rows(buf, screen):
 def main(argv):
     ap = argparse.ArgumentParser(description='render the first-boot screen')
     ap.add_argument('--out', default=os.path.join(ROOT, 'work', 'boot-screen'))
-    ap.add_argument('--size', default='1024x600@32')
+    ap.add_argument('--size', default='480x800@32',
+                    help='the FRAMEBUFFER, not the panel (default: the real one)')
+    ap.add_argument('--rotate', type=int, default=None, choices=[0, 90, 270])
     args = ap.parse_args(argv)
 
     ffscreen = load_ffscreen()
@@ -94,7 +115,7 @@ def main(argv):
     fb = os.path.join(args.out, 'fb0.raw')
     for name, status, progress in PHASES:
         open(fb, 'wb').close()
-        screen = ffscreen.Screen(fb, geometry=geometry)
+        screen = ffscreen.Screen(fb, geometry=geometry, rotate=args.rotate)
         if not screen.ok:
             raise SystemExit('ffscreen refused this geometry: %s' % args.size)
         note = '' if name in NO_NOTE else 'DO NOT TURN THE PRINTER OFF'
@@ -103,7 +124,9 @@ def main(argv):
             buf = fh.read()
         out = os.path.join(args.out, '%s.png' % name)
         png(out, screen.width, screen.height, to_rows(buf, screen))
-        print('%-18s %s' % (status, out))
+        print('%-30s %s  (%dx%d panel, %dx%d buffer)'
+              % (status, out, screen.width, screen.height,
+                 screen.buf_w, screen.buf_h))
     os.remove(fb)
     return 0
 
