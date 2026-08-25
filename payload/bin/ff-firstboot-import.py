@@ -18,9 +18,9 @@
 #   1. If the stamp exists, exit immediately. This is every boot but the
 #      first, and it must cost nothing -- the UI is waiting behind us.
 #   2. If there is no firmwareRes JSON to import, exit immediately too.
-#   3. Otherwise wait for the whole stack to be genuinely up -- klipper ready,
-#      moonraker answering, mainsail served -- because a half-started printer
-#      is exactly where an import lands values nobody can see or correct.
+#   3. Otherwise wait for klipper ready and moonraker answering -- a
+#      half-started printer is exactly where an import lands values nobody can
+#      see or correct. The web UI is waited for but NOT required: see below.
 #   4. Run FF_IMPORT_FIRMWARE_CONFIG, then SAVE_CONFIG (which restarts klippy),
 #      wait for it to come back, and only then write the stamp.
 #
@@ -30,8 +30,19 @@
 # stack was not ready in time" is a normal event to retry, not a failure to
 # record forever.
 #
+# WHY THE WEB UI IS A SOFT GATE. Everything this program does travels over
+# moonraker's API, so klipper and moonraker are the only two services it
+# actually needs. The browser UI is waited for anyway -- if it is seconds
+# behind, importing after it means the first person to open a browser sees a
+# calibrated machine -- but it is never a requirement. It cannot be: the UI is
+# a build-time choice (Mainsail today, Fluidd or nothing tomorrow), and
+# MOD_WEB=0 turns nginx off entirely. Blocking a one-shot migration on an
+# optional, swappable component would strand exactly the printers that chose
+# not to have one. --webui '' skips the wait altogether.
+#
 #   usage: ff-firstboot-import.py [--stamp F] [--dir D] [--moonraker URL]
-#                                 [--mainsail URL] [--timeout S] [--dry-run]
+#                                 [--webui URL] [--webui-grace S]
+#                                 [--timeout S] [--dry-run]
 #
 # Exit 0 = nothing to do, or imported and saved. Exit 1 = tried and did not
 # finish; no stamp was written.
@@ -46,8 +57,9 @@ import urllib.request
 STAMP = '/usr/data/anvil/.firmware-config-imported'
 JSON_DIR = '/usr/data/firmwareRes/config'
 MOONRAKER = 'http://127.0.0.1:7125'
-MAINSAIL = 'http://127.0.0.1/'
+WEBUI = 'http://127.0.0.1/'
 TIMEOUT = 240.0
+WEBUI_GRACE = 30.0
 EXTRUDER_COUNT = 4
 
 
@@ -59,9 +71,9 @@ def log(msg):
 class Moonraker:
     """The smallest possible client: three GETs and one POST."""
 
-    def __init__(self, base, mainsail):
+    def __init__(self, base, webui):
         self.base = base.rstrip('/')
-        self.mainsail = mainsail
+        self.webui = webui
 
     def _open(self, req, timeout):
         return urllib.request.urlopen(req, timeout=timeout)
@@ -109,8 +121,12 @@ class Moonraker:
         except Exception as exc:
             return False, '%s: %s' % (type(exc).__name__, exc)
 
-    def mainsail_ok(self, timeout=5.0):
-        req = urllib.request.Request(self.mainsail, method='GET')
+    def webui_ok(self, timeout=5.0):
+        """Is nginx serving a browser UI? Whichever one it is -- we only ask
+        for the index, so Mainsail and Fluidd look identical from here."""
+        if not self.webui:
+            return False
+        req = urllib.request.Request(self.webui, method='GET')
         try:
             with self._open(req, timeout) as fh:
                 fh.read(1)
@@ -148,26 +164,42 @@ def any_calibrated(tools):
 
 
 def wait_for_stack(mr, deadline):
-    """Block until klipper, moonraker AND mainsail are all up, or time runs
-    out. Reports each subsystem's state once per change so the boot log says
-    which one everybody is waiting on."""
+    """Block until klipper and moonraker are both up, or time runs out.
+    Reports their state once per change so the boot log says which one
+    everybody is waiting on."""
     last = None
     while True:
         state = mr.klippy_state()
-        mainsail = mr.mainsail_ok() if state == 'ready' else False
-        now = (state, mainsail)
-        if now != last:
-            log('waiting: moonraker=%s klipper=%s mainsail=%s'
-                % ('up' if state is not None else 'down',
-                   state or 'unknown', 'up' if mainsail else 'down'))
-            last = now
-        if state == 'ready' and mainsail:
+        if state != last:
+            log('waiting: moonraker=%s klipper=%s'
+                % ('up' if state is not None else 'down', state or 'unknown'))
+            last = state
+        if state == 'ready':
             return True
         if time.time() >= deadline:
-            log('the stack did not come up in time (moonraker=%s klipper=%s'
-                ' mainsail=%s) -- no stamp, the next boot tries again'
-                % ('up' if state is not None else 'down', state or 'unknown',
-                   'up' if mainsail else 'down'))
+            log('klipper and moonraker did not come up in time (moonraker=%s'
+                ' klipper=%s) -- no stamp, the next boot tries again'
+                % ('up' if state is not None else 'down', state or 'unknown'))
+            return False
+        time.sleep(2.0)
+
+
+def wait_for_webui(mr, deadline):
+    """Give the browser UI a moment to catch up, and carry on either way.
+
+    Nothing here needs it -- see the header. It is worth a short wait only so
+    that on a normal printer the import lands before anyone can open a
+    browser, and worth no more than that."""
+    if not mr.webui:
+        log('no web UI configured -- not waiting for one')
+        return False
+    while True:
+        if mr.webui_ok():
+            log('web UI is being served')
+            return True
+        if time.time() >= deadline:
+            log('no web UI yet (%s) -- importing anyway; nothing here needs'
+                ' it' % mr.webui)
             return False
         time.sleep(2.0)
 
@@ -214,9 +246,10 @@ def run(args):
     log('first boot: importing this unit\'s factory calibration from %s'
         % args.dir)
     deadline = time.time() + args.timeout
-    mr = Moonraker(args.moonraker, args.mainsail)
+    mr = Moonraker(args.moonraker, args.webui)
     if not wait_for_stack(mr, deadline):
         return 1
+    wait_for_webui(mr, min(deadline, time.time() + args.webui_grace))
 
     tools = mr.tools()
     if tools is None:
@@ -279,7 +312,9 @@ def main(argv):
     ap.add_argument('--stamp', default=STAMP)
     ap.add_argument('--dir', default=JSON_DIR)
     ap.add_argument('--moonraker', default=MOONRAKER)
-    ap.add_argument('--mainsail', default=MAINSAIL)
+    ap.add_argument('--webui', default=WEBUI,
+                    help="browser UI index to wait for; '' to not wait")
+    ap.add_argument('--webui-grace', type=float, default=WEBUI_GRACE)
     ap.add_argument('--timeout', type=float, default=TIMEOUT)
     ap.add_argument('--dry-run', action='store_true')
     args = ap.parse_args(argv)

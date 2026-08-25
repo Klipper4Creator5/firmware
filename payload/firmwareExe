@@ -49,8 +49,12 @@ fi
 # splash wait. Every boot after the first costs one stat() of the stamp.
 #
 # It is a separate program (bin/ff-firstboot-import.py) rather than something
-# klippy does to itself, because it must see the WHOLE stack up -- klipper,
-# moonraker and Mainsail -- before it decides anything.
+# klippy does to itself, because it must see klipper AND moonraker up before
+# it decides anything -- it drives both commands over the moonraker API.
+#
+# The browser UI is not part of that: it is a build-time choice and MOD_WEB=0
+# removes it, so with the web stack off we tell the importer not to wait for
+# one at all. With it on, the importer waits briefly and proceeds regardless.
 if [ "${MOD_IMPORT:-1}" = 1 ] && [ -f $MODDIR/bin/ff-firstboot-import.py ]; then
     # Same interpreter dance as klipper/start.sh: this python does not start
     # without its own libraries on the path.
@@ -60,8 +64,11 @@ if [ "${MOD_IMPORT:-1}" = 1 ] && [ -f $MODDIR/bin/ff-firstboot-import.py ]; then
     LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
     LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
     export LD_LIBRARY_PATH
+    IMPORT_WEBUI=http://127.0.0.1/
+    [ "${MOD_WEB:-1}" = 1 ] || IMPORT_WEBUI=
     "$FF_PY" $MODDIR/bin/ff-firstboot-import.py \
         --timeout "${MOD_IMPORT_TIMEOUT:-240}" \
+        --webui "$IMPORT_WEBUI" \
         || echo "ff-import: returned $? -- the next boot will try again"
 fi
 

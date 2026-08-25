@@ -31,7 +31,7 @@ documented in the file headers.
 | [`payload/klipper/config/ff-toolchange.cfg`](../payload/klipper/config/ff-toolchange.cfg) | `/usr/data/config/` | empty `[ff_tool 0..3]` sections (the per-unit dock/nozzle data is autosaved, nothing unit-specific ships), `[ff_toolchange]` feeds/geometry, the `G28` dock-first wrapper |
 | [`payload/klipper/config/ff-tool-offset.cfg`](../payload/klipper/config/ff-tool-offset.cfg) | `/usr/data/config/` | `[ff_tool_offset]` — probe geometry and guards for the calibration commands |
 | [`payload/klipper/config/ff-legacy.cfg`](../payload/klipper/config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — stays included permanently; declares the section and, optionally, `firmware_config_dir` |
-| [`payload/bin/ff-firstboot-import.py`](../payload/bin/ff-firstboot-import.py) | `/usr/data/anvil/bin/` | The first-boot migration, outside Klipper: the `firmwareExe` wrapper runs it once before HelixScreen, it waits for klipper + moonraker + Mainsail, sends `FF_IMPORT_FIRMWARE_CONFIG` and `SAVE_CONFIG` over the moonraker API, and stamps `/usr/data/anvil/.firmware-config-imported`. Only a verified save stamps, so a slow boot retries |
+| [`payload/bin/ff-firstboot-import.py`](../payload/bin/ff-firstboot-import.py) | `/usr/data/anvil/bin/` | The first-boot migration, outside Klipper: the `firmwareExe` wrapper runs it once before HelixScreen, it waits for klipper + moonraker, sends `FF_IMPORT_FIRMWARE_CONFIG` and `SAVE_CONFIG` over the moonraker API, and stamps `/usr/data/anvil/.firmware-config-imported`. Only a verified save stamps, so a slow boot retries. The browser UI is waited for briefly but never required — it is a build-time choice and nothing here talks to it |
 | [`payload/klipper/config/ff-print-macros.cfg`](../payload/klipper/config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the `_FF_PREFLIGHT` calibration and tool-presence gate; declares `[ff_print]` and the `FF_BEFORE_PRINT_START` / `FF_AFTER_PRINT_END` entry points it calls |
 | [`payload/klipper/config/ff-filament.cfg`](../payload/klipper/config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
 | [`payload/klipper/config/ff-runout.cfg`](../payload/klipper/config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163, reported here in plain words); `ff_toolchange` arms only the mounted tool's sensors |
@@ -154,8 +154,10 @@ scp payload/klipper/config/ff-*.cfg \
    the flash — driven from outside Klipper by
    [`bin/ff-firstboot-import.py`](../payload/bin/ff-firstboot-import.py),
    which the `firmwareExe` wrapper runs ahead of HelixScreen. It waits until
-   klipper, moonraker and Mainsail are all up, then sends the two commands
-   below over the moonraker API: `[ff_legacy]` reads `extruder.json` /
+   klipper and moonraker are up — those two and nothing else, since that is
+   what it talks to; the browser UI gets a short grace period and is then
+   ignored, so `MOD_WEB=0` or a Fluidd build still migrates — then sends the
+   two commands below over the moonraker API: `[ff_legacy]` reads `extruder.json` /
    `test.json` / `zoffset.json` and stages **your unit's** dock coordinates,
    nozzle and station values, station start point and any per-tool Z tune,
    and `SAVE_CONFIG` persists them into `printer.cfg`'s `#*#` block. That

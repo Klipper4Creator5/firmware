@@ -1,11 +1,16 @@
 """bin/ff-firstboot-import.py -- the once-per-install calibration migration.
 
 The contract under test: on the first boot after the mod is installed, and
-only then, this program waits until klipper, moonraker AND Mainsail are all
-answering, runs FF_IMPORT_FIRMWARE_CONFIG + SAVE_CONFIG over the moonraker
-API, waits out the restart that save causes, and stamps the install. Every
-boot after that it must exit instantly, because the firmwareExe wrapper runs
-it with HelixScreen waiting behind it.
+only then, this program waits until klipper and moonraker are answering, runs
+FF_IMPORT_FIRMWARE_CONFIG + SAVE_CONFIG over the moonraker API, waits out the
+restart that save causes, and stamps the install. Every boot after that it
+must exit instantly, because the firmwareExe wrapper runs it with HelixScreen
+waiting behind it.
+
+Klipper and moonraker are the only HARD requirements, and the tests below
+pin that: the browser UI is waited for briefly and then ignored, because it
+is a build-time choice (Mainsail, Fluidd, none) that nothing in this path
+talks to. A printer with MOD_WEB=0 still gets its calibration.
 
 The other half of the contract is what it does NOT do: no stamp is written
 unless the values are verifiably saved, so a printer whose heater board needed
@@ -64,7 +69,7 @@ class Stack:
     def __init__(self):
         self.moonraker = True
         self.klippy_state = "ready"
-        self.mainsail = True
+        self.webui = True
         self.calibrated = False
         self.save_pending = False
         self.scripts = []
@@ -80,9 +85,9 @@ class Stack:
         if self.on_request:
             self.on_request(url)
         if url.startswith("http://127.0.0.1/"):
-            if not self.mainsail:
+            if not self.webui:
                 raise Down("nginx not listening")
-            return FakeResponse(b"<html>mainsail</html>")
+            return FakeResponse(b"<html>a browser ui</html>")
         if not self.moonraker:
             raise Down("connection refused")
         path = url.split("127.0.0.1:7125", 1)[1]
@@ -156,8 +161,8 @@ def args(tmp_path, **over):
     (jsondir / "extruder.json").write_text('{"t0_offset_x": 1.0}\n/* tail */\n')
     ns = imp.argparse.Namespace(
         stamp=str(tmp_path / "stamp"), dir=str(jsondir),
-        moonraker="http://127.0.0.1:7125", mainsail="http://127.0.0.1/",
-        timeout=60.0, dry_run=False)
+        moonraker="http://127.0.0.1:7125", webui="http://127.0.0.1/",
+        timeout=60.0, webui_grace=10.0, dry_run=False)
     for k, v in over.items():
         setattr(ns, k, v)
     return ns
@@ -193,10 +198,10 @@ def test_a_save_that_answers_is_also_fine(tmp_path, stack):
 # -- the health gate -------------------------------------------------------
 
 
-def test_waits_for_all_three_then_proceeds(tmp_path, stack):
+def test_waits_for_the_stack_then_proceeds(tmp_path, stack):
     stack.moonraker = False
     stack.klippy_state = "startup"
-    stack.mainsail = False
+    stack.webui = False
     seen = []
 
     def wake(url):
@@ -206,26 +211,63 @@ def test_waits_for_all_three_then_proceeds(tmp_path, stack):
         elif len(seen) == 4:
             stack.klippy_state = "ready"
         elif len(seen) == 6:
-            stack.mainsail = True
+            stack.webui = True
 
     stack.on_request = wake
     assert imp.run(args(tmp_path)) == 0
     assert "FF_IMPORT_FIRMWARE_CONFIG" in stack.scripts
 
 
-@pytest.mark.parametrize("broken", ["moonraker", "klipper", "mainsail"])
-def test_any_one_service_missing_means_no_import_and_no_stamp(
+@pytest.mark.parametrize("broken", ["moonraker", "klipper"])
+def test_a_missing_hard_dependency_means_no_import_and_no_stamp(
         tmp_path, stack, broken):
     if broken == "moonraker":
         stack.moonraker = False
-    elif broken == "klipper":
-        stack.klippy_state = "startup"
     else:
-        stack.mainsail = False
+        stack.klippy_state = "startup"
     a = args(tmp_path, timeout=10.0)
     assert imp.run(a) == 1
     assert stack.scripts == []
     assert not os.path.exists(a.stamp)
+
+
+# -- the web UI is not one of them -----------------------------------------
+
+
+def test_no_web_ui_at_all_still_imports(tmp_path, stack):
+    # nginx never comes up: a build with no UI, or a broken web stack. The
+    # migration goes over moonraker and must not care.
+    stack.webui = False
+    a = args(tmp_path)
+    assert imp.run(a) == 0
+    assert stack.scripts == ["FF_IMPORT_FIRMWARE_CONFIG", "SAVE_CONFIG"]
+    assert os.path.exists(a.stamp)
+
+
+def test_web_ui_disabled_is_not_even_asked(tmp_path, stack):
+    # What the wrapper passes when MOD_WEB=0. Nothing should hit port 80.
+    stack.on_request = lambda url: (
+        pytest.fail("asked %s with the web UI switched off" % url)
+        if url.startswith("http://127.0.0.1/") else None)
+    a = args(tmp_path, webui="")
+    assert imp.run(a) == 0
+    assert os.path.exists(a.stamp)
+
+
+def test_a_slow_web_ui_is_waited_for_but_not_required(tmp_path, stack):
+    # Up late: it should be noticed rather than waited out to the deadline,
+    # and either way the import happens.
+    seen = []
+
+    def wake(url):
+        seen.append(url)
+        stack.webui = len(seen) > 3
+
+    stack.webui = False
+    stack.on_request = wake
+    a = args(tmp_path)
+    assert imp.run(a) == 0
+    assert os.path.exists(a.stamp)
 
 
 def test_klipper_in_error_never_gets_a_gcode(tmp_path, stack):
