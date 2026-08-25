@@ -1,15 +1,20 @@
 # One-shot migration helpers from firmwareExe's per-unit JSON to Klipper config.
 #
-# [ff_legacy] is shipped permanently (printer.base.cfg includes ff-legacy.cfg).
-# With auto_import -- the default -- _handle_ready re-imports on EVERY
-# klippy:ready until some tool has a saved nozzle position, so a fresh install
-# comes up with the calibration firmwareExe already made. With auto_save --
-# also the default -- a successful first import runs SAVE_CONFIG by itself:
-# klipper restarts once, right after the first ready and before anyone has had
-# time to reach a screen, and comes back with the values persisted -- after
-# which the import finds a saved nozzle and neither runs again. Setting
-# auto_save off restores the old contract: values applied live each boot,
-# SAVE_CONFIG left to you.
+# [ff_legacy] is shipped permanently (printer.base.cfg includes ff-legacy.cfg)
+# and does exactly one thing: it registers the command below. It has no
+# startup behaviour at all.
+#
+# WHO RUNS IT. On a fresh install the migration is driven from outside klippy,
+# by /usr/data/anvil/bin/ff-firstboot-import.py, which the firmwareExe wrapper
+# runs once before HelixScreen. That program waits until klipper, moonraker
+# and Mainsail are all up, sends FF_IMPORT_FIRMWARE_CONFIG and SAVE_CONFIG
+# over the moonraker API, and stamps the install so it never runs again.
+#
+# This used to be a klippy:ready handler here (auto_import / auto_save), which
+# meant a Creator-5-only, once-per-install chore lived inside a general extra
+# and re-decided itself on every ready, at the one moment klippy cannot know
+# whether the rest of the machine is up. Both options are gone; the command
+# is unchanged, and running it by hand still works exactly as it did.
 #
 #   FF_IMPORT_FIRMWARE_CONFIG [DIR=/usr/data/firmwareRes/config] [APPLY=1]
 #
@@ -126,81 +131,17 @@ class FFLegacy:
         self.gcode.register_command(
             'FF_IMPORT_FIRMWARE_CONFIG', self.cmd_FF_IMPORT_FIRMWARE_CONFIG,
             desc=self.cmd_FF_IMPORT_FIRMWARE_CONFIG_help)
-        # auto_import: while no [ff_tool n] carries a nozzle position (nothing
-        # calibrated or saved yet), load the stock firmware's numbers at
-        # startup so the printer -- and a UI's setup wizard -- sees the
-        # calibration firmwareExe already made. Applied live and staged; with
-        # auto_save the staging is persisted immediately (see _handle_ready),
-        # otherwise the next SAVE_CONFIG (e.g. after a recalibration) does it.
-        # Either way, once saved this no longer triggers.
-        self.auto_import = config.getboolean('auto_import', True)
-        self.auto_save = config.getboolean('auto_save', True)
-        self.auto_import_dir = config.get('firmware_config_dir',
-                                          FIRMWARE_CONFIG_DIR)
-        self.printer.register_event_handler('klippy:ready',
-                                            self._handle_ready)
-
-    def _handle_ready(self):
-        if not self.auto_import:
-            return
-        for n in range(EXTRUDER_COUNT):
-            tool = self.printer.lookup_object('ff_tool %d' % n, None)
-            if tool is not None and tool.calibrated():
-                return  # something is calibrated or saved -- leave it alone
-        if not os.path.exists(os.path.join(self.auto_import_dir,
-                                           'extruder.json')):
-            return
-        # Read BEFORE the import stages anything: SAVE_CONFIG commits every
-        # staged value, so if something else is already pending it is not ours
-        # to commit and the automatic save stands down.
-        reactor = self.printer.get_reactor()
-        configfile = self.printer.lookup_object('configfile')
-        pending_before = configfile.get_status(
-            reactor.monotonic()).get('save_config_pending')
-        try:
-            out = self._import(self.auto_import_dir, apply=True)
-        except Exception as e:
-            logging.warning("%s: auto import failed: %s", self.name, e)
-            return
-        logging.info("%s: auto import\n%s", self.name, "\n".join(out))
-        # Only restart for values that actually landed: a JSON with no tool
-        # data stages nothing worth a restart, and calibrated() turning true
-        # is also what stops this from ever running a second time.
-        landed = any(
-            t is not None and t.calibrated()
-            for t in (self.printer.lookup_object('ff_tool %d' % n, None)
-                      for n in range(EXTRUDER_COUNT)))
-        if self.auto_save and landed and not pending_before:
-            self.gcode.respond_info(
-                "%s: imported the stock firmware's calibration (%s);"
-                " persisting with SAVE_CONFIG -- klipper restarts once"
-                % (self.name, self.auto_import_dir))
-            # After the ready handlers, not during them: SAVE_CONFIG restarts
-            # klippy, and the other handlers deserve to finish first. One
-            # reactor callback later is still seconds before any UI is up.
-            reactor.register_callback(self._auto_save)
-        else:
-            self.gcode.respond_info(
-                "%s: imported the stock firmware's calibration (%s); run"
-                " SAVE_CONFIG to keep it" % (self.name, self.auto_import_dir))
-
-    def _auto_save(self, eventtime):
-        try:
-            self.gcode.run_script("SAVE_CONFIG")
-        except Exception as e:
-            # A failed save does not restart, so there is no loop here: the
-            # printer runs on the live-applied values and the next boot tries
-            # again, exactly as a manual SAVE_CONFIG failure would leave it.
-            logging.warning("%s: automatic SAVE_CONFIG failed (%s) -- the"
-                            " imported values are live but unsaved; run"
-                            " SAVE_CONFIG by hand", self.name, e)
+        # Where the command looks when it is given no DIR= of its own. The
+        # first-boot importer passes nothing, so this is the path it gets.
+        self.default_dir = config.get('firmware_config_dir',
+                                      FIRMWARE_CONFIG_DIR)
 
     cmd_FF_IMPORT_FIRMWARE_CONFIG_help = (
         "Import firmwareExe's extruder/test/zoffset.json into [ff_tool n] /"
         " [ff_tool_offset] ([DIR=<path>] [APPLY=1])")
 
     def cmd_FF_IMPORT_FIRMWARE_CONFIG(self, gcmd):
-        directory = gcmd.get('DIR', FIRMWARE_CONFIG_DIR)
+        directory = gcmd.get('DIR', self.default_dir)
         apply = gcmd.get_int('APPLY', 1, minval=0, maxval=1)
         try:
             out = self._import(directory, apply)

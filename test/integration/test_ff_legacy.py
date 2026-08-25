@@ -1,16 +1,18 @@
-"""ff_legacy's automatic import-and-save at first boot.
+"""FF_IMPORT_FIRMWARE_CONFIG -- reading firmwareExe's per-unit JSON.
 
-The contract under test: on a printer fresh from stock firmware -- no
-[ff_tool n] has a saved nozzle position -- the first klippy:ready imports
-firmwareExe's per-unit JSON and, with auto_save (the default), persists it
-with a SAVE_CONFIG that klipper issues itself. Once. The restart that save
-causes is exactly the point: it happens right after ready, before a UI is up,
-so the wizard never sees an uncalibrated machine.
+The contract under test is the command alone: given the three JSON files the
+stock firmware keeps, it applies the nozzle/dock/station numbers live AND
+stages them for SAVE_CONFIG, so one SAVE_CONFIG afterwards persists the lot.
+
+It has no startup behaviour to test. Deciding WHEN to run this on a fresh
+install belongs to bin/ff-firstboot-import.py (see test_firstboot_import.py),
+which drives the command from outside klippy once the whole stack is up. The
+options that used to do it here, auto_import and auto_save, are gone.
 
 These run against payload/klipper/extras/ff_legacy.py with the klippy objects
-stubbed -- the extra only touches gcode, configfile, reactor and the ff_tool
-objects, all narrow enough to fake honestly. The replica lane cannot cover
-this: klippy itself does not run there.
+stubbed -- the extra only touches gcode, configfile and the ff_tool objects,
+all narrow enough to fake honestly. The replica lane cannot cover this:
+klippy itself does not run there.
 """
 import importlib.util
 import json
@@ -163,93 +165,96 @@ def make(printer, values):
     return ff_legacy.FFLegacy(config)
 
 
-def ready(printer):
-    printer.handlers["klippy:ready"]()
+class FakeGcmd:
+    """Just enough of a gcode command: parameters in, respond_info out."""
+
+    def __init__(self, params=None):
+        self.params = params or {}
+        self.responses = []
+
+    def get(self, name, default=None):
+        return self.params.get(name, default)
+
+    def get_int(self, name, default, minval=None, maxval=None):
+        return int(self.params.get(name, default))
+
+    def respond_info(self, msg):
+        self.responses.append(msg)
+
+    def error(self, msg):
+        return ValueError(msg)
 
 
-def test_first_boot_imports_and_saves(rig):
+def run_import(printer, values, params=None):
+    legacy = make(printer, values)
+    gcmd = FakeGcmd(params)
+    legacy.cmd_FF_IMPORT_FIRMWARE_CONFIG(gcmd)
+    return "\n".join(gcmd.responses)
+
+
+def test_the_command_is_all_it_registers(rig):
     printer, reactor, gcode, configfile, jdir = rig
     make(printer, {"firmware_config_dir": jdir})
-    ready(printer)
-    # applied live: every tool got its nozzle triple
+    assert list(gcode.commands) == ["FF_IMPORT_FIRMWARE_CONFIG"]
+    # No klippy:ready hook: nothing happens to a printer merely by booting.
+    assert printer.handlers == {}
+
+
+def test_import_applies_live_and_stages_for_save(rig):
+    printer, reactor, gcode, configfile, jdir = rig
+    out = run_import(printer, {"firmware_config_dir": jdir})
+    # applied live: every tool got its nozzle triple and its dock
     for n in range(4):
-        assert printer.objects["ff_tool %d" % n].nozzle == (1.0 + n, 2.0 + n, 3.0 + n)
-    # staged for the save that is about to happen
+        tool = printer.objects["ff_tool %d" % n]
+        assert tool.nozzle == (1.0 + n, 2.0 + n, 3.0 + n)
+        assert (tool.dock_x, tool.dock_y) == (10.0 + n, 20.0 + n)
+    # staged, so a single SAVE_CONFIG afterwards persists everything
     assert ("ff_tool 0", "nozzle_x") in configfile.staged
+    assert ("ff_tool 3", "dock_y") in configfile.staged
     assert ("ff_tool_offset", "station_z") in configfile.staged
-    # the save is deferred to after the ready handlers, then actually issued
+    assert configfile.pending
+    assert "Then run SAVE_CONFIG" in out
+    # and it saves nothing by itself -- that is the caller's move now
     assert gcode.scripts == []
-    assert len(reactor.callbacks) == 1
-    reactor.run_pending()
-    assert gcode.scripts == ["SAVE_CONFIG"]
-    assert any("restarts once" in m for m in gcode.messages)
 
 
-def test_never_a_second_time(rig):
+def test_apply_zero_only_reports(rig):
     printer, reactor, gcode, configfile, jdir = rig
-    make(printer, {"firmware_config_dir": jdir})
-    ready(printer)
-    reactor.run_pending()
-    # after the save-restart the tools come back calibrated; ready again must
-    # neither re-import nor schedule another save -- this is the "once"
-    ready(printer)
-    assert reactor.callbacks == []
-    assert gcode.scripts == ["SAVE_CONFIG"]
+    out = run_import(printer, {"firmware_config_dir": jdir}, {"APPLY": 0})
+    assert configfile.staged == {}
+    assert printer.objects["ff_tool 0"].nozzle is None
+    assert "would stage" in out
 
 
-def test_auto_save_off_keeps_the_old_contract(rig):
+def test_dir_parameter_wins_over_the_configured_default(rig, tmp_path):
     printer, reactor, gcode, configfile, jdir = rig
-    make(printer, {"firmware_config_dir": jdir, "auto_save": False})
-    ready(printer)
-    assert reactor.callbacks == []
-    assert gcode.scripts == []
-    assert any("run SAVE_CONFIG to keep it" in m for m in gcode.messages)
-    # the values are still applied live, exactly as before
+    other = tmp_path / "other"
+    other.mkdir()
+    write_firmware_json(str(other))
+    out = run_import(printer, {"firmware_config_dir": "/nonexistent"},
+                     {"DIR": str(other)})
+    assert str(other) in out
     assert printer.objects["ff_tool 0"].nozzle == (1.0, 2.0, 3.0)
 
 
-def test_someone_elses_pending_save_is_not_committed(rig):
-    printer, reactor, gcode, configfile, jdir = rig
-    configfile.pending = True  # staged by something else before ready
-    make(printer, {"firmware_config_dir": jdir})
-    ready(printer)
-    assert reactor.callbacks == []
-    assert gcode.scripts == []
-    assert any("run SAVE_CONFIG to keep it" in m for m in gcode.messages)
-
-
-def test_no_json_no_import_no_restart(rig, tmp_path):
+def test_missing_json_is_a_command_error(rig, tmp_path):
     printer, reactor, gcode, configfile, _ = rig
     empty = tmp_path / "empty"
     empty.mkdir()
-    make(printer, {"firmware_config_dir": str(empty)})
-    ready(printer)
-    assert reactor.callbacks == []
+    with pytest.raises(ValueError):
+        run_import(printer, {"firmware_config_dir": str(empty)})
     assert configfile.staged == {}
-    assert gcode.messages == []
 
 
-def test_nothing_landed_no_restart(rig, tmp_path):
-    # extruder.json exists but carries no usable tool data: importing stages
-    # nothing a restart would be worth, so no save is scheduled.
+def test_json_without_tool_data_stages_nothing(rig, tmp_path):
+    # extruder.json exists but carries nothing usable: the command succeeds
+    # and reports it, and no tool comes out calibrated -- which is what the
+    # first-boot importer checks before it decides to SAVE_CONFIG.
     printer, reactor, gcode, configfile, _ = rig
     bare = tmp_path / "bare"
     bare.mkdir()
     with open(os.path.join(str(bare), "extruder.json"), "w") as fh:
         fh.write('{"irrelevant": 1}\n/* trailer */\n')
-    make(printer, {"firmware_config_dir": str(bare)})
-    ready(printer)
-    assert reactor.callbacks == []
-    assert gcode.scripts == []
-
-
-def test_failed_save_does_not_raise(rig):
-    # SAVE_CONFIG can refuse (read-only config, a conflict); the callback must
-    # swallow it -- the values are live, the next boot retries, and a failed
-    # save never restarted klippy so there is no loop to fear.
-    printer, reactor, gcode, configfile, jdir = rig
-    gcode.fail_scripts = True
-    make(printer, {"firmware_config_dir": jdir})
-    ready(printer)
-    reactor.run_pending()  # must not raise
-    assert gcode.scripts == []
+    run_import(printer, {"firmware_config_dir": str(bare)})
+    assert configfile.staged == {}
+    assert not printer.objects["ff_tool 0"].calibrated()

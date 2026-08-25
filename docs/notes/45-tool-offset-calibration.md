@@ -69,8 +69,10 @@ STATION_CALIBRATE PLATE_REMOVED=1
 TOOL_OFFSET_CALIBRATE TOOL=ALL PLATE_REMOVED=1
 SAVE_CONFIG
 ```
-`ff-legacy.cfg` stays included permanently: with `auto_import` (the default)
-it re-imports on every startup until a tool has a saved nozzle position.
+`ff-legacy.cfg` stays included permanently, but only to register the command:
+since 2026-08-25 the first-boot import is driven from outside klippy by
+`bin/ff-firstboot-import.py` (once per install, stamped), not by a
+`klippy:ready` handler. `auto_import` / `auto_save` no longer exist.
 
 ## Safety on an uncalibrated machine (added 2026-08-21, user request)
 

@@ -32,8 +32,8 @@ UI. What is genuinely still unported is marked as such per item. Kept as referen
   `tN_offset_x/y/z`, `z_station_pos` in extruder.json. Reimplemented in Klipper as
   `STATION_CALIBRATE` / `TOOL_OFFSET_CALIBRATE` (`45-tool-offset-calibration.md`,
   `46-offset-calibration-recovered.md`); the JSON is imported by
-  `FF_IMPORT_FIRMWARE_CONFIG` — automatically, on every startup, for as long as no
-  `[ff_tool n]` has a saved nozzle position — and is never a runtime source.
+  `FF_IMPORT_FIRMWARE_CONFIG` — once per install, run for you at the first boot
+  by `bin/ff-firstboot-import.py` — and is never a runtime source.
 - **Input shaper**: `STEPPER_RESONANCE_FACTORY_CALIBRATE` (fork) / `SHAPER_CALIBRATE`.
 - **Auto PA**: prints slow-fast-slow line patterns per PA candidate, scores via
   `PA_ACTION`/`PA_GET` (sensor unknown), stores per-tool table via `SET_PA_ADVANCE`.

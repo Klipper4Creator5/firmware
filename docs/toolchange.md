@@ -27,10 +27,11 @@ documented in the file headers.
 | [`payload/klipper/extras/ff_print.py`](../payload/klipper/extras/ff_print.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_print]` — takes over `SDCARD_PRINT_FILE` and `M23`, reads bed/nozzle/initial tool/first-layer height out of the file itself, and calls `FF_BEFORE_PRINT_START` before the file's first line and `FF_AFTER_PRINT_END` once the job leaves the printing state. Declared in `ff-print-macros.cfg`; holds no policy of its own |
 | [`payload/klipper/extras/ff_tool.py`](../payload/klipper/extras/ff_tool.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_tool n]` — one section per tool; `dock_x/dock_y`, `nozzle_x/y/z` and `z_adjust` are all autosaved (import or calibration + `SAVE_CONFIG`) |
 | [`payload/klipper/extras/ff_tool_offset.py`](../payload/klipper/extras/ff_tool_offset.py) | `/usr/prog/klipper/klippy/extras/` | `TOOL_OFFSET_CALIBRATE` / `STATION_CALIBRATE` / `TOOL_OFFSET_STATUS` — the touchscreen's nozzle XY/Z offset calibration, recovered from the binary and reimplemented in Klipper |
-| [`payload/klipper/extras/ff_legacy.py`](../payload/klipper/extras/ff_legacy.py) | `/usr/prog/klipper/klippy/extras/` | `FF_IMPORT_FIRMWARE_CONFIG` — one-shot import of the factory/touchscreen JSON into Klipper config. Runs (and saves) by itself on the first boot; the command remains for doing it by hand |
+| [`payload/klipper/extras/ff_legacy.py`](../payload/klipper/extras/ff_legacy.py) | `/usr/prog/klipper/klippy/extras/` | `FF_IMPORT_FIRMWARE_CONFIG` — one-shot import of the factory/touchscreen JSON into Klipper config. The command and nothing else: no startup behaviour. `bin/ff-firstboot-import.py` is what runs it on the first boot |
 | [`payload/klipper/config/ff-toolchange.cfg`](../payload/klipper/config/ff-toolchange.cfg) | `/usr/data/config/` | empty `[ff_tool 0..3]` sections (the per-unit dock/nozzle data is autosaved, nothing unit-specific ships), `[ff_toolchange]` feeds/geometry, the `G28` dock-first wrapper |
 | [`payload/klipper/config/ff-tool-offset.cfg`](../payload/klipper/config/ff-tool-offset.cfg) | `/usr/data/config/` | `[ff_tool_offset]` — probe geometry and guards for the calibration commands |
-| [`payload/klipper/config/ff-legacy.cfg`](../payload/klipper/config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — stays included permanently; with `auto_import` it imports at startup until a tool has a saved nozzle position, and with `auto_save` the first import `SAVE_CONFIG`s itself (one restart, before the UI is up), after which it does nothing |
+| [`payload/klipper/config/ff-legacy.cfg`](../payload/klipper/config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — stays included permanently; declares the section and, optionally, `firmware_config_dir` |
+| [`payload/bin/ff-firstboot-import.py`](../payload/bin/ff-firstboot-import.py) | `/usr/data/anvil/bin/` | The first-boot migration, outside Klipper: the `firmwareExe` wrapper runs it once before HelixScreen, it waits for klipper + moonraker + Mainsail, sends `FF_IMPORT_FIRMWARE_CONFIG` and `SAVE_CONFIG` over the moonraker API, and stamps `/usr/data/anvil/.firmware-config-imported`. Only a verified save stamps, so a slow boot retries |
 | [`payload/klipper/config/ff-print-macros.cfg`](../payload/klipper/config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the `_FF_PREFLIGHT` calibration and tool-presence gate; declares `[ff_print]` and the `FF_BEFORE_PRINT_START` / `FF_AFTER_PRINT_END` entry points it calls |
 | [`payload/klipper/config/ff-filament.cfg`](../payload/klipper/config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
 | [`payload/klipper/config/ff-runout.cfg`](../payload/klipper/config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163, reported here in plain words); `ff_toolchange` arms only the mounted tool's sensors |
@@ -149,20 +150,30 @@ scp payload/klipper/config/ff-*.cfg \
 
 4. `RESTART` (or reboot).
 
-5. The factory/touchscreen calibration imports itself on that startup:
-   `[ff_legacy]` reads `extruder.json` / `test.json` / `zoffset.json`, stages
-   **your unit's** dock coordinates, nozzle and station values, station start
-   point and any per-tool Z tune, and — with `auto_save`, the default —
-   persists them with its own `SAVE_CONFIG` into `printer.cfg`'s `#*#` block.
-   That save restarts Klipper once more, straight after ready, which on a
-   flashed printer lands before HelixScreen is up: the wizard never meets an
-   uncalibrated machine. The manual form, for inspecting or with
-   `auto_save: False`:
+5. The factory/touchscreen calibration imports itself on the first boot after
+   the flash — driven from outside Klipper by
+   [`bin/ff-firstboot-import.py`](../payload/bin/ff-firstboot-import.py),
+   which the `firmwareExe` wrapper runs ahead of HelixScreen. It waits until
+   klipper, moonraker and Mainsail are all up, then sends the two commands
+   below over the moonraker API: `[ff_legacy]` reads `extruder.json` /
+   `test.json` / `zoffset.json` and stages **your unit's** dock coordinates,
+   nozzle and station values, station start point and any per-tool Z tune,
+   and `SAVE_CONFIG` persists them into `printer.cfg`'s `#*#` block. That
+   save restarts Klipper once, before the UI is up: the wizard never meets an
+   uncalibrated machine. Then it stamps
+   `/usr/data/anvil/.firmware-config-imported` and never runs again — delete
+   the stamp to redo it, or set `MOD_IMPORT=0` in `anvil.conf` to skip it
+   entirely. The manual form, for inspecting or after a `RESTORE`:
 
    ```gcode
    FF_IMPORT_FIRMWARE_CONFIG            ; APPLY=0 to only print, stage nothing
    SAVE_CONFIG
    ```
+
+   Only a save it can verify writes the stamp. A boot where the heater board
+   needed several klippy restarts (`S70klipper`) simply times out and tries
+   again next boot; `/usr/data/logs/anvil-boot.log` says which service it was
+   waiting on.
 
    Nothing to paste either way; the import only prints an `[ff_toolchange]`
    snippet if a feed in the JSON differs from the running config (it does not

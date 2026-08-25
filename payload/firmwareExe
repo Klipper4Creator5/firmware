@@ -40,6 +40,31 @@ if [ -d $MODDIR/init.d ]; then
     done
 fi
 
+# ---- one-time migration of the factory calibration -----------------------
+# Creator-5-specific, and specific to the FIRST boot after the install: this
+# unit's nozzle/dock/station numbers live in firmwareExe's own JSON and have
+# to be moved into printer.cfg once. It runs HERE, ahead of the UI, on
+# purpose -- the save it makes restarts klippy, and doing that behind a
+# HelixScreen that is already showing a printer is worse than making the
+# splash wait. Every boot after the first costs one stat() of the stamp.
+#
+# It is a separate program (bin/ff-firstboot-import.py) rather than something
+# klippy does to itself, because it must see the WHOLE stack up -- klipper,
+# moonraker and Mainsail -- before it decides anything.
+if [ "${MOD_IMPORT:-1}" = 1 ] && [ -f $MODDIR/bin/ff-firstboot-import.py ]; then
+    # Same interpreter dance as klipper/start.sh: this python does not start
+    # without its own libraries on the path.
+    FF_PY=/usr/prog/Python-3.8.2/bin/python3
+    [ -x "$FF_PY" ] || FF_PY=python3
+    LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:$LD_LIBRARY_PATH
+    LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
+    LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
+    export LD_LIBRARY_PATH
+    "$FF_PY" $MODDIR/bin/ff-firstboot-import.py \
+        --timeout "${MOD_IMPORT_TIMEOUT:-240}" \
+        || echo "ff-import: returned $? -- the next boot will try again"
+fi
+
 # ---- the UI, in the foreground so the stock watchdog can see us ----------
 # S80ui already decided and wrote its verdict here: "helix" to start the UI,
 # "none" to stay headless (MOD_UI=0, or HelixScreen not installed).
