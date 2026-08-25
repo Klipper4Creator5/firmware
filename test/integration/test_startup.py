@@ -1,11 +1,15 @@
-"""bin/ff-firstboot-import.py -- the once-per-install calibration migration.
+"""bin/ff-startup.py -- everything before HelixScreen, and the panel saying so.
 
-The contract under test: on the first boot after the mod is installed, and
-only then, this program waits until klipper and moonraker are answering, runs
-FF_IMPORT_FIRMWARE_CONFIG + SAVE_CONFIG over the moonraker API, waits out the
-restart that save causes, and stamps the install. Every boot after that it
-must exit instantly, because the firmwareExe wrapper runs it with HelixScreen
-waiting behind it.
+Two contracts, and only the second is once-per-install.
+
+EVERY BOOT it waits for the printer to actually be up -- the toolhead boards
+handed over from their bootloaders by ff-mcu-bringup.py, then klipper and
+moonraker ready -- and names on the panel whichever one is holding things up.
+
+FIRST BOOT, once that has happened, it runs FF_IMPORT_FIRMWARE_CONFIG +
+SAVE_CONFIG over the moonraker API, waits out the restart that save causes,
+and stamps the install. A stamped printer still does the waiting; it just
+skips the migration.
 
 Klipper and moonraker are the only services involved, and the tests below pin
 that: nothing here asks about a browser UI. Which one is installed --
@@ -37,8 +41,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 
 def _load():
-    path = os.path.join(ROOT, "payload", "bin", "ff-firstboot-import.py")
-    spec = importlib.util.spec_from_file_location("ff_firstboot_import", path)
+    path = os.path.join(ROOT, "payload", "bin", "ff-startup.py")
+    spec = importlib.util.spec_from_file_location("ff_startup", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -74,6 +78,7 @@ class Stack:
     def __init__(self):
         self.moonraker = True
         self.klippy_state = "ready"
+        self.state_message = "Printer is ready"
         self.calibrated = False
         self.save_pending = False
         self.scripts = []
@@ -101,6 +106,9 @@ class Stack:
         if path.startswith("/server/info"):
             return self._json({"klippy_state": self.klippy_state,
                                "klippy_connected": True})
+        if path.startswith("/printer/info"):
+            return self._json({"state": self.klippy_state,
+                               "state_message": self.state_message})
         if path.startswith("/printer/objects/query?configfile"):
             return self._json({"status": {"configfile": {
                 "save_config_pending": self.save_pending}}})
@@ -164,7 +172,9 @@ def args(tmp_path, **over):
     ns = imp.argparse.Namespace(
         stamp=str(tmp_path / "stamp"), dir=str(jsondir),
         moonraker="http://127.0.0.1:7125", timeout=60.0,
-        fb=None, fb_geometry=None, no_screen=True, dry_run=False)
+        mcu_status=str(tmp_path / "mcu.status"), mcu_timeout=20.0,
+        no_import=False, fb=None, fb_geometry=None, no_screen=True,
+        dry_run=False)
     for k, v in over.items():
         setattr(ns, k, v)
     return ns
@@ -181,14 +191,22 @@ def test_first_boot_imports_saves_and_stamps(tmp_path, stack, capsys):
     assert stack.calibrated
 
 
-def test_the_stamp_makes_every_later_boot_free(tmp_path, stack):
+def test_a_stamped_printer_waits_but_does_not_migrate(tmp_path, stack):
     a = args(tmp_path)
     assert imp.run(a) == 0
     stack.scripts = []
-    # Not one request may be made once the stamp is there: the UI is waiting.
-    stack.on_request = lambda url: pytest.fail("touched %s after the stamp" % url)
+    # The wait still happens -- that is the every-boot half -- but nothing is
+    # sent to the printer, because the migration is done.
     assert imp.run(a) == 0
     assert stack.scripts == []
+
+
+def test_no_import_waits_and_stops(tmp_path, stack):
+    # MOD_IMPORT=0: keep the wait, never migrate.
+    a = args(tmp_path, no_import=True)
+    assert imp.run(a) == 0
+    assert stack.scripts == []
+    assert not os.path.exists(a.stamp)
 
 
 def test_a_save_that_answers_is_also_fine(tmp_path, stack):
@@ -233,12 +251,12 @@ def test_a_missing_hard_dependency_means_no_import_and_no_stamp(
 # -- reasons not to import -------------------------------------------------
 
 
-def test_no_firmware_json_exits_at_once(tmp_path, stack):
+def test_no_firmware_json_means_no_migration(tmp_path, stack):
     empty = tmp_path / "empty"
     empty.mkdir()
     a = args(tmp_path, dir=str(empty))
-    stack.on_request = lambda url: pytest.fail("asked %s with nothing to import" % url)
     assert imp.run(a) == 0
+    assert stack.scripts == []
     # No stamp: plugging the stock config back in should still be importable.
     assert not os.path.exists(a.stamp)
 
@@ -497,3 +515,124 @@ def test_every_reason_is_drawable(tmp_path):
     for reason in reasons:
         missing = set(reason.upper()) - set(ffscreen.FONT)
         assert not missing, "%r has no glyph for %s" % (reason, missing)
+
+
+# -- waiting for the toolhead boards, every boot ---------------------------
+#
+# Three of the four boards answer only after ff-mcu-bringup.py hands them over
+# from their bootloaders, and it runs alongside this program. It publishes
+# what it is still working on; the point of reading that is to be able to say
+# WAITING FOR THE HEATER BOARD instead of showing a bar that has not moved.
+
+
+def write_mcu_status(path, state, working=(), done=()):
+    lines = ["state %s" % state]
+    lines += ["%s working" % d for d in working]
+    lines += ["%s ok" % d for d in done]
+    open(path, "w").write("\n".join(lines) + "\n")
+
+
+def test_the_panel_names_the_board_being_waited_for(tmp_path, stack, monkeypatch):
+    screen = with_screen(monkeypatch, FakeScreen())
+    a = args(tmp_path, no_screen=False)
+    write_mcu_status(a.mcu_status, "running", working=["/dev/ttyS4"])
+    seen = []
+
+    def wake(url):
+        seen.append(url)
+        if len(seen) == 1:
+            write_mcu_status(a.mcu_status, "finished", done=["/dev/ttyS4"])
+
+    stack.on_request = wake
+    assert imp.run(a) == 0
+    assert any("THE HEATER BOARD" in s for _, s, _, _ in screen.frames)
+
+
+def test_both_boards_are_named_while_both_are_working(tmp_path, stack,
+                                                      monkeypatch):
+    screen = with_screen(monkeypatch, FakeScreen())
+    a = args(tmp_path, no_screen=False)
+    write_mcu_status(a.mcu_status, "running",
+                     working=["/dev/ttyS4", "/dev/ttyS7"])
+    seen = []
+
+    def wake(url):
+        seen.append(url)
+        write_mcu_status(a.mcu_status, "finished")
+
+    stack.on_request = wake
+    assert imp.run(a) == 0
+    said = " ".join(s for _, s, _, _ in screen.frames)
+    assert "THE HEATER BOARD" in said and "THE LEVEL BOARD" in said
+
+
+def test_a_bringup_that_never_reports_does_not_block_the_boot(tmp_path, stack):
+    # ff-mcu-bringup.py may not have written anything yet, or at all. Klippy
+    # is the real authority on whether a board answered, so this wait is one
+    # we are happy to abandon.
+    a = args(tmp_path, mcu_timeout=5.0)
+    assert imp.run(a) == 0
+    assert stack.scripts == ["FF_IMPORT_FIRMWARE_CONFIG", "SAVE_CONFIG"]
+    assert os.path.exists(a.stamp)
+
+
+def test_a_finished_bringup_is_not_waited_for_at_all(tmp_path, stack):
+    a = args(tmp_path)
+    write_mcu_status(a.mcu_status, "finished", done=["/dev/ttyS4", "/dev/ttyS7"])
+    assert imp.run(a) == 0
+    assert os.path.exists(a.stamp)
+
+
+@pytest.mark.parametrize("text", [
+    "", "state\n", "garbage\nlines\n", "state running\n/dev/ttyS4\n",
+])
+def test_an_unreadable_status_file_is_just_no_news(tmp_path, stack, text):
+    # A malformed hint must never be the reason a printer does not boot.
+    a = args(tmp_path, mcu_timeout=5.0)
+    open(a.mcu_status, "w").write(text)
+    assert imp.run(a) == 0
+
+
+def test_status_parsing(tmp_path):
+    path = str(tmp_path / "s")
+    write_mcu_status(path, "running", working=["/dev/ttyS7"], done=["/dev/ttyS4"])
+    assert imp.read_mcu_status(path) == ("running", ["/dev/ttyS7"])
+    write_mcu_status(path, "finished", done=["/dev/ttyS4", "/dev/ttyS7"])
+    assert imp.read_mcu_status(path) == ("finished", [])
+    assert imp.read_mcu_status(str(tmp_path / "absent")) is None
+
+
+def test_board_names_are_human_readable():
+    assert imp.board_name("/dev/ttyS4") == "THE HEATER BOARD"
+    assert imp.board_name("eheaterboard") == "THE HEATER BOARD"
+    assert imp.board_name("/dev/ttyS7") == "THE LEVEL BOARD"
+    # An unknown port still says something rather than nothing.
+    assert imp.board_name("/dev/ttyS9") == "/DEV/TTYS9"
+
+
+# -- klippy's own error names the board ------------------------------------
+
+
+def test_a_failed_connect_names_the_board_klippy_blamed(tmp_path, stack,
+                                                        monkeypatch):
+    # This is the only place the guilty board is named: klippy's
+    # state_message on a failed connect.
+    screen = with_screen(monkeypatch, FakeScreen())
+    stack.klippy_state = "error"
+    stack.state_message = ("MCU 'eheaterboard' error during connect\n"
+                           "Once the underlying issue is corrected, use the"
+                           " \"FIRMWARE_RESTART\" command to reset the"
+                           " firmware.")
+    a = args(tmp_path, no_screen=False, timeout=10.0)
+    assert imp.run(a) == 1
+    assert any("THE HEATER BOARD DID NOT ANSWER" in d for d in _details(screen))
+
+
+def test_an_error_naming_no_board_still_reports_something(tmp_path, stack,
+                                                          monkeypatch):
+    screen = with_screen(monkeypatch, FakeScreen())
+    stack.klippy_state = "error"
+    stack.state_message = "Option 'foo' is not valid in section 'bar'"
+    a = args(tmp_path, no_screen=False, timeout=10.0)
+    assert imp.run(a) == 1
+    assert any("KLIPPER REPORTED AN ERROR" in d for d in _details(screen))

@@ -28,6 +28,8 @@ W, H, BPP = 480, 800, 32   # the real framebuffer: portrait
 # on the host -- the two are expected to agree byte for byte.
 PHASES = [
     ('starting-services', 'STARTING SERVICES', 0.05, ''),
+    ('mcu-heater', 'WAITING FOR THE HEATER BOARD', 0.05, ''),
+    ('mcu-both', 'WAITING FOR THE HEATER BOARD AND THE LEVEL BOARD', 0.05, ''),
     ('waiting', 'WAITING FOR THE PRINTER', 0.22, ''),
     ('importing', 'READING FACTORY CALIBRATION', 0.5, ''),
     ('saving', 'SAVING CALIBRATION', 0.7, ''),
@@ -40,6 +42,7 @@ LOG = '/USR/DATA/LOGS/ANVIL-BOOT.LOG'
 for slug, reason in [
         ('fail-moonraker', 'MOONRAKER IS NOT RESPONDING'),
         ('fail-klipper-error', 'KLIPPER REPORTED AN ERROR'),
+        ('fail-board', 'THE HEATER BOARD DID NOT ANSWER'),
         ('fail-klipper-startup', 'KLIPPER DID NOT FINISH STARTING (STARTUP)'),
         ('fail-tools', 'COULD NOT READ THE TOOL SETTINGS'),
         ('fail-config', 'COULD NOT READ THE PRINTER CONFIGURATION'),

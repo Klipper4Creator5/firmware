@@ -27,10 +27,12 @@ import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Every (status, progress) ff-firstboot-import.py can put on the panel, in the
+# Every (status, progress) ff-startup.py can put on the panel, in the
 # order it happens. Keep this in step with the panel.say() calls there.
 PHASES = [
     ('starting-services', 'STARTING SERVICES', 0.05),
+    ('mcu-heater', 'WAITING FOR THE HEATER BOARD', 0.05),
+    ('mcu-both', 'WAITING FOR THE HEATER BOARD AND THE LEVEL BOARD', 0.05),
     ('waiting', 'WAITING FOR THE PRINTER', 0.22),
     ('importing', 'READING FACTORY CALIBRATION', 0.5),
     ('saving', 'SAVING CALIBRATION', 0.7),
@@ -41,10 +43,11 @@ PHASES = [
 NO_NOTE = ('complete', 'already')
 
 # Every way the migration can end badly, with the reason it puts on the panel.
-# Kept in step with the panel.failed() calls in ff-firstboot-import.py.
+# Kept in step with the panel.failed() calls in ff-startup.py.
 FAILURES = [
     ('fail-moonraker', 'MOONRAKER IS NOT RESPONDING'),
     ('fail-klipper-error', 'KLIPPER REPORTED AN ERROR'),
+    ('fail-board', 'THE HEATER BOARD DID NOT ANSWER'),
     ('fail-klipper-startup', 'KLIPPER DID NOT FINISH STARTING (STARTUP)'),
     ('fail-tools', 'COULD NOT READ THE TOOL SETTINGS'),
     ('fail-config', 'COULD NOT READ THE PRINTER CONFIGURATION'),

@@ -1,7 +1,7 @@
 # A few lines of text on /dev/fb0, for the moments when nothing else owns the
 # screen and the printer would otherwise look dead.
 #
-# WHY THIS EXISTS. The first boot after a flash runs ff-firstboot-import.py
+# WHY THIS EXISTS. The first boot after a flash runs ff-startup.py
 # before HelixScreen, and that can take a couple of minutes: it waits for
 # klipper to find its MCUs (which on this machine routinely needs a restart or
 # two), then makes a SAVE_CONFIG that restarts klippy again. All of it happens

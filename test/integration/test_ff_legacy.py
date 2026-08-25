@@ -5,7 +5,7 @@ stock firmware keeps, it applies the nozzle/dock/station numbers live AND
 stages them for SAVE_CONFIG, so one SAVE_CONFIG afterwards persists the lot.
 
 It has no startup behaviour to test. Deciding WHEN to run this on a fresh
-install belongs to bin/ff-firstboot-import.py (see test_firstboot_import.py),
+install belongs to bin/ff-startup.py (see test_startup.py),
 which drives the command from outside klippy once the whole stack is up. The
 options that used to do it here, auto_import and auto_save, are gone.
 

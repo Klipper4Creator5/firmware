@@ -34,7 +34,7 @@ H=800
 BPP=32
 
 mkdir -p $MOD/bin
-for f in ffscreen.py ff-firstboot-import.py; do
+for f in ffscreen.py ff-startup.py; do
     cp /tmp/payload/bin/$f $MOD/bin/$f 2>/dev/null
     if [ -f "$MOD/bin/$f" ]; then
         ok "payload ships bin/$f"
@@ -43,7 +43,7 @@ for f in ffscreen.py ff-firstboot-import.py; do
         exit 1
     fi
 done
-chmod +x $MOD/bin/ff-firstboot-import.py 2>/dev/null
+chmod +x $MOD/bin/ff-startup.py 2>/dev/null
 
 if [ ! -x "$PY" ]; then
     bad "$PY is not executable -- the replica has no usable interpreter"
@@ -58,10 +58,10 @@ export LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
 
 # 1. the interpreter runs the importer at all. --help exits before any I/O,
 #    so this is purely "does this 3.8 accept the syntax and the imports".
-if "$PY" $MOD/bin/ff-firstboot-import.py --help >/tmp/help.out 2>&1; then
-    ok "ff-firstboot-import.py runs under the printer's python"
+if "$PY" $MOD/bin/ff-startup.py --help >/tmp/help.out 2>&1; then
+    ok "ff-startup.py runs under the printer's python"
 else
-    bad "ff-firstboot-import.py does not run: `cat /tmp/help.out`"
+    bad "ff-startup.py does not run: `cat /tmp/help.out`"
 fi
 
 # 2. it found ffscreen.py beside itself. The import is optional by design, so

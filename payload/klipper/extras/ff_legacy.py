@@ -5,7 +5,7 @@
 # startup behaviour at all.
 #
 # WHO RUNS IT. On a fresh install the migration is driven from outside klippy,
-# by /usr/data/anvil/bin/ff-firstboot-import.py, which the firmwareExe wrapper
+# by /usr/data/anvil/bin/ff-startup.py, which the firmwareExe wrapper
 # runs once before HelixScreen. That program waits until klipper, moonraker
 # and Mainsail are all up, sends FF_IMPORT_FIRMWARE_CONFIG and SAVE_CONFIG
 # over the moonraker API, and stamps the install so it never runs again.

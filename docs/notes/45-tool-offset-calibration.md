@@ -71,7 +71,7 @@ SAVE_CONFIG
 ```
 `ff-legacy.cfg` stays included permanently, but only to register the command:
 since 2026-08-25 the first-boot import is driven from outside klippy by
-`bin/ff-firstboot-import.py` (once per install, stamped), not by a
+`bin/ff-startup.py` (once per install, stamped), not by a
 `klippy:ready` handler. `auto_import` / `auto_save` no longer exist.
 
 ## Safety on an uncalibrated machine (added 2026-08-21, user request)

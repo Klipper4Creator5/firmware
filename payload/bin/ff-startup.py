@@ -1,6 +1,22 @@
 #!/usr/bin/env python3
-# Carry this unit's factory calibration from firmwareExe's JSON into Klipper.
-# Once, on the first boot after the mod is installed, and then never again.
+# Everything that has to happen before HelixScreen, and the panel that says so.
+#
+# The firmwareExe wrapper runs this after the init.d services and before the
+# UI. It does two jobs, and only the second is once-per-install:
+#
+#   EVERY BOOT   wait until the printer is genuinely up -- the toolhead boards
+#                handed over from their bootloaders, then klipper and
+#                moonraker ready -- naming on the panel whatever is being
+#                waited for. This machine takes its time: three of the four
+#                boards need a handshake before they answer (see
+#                bin/ff-mcu-bringup.py) and the heater board routinely costs
+#                klippy a restart or two. That wait used to happen behind a
+#                black screen with HelixScreen already up and reporting a
+#                disconnected printer, which tells an owner nothing about
+#                which board is missing.
+#
+#   FIRST BOOT   carry this unit's factory calibration from firmwareExe's JSON
+#                into Klipper, then stamp the install so it never runs again.
 #
 # WHY THIS IS ITS OWN PROGRAM. The migration used to live inside Klipper:
 # [ff_legacy] hooked klippy:ready, imported, and ran SAVE_CONFIG itself. That
@@ -12,17 +28,18 @@
 # start, so it wants a stamp on disk rather than a "has anything been
 # calibrated yet" guess re-evaluated on every ready.
 #
-# So it is a separate program with one job, run from the firmwareExe wrapper
-# before HelixScreen:
+# So it is a separate program, run from the firmwareExe wrapper before
+# HelixScreen:
 #
-#   1. If the stamp exists, exit immediately. This is every boot but the
-#      first, and it must cost nothing -- the UI is waiting behind us.
-#   2. If there is no firmwareRes JSON to import, exit immediately too.
-#   3. Otherwise wait for klipper ready and moonraker answering -- a
-#      half-started printer is exactly where an import lands values nobody can
-#      see or correct.
-#   4. Run FF_IMPORT_FIRMWARE_CONFIG, then SAVE_CONFIG (which restarts klippy),
-#      wait for it to come back, and only then write the stamp.
+#   1. Wait for bin/ff-mcu-bringup.py, which start.sh runs alongside us, to
+#      finish handing the toolhead boards over. It publishes what it is still
+#      working on and we name that board on the panel.
+#   2. Wait for klipper ready and moonraker answering. If klippy fails, its
+#      own message names the board that did not connect, and so do we.
+#   3. If the install is already stamped, stop here -- the rest is the
+#      migration, and it has been done.
+#   4. Otherwise run FF_IMPORT_FIRMWARE_CONFIG, then SAVE_CONFIG (which
+#      restarts klippy), wait for it to come back, and only then stamp.
 #
 # Anything short of a verified success leaves NO stamp: the next boot tries
 # again. That is deliberate. The heater board on this machine routinely needs
@@ -44,12 +61,12 @@
 # if it cannot draw, the migration proceeds exactly the same. --no-screen
 # turns it off.
 #
-#   usage: ff-firstboot-import.py [--stamp F] [--dir D] [--moonraker URL]
-#                                 [--timeout S] [--fb DEV] [--no-screen]
-#                                 [--dry-run]
+#   usage: ff-startup.py [--stamp F] [--dir D] [--moonraker URL] [--timeout S]
+#                        [--mcu-status F] [--mcu-timeout S] [--no-import]
+#                        [--fb DEV] [--fb-geometry G] [--no-screen] [--dry-run]
 #
-# Exit 0 = nothing to do, or imported and saved. Exit 1 = tried and did not
-# finish; no stamp was written.
+# Exit 0 = the printer came up, and the migration either was not needed or
+# succeeded. Exit 1 = something did not finish; no stamp was written.
 import argparse
 import json
 import os
@@ -67,8 +84,24 @@ except ImportError:
 STAMP = '/usr/data/anvil/.firmware-config-imported'
 JSON_DIR = '/usr/data/firmwareRes/config'
 MOONRAKER = 'http://127.0.0.1:7125'
+MCU_STATUS = '/tmp/ff-mcu-bringup.status'
 TIMEOUT = 240.0
+MCU_TIMEOUT = 90.0
 EXTRUDER_COUNT = 4
+
+# What to call each board on the panel. The serial port is what ff-mcu-bringup
+# publishes and what klipper names in its own errors; neither string means
+# anything to the person standing in front of the machine.
+BOARDS = {
+    '/dev/ttyS2': 'THE MAIN BOARD',
+    '/dev/ttyS5': 'THE EXTRUDER BOARD',
+    '/dev/ttyS4': 'THE HEATER BOARD',
+    '/dev/ttyS7': 'THE LEVEL BOARD',
+    'mcu': 'THE MAIN BOARD',
+    'eboard': 'THE EXTRUDER BOARD',
+    'eheaterboard': 'THE HEATER BOARD',
+    'levelboard': 'THE LEVEL BOARD',
+}
 
 TITLE = 'SETTING UP YOUR PRINTER'
 KEEP_POWER = 'DO NOT TURN THE PRINTER OFF'
@@ -220,6 +253,84 @@ def any_calibrated(tools):
     return any(t and t.get('calibrated') for t in tools or [])
 
 
+def read_mcu_status(path):
+    """What ff-mcu-bringup.py is doing, or None if it has not said yet.
+
+    Returns (state, [ports still working]). Anything unparseable reads as
+    "nothing to report" -- this is a progress hint, and a malformed hint must
+    never be the reason a printer does not finish booting."""
+    try:
+        with open(path) as fh:
+            lines = fh.read().splitlines()
+    except (IOError, OSError):
+        return None
+    state, working = None, []
+    for line in lines:
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        if parts[0] == 'state':
+            state = parts[1]
+        elif parts[1] == 'working':
+            working.append(parts[0])
+    if state is None:
+        return None
+    return state, working
+
+
+def board_name(key):
+    """A serial port or a klipper mcu name -> something a person can act on."""
+    return BOARDS.get(key, str(key).upper())
+
+
+def wait_for_mcus(panel, path, deadline):
+    """Wait for the toolhead boards to leave their bootloaders.
+
+    start.sh runs ff-mcu-bringup.py at the same time as this program, so its
+    status file may not exist for a moment; that is not an error, and neither
+    is it never appearing. This is a wait we are happy to abandon -- klippy is
+    the real authority on whether a board answered, and it is waited for next.
+    """
+    said = None
+    while True:
+        status = read_mcu_status(path)
+        if status is not None and status[0] == 'finished':
+            log('mcu bring-up finished')
+            return True
+        if status is None:
+            detail = ''
+        else:
+            working = [board_name(d) for d in status[1]]
+            detail = ' AND '.join(working[:2])
+        if detail != said:
+            log('waiting for the boards: %s' % (detail or 'not started yet'))
+            said = detail
+        panel.say('WAITING FOR ' + detail if detail else 'STARTING SERVICES',
+                  0.05)
+        if time.time() >= deadline:
+            # Not a failure: a board that never answered is klippy's news to
+            # break, with a much better message than we could write here.
+            log('mcu bring-up did not report finishing -- going on to klipper')
+            return False
+        time.sleep(1.0)
+
+
+def klippy_fault(mr):
+    """The board klippy is complaining about, if it names one.
+
+    On a failed connect klippy's state_message is "MCU 'eheaterboard' error
+    during connect ..." -- the only place the guilty board is named, and
+    exactly what an owner needs to know."""
+    info = mr.get('/printer/info')
+    if not info:
+        return None
+    message = info.get('state_message') or ''
+    for key in BOARDS:
+        if "'%s'" % key in message:
+            return board_name(key)
+    return None
+
+
 def wait_for_stack(mr, panel, deadline, started):
     """Block until klipper and moonraker are both up, or time runs out.
     Reports their state once per change so the boot log says which one
@@ -250,7 +361,11 @@ def wait_for_stack(mr, panel, deadline, started):
             if state is None:
                 panel.failed('MOONRAKER IS NOT RESPONDING')
             elif state == 'error':
-                panel.failed('KLIPPER REPORTED AN ERROR')
+                board = klippy_fault(mr)
+                if board:
+                    panel.failed('%s DID NOT ANSWER' % board)
+                else:
+                    panel.failed('KLIPPER REPORTED AN ERROR')
             else:
                 panel.failed('KLIPPER DID NOT FINISH STARTING (%s)'
                              % str(state).upper())
@@ -288,33 +403,43 @@ def stamp(path, note):
 
 
 def run(args):
-    if os.path.exists(args.stamp):
-        return 0  # the common case: say nothing, cost nothing
-    extruder_json = os.path.join(args.dir, 'extruder.json')
-    if not os.path.exists(extruder_json):
-        # Not a unit migrated from stock firmware (or the files were wiped).
-        # Nothing to import and nothing to wait for.
-        log('no %s -- nothing to import' % extruder_json)
-        return 0
-
-    log('first boot: importing this unit\'s factory calibration from %s'
-        % args.dir)
     started = time.time()
     deadline = started + args.timeout
     mr = Moonraker(args.moonraker)
     panel = Panel(args.fb, args.fb_geometry, enabled=not args.no_screen)
     panel.say('STARTING SERVICES', 0.05)
     try:
-        return migrate(args, mr, panel, started, deadline)
+        return startup(args, mr, panel, started, deadline)
     finally:
         # Whatever happened, hand HelixScreen a clean panel.
         panel.done()
 
 
-def migrate(args, mr, panel, started, deadline):
+def startup(args, mr, panel, started, deadline):
+    # -- every boot ------------------------------------------------------
+    wait_for_mcus(panel, args.mcu_status,
+                  min(deadline, started + args.mcu_timeout))
     if not wait_for_stack(mr, panel, deadline, started):
         return 1
 
+    # -- first boot only -------------------------------------------------
+    if args.no_import:
+        return 0
+    if os.path.exists(args.stamp):
+        log('already migrated (%s) -- nothing else to do' % args.stamp)
+        return 0
+    extruder_json = os.path.join(args.dir, 'extruder.json')
+    if not os.path.exists(extruder_json):
+        # Not a unit migrated from stock firmware (or the files were wiped).
+        log('no %s -- nothing to import' % extruder_json)
+        return 0
+    log('first boot: importing this unit\'s factory calibration from %s'
+        % args.dir)
+    return migrate(args, mr, panel)
+
+
+def migrate(args, mr, panel):
+    deadline = time.time() + args.timeout
     tools = mr.tools()
     if tools is None:
         log('could not read the ff_tool objects -- no stamp')
@@ -389,6 +514,12 @@ def main(argv):
     ap.add_argument('--dir', default=JSON_DIR)
     ap.add_argument('--moonraker', default=MOONRAKER)
     ap.add_argument('--timeout', type=float, default=TIMEOUT)
+    ap.add_argument('--mcu-status', default=MCU_STATUS,
+                    help="where ff-mcu-bringup.py publishes its progress")
+    ap.add_argument('--mcu-timeout', type=float, default=MCU_TIMEOUT,
+                    help="how long to wait for the boards before going on")
+    ap.add_argument('--no-import', action='store_true',
+                    help="only wait for the printer; never migrate")
     ap.add_argument('--fb', default=None,
                     help='framebuffer to draw the boot screen on')
     ap.add_argument('--fb-geometry', default=None,

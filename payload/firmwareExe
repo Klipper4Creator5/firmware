@@ -60,25 +60,25 @@ if [ -d $MODDIR/init.d ]; then
     done
 fi
 
-# ---- one-time migration of the factory calibration -----------------------
-# Creator-5-specific, and specific to the FIRST boot after the install: this
-# unit's nozzle/dock/station numbers live in firmwareExe's own JSON and have
-# to be moved into printer.cfg once. It runs HERE, ahead of the UI, on
-# purpose -- the save it makes restarts klippy, and doing that behind a
-# HelixScreen that is already showing a printer is worse than making the
-# splash wait. Every boot after the first costs one stat() of the stamp.
+# ---- wait for the printer, and migrate on the first boot -----------------
+# Two jobs, and the panel narrates both (bin/ff-startup.py):
 #
-# It is a separate program (bin/ff-firstboot-import.py) rather than something
-# klippy does to itself, because it must see klipper AND moonraker up before
-# it decides anything -- it drives both commands over the moonraker API.
+#   every boot   wait for the toolhead boards to leave their bootloaders and
+#                for klipper and moonraker to be ready, naming whichever one
+#                is holding things up. Starting HelixScreen before that is
+#                what produces a UI reporting a disconnected printer with no
+#                clue as to which board is missing.
+#   first boot   move this unit's factory calibration into printer.cfg. That
+#                runs HERE, ahead of the UI, because the save restarts klippy
+#                and doing that behind a HelixScreen already showing a
+#                printer is worse than making the splash wait.
 #
-# The browser UI is not part of that: it is a build-time choice and MOD_WEB=0
-# removes it, so with the web stack off we tell the importer not to wait for
-# one at all. With it on, the importer waits briefly and proceeds regardless.
-if [ "${MOD_IMPORT:-1}" = 1 ] && [ -f $MODDIR/bin/ff-firstboot-import.py ]; then
-    "$FF_PY" $MODDIR/bin/ff-firstboot-import.py \
-        --timeout "${MOD_IMPORT_TIMEOUT:-240}" \
-        || echo "ff-import: returned $? -- the next boot will try again"
+# MOD_IMPORT=0 keeps the wait and skips the migration.
+if [ "${MOD_STARTUP:-1}" = 1 ] && [ -f $MODDIR/bin/ff-startup.py ]; then
+    STARTUP_ARGS="--timeout ${MOD_STARTUP_TIMEOUT:-240}"
+    [ "${MOD_IMPORT:-1}" = 1 ] || STARTUP_ARGS="$STARTUP_ARGS --no-import"
+    "$FF_PY" $MODDIR/bin/ff-startup.py $STARTUP_ARGS \
+        || echo "ff-startup: returned $? -- the next boot will try again"
 fi
 
 # ---- the UI, in the foreground so the stock watchdog can see us ----------
