@@ -8,15 +8,28 @@ three times over -- bootSerialHeatMcu, bootSerialMainEboardMcu and
 bootSerialLevelBoardMcu, byte-identical apart from a hard-coded device path.
 
 Replacing firmwareExe took all three away, and /usr/prog/klipper/start.sh
-covers only two of the four boards:
+covered only two of the four boards:
 
-    /dev/ttyS2  mcu           cmd_mcu bootup, in start.sh      ok
-    /dev/ttyS5  eboard        checkEboard, in start.sh         ok
+    /dev/ttyS2  mcu           cmd_mcu bootup, in start.sh      still stock
+    /dev/ttyS5  eboard        checkEboard                      NOW HERE
     /dev/ttyS4  eheaterboard  NOBODY   <- klippy cannot connect
     /dev/ttyS7  levelboard    NOBODY
 
-so this covers the two that were left out. It has to run before klippy opens
+so this covers the two that were left out, and since it does the job better
+than checkEboard did, the eboard as well. It has to run before klippy opens
 the ports.
+
+WHY checkEboard IS GONE. It is 9KB containing one function --
+_Z23bootSerialMainEboardMcuv, an older -O2 build of the same routine, hard
+wired to /dev/ttyS5 -- and its only imports are the tty calls and printf. It
+flashes nothing and touches no other device, so nothing is lost by dropping
+it. What is gained is the ttyS5 half of the ready phase: stock sets isReady on
+ANY byte from that port, so checkEboard cheerfully sends 'A' at an eboard that
+is already running Klipper and merely returning garbage at the wrong baud.
+Here only a banner earns a write. Doing all three ports in one pass is also
+strictly better than doing ttyS5 afterwards, for the reason in the first
+bullet below: a port nobody holds open is shut down in the driver, so the
+banners it sends while another port is being polled are lost.
 
 Doing nothing is always a valid outcome: a board that already started its
 application never sends the banner, and then we must not write to its port at
@@ -80,7 +93,7 @@ QUIET_S = 9.0
 # How many times to resend 'A' before falling back to the quiet check.
 # 50 is what firmwareExe does, exactly (slti $v0, $v0, 0x32).
 ACK_TRIES = 50
-DEFAULT_PORTS = ("/dev/ttyS4", "/dev/ttyS7")
+DEFAULT_PORTS = ("/dev/ttyS4", "/dev/ttyS5", "/dev/ttyS7")
 
 # Where the progress of this pass is published, for anything that wants to
 # tell a person what the printer is doing. bin/ff-startup.py reads it to put

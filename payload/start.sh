@@ -9,9 +9,15 @@
 # Three changes from stock:
 #   * klipper_pri.sh is actually invoked. FlashForge ships that script but
 #     never calls it, so klippy runs at normal priority.
-#   * ff-mcu-bringup.py hands the heat and level boards over from their
-#     bootloaders. Stock never needed it here because firmwareExe did all
-#     three boards itself; replacing firmwareExe left two of them stranded.
+#   * ff-mcu-bringup.py hands the heat, eboard and level boards over from
+#     their bootloaders. Stock never needed it here because firmwareExe did
+#     all three itself; replacing firmwareExe left two of them stranded, and
+#     the third was covered by checkEboard.
+#   * checkEboard is no longer called. It is one function, hard wired to
+#     /dev/ttyS5, and an older build of the routine ff-mcu-bringup.py already
+#     reimplements -- one that treats ANY byte from that port as a bootloader
+#     banner and so sends 'A' at an eboard already running Klipper. The
+#     binary is still on the firmware partition; nothing runs it.
 #   * the /tmp/uds idempotence guard below, so S70klipper's retry loop cannot
 #     start a second klippy against the same MCU.
 
@@ -37,7 +43,7 @@ fi
 #
 #   /dev/ttyS2  mcu           cmd_mcu bootup, above
 #   /dev/ttyS4  eheaterboard  ff-mcu-bringup.py   <- was nobody's job
-#   /dev/ttyS5  eboard        checkEboard
+#   /dev/ttyS5  eboard        ff-mcu-bringup.py   <- was checkEboard
 #   /dev/ttyS7  levelboard    ff-mcu-bringup.py   <- was nobody's job
 #
 # This runs on every klippy start, including the restarts S70klipper issues
@@ -62,7 +68,6 @@ if [ -f /usr/data/anvil/bin/ff-mcu-bringup.py ]; then
 else
     echo "start.sh: ff-mcu-bringup.py missing -- ttyS4/ttyS7 not brought up"
 fi
-/usr/prog/klipper/checkEboard
 /usr/prog/klipper/klipperDaemon start
 
 # Real-time priority for klippy (stock ships this but never runs it).

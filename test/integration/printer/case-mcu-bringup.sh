@@ -79,14 +79,26 @@ else
     bad "unexpected output: `cat /tmp/run.out`"
 fi
 
-# 4. it must name BOTH orphaned boards, not just the first
-if grep -q "mcu-bringup: /dev/ttyS7" /tmp/run.out; then
-    ok "covers /dev/ttyS7 as well"
+# 4. it must name EVERY board it owns, not just the first. ttyS5 is in that
+#    list because checkEboard no longer runs: start.sh dropped it, so a
+#    bring-up that quietly stopped covering ttyS5 would strand the eboard
+#    with nothing left to notice.
+for dev in /dev/ttyS5 /dev/ttyS7; do
+    if grep -q "mcu-bringup: $dev" /tmp/run.out; then
+        ok "covers $dev as well"
+    else
+        bad "never mentioned $dev: `cat /tmp/run.out`"
+    fi
+done
+
+# 5. and start.sh must not still be calling the binary it replaced
+if grep -q "^[^#]*checkEboard" /tmp/payload/start.sh; then
+    bad "start.sh still runs checkEboard"
 else
-    bad "never mentioned /dev/ttyS7: `cat /tmp/run.out`"
+    ok "start.sh no longer runs checkEboard"
 fi
 
-# 5. negative control: without LD_LIBRARY_PATH the interpreter must fail.
+# 6. negative control: without LD_LIBRARY_PATH the interpreter must fail.
 #    This is what makes the export in start.sh load-bearing rather than
 #    decorative -- if this ever starts passing, the comment there is stale.
 if env -u LD_LIBRARY_PATH "$PY" -c 'pass' >/dev/null 2>&1; then
