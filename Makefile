@@ -67,7 +67,8 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
 .PHONY: help image shell passwd build vendor \
         rootfs verify test test-py test-install \
         printer-image printer-image-push \
-        test-recovery test-mcu release clean distclean
+        test-recovery test-mcu test-boot-screen boot-screen \
+        release clean distclean
 
 help:
 	@echo 'creator5-custom-firmware -- everything runs in Docker'
@@ -89,7 +90,11 @@ help:
 	@echo '  make test-py          pytest: the whole test/ tree'
 	@echo '  make test-install     end-to-end: USB stick -> update -> reboot'
 	@echo '  make test-mcu         ff-mcu-bringup.py runs on the printer own python'
+	@echo '  make test-boot-screen the first-boot screen draws on the replica fb0'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
+	@echo
+	@echo 'Look at things:'
+	@echo '  make boot-screen      render the first-boot screen to work/boot-screen/*.png'
 	@echo
 	@echo 'test-py needs python3, pytest and jinja2; its rootfs checks skip'
 	@echo 'until make rootfs has run. The other'
@@ -208,6 +213,15 @@ test-py: image
 
 test-mcu: image
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-mcu-bringup.sh
+
+# The first-boot screen, drawn by the printer's own python onto the replica's
+# /dev/fb0. `make boot-screen` needs nothing but this checkout and renders the
+# same frames to PNGs you can look at.
+test-boot-screen: image
+	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-boot-screen.sh
+
+boot-screen:
+	@./bin/preview-boot-screen.py
 
 # Packages land in dist/ after `make release` and in work/out after a single
 # build (pack.sh clears work/out each run, so only the last model survives

@@ -345,6 +345,9 @@ def main():
         with r.gate("mcu bring-up"):
             gates.mcu_bringup(config, on_output=emit)
 
+        with r.gate("boot screen"):
+            gates.boot_screen(config, on_output=emit)
+
         r.hdr("end-to-end update on the printer replica")
         with r.gate("boot -> install -> re-install -> boot"):
             for step in ("unpack", "patch", "pack"):

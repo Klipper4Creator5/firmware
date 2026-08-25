@@ -7,10 +7,14 @@ restart that save causes, and stamps the install. Every boot after that it
 must exit instantly, because the firmwareExe wrapper runs it with HelixScreen
 waiting behind it.
 
-Klipper and moonraker are the only HARD requirements, and the tests below
-pin that: the browser UI is waited for briefly and then ignored, because it
-is a build-time choice (Mainsail, Fluidd, none) that nothing in this path
-talks to. A printer with MOD_WEB=0 still gets its calibration.
+Klipper and moonraker are the only services involved, and the tests below pin
+that: nothing here asks about a browser UI. Which one is installed --
+Mainsail, Fluidd, none at all -- is a build-time choice this migration has no
+stake in, and a printer with MOD_WEB=0 still gets its calibration.
+
+The boot screen is covered separately in test_ffscreen.py; here it is only
+checked for the property that matters to the migration, which is that it
+cannot affect it.
 
 The other half of the contract is what it does NOT do: no stamp is written
 unless the values are verifiably saved, so a printer whose heater board needed
@@ -25,6 +29,7 @@ import importlib.util
 import io
 import json
 import os
+import sys
 
 import pytest
 
@@ -69,7 +74,6 @@ class Stack:
     def __init__(self):
         self.moonraker = True
         self.klippy_state = "ready"
-        self.webui = True
         self.calibrated = False
         self.save_pending = False
         self.scripts = []
@@ -84,10 +88,8 @@ class Stack:
         url = req.full_url
         if self.on_request:
             self.on_request(url)
-        if url.startswith("http://127.0.0.1/"):
-            if not self.webui:
-                raise Down("nginx not listening")
-            return FakeResponse(b"<html>a browser ui</html>")
+        assert not url.startswith("http://127.0.0.1/"), (
+            "asked the web UI for %s -- nothing here needs one" % url)
         if not self.moonraker:
             raise Down("connection refused")
         path = url.split("127.0.0.1:7125", 1)[1]
@@ -161,8 +163,8 @@ def args(tmp_path, **over):
     (jsondir / "extruder.json").write_text('{"t0_offset_x": 1.0}\n/* tail */\n')
     ns = imp.argparse.Namespace(
         stamp=str(tmp_path / "stamp"), dir=str(jsondir),
-        moonraker="http://127.0.0.1:7125", webui="http://127.0.0.1/",
-        timeout=60.0, webui_grace=10.0, dry_run=False)
+        moonraker="http://127.0.0.1:7125", timeout=60.0,
+        fb=None, fb_geometry=None, no_screen=True, dry_run=False)
     for k, v in over.items():
         setattr(ns, k, v)
     return ns
@@ -201,7 +203,6 @@ def test_a_save_that_answers_is_also_fine(tmp_path, stack):
 def test_waits_for_the_stack_then_proceeds(tmp_path, stack):
     stack.moonraker = False
     stack.klippy_state = "startup"
-    stack.webui = False
     seen = []
 
     def wake(url):
@@ -210,8 +211,6 @@ def test_waits_for_the_stack_then_proceeds(tmp_path, stack):
             stack.moonraker = True
         elif len(seen) == 4:
             stack.klippy_state = "ready"
-        elif len(seen) == 6:
-            stack.webui = True
 
     stack.on_request = wake
     assert imp.run(args(tmp_path)) == 0
@@ -225,55 +224,6 @@ def test_a_missing_hard_dependency_means_no_import_and_no_stamp(
         stack.moonraker = False
     else:
         stack.klippy_state = "startup"
-    a = args(tmp_path, timeout=10.0)
-    assert imp.run(a) == 1
-    assert stack.scripts == []
-    assert not os.path.exists(a.stamp)
-
-
-# -- the web UI is not one of them -----------------------------------------
-
-
-def test_no_web_ui_at_all_still_imports(tmp_path, stack):
-    # nginx never comes up: a build with no UI, or a broken web stack. The
-    # migration goes over moonraker and must not care.
-    stack.webui = False
-    a = args(tmp_path)
-    assert imp.run(a) == 0
-    assert stack.scripts == ["FF_IMPORT_FIRMWARE_CONFIG", "SAVE_CONFIG"]
-    assert os.path.exists(a.stamp)
-
-
-def test_web_ui_disabled_is_not_even_asked(tmp_path, stack):
-    # What the wrapper passes when MOD_WEB=0. Nothing should hit port 80.
-    stack.on_request = lambda url: (
-        pytest.fail("asked %s with the web UI switched off" % url)
-        if url.startswith("http://127.0.0.1/") else None)
-    a = args(tmp_path, webui="")
-    assert imp.run(a) == 0
-    assert os.path.exists(a.stamp)
-
-
-def test_a_slow_web_ui_is_waited_for_but_not_required(tmp_path, stack):
-    # Up late: it should be noticed rather than waited out to the deadline,
-    # and either way the import happens.
-    seen = []
-
-    def wake(url):
-        seen.append(url)
-        stack.webui = len(seen) > 3
-
-    stack.webui = False
-    stack.on_request = wake
-    a = args(tmp_path)
-    assert imp.run(a) == 0
-    assert os.path.exists(a.stamp)
-
-
-def test_klipper_in_error_never_gets_a_gcode(tmp_path, stack):
-    # The MCU-connect failure this printer is prone to: klippy is up and
-    # answering, but in no state to run anything.
-    stack.klippy_state = "error"
     a = args(tmp_path, timeout=10.0)
     assert imp.run(a) == 1
     assert stack.scripts == []
@@ -372,3 +322,86 @@ def test_an_unwritable_stamp_still_reports_success(tmp_path, stack, capsys):
         assert "WARNING" in capsys.readouterr().out
     finally:
         os.chmod(os.path.dirname(os.path.dirname(a.stamp)), 0o700)
+
+
+# -- the boot screen cannot affect the migration ---------------------------
+
+
+class FakeScreen:
+    """Records what it was asked to paint. `ok` false models a panel that is
+    not there at all -- no framebuffer, no permission, unknown pixel format."""
+
+    def __init__(self, device=None, ok=True, explode=False):
+        self.device = device
+        self.ok = ok
+        self.explode = explode
+        self.frames = []
+        self.cleared = 0
+
+    def show(self, title, status, note, progress):
+        if self.explode:
+            raise IOError("the panel went away")
+        self.frames.append((title, status, progress))
+
+    def clear(self):
+        if self.explode:
+            raise IOError("the panel went away")
+        self.cleared += 1
+
+
+def with_screen(monkeypatch, screen):
+    module = _StubModule(screen)
+    monkeypatch.setattr(imp, "ffscreen", module)
+    return screen
+
+
+class _StubModule:
+    def __init__(self, screen):
+        self._screen = screen
+
+    def Screen(self, device=None):
+        self._screen.device = device
+        return self._screen
+
+
+def test_the_panel_narrates_each_phase(tmp_path, stack, monkeypatch):
+    screen = with_screen(monkeypatch, FakeScreen())
+    a = args(tmp_path, no_screen=False)
+    assert imp.run(a) == 0
+    said = [status for _, status, _ in screen.frames]
+    assert "READING FACTORY CALIBRATION" in said
+    assert "SAVING CALIBRATION" in said
+    assert "SETUP COMPLETE" in said
+    # The bar only ever moves forward.
+    progress = [p for _, _, p in screen.frames if p is not None]
+    assert progress == sorted(progress)
+    # and the panel is handed back black for whatever starts next
+    assert screen.cleared == 1
+
+
+def test_a_panel_that_throws_does_not_stop_the_migration(
+        tmp_path, stack, monkeypatch):
+    screen = with_screen(monkeypatch, FakeScreen(explode=True))
+    a = args(tmp_path, no_screen=False)
+    assert imp.run(a) == 0
+    assert stack.scripts == ["FF_IMPORT_FIRMWARE_CONFIG", "SAVE_CONFIG"]
+    assert os.path.exists(a.stamp)
+
+
+def test_no_framebuffer_is_simply_no_screen(tmp_path, stack, monkeypatch):
+    screen = with_screen(monkeypatch, FakeScreen(ok=False))
+    a = args(tmp_path, no_screen=False)
+    assert imp.run(a) == 0
+    assert screen.frames == []
+    assert os.path.exists(a.stamp)
+
+
+def test_a_timeout_leaves_a_message_rather_than_a_blank_panel(
+        tmp_path, stack, monkeypatch):
+    # The failure people actually see: nothing came up, we give up, and the
+    # panel must say the printer will try again rather than just go dark.
+    screen = with_screen(monkeypatch, FakeScreen())
+    stack.klippy_state = "startup"
+    a = args(tmp_path, no_screen=False, timeout=10.0)
+    assert imp.run(a) == 1
+    assert any("RETRY" in status for _, status, _ in screen.frames)

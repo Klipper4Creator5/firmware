@@ -95,6 +95,17 @@ def mcu_bringup(config, on_output=None):
     replica.run_case(_case(config, "case-mcu-bringup.sh"), on_output=on_output)
 
 
+def boot_screen(config, on_output=None):
+    """Does the first-boot screen draw, on the printer's Python and its fb0?
+
+    Hand-packed pixels and an interpreter FlashForge built themselves: the two
+    things that cannot be established by reading the code or by running it on
+    a developer's machine.
+    """
+    replica = Replica.start(config, want_output=on_output)
+    replica.run_case(_case(config, "case-boot-screen.sh"), on_output=on_output)
+
+
 def install(config, package, on_output=None):
     """The end-to-end update: USB stick -> the printer's own installer -> boot.
 

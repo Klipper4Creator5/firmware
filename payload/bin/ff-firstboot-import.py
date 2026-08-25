@@ -20,7 +20,7 @@
 #   2. If there is no firmwareRes JSON to import, exit immediately too.
 #   3. Otherwise wait for klipper ready and moonraker answering -- a
 #      half-started printer is exactly where an import lands values nobody can
-#      see or correct. The web UI is waited for but NOT required: see below.
+#      see or correct.
 #   4. Run FF_IMPORT_FIRMWARE_CONFIG, then SAVE_CONFIG (which restarts klippy),
 #      wait for it to come back, and only then write the stamp.
 #
@@ -30,19 +30,23 @@
 # stack was not ready in time" is a normal event to retry, not a failure to
 # record forever.
 #
-# WHY THE WEB UI IS A SOFT GATE. Everything this program does travels over
-# moonraker's API, so klipper and moonraker are the only two services it
-# actually needs. The browser UI is waited for anyway -- if it is seconds
-# behind, importing after it means the first person to open a browser sees a
-# calibrated machine -- but it is never a requirement. It cannot be: the UI is
-# a build-time choice (Mainsail today, Fluidd or nothing tomorrow), and
-# MOD_WEB=0 turns nginx off entirely. Blocking a one-shot migration on an
-# optional, swappable component would strand exactly the printers that chose
-# not to have one. --webui '' skips the wait altogether.
+# THE BROWSER UI IS DELIBERATELY NOT CONSULTED. Everything here travels over
+# moonraker's API, so klipper and moonraker are the only services involved.
+# Which browser UI is installed -- Mainsail, Fluidd, none at all with
+# MOD_WEB=0 -- is a build-time choice that this migration has no stake in, so
+# it is not waited for, not checked, and not mentioned again.
+#
+# WHAT THE PANEL SHOWS. All of this happens before HelixScreen starts, so the
+# screen is black for as long as it takes -- which on a first boot is the
+# longest wait of the whole install. ffscreen.py paints a line of text and a
+# progress bar straight onto /dev/fb0 so the machine does not look bricked
+# and nobody reaches for the power switch mid-SAVE_CONFIG. It is decoration:
+# if it cannot draw, the migration proceeds exactly the same. --no-screen
+# turns it off.
 #
 #   usage: ff-firstboot-import.py [--stamp F] [--dir D] [--moonraker URL]
-#                                 [--webui URL] [--webui-grace S]
-#                                 [--timeout S] [--dry-run]
+#                                 [--timeout S] [--fb DEV] [--no-screen]
+#                                 [--dry-run]
 #
 # Exit 0 = nothing to do, or imported and saved. Exit 1 = tried and did not
 # finish; no stamp was written.
@@ -54,13 +58,20 @@ import time
 import urllib.error
 import urllib.request
 
+try:
+    # Sits beside this script, so running it by absolute path finds it.
+    import ffscreen
+except ImportError:
+    ffscreen = None
+
 STAMP = '/usr/data/anvil/.firmware-config-imported'
 JSON_DIR = '/usr/data/firmwareRes/config'
 MOONRAKER = 'http://127.0.0.1:7125'
-WEBUI = 'http://127.0.0.1/'
 TIMEOUT = 240.0
-WEBUI_GRACE = 30.0
 EXTRUDER_COUNT = 4
+
+TITLE = 'SETTING UP YOUR PRINTER'
+KEEP_POWER = 'DO NOT TURN THE PRINTER OFF'
 
 
 def log(msg):
@@ -68,12 +79,58 @@ def log(msg):
     sys.stdout.flush()
 
 
+class Panel:
+    """The boot screen, reduced to "say this, you are about this far along".
+
+    A null object when there is no framebuffer or --no-screen was passed, so
+    the call sites never branch on whether a panel exists."""
+
+    def __init__(self, device=None, geometry=None, enabled=True):
+        self.screen = None
+        if not enabled or ffscreen is None:
+            return
+        try:
+            kwargs = {}
+            if device:
+                kwargs['device'] = device
+            if geometry:
+                kwargs['geometry'] = ffscreen.parse_geometry(geometry)
+            screen = ffscreen.Screen(**kwargs)
+        except Exception:
+            return
+        if screen.ok:
+            self.screen = screen
+
+    # Both of these swallow everything. This is the boundary where drawing
+    # stops being allowed to matter: the migration below must run identically
+    # on a printer with no panel, a panel that dies mid-write, or a panel that
+    # throws something ffscreen did not anticipate. One failure retires the
+    # screen for the rest of the run rather than failing again every 2s.
+
+    def say(self, status, progress, note=KEEP_POWER):
+        if self.screen is None:
+            return
+        try:
+            self.screen.show(TITLE, status, note, progress)
+        except Exception as exc:
+            log('the boot screen stopped working (%s) -- carrying on' % exc)
+            self.screen = None
+
+    def done(self):
+        if self.screen is None:
+            return
+        try:
+            self.screen.clear()
+        except Exception:
+            pass
+        self.screen = None
+
+
 class Moonraker:
     """The smallest possible client: three GETs and one POST."""
 
-    def __init__(self, base, webui):
+    def __init__(self, base):
         self.base = base.rstrip('/')
-        self.webui = webui
 
     def _open(self, req, timeout):
         return urllib.request.urlopen(req, timeout=timeout)
@@ -121,19 +178,6 @@ class Moonraker:
         except Exception as exc:
             return False, '%s: %s' % (type(exc).__name__, exc)
 
-    def webui_ok(self, timeout=5.0):
-        """Is nginx serving a browser UI? Whichever one it is -- we only ask
-        for the index, so Mainsail and Fluidd look identical from here."""
-        if not self.webui:
-            return False
-        req = urllib.request.Request(self.webui, method='GET')
-        try:
-            with self._open(req, timeout) as fh:
-                fh.read(1)
-                return fh.getcode() == 200
-        except Exception:
-            return False
-
     # -- the two questions we ask about klipper's state --------------------
 
     def klippy_state(self):
@@ -163,43 +207,31 @@ def any_calibrated(tools):
     return any(t and t.get('calibrated') for t in tools or [])
 
 
-def wait_for_stack(mr, deadline):
+def wait_for_stack(mr, panel, deadline, started):
     """Block until klipper and moonraker are both up, or time runs out.
     Reports their state once per change so the boot log says which one
-    everybody is waiting on."""
+    everybody is waiting on, and creeps the panel's bar along with the wait
+    so a long MCU hunt still looks like progress rather than a freeze."""
     last = None
+    span = max(1.0, deadline - started)
     while True:
         state = mr.klippy_state()
         if state != last:
             log('waiting: moonraker=%s klipper=%s'
                 % ('up' if state is not None else 'down', state or 'unknown'))
             last = state
+        if state is None:
+            panel.say('STARTING SERVICES', 0.05 + 0.3 * (time.time() - started) / span)
+        elif state != 'ready':
+            panel.say('WAITING FOR THE PRINTER',
+                      0.05 + 0.3 * (time.time() - started) / span)
         if state == 'ready':
             return True
         if time.time() >= deadline:
+            panel.say('SETUP WILL RETRY ON NEXT START', None, note='')
             log('klipper and moonraker did not come up in time (moonraker=%s'
                 ' klipper=%s) -- no stamp, the next boot tries again'
                 % ('up' if state is not None else 'down', state or 'unknown'))
-            return False
-        time.sleep(2.0)
-
-
-def wait_for_webui(mr, deadline):
-    """Give the browser UI a moment to catch up, and carry on either way.
-
-    Nothing here needs it -- see the header. It is worth a short wait only so
-    that on a normal printer the import lands before anyone can open a
-    browser, and worth no more than that."""
-    if not mr.webui:
-        log('no web UI configured -- not waiting for one')
-        return False
-    while True:
-        if mr.webui_ok():
-            log('web UI is being served')
-            return True
-        if time.time() >= deadline:
-            log('no web UI yet (%s) -- importing anyway; nothing here needs'
-                ' it' % mr.webui)
             return False
         time.sleep(2.0)
 
@@ -245,11 +277,21 @@ def run(args):
 
     log('first boot: importing this unit\'s factory calibration from %s'
         % args.dir)
-    deadline = time.time() + args.timeout
-    mr = Moonraker(args.moonraker, args.webui)
-    if not wait_for_stack(mr, deadline):
+    started = time.time()
+    deadline = started + args.timeout
+    mr = Moonraker(args.moonraker)
+    panel = Panel(args.fb, args.fb_geometry, enabled=not args.no_screen)
+    panel.say('STARTING SERVICES', 0.05)
+    try:
+        return migrate(args, mr, panel, started, deadline)
+    finally:
+        # Whatever happened, hand HelixScreen a clean panel.
+        panel.done()
+
+
+def migrate(args, mr, panel, started, deadline):
+    if not wait_for_stack(mr, panel, deadline, started):
         return 1
-    wait_for_webui(mr, min(deadline, time.time() + args.webui_grace))
 
     tools = mr.tools()
     if tools is None:
@@ -259,6 +301,7 @@ def run(args):
         # Someone got there first: a hand calibration, or a restored config.
         # Importing over it would throw away the better numbers.
         log('a tool already carries a nozzle position -- nothing to import')
+        panel.say('ALREADY CALIBRATED', 1.0, note='')
         stamp(args.stamp, 'already calibrated; nothing imported')
         return 0
 
@@ -276,9 +319,11 @@ def run(args):
         log('dry run: would run FF_IMPORT_FIRMWARE_CONFIG and SAVE_CONFIG')
         return 0
 
+    panel.say('READING FACTORY CALIBRATION', 0.5)
     ok, detail = mr.gcode('FF_IMPORT_FIRMWARE_CONFIG')
     if not ok:
         log('FF_IMPORT_FIRMWARE_CONFIG failed: %s' % detail)
+        panel.say('SETUP WILL RETRY ON NEXT START', None, note='')
         return 1
     tools = mr.tools()
     if not any_calibrated(tools):
@@ -288,11 +333,13 @@ def run(args):
         return 1
 
     log('imported; persisting with SAVE_CONFIG -- klipper restarts once')
+    panel.say('SAVING CALIBRATION', 0.7)
     ok, detail = mr.gcode('SAVE_CONFIG', timeout=20.0)
     if not ok:
         # Expected: the restart cuts the connection before moonraker answers.
         log('SAVE_CONFIG did not answer (%s) -- klipper is restarting' % detail)
 
+    panel.say('RESTARTING THE PRINTER', 0.85)
     if not wait_for_ready(mr, max(deadline, time.time() + 90.0)):
         log('klipper did not come back after SAVE_CONFIG -- no stamp')
         return 1
@@ -303,6 +350,7 @@ def run(args):
         return 1
 
     log('done: the factory calibration is saved in printer.cfg')
+    panel.say('SETUP COMPLETE', 1.0, note='')
     stamp(args.stamp, 'imported %s' % args.dir)
     return 0
 
@@ -312,10 +360,13 @@ def main(argv):
     ap.add_argument('--stamp', default=STAMP)
     ap.add_argument('--dir', default=JSON_DIR)
     ap.add_argument('--moonraker', default=MOONRAKER)
-    ap.add_argument('--webui', default=WEBUI,
-                    help="browser UI index to wait for; '' to not wait")
-    ap.add_argument('--webui-grace', type=float, default=WEBUI_GRACE)
     ap.add_argument('--timeout', type=float, default=TIMEOUT)
+    ap.add_argument('--fb', default=None,
+                    help='framebuffer to draw the boot screen on')
+    ap.add_argument('--fb-geometry', default=None,
+                    help="panel size as WxH@BPP, skipping the sysfs probe")
+    ap.add_argument('--no-screen', action='store_true',
+                    help='do not draw anything on the panel')
     ap.add_argument('--dry-run', action='store_true')
     args = ap.parse_args(argv)
     try:
