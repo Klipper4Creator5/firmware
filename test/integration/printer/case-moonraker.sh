@@ -25,6 +25,7 @@ skip() { echo "  SKIP  $*"; }
 
 PY=/usr/prog/Python-3.8.2/bin/python3
 MR=/usr/prog/moonraker/moonraker
+MR_MAIN=/usr/prog/moonraker/moonraker/moonraker/moonraker.py
 S60=/tmp/payload/init.d/S60web
 
 [ -x "$PY" ] || { bad "no interpreter at $PY"; exit 1; }
@@ -95,6 +96,21 @@ print('imported')
         sed 's/^/      /' /tmp/mr-nosodium.out | tail -2
     fi
 fi
+
+# 3. S60web now starts moonraker itself, so the entry point it names has to
+#    be there and the tools it uses have to exist. A path that is wrong here
+#    means no web UI at all, and the failure would be a silent one.
+[ -f "$MR_MAIN" ] \
+    && ok "the entry point S60web names is present ($MR_MAIN)" \
+    || bad "no moonraker.py at $MR_MAIN"
+
+command -v start-stop-daemon >/dev/null 2>&1 \
+    && ok "start-stop-daemon is available for the pidfile" \
+    || bad "no start-stop-daemon -- S60web could not manage moonraker"
+
+grep -q 'TMPDIR' $S60 \
+    && ok "S60web sets TMPDIR off the /tmp ramdisk" \
+    || bad "S60web does not set TMPDIR -- uploads would fill memory"
 
 echo
 [ $FAIL = 0 ] && echo "moonraker: all checks passed" || echo "moonraker: FAILURES"

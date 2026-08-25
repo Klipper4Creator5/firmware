@@ -34,6 +34,7 @@ REQUIRED = {
     "/usr/prog/libffi-3.4.4/lib",
     "/usr/prog/libsodium/lib",
 }
+MOONRAKER_PY = "/usr/prog/moonraker/moonraker/moonraker/moonraker.py"
 
 
 def code(path):
@@ -67,30 +68,42 @@ def test_libsodium_is_there_because_it_is_the_one_that_broke():
     assert "/usr/prog/libsodium/lib" in lib_dirs(S60WEB)
 
 
-def test_the_installer_checks_against_the_same_list():
+def test_the_installer_checks_libsodium_too():
     # run-append.sh's preflight decides whether the shipped moonraker is
-    # usable. If it checked against a fuller path than the boot script sets,
-    # it would pass a build that then failed to start -- which is precisely
-    # the shape of the bug this is guarding.
-    boot, install = lib_dirs(S60WEB), lib_dirs(RUN_APPEND)
-    assert boot == install, (
-        "S60web and run-append.sh disagree: only in boot=%s, only in install=%s"
-        % (sorted(boot - install), sorted(install - boot)))
+    # usable. If it checked with libsodium on the path while the boot script
+    # started moonraker without it, it would pass a build that then failed to
+    # start -- which is the shape of the bug this is guarding. It sets a
+    # fuller list than the boot script needs, so only the overlap is pinned.
+    assert "/usr/prog/libsodium/lib" in lib_dirs(RUN_APPEND)
 
 
-def test_the_directories_are_probed_before_use():
-    # A directory that is not on this model gets skipped rather than pushed
-    # onto the path as a dead entry.
-    assert '[ -d "$d" ]' in code(S60WEB)
-
-
-def test_moonraker_is_started_through_the_daemon():
-    # Not python3.8 moonraker.py & -- the daemon owns the pidfile `stop` uses
-    # and sets TMPDIR=/usr/data/tmp, without which moonraker writes to /tmp,
-    # a ramdisk on this machine.
+def test_moonraker_is_started_directly_not_through_flashforges_daemon():
+    # /usr/prog/klipper/moonrakerDaemon is FlashForge's, lives on the
+    # partition a stock flash overwrites, and hardcodes an interpreter and a
+    # tree. One place decides which moonraker runs, and it is this one.
     text = code(S60WEB)
-    assert "moonrakerDaemon start" in text
-    assert not re.search(r"moonraker\.py\s", text)
+    assert "moonrakerDaemon" not in text
+    assert "moonraker.py" in text
+
+
+def test_the_two_things_the_daemon_did_are_kept():
+    # start-stop-daemon writes the pidfile `stop` needs, and TMPDIR keeps
+    # moonraker's temporary files -- uploads included -- off /tmp, which is a
+    # ramdisk here. Dropping either was the reason not to do this before.
+    text = code(S60WEB)
+    assert "start-stop-daemon -S" in text and "-p $MR_PID" in text
+    assert "start-stop-daemon -K" in text
+    assert "TMPDIR" in text
+
+
+def test_the_installed_tree_wins_over_the_payload_copy():
+    # run-append.sh already chose what belongs in /usr/prog -- the mod's build
+    # if it passed the preflight on this printer, the stock one if it did not.
+    # Preferring the data-partition copy would defeat that rollback.
+    text = code(S60WEB)
+    installed = text.index(MOONRAKER_PY)
+    fallback = text.index("$MODDIR/moonraker/moonraker.py")
+    assert installed < fallback
 
 
 def test_a_dead_moonraker_is_reported_in_the_boot_log():

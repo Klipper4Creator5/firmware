@@ -15,6 +15,18 @@ NGINX=/usr/prog/nginx/sbin/nginx
 NGX_PID=$MODDIR/nginx/logs/nginx.pid
 MR_PID=/run/moonraker.pid
 MR_LOG=/usr/data/logs/moonraker.log
+MR_TMP=/usr/data/tmp
+MR_DATA=/usr/data
+MR_PY=/usr/prog/Python-3.8.2/bin/python3
+
+# Which moonraker actually runs. The INSTALLED tree first: run-append.sh
+# already decided what belongs there -- the mod's build if it passed the
+# preflight on this printer, the stock one if it did not -- and overriding
+# that decision here would defeat the rollback it exists to provide. The copy
+# on the data partition is the fallback for a printer where /usr/prog has no
+# moonraker at all.
+MR_MAIN=/usr/prog/moonraker/moonraker/moonraker/moonraker.py
+[ -f "$MR_MAIN" ] || MR_MAIN=$MODDIR/moonraker/moonraker.py
 
 start() {
     [ "${MOD_WEB:-1}" = "1" ] || { echo "web: disabled in anvil.conf"; return 0; }
@@ -25,40 +37,50 @@ start() {
     else
         echo "nginx: not available"
     fi
-    if [ -x /usr/prog/klipper/moonrakerDaemon ]; then
-        # moonrakerDaemon just execs /usr/prog/Python-3.8.2/bin/python3 and
-        # sets NO library path of its own. On stock it is only ever called
-        # from klipper/start.sh, which exports these first -- so calling it
-        # from here without them means python3 dies on
-        # "libpython3.8.so.1.0: cannot open shared object file", moonraker
-        # never listens on 7125, and every UI reports a connection timeout.
+    if [ -x "$MR_PY" ]; then
+        # This interpreter does not start without its own libraries on the
+        # path: without them python3 dies on "libpython3.8.so.1.0: cannot
+        # open shared object file", moonraker never listens on 7125, and
+        # every UI reports a connection timeout. That is how moonrakerDaemon
+        # shipped broken once -- on stock it is only ever called from
+        # klipper/start.sh, which exports these first.
         #
-        # SET THE WHOLE LIST, do not inherit it. This used to name three
-        # directories and lean on app_startup.sh having exported the other
-        # nine before it ran us. That holds on a normal boot and nowhere
-        # else: re-run this script over ssh and the environment is bare.
-        # The one that bites is libsodium -- moonraker's `authorization`
-        # component is linked against it, so without it moonraker exits
-        # during component load and the printer comes up with no web UI at
-        # all. moonraker-preflight.py was written after that same library
-        # caught us once already, and run-append.sh sets this exact list for
-        # the same reason. There is now one list, in three places that each
-        # need it, rather than one place quietly depending on another.
+        # libsodium is the fourth for a reason: moonraker's `authorization`
+        # component is linked against it through PyNaCl, and without it
+        # moonraker does not fail to import -- it exits during component
+        # load, which from outside is indistinguishable from never having
+        # started. app_startup.sh does export it before running the wrapper,
+        # so on a normal boot it is inherited anyway; naming it here is what
+        # makes this script work when that environment is not there, which is
+        # every time somebody re-runs it over ssh.
         export PATH=$PATH:/usr/prog/Python-3.8.2/bin
-        for d in /usr/prog/Python-3.8.2/lib /usr/prog/openssl-1.0.2d/lib \
-                 /usr/prog/curl-7.55.1/lib /usr/prog/ffmpeg-402/lib \
-                 /usr/prog/x264/lib /usr/prog/libffi-3.4.4/lib \
-                 /usr/prog/libsodium/lib /usr/prog/opencv-4.2/lib \
-                 /usr/prog/nim/lib /usr/prog/libzip-1.10.1/lib; do
-            [ -d "$d" ] && LD_LIBRARY_PATH="$d:$LD_LIBRARY_PATH"
-        done
-        export LD_LIBRARY_PATH
-        # The daemon is kept rather than exec'ing moonraker.py ourselves: it
-        # owns the pidfile that `stop` below needs, and it sets
-        # TMPDIR=/usr/data/tmp, without which moonraker writes to /tmp -- a
-        # ramdisk on this machine.
-        /usr/prog/klipper/moonrakerDaemon start && echo "moonraker: started"
-        moonraker_check &
+        export LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:$LD_LIBRARY_PATH
+        export LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
+        export LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
+        export LD_LIBRARY_PATH=/usr/prog/libsodium/lib:$LD_LIBRARY_PATH
+        # Start moonraker ourselves rather than through
+        # /usr/prog/klipper/moonrakerDaemon. That script is FlashForge's, it
+        # is on the firmware partition a stock flash overwrites, and it
+        # hardcodes an interpreter and a tree we no longer necessarily want
+        # -- and every time we call it we have to reconstruct the environment
+        # it does not set anyway. Doing it here means one place decides which
+        # moonraker runs, with which libraries.
+        #
+        # The two things the daemon did for us are kept, because both matter:
+        #   * start-stop-daemon writes the pidfile that `stop` uses. Without
+        #     it there is no way to stop moonraker except by name.
+        #   * TMPDIR. Moonraker writes temporary files -- uploads among them
+        #     -- and /tmp here is a ramdisk, so a large upload without this
+        #     fills memory instead of the data partition.
+        rm -rf $MR_TMP && mkdir -p $MR_TMP
+        export TMPDIR=$MR_TMP
+        if [ -f "$MR_MAIN" ]; then
+            start-stop-daemon -S -b -m -p $MR_PID --exec $MR_PY \
+                -- $MR_MAIN -d $MR_DATA && echo "moonraker: started ($MR_MAIN)"
+            moonraker_check &
+        else
+            echo "moonraker: no moonraker.py found -- not started"
+        fi
     fi
 }
 
@@ -86,7 +108,7 @@ moonraker_check() {
 }
 stop() {
     [ -f "$NGX_PID" ] && kill `cat $NGX_PID` 2>/dev/null
-    [ -x /usr/prog/klipper/moonrakerDaemon ] && /usr/prog/klipper/moonrakerDaemon stop
+    [ -f "$MR_PID" ] && start-stop-daemon -K -p $MR_PID 2>/dev/null
     echo "web: stopped"
 }
 case "$1" in
