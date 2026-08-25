@@ -82,8 +82,12 @@ jobs:
           # and it is compared as a number, so the codename stays in the tag.
           # A manual run has no tag -- GITHUB_REF_NAME would be the branch --
           # so leave it empty and let the build stamp today's UTC date.
+          # The optional trailing letter is the same-day re-release
+          # convention common.sh documents (20260824b): the installer never
+          # reads this -- it compares the software component's own version --
+          # so the letter only keeps the outer filenames distinct.
           MOD_VER=$(case "$GITHUB_REF" in
-                      refs/tags/*) echo "${GITHUB_REF_NAME#v}" | sed -n 's/^\([0-9]\{8\}\).*/\1/p' ;;
+                      refs/tags/*) echo "${GITHUB_REF_NAME#v}" | sed -n 's/^\([0-9]\{8\}[a-z]\{0,1\}\).*/\1/p' ;;
                       *) echo "" ;;
                     esac)
           SW_VER=""

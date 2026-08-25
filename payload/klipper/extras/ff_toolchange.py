@@ -417,8 +417,8 @@ class FFToolchange:
         this applies exactly off_z[tool] -- the frame a fresh grab would set.
         """
         self._z_tool_term = 0.0
-        tool = self._current_tool_or_none()
-        if tool is None:
+        tool, _why = self._current_tool_or_none()
+        if tool is None or tool < 0:
             return False
         self._apply_tool_diff_offsets(tool)
         if gcmd is not None:
