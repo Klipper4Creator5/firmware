@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Draw the first-boot screen in the replica and write it out as PNGs.
+
+    ./test/integration/sim-boot-screen.py [--out DIR]
+
+ffscreen.py packs pixels by hand, and the only honest way to review that is to
+look at the result -- rendered by the interpreter that will really run it.
+This drives case-boot-screen-dump.sh, which draws every phase inside the
+replica using FlashForge's own python3 on MIPS, and decodes the base64 PNGs it
+prints back into files.
+
+`make boot-screen` renders the same list on the host in a fraction of the time
+and needs no docker; the two are expected to agree byte for byte, and this is
+what establishes that they do.
+"""
+import argparse
+import base64
+import re
+import sys
+from pathlib import Path
+
+for _p in Path(__file__).resolve().parents:
+    if (_p / "bin" / "common.sh").is_file():
+        ROOT = _p
+        sys.path.insert(0, str(_p / "test"))
+        break
+
+from ffsim import cli                            # noqa: E402
+from ffsim.config import Config                  # noqa: E402
+from ffsim.replica import Replica                # noqa: E402
+
+CASE = ("test", "integration", "printer", "case-boot-screen-dump.sh")
+FRAME = re.compile(r"PNGSTART (\S+)\n(.*?)\nPNGEND", re.S)
+
+
+def run():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--out", default=str(ROOT / "work" / "boot-screen-sim"))
+    args = ap.parse_args()
+
+    config = Config.load()
+    replica = Replica.start(config, want_output=_echo)
+    # The frames come back on stdout as base64, so this body is the payload --
+    # not just a log. It is deliberately not echoed.
+    body = replica.run_case(str(ROOT.joinpath(*CASE)))
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    found = 0
+    for name, blob in FRAME.findall(body):
+        png = base64.b64decode("".join(blob.split()))
+        path = out / ("%s.png" % name)
+        path.write_bytes(png)
+        _echo("%-18s %s  (%d bytes)" % (name, path, len(png)))
+        found += 1
+    if not found:
+        raise SystemExit("the replica printed no frames:\n%s" % body[-2000:])
+    _echo("\n%d frames in %s" % (found, out))
+
+
+def _echo(text):
+    sys.stdout.write(str(text).rstrip("\n") + "\n")
+    sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    sys.exit(cli.main(run))

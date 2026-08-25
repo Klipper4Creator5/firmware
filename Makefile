@@ -67,7 +67,7 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
 .PHONY: help image shell passwd build vendor \
         rootfs verify test test-py test-install \
         printer-image printer-image-push \
-        test-recovery test-mcu test-boot-screen boot-screen \
+        test-recovery test-mcu test-boot-screen boot-screen boot-screen-sim \
         release clean distclean
 
 help:
@@ -95,6 +95,7 @@ help:
 	@echo
 	@echo 'Look at things:'
 	@echo '  make boot-screen      render the first-boot screen to work/boot-screen/*.png'
+	@echo '  make boot-screen-sim  the same, drawn by the printer own python in the replica'
 	@echo
 	@echo 'test-py needs python3, pytest and jinja2; its rootfs checks skip'
 	@echo 'until make rootfs has run. The other'
@@ -222,6 +223,11 @@ test-boot-screen: image
 
 boot-screen:
 	@./bin/preview-boot-screen.py
+
+# The same frames, drawn by the PRINTER's python inside the replica. Slower,
+# and the only render that proves what the panel would really show.
+boot-screen-sim: image
+	@$(RUNSIM) ./test/integration/sim-boot-screen.py
 
 # Packages land in dist/ after `make release` and in work/out after a single
 # build (pack.sh clears work/out each run, so only the last model survives
