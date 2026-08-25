@@ -106,6 +106,16 @@ def boot_screen(config, on_output=None):
     replica.run_case(_case(config, "case-boot-screen.sh"), on_output=on_output)
 
 
+def moonraker(config, on_output=None):
+    """Does moonraker load with the library path S60web sets?
+
+    And is every directory in that list actually load-bearing? Only the
+    printer's own libraries and interpreter can answer either.
+    """
+    replica = Replica.start(config, want_output=on_output)
+    replica.run_case(_case(config, "case-moonraker.sh"), on_output=on_output)
+
+
 def install(config, package, on_output=None):
     """The end-to-end update: USB stick -> the printer's own installer -> boot.
 

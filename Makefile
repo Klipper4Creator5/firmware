@@ -67,7 +67,8 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
 .PHONY: help image shell passwd build vendor \
         rootfs verify test test-py test-install \
         printer-image printer-image-push \
-        test-recovery test-mcu test-boot-screen boot-screen boot-screen-sim \
+        test-recovery test-mcu test-boot-screen test-moonraker \
+        boot-screen boot-screen-sim \
         release clean distclean
 
 help:
@@ -91,6 +92,7 @@ help:
 	@echo '  make test-install     end-to-end: USB stick -> update -> reboot'
 	@echo '  make test-mcu         ff_mcu_bringup.py runs on the printer own python'
 	@echo '  make test-boot-screen the first-boot screen draws on the replica fb0'
+	@echo '  make test-moonraker   moonraker loads with the library path S60web sets'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo
 	@echo 'Look at things:'
@@ -220,6 +222,9 @@ test-mcu: image
 # same frames to PNGs you can look at.
 test-boot-screen: image
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-boot-screen.sh
+
+test-moonraker: image
+	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-moonraker.sh
 
 boot-screen:
 	@./bin/preview-boot-screen.py

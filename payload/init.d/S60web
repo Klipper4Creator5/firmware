@@ -13,6 +13,8 @@ MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 NGINX=/usr/prog/nginx/sbin/nginx
 NGX_PID=$MODDIR/nginx/logs/nginx.pid
+MR_PID=/run/moonraker.pid
+MR_LOG=/usr/data/logs/moonraker.log
 
 start() {
     [ "${MOD_WEB:-1}" = "1" ] || { echo "web: disabled in anvil.conf"; return 0; }
@@ -30,12 +32,57 @@ start() {
         # from here without them means python3 dies on
         # "libpython3.8.so.1.0: cannot open shared object file", moonraker
         # never listens on 7125, and every UI reports a connection timeout.
+        #
+        # SET THE WHOLE LIST, do not inherit it. This used to name three
+        # directories and lean on app_startup.sh having exported the other
+        # nine before it ran us. That holds on a normal boot and nowhere
+        # else: re-run this script over ssh and the environment is bare.
+        # The one that bites is libsodium -- moonraker's `authorization`
+        # component is linked against it, so without it moonraker exits
+        # during component load and the printer comes up with no web UI at
+        # all. moonraker-preflight.py was written after that same library
+        # caught us once already, and run-append.sh sets this exact list for
+        # the same reason. There is now one list, in three places that each
+        # need it, rather than one place quietly depending on another.
         export PATH=$PATH:/usr/prog/Python-3.8.2/bin
-        export LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:$LD_LIBRARY_PATH
-        export LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
-        export LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
+        for d in /usr/prog/Python-3.8.2/lib /usr/prog/openssl-1.0.2d/lib \
+                 /usr/prog/curl-7.55.1/lib /usr/prog/ffmpeg-402/lib \
+                 /usr/prog/x264/lib /usr/prog/libffi-3.4.4/lib \
+                 /usr/prog/libsodium/lib /usr/prog/opencv-4.2/lib \
+                 /usr/prog/nim/lib /usr/prog/libzip-1.10.1/lib; do
+            [ -d "$d" ] && LD_LIBRARY_PATH="$d:$LD_LIBRARY_PATH"
+        done
+        export LD_LIBRARY_PATH
+        # The daemon is kept rather than exec'ing moonraker.py ourselves: it
+        # owns the pidfile that `stop` below needs, and it sets
+        # TMPDIR=/usr/data/tmp, without which moonraker writes to /tmp -- a
+        # ramdisk on this machine.
         /usr/prog/klipper/moonrakerDaemon start && echo "moonraker: started"
+        moonraker_check &
     fi
+}
+
+# Did it actually come up? Moonraker failing to load a component exits
+# quietly, minutes before anyone opens a browser and finds out. Say so in the
+# boot log, with the reason, because "moonraker did not start" is otherwise a
+# support conversation rather than a log line.
+moonraker_alive() {
+    [ -f "$MR_PID" ] || return 1
+    kill -0 `cat "$MR_PID"` 2>/dev/null
+}
+
+moonraker_check() {
+    n=0
+    while [ $n -lt 30 ]; do
+        sleep 2
+        n=$((n + 1))
+        moonraker_alive && continue
+        echo "moonraker: NOT running after $((n * 2))s -- last words:"
+        tail -n 15 "$MR_LOG" 2>/dev/null | sed 's/^/    /'
+        return 1
+    done
+    echo "moonraker: up"
+    return 0
 }
 stop() {
     [ -f "$NGX_PID" ] && kill `cat $NGX_PID` 2>/dev/null
@@ -46,6 +93,7 @@ case "$1" in
     start|'') start ;;
     stop)     stop ;;
     restart)  stop; sleep 2; start ;;
-    status)   [ -f "$NGX_PID" ] && echo "nginx: running" || echo "nginx: not running" ;;
+    status)   [ -f "$NGX_PID" ] && echo "nginx: running" || echo "nginx: not running"
+              moonraker_alive && echo "moonraker: running" || echo "moonraker: not running" ;;
     *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
 esac
