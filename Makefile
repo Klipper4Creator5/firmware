@@ -68,6 +68,7 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
         rootfs verify test test-py test-install \
         printer-image printer-image-push \
         test-recovery test-mcu test-boot-screen test-moonraker test-services \
+        test-upgrade \
         boot-screen boot-screen-sim \
         release clean distclean
 
@@ -94,6 +95,7 @@ help:
 	@echo '  make test-boot-screen the first-boot screen draws on the replica fb0'
 	@echo '  make test-moonraker   S62moonraker starts moonraker on the printer own python'
 	@echo '  make test-services    every init.d service dispatches the same way'
+	@echo '  make test-upgrade     an update deletes what it installed, and only that'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo
 	@echo 'Look at things:'
@@ -229,6 +231,11 @@ test-moonraker: image
 
 test-services: image
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-services.sh
+
+# The installer, run for real over two payloads: what the last one shipped
+# goes, what nobody shipped stays.
+test-upgrade: image
+	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-upgrade.sh
 
 boot-screen:
 	@./bin/preview-boot-screen.py

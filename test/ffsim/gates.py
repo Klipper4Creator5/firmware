@@ -142,6 +142,23 @@ def services(config, on_output=None):
     replica.run_case(_case(config, "case-services.sh"), on_output=on_output)
 
 
+def upgrade(config, on_output=None):
+    """Does an update delete what it installed, and only what it installed?
+
+    The installer used to start an update by wiping seven whole directories,
+    which is right only while every file under them is ours -- and $MODDIR/bin
+    is where a supervisor and later a Python are going to live. It ships a
+    manifest now and deletes what the previous one named. This runs the real
+    run-append.sh over two hand-built payloads on the printer's own busybox
+    and asks the filesystem afterwards: the init script the last payload
+    shipped and this one does not is gone, the file nobody shipped is still
+    there, anvil.conf keeps the user's edit, config-installed survives, and a
+    printer with no manifest at all still gets cleaned up the old way.
+    """
+    replica = Replica.start(config, want_output=on_output)
+    replica.run_case(_case(config, "case-upgrade.sh"), on_output=on_output)
+
+
 def install(config, package, on_output=None):
     """The end-to-end update: USB stick -> the printer's own installer -> boot.
 

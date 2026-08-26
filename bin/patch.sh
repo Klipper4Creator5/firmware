@@ -377,6 +377,46 @@ sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
     -e "s/^MOD_WIFI=.*/MOD_WIFI=${MOD_WIFI:-1}/" \
     payload/anvil.conf > "$MOD_PAYLOAD/anvil.conf"
 
+# ------------------------------------------------ 10b. the install manifest
+# The list of every path this payload installs, shipped inside the payload
+# itself so that the NEXT update can delete exactly what this one left behind.
+#
+# What it replaces: run-append.sh used to `rm -rf` seven whole directories --
+# bin, www, nginx, helixscreen, config, moonraker, init.d -- before
+# extracting. That is correct only while every single file under them is
+# ours, and it stops being correct the moment anything else lives there. A
+# supervisor binary in $MODDIR/bin, a Python, anything a user put there by
+# hand: all of it was destroyed on every update, silently, by the installer.
+#
+# It has to keep the property the rm -rf was written for, though. The
+# installed set must end up exactly the shipped set, or a RENAMED init script
+# leaves a stale twin behind and firmwareExe runs both -- see the comment in
+# payload/run-append.sh, which is where that bill came due. A manifest gives
+# that property for free: a file the last payload shipped and this one does
+# not is still named in the list the last payload wrote, so it still goes.
+#
+# GENERATED, never hand-maintained. A hand-written list is wrong one release
+# after somebody adds a directory, and wrong here means either a file that
+# never goes away or a file that should have stayed. So it is read off the
+# staged tree, at the last moment before bin/pack.sh turns that tree into
+# anvil.tar.xz -- everything above this line has finished staging.
+#
+# Format: one path per line, relative to $MODDIR, directories listed as well
+# as files so the emptied ones can be rmdir'd afterwards. Sorted, so a diff
+# between two releases reads as a changelog. The manifest names ITSELF,
+# because it too is a file this payload installs and the next update must be
+# free to replace it.
+#
+# Written to a temp file and moved into place: a redirection straight into
+# the payload would create the target before `find` walked the tree, and find
+# would then list the half-written manifest as one more payload path.
+MOD_MANIFEST=.install-manifest
+{ ( cd "$MOD_PAYLOAD" && find . -mindepth 1 | sed 's|^\./||' )
+  echo "$MOD_MANIFEST"
+} | LC_ALL=C sort -u > work/.install-manifest
+mv -f work/.install-manifest "$MOD_PAYLOAD/$MOD_MANIFEST"
+say "install manifest: $(wc -l < "$MOD_PAYLOAD/$MOD_MANIFEST") paths -> $MODDIR/$MOD_MANIFEST"
+
 # --------------------------------------------------- 11. run.sh install step
 say "run.sh: injecting mod install blocks (pre + post)"
 POST=work/.run-post.sh

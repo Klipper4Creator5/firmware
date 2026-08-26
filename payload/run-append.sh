@@ -28,18 +28,100 @@ if [ -n "$MODTAR" ]; then
     else
         # Keep user-editable state; replace everything we own.
         [ -f $MODDIR/anvil.conf ] && cp -f $MODDIR/anvil.conf /tmp/anvil.conf.keep
-        # init.d is in this list for a reason that only shows up on UPDATES.
-        # Scripts here used to be overwritten in place and never removed, which
-        # was harmless only while the set of filenames never changed. It does
-        # change: S60web was split into S60nginx and S62moonraker, and on a
-        # printer that already had the mod the old S60web would have survived
-        # the update and sat next to both new scripts. firmwareExe runs every
-        # executable $MODDIR/init.d/S* in filename order, so nginx and moonraker
-        # would each have been started twice, by two scripts that disagree about
-        # where moonraker even lives. Clearing the directory first makes the
-        # installed set exactly the shipped set. rm -rf is happy when it is not
-        # there yet (first install), and the tarball recreates it below.
-        rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen $MODDIR/config $MODDIR/moonraker $MODDIR/init.d
+        # Remove what the PREVIOUS payload installed -- exactly that, and
+        # nothing else.
+        #
+        # THE PROPERTY THIS HAS TO KEEP, which is why anything is removed at
+        # all rather than just extracted over: init.d scripts used to be
+        # overwritten in place and never removed, which was harmless only
+        # while the set of filenames never changed. It does change: S60web was
+        # split into S60nginx and S62moonraker, and on a printer that already
+        # had the mod the old S60web survived the update and sat next to both
+        # new scripts. firmwareExe runs every executable $MODDIR/init.d/S* in
+        # filename order, so nginx and moonraker would each have been started
+        # twice, by two scripts that disagree about where moonraker even
+        # lives. The installed set must end up exactly the shipped set.
+        #
+        # HOW IT USED TO BE KEPT, and why that had to stop: this line was
+        #     rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx ... $MODDIR/init.d
+        # -- seven whole directories, wiped on every update. That is correct
+        # only while every single file under them is ours, and it stops being
+        # correct the moment anything else lives there. $MODDIR/bin is where a
+        # supervisor, and later a Python, are going to live; it is also the
+        # obvious place for someone to drop a script of their own. All of it
+        # was destroyed by the installer, silently, on every update.
+        #
+        # So bin/patch.sh now ships a manifest of every path the payload
+        # installs -- one path per line, relative to $MODDIR, files and
+        # directories both, the manifest itself included. Deleting what the
+        # LAST manifest lists keeps the property above (a script the last
+        # payload shipped and this one does not is named in that list, so it
+        # still goes) without touching one byte we did not put there.
+        MOD_MANIFEST=$MODDIR/.install-manifest
+        if [ -s "$MOD_MANIFEST" ]; then
+            # Work from a copy in /tmp. The manifest lists itself, so the
+            # first pass below deletes the very file it is reading; the read
+            # would survive that on Linux, but the second pass opens it again
+            # by name and would find nothing there.
+            cp -f "$MOD_MANIFEST" /tmp/anvil.manifest.old
+            # Pass 1 -- the files. Anything that is not a directory, and a
+            # symlink even when it points at one, which is why -L is asked
+            # first: rm -f on a symlink-to-directory removes the link, while
+            # the rmdir pass below would refuse it and leave it behind.
+            while read -r mrel; do
+                [ -n "$mrel" ] || continue
+                case "$mrel" in
+                /*|*..*)
+                    # A manifest is a file on the printer's disk, and this
+                    # loop runs as root with $MODDIR pasted onto the front of
+                    # whatever it says. An absolute path escapes $MODDIR
+                    # outright; `..` walks out of it one component at a time.
+                    # Neither can come out of bin/patch.sh, so one appearing
+                    # here means the file is damaged or forged, and the answer
+                    # is to say so and skip rather than to find out what it
+                    # would have deleted. The `..` test is deliberately blunt
+                    # -- it also rejects a legitimate "foo..bar", and we ship
+                    # no such name.
+                    echo "!! manifest: refusing '$mrel' -- not a path under $MODDIR"
+                    continue ;;
+                esac
+                if [ -L "$MODDIR/$mrel" ] || [ ! -d "$MODDIR/$mrel" ]; then
+                    rm -f "$MODDIR/$mrel"
+                fi
+            done < /tmp/anvil.manifest.old
+            # Pass 2 -- the directories, deepest first and only when empty.
+            # Reverse sort is what makes them deepest-first: "www/mainsail"
+            # sorts after "www", so the child is offered before its parent and
+            # the parent is empty by the time its turn comes. rmdir refusing a
+            # directory that still holds something is not a failure here, it
+            # is the whole point -- a directory holding a file we did not ship
+            # stays, and so does the file.
+            sort -r /tmp/anvil.manifest.old | while read -r mrel; do
+                case "$mrel" in ''|/*|*..*) continue ;; esac
+                [ -d "$MODDIR/$mrel" ] && rmdir "$MODDIR/$mrel" 2>/dev/null
+            done
+            rm -f /tmp/anvil.manifest.old
+            echo "previous install removed (manifest)"
+        else
+            # ---- COMPATIBILITY: an install that predates the manifest ------
+            # Printers running any package built before this change have no
+            # $MODDIR/.install-manifest, and there is no way to work out after
+            # the fact which files that package installed. The only honest
+            # answer for them is the old one, so this is exactly the rm -rf
+            # that used to be here, unchanged: without it an upgrade off one
+            # of those versions would leave every renamed init script in
+            # place, which is the double-start failure described above.
+            #
+            # -s rather than -f on purpose: a zero-byte manifest is a broken
+            # install, not a payload that shipped nothing, and the sweep is
+            # the conservative answer to it.
+            #
+            # DELETE THIS BRANCH once no pre-manifest install can still be
+            # upgraded in the field -- it is the one piece of this installer
+            # that can still destroy a file nobody asked it to.
+            rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen $MODDIR/config $MODDIR/moonraker $MODDIR/init.d
+            echo "previous install removed (no manifest -- pre-manifest layout)"
+        fi
         mkdir -p $MODDIR
         # Try xz first (FlashForge's own factory installer uses `xz -dc`, so
         # it exists), then fall back to plain tar in case a build shipped it

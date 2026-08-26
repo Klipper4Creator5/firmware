@@ -136,6 +136,14 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
                                           || bad "mod payload missing init.d services"
     grep -q 'init.d/S70klipper' <<<"$LIST" && ok "mod payload owns Klipper startup" \
                                           || bad "mod payload missing S70klipper -- Klipper would never start"
+    # The manifest is what the NEXT update deletes before it extracts. A
+    # payload shipping without one still installs fine -- run-append.sh falls
+    # back to the old seven-directory rm -rf -- but every printer that takes
+    # it keeps falling back on every update after that, and the fallback is
+    # the thing that eats whatever else lives in $MODDIR/bin. So this is a
+    # build bug, not a warning.
+    grep -q '\.install-manifest' <<<"$LIST" && ok "install manifest present (next update deletes by list, not by rm -rf)" \
+                                          || bad "mod payload has no .install-manifest -- updates fall back to wiping whole directories"
     grep -q 'mainsail/index.html' <<<"$LIST" && ok "Mainsail present" || warn "no Mainsail in payload"
     grep -q 'helixscreen/bin/helix-screen' <<<"$LIST" && ok "HelixScreen present" || warn "no HelixScreen in payload"
     # We deliberately ship no dropbear: the stock rootfs already has one, with
