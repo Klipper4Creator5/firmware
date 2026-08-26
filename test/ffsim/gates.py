@@ -222,6 +222,24 @@ def camera(config, on_output=None):
                      packages={"sup.tgz": s6}, on_output=on_output)
 
 
+def libpath(config, on_output=None):
+    """Is every directory anvil-env.sh exports actually needed, and every one
+    it dropped actually dead?
+
+    ANVIL_LIBS was ten /usr/prog directories defended by an argument -- give
+    every caller the union and no config change can break it -- and it is four
+    now because the argument did not survive being measured. This is the
+    measurement, kept: each of the four is removed from LD_LIBRARY_PATH on its
+    own and made to fail (the interpreter will not start without Python or
+    openssl, `import ctypes` needs libffi, `import libnacl` needs libsodium),
+    and a python running with the whole old ten-entry path is caught by
+    /proc/PID/maps loading none of the six that went. Without those negative
+    controls a gate here would pass just as happily on a list of forty.
+    """
+    replica = Replica.start(config, want_output=on_output)
+    replica.run_case(_case(config, "case-libpath.sh"), on_output=on_output)
+
+
 def services(config, on_output=None):
     """Do all five init.d services behave like the same kind of thing?
 

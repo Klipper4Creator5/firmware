@@ -18,17 +18,61 @@
 # with four, so a build could pass the check that decides whether to install it
 # and then fail to run. One list, one place, every caller.
 #
-# THE LIST IS THE UNION, DELIBERATELY. It is tempting to give each script the
-# subset it needs today, but "what moonraker links against" is a property of
-# the component set in moonraker.conf, which the user edits. A caller that
-# gets the full environment cannot be broken by a config change.
+# THE LIST WAS THE UNION UNTIL IT WAS MEASURED, AND IS NOW THE FOUR THAT ARE
+# ACTUALLY MAPPED. What stood here said that the subset a script needs today
+# is a property of the component set in moonraker.conf -- which the user edits
+# -- so handing every caller all ten was the defence against a config change
+# reaching for one of the others. That defence guards nothing on this
+# firmware. Six of the ten have no Python consumer at all: /proc/PID/maps of
+# the processes the mod really runs maps four of them and none of the other
+# six, and a DT_NEEDED walk over every ELF in
+# /usr/prog/{PROGRAM,bin,nginx,mjpg-streamer,klipper,module,modules,wifi},
+# /usr/bin, /usr/sbin, /bin and /sbin found exactly ONE consumer of ffmpeg,
+# x264, opencv, nim and libzip between them: FlashForge's Qt binary
+# /usr/prog/PROGRAM/software/firmwareExe, WHICH THIS MOD REPLACES WITH A SHELL
+# SCRIPT. curl is the interesting one, because it did have a Python consumer:
+# pycurl, in site-packages -- which does not import on this firmware at all.
+# "undefined symbol: curl_global_sslset", a symbol that arrived in curl 7.56
+# while /usr/prog ships 7.55.1, and the shipped pycurl links libssl.so.1.1
+# where this curl links 1.0.0. No moonraker.conf edit can reach a library
+# through a module that cannot be imported in the first place. nginx runs with
+# LD_LIBRARY_PATH="" and mjpg_streamer maps only its own plugin directory and
+# glibc, so neither wanted any of the ten either.
+#
+# WHAT WOULD HAVE TO BE TRUE TO PUT ONE BACK: some process the mod runs maps
+# it. That is a measurement, not an argument -- start the process and read
+# /proc/PID/maps. test/integration/printer/case-libpath.sh is where that
+# measurement lives, in both directions: each of the four below is taken away
+# one at a time and made to fail, and a python running with only these four is
+# shown to map none of the six that went. A new entry arrives with the process
+# that needs it and a check in that gate; an entry nothing can be shown to map
+# is how this list got to ten in the first place.
 #
 # Sourcing twice is safe: each directory is added only if it is not already
 # there, so firmwareExe sourcing this and then running init.d/S62moonraker --
 # which sources it again with the first copy already inherited -- does not grow
 # the variable on every boot.
 
-# The /usr/prog library packages, in app_startup.sh's own order.
+# The /usr/prog library packages, in app_startup.sh's own order. Each is here
+# for a failure that has been watched happen:
+#
+#   Python-3.8.2    libpython3.8.so.1.0. Without it no python starts at all:
+#                   "libpython3.8.so.1.0: cannot open shared object file".
+#   openssl-1.0.2d  NOT for `import ssl`. _ssl and zlib are BUILTIN on this
+#                   interpreter, statically linked into libpython, so
+#                   libpython3.8.so.1.0 ITSELF carries DT_NEEDED on
+#                   libssl.so.1.0.0 and libcrypto.so.1.0.0 -- take this away
+#                   and the interpreter does not start, before it has read a
+#                   line of anyone's python. The rootfs has 1.1 only, which is
+#                   a different soname and cannot stand in.
+#   libffi-3.4.4    _ctypes wants libffi.so.8 and the rootfs has libffi.so.7
+#                   only. `import ctypes` is the visible failure; the cost in
+#                   moonraker is four components -- file_manager,
+#                   authorization, machine, proc_stats.
+#   libsodium       libnacl maps libsodium.so.18.1.1, and raises OSError
+#                   rather than ImportError when it cannot, which is what made
+#                   the authorization outage read as a component crash rather
+#                   than a missing library.
 #
 # NOT /usr/prog/mjpg-streamer: that one is a plugin directory rather than a
 # library package, it carries its own libjpeg.so.9, and putting it in front of
@@ -36,14 +80,8 @@
 # init.d/S65camera prepends it for itself.
 ANVIL_LIBS="/usr/prog/Python-3.8.2/lib
 /usr/prog/openssl-1.0.2d/lib
-/usr/prog/curl-7.55.1/lib
-/usr/prog/ffmpeg-402/lib
-/usr/prog/x264/lib
 /usr/prog/libffi-3.4.4/lib
-/usr/prog/libsodium/lib
-/usr/prog/opencv-4.2/lib
-/usr/prog/nim/lib
-/usr/prog/libzip-1.10.1/lib"
+/usr/prog/libsodium/lib"
 
 for _anvil_lib in $ANVIL_LIBS; do
     [ -d "$_anvil_lib" ] || continue

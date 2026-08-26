@@ -68,6 +68,7 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
         rootfs verify test test-py test-install \
         printer-image printer-image-push \
         test-recovery test-mcu test-boot-screen test-moonraker test-services \
+        test-libpath \
         test-upgrade test-supervisor test-nginx test-camera \
         boot-screen boot-screen-sim \
         release clean distclean
@@ -95,6 +96,7 @@ help:
 	@echo '  make test-boot-screen the first-boot screen draws on the replica fb0'
 	@echo '  make test-moonraker   S62moonraker starts moonraker on the printer own python'
 	@echo '  make test-services    every init.d service dispatches the same way'
+	@echo '  make test-libpath     every library on LD_LIBRARY_PATH is one something maps'
 	@echo '  make test-upgrade     an update deletes what it installed, and only that'
 	@echo '  make test-supervisor  the s6 we cross-compiled supervises and waits'
 	@echo '  make test-nginx       nginx runs under s6, and a stop stays stopped'
@@ -234,6 +236,11 @@ test-moonraker: image
 
 test-services: image
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-services.sh
+
+# ANVIL_LIBS, asked of the loader rather than of the file. Needs no s6 and no
+# tarball: what is under test is which libraries a running process maps.
+test-libpath: image
+	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-libpath.sh
 
 # s6 itself, as the build produced it -- not a stand-in. Needs work/.s6, which
 # bin/patch.sh fills; the full suite builds this tarball for itself, this

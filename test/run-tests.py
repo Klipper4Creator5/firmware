@@ -423,6 +423,9 @@ def main():
         with reporter.gate("init.d services"):
             gates.services(config, on_output=emit)
 
+        with reporter.gate("the library path is what it claims"):
+            gates.libpath(config, on_output=emit)
+
         with reporter.gate("upgrade keeps what it did not install"):
             gates.upgrade(config, on_output=emit)
 

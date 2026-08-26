@@ -212,13 +212,77 @@ moonraker runs from `/usr/data` on the printer's own Python.
 
 ## Phase 6 -- own the Python environment (separate project)
 
-Build Python into the prefix and repoint `anvil-env.sh` at `$MODDIR/lib` and
-`$MODDIR/bin/python3`. Everything the mod runs -- moonraker, `ff-startup.py`,
-the MCU bring-up, and eventually klippy -- runs under it.
+Scoped, in the replica, before starting. The scoping changed the shape of this
+phase and corrected a premise, so read this before writing any of it.
 
-Worth scoping first: of the ten library paths in `anvil-env.sh`, find out which
-are genuinely loaded at runtime and which are dead entries. That sizes the work
-before it starts.
+**THE PREMISE THAT DID NOT SURVIVE.** "Owning Python makes the mod survive a
+stock flash" is false, and so is that framing for phases 6 and 7 generally.
+`firmwareExe` lives on `/usr/prog`, a stock flash overwrites it with
+FlashForge's binary, and after that nothing runs `$MODDIR/init.d/S*` at all --
+the mod is already dead whatever else survived. The flash also restores a
+working `/usr/prog/Python-3.8.2` at the same path, so today's arrangement
+recovers the moment the mod package is reinstalled. Do not justify this phase
+that way.
+
+**What it actually buys**, in order of value:
+
+1. It unfreezes Moonraker. The pin is stuck at commit 9d0d09d (Dec 2023) for
+   exactly one reason: FlashForge's Python has no `_sqlite3` and there is no
+   `libsqlite3` anywhere on the box, while Moonraker v0.9.0 moved its database
+   off lmdb onto sqlite. That is a compounding cost paid every release.
+2. It removes two FlashForge version strings -- `Python-3.8.2` and
+   `openssl-1.0.2d` -- hardcoded into `anvil-env.sh`. FlashForge demonstrably
+   bumps these (they already ship `opencv-4.10` beside `opencv-4.2`), and an
+   OTA that does breaks every modded printer that takes it before our next
+   release.
+3. Modern OpenSSL. Marginal for what Moonraker actually does.
+
+**What is measured, and what it rules out.** Only four of the ten `ANVIL_LIBS`
+are ever mapped: Python, openssl, libffi, libsodium. The other six have one
+consumer between them -- FlashForge's `firmwareExe`, which we replace. There is
+NO usable prebuilt Python for this target: python-build-standalone has no mips
+at all, and OpenWrt's `mipsel_24kc` build is `e_flags=0x74001005`, legacy-NaN
+soft-float musl, wrong three ways. The target ABI is NAN2008, O32, hard-float,
+glibc 2.33. And a musl-built CPython is **fatal for phase 7**: it cannot
+`dlopen` a glibc `c_helper.so`, which is exactly how klippy loads it. If
+CPython is ever built here it must use the Ingenic glibc toolchain that already
+builds `c_helper.so`.
+
+**The option this plan originally missed, and the one to do first.**
+
+* **6a -- relocate, do not build.** Copy FlashForge's own interpreter and the
+  three native libraries into the prefix at INSTALL time, repoint
+  `anvil-env.sh`, and leave `/usr/prog` unreferenced. Measured end to end in
+  the replica: all 16 Moonraker components import, klippy's `chelper.get_ffi()`
+  works, Moonraker answers `/server/info`, and its `/proc/PID/maps` holds no
+  `/usr/prog` library. Buys benefit 2 in full, costs no cross-compiling.
+  ~2-3 days, nearly all of it install/upgrade code and gates. Copying on the
+  printer rather than shipping FlashForge's binaries also avoids
+  redistributing them. Hard dependency on phase 1's manifest: ~3000 files of
+  Python in `$MODDIR` is not survivable under a directory wipe.
+* **6b -- `_sqlite3` alone, when a newer Moonraker is wanted.** One extension
+  module plus a static sqlite amalgamation, built against 3.8.2's headers with
+  the Ingenic toolchain, dropped into the relocated `lib-dynload/`. That is the
+  narrow route to benefit 1 -- one `.so`, not an interpreter. ~1-2 days.
+* **6c -- cross-build CPython 3.13.** Only if 6b fails or something demands
+  >3.8. Ingenic glibc toolchain, never musl. 1-3 weeks, most of it fighting the
+  build: the interpreter is the easy half, the seven hand-cross-built C
+  extensions and the missing distutils are the hard half.
+
+**BLOCKING UNKNOWN: free space on `/usr/data`.** A trimmed relocation is
+73-112MB and ~3084 files. `DATA_MB` is unset in `test.env.example`, the
+replica's partitions are unbounded overlays, and no document in this repo
+records `df` from a real printer. Measure that before 6a, not during it.
+
+**Do the gate first, not the installer.** A `case-python.sh` that relocates,
+moves `/usr/prog/Python-3.8.2` aside, and then asserts the four things above,
+with the pre-relocation run as its negative control. It makes every later step
+falsifiable and it is a few hours' work.
+
+One trap already found: dropping `setuptools`/`pkg_resources` while trimming
+breaks the `lmdb` egg, which then falls back to lmdb's cffi path and tries to
+invoke `mips-linux-gnu-gcc` ON THE PRINTER at Moonraker startup. A trim gate
+has to catch that class of failure.
 
 ## Phase 7 -- own Klipper
 
@@ -229,7 +293,13 @@ an s6 restart policy plus readiness. `checkEboard`, `libmcu-bare.bin` and
 `cmd_mcu` stay where they are -- they are version-matched to the firmware and
 reading them from the firmware partition is correct.
 
-At that point `firmwareExe` is the only file we place outside `/usr/data`.
+At that point `firmwareExe` is the only file we place outside `/usr/data` --
+which is the goal, but be clear about what it is worth. It does NOT make the
+mod survive a stock flash: the flash replaces `firmwareExe` itself, and with it
+the only thing that runs any of this. What owning everything else buys is a
+mod that depends on no FlashForge version string, so a stock OTA cannot break a
+modded printer between our releases, and a single place to look when something
+does not start. That is worth having. "Survives a flash" is not the reason.
 
 ## How this gets implemented
 
