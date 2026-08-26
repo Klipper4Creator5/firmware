@@ -22,6 +22,7 @@ was recorded as a clean skip on a machine that could have run it. The gates
 are function calls now. Their verdict is an exception or the absence of one,
 and output cannot imitate either.
 """
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -112,6 +113,53 @@ def check_no_bashisms(reporter):
         for ln in hits[:10]:
             reporter._say("       %s\n" % ln)
         raise Fail("bashisms in the payload")
+
+
+def check_undefined_names(reporter):
+    """The Python counterpart of check_shell_syntax: a name that does not
+    exist anywhere it is read.
+
+    py_compile catches typos in syntax; nothing caught typos in names, so a
+    rename that renamed an assignment and missed one of its uses stayed
+    green through both lanes and waited for the line to execute on the
+    printer. That is how `_plate_check` came to reach for `z_trigger` when
+    what it had bound was `station_z` -- on the one path that runs BEFORE a
+    nozzle is allowed to descend.
+
+    Only the fatal findings count. pyflakes also reports unused imports and
+    the like, which are untidy but cannot fail at runtime, and a gate that
+    goes red for those gets switched off.
+    """
+    # The debian package ships the module without putting a pyflakes
+    # executable on PATH, so shutil.which() -- the shape the shellcheck gate
+    # uses -- reports it missing on the very image that has it.
+    if importlib.util.find_spec("pyflakes") is None:
+        raise Fail("pyflakes not installed (the build image has it -- run "
+                   "through 'make test')")
+    targets = []
+    for pattern in ("bin/*.py", "payload/*.py", "payload/bin/*.py",
+                    "payload/klipper/extras/*.py", "test/*.py",
+                    "test/ffsim/*.py", "test/integration/*.py"):
+        targets += sorted(ROOT.glob(pattern))
+    targets = [str(t) for t in targets if t.is_file()]
+    # As in check_no_bashisms: with no targets the tool reports nothing and
+    # the gate would pass having examined nothing at all.
+    if not targets:
+        raise Fail("no python files found to check -- have the globs rotted?")
+    checked = subprocess.run([sys.executable, "-m", "pyflakes"] + targets,
+                             capture_output=True, text=True)
+    fatal = ("undefined name", "referenced before assignment",
+             "syntax error", "invalid syntax")
+    hits = [line for line in (checked.stdout or "").split("\n")
+            if any(marker in line.lower() for marker in fatal)]
+    if not hits and checked.returncode not in (0, 1):
+        raise Fail("pyflakes failed to run (exit %d): %s"
+                   % (checked.returncode,
+                      (checked.stderr or "").strip()[:200]))
+    if hits:
+        for line in hits[:10]:
+            reporter._say("       %s\n" % line)
+        raise Fail("names used but never bound")
 
 
 # ------------------------------------------------------------------- pytest
@@ -292,6 +340,9 @@ def main():
                 gates.extract_rootfs(config, on_output=emit)
 
     reporter.hdr("python checks")
+    with reporter.gate("every name resolves"):
+        check_undefined_names(reporter)
+
     with reporter.gate("pytest"):
         run_pytest(reporter)
 
