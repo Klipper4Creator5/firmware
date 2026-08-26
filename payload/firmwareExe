@@ -68,6 +68,36 @@ if [ -d $MODDIR/init.d ]; then
     done
 fi
 
+# ---- is the supervisor still there? --------------------------------------
+# S40s6 started s6-svscan a few lines above, backgrounded, and then returned
+# -- it has to, because the scanner never returns and these scripts run in the
+# foreground. Nothing supervises the supervisor: we are not PID 1, there is no
+# inittab we can reach (/etc is inside the read-only squashfs a stock flash
+# overwrites), and a `while true` respawn loop in this script would be one
+# more hand-rolled supervisor, which is the exact thing s6 is here to delete.
+#
+# So this is the whole answer, and it is deliberately the same shape as the
+# Klipper last-resort further down: check once, at the one moment something
+# has already had a chance to go wrong, and say so in the boot log. What it
+# actually catches is a scanner that exec'd and then died -- the
+# -D_FILE_OFFSET_BITS=64 build trap in tools/supervisor/README.md, where
+# readdir() returns EOVERFLOW and the scanner starts fine and then does
+# nothing. S40s6 already waits and warns; this catches the case where it died
+# in the seconds AFTER that, while wifi and nginx were starting.
+#
+# Deliberately NOT a loop and NOT a watchdog. If the scanner dies twice the
+# printer has a real fault and a respawn would only hide it -- and note that a
+# dead scanner leaves the s6-supervise processes it started running, still
+# respawning their own services, so it is a printer that has stopped noticing
+# changes to the scandir rather than a printer that has stopped printing.
+# Today, with an empty scandir, it is not even that. See S40s6's header.
+if [ "${MOD_S6:-1}" = 1 ] && [ -x $MODDIR/init.d/S40s6 ]; then
+    if ! $MODDIR/init.d/S40s6 status | grep -q scanning; then
+        echo "s6: the scanner is not answering -- one restart, then we leave it"
+        $MODDIR/init.d/S40s6 start
+    fi
+fi
+
 # ---- wait for the printer, and migrate on the first boot -----------------
 # Two jobs, and the panel narrates both (bin/ff-startup.py):
 #

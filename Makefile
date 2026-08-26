@@ -68,7 +68,7 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
         rootfs verify test test-py test-install \
         printer-image printer-image-push \
         test-recovery test-mcu test-boot-screen test-moonraker test-services \
-        test-upgrade \
+        test-upgrade test-supervisor \
         boot-screen boot-screen-sim \
         release clean distclean
 
@@ -96,6 +96,7 @@ help:
 	@echo '  make test-moonraker   S62moonraker starts moonraker on the printer own python'
 	@echo '  make test-services    every init.d service dispatches the same way'
 	@echo '  make test-upgrade     an update deletes what it installed, and only that'
+	@echo '  make test-supervisor  the s6 we cross-compiled supervises and waits'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo
 	@echo 'Look at things:'
@@ -231,6 +232,13 @@ test-moonraker: image
 
 test-services: image
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-services.sh
+
+# s6 itself, as the build produced it -- not a stand-in. Needs work/.s6, which
+# bin/patch.sh fills; the full suite builds this tarball for itself, this
+# target is for running the one gate on its own.
+test-supervisor: image
+	@tar -czf work/.s6-gate.tgz -C work/.s6 bin libexec
+	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-supervisor.sh sup.tgz=work/.s6-gate.tgz
 
 # The installer, run for real over two payloads: what the last one shipped
 # goes, what nobody shipped stays.

@@ -127,6 +127,45 @@ def moonraker(config, on_output=None):
     replica.run_case(_case(config, "case-moonraker.sh"), on_output=on_output)
 
 
+def _s6_tarball(config):
+    """The cross-built s6 tree, packed the way a printer would see it.
+
+    bin/patch.sh leaves it in work/.s6 as bin/ + libexec/, which is exactly
+    the shape a case wants to unpack straight into $MODDIR. Returns None when
+    nothing has built it yet -- the caller decides whether that is a Skip or a
+    reason to fall back, because those are different questions: case-supervisor
+    is ABOUT s6 and has nothing to say without it, while case-services is
+    about our own scripts and can still check most of its contract against a
+    stand-in.
+    """
+    built = config.root / "work" / ".s6"
+    if not (built / "bin" / "s6-svscan").is_file():
+        return None
+    out = config.root / "work" / ".s6-gate.tgz"
+    with tarfile.open(str(out), "w:gz") as tar:
+        for sub in ("bin", "libexec"):
+            tar.add(str(built / sub), arcname=sub)
+    return str(out)
+
+
+def supervisor(config, on_output=None):
+    """Does the s6 we cross-compiled actually work on the printer?
+
+    Not "did it build" -- it execs, it supervises, it respawns a killed
+    process, its stop waits for the process to be gone, and s6-svwait -U
+    blocks until a service says it is ready. That last one is the whole reason
+    s6 was chosen over runit, and it is also the check that proves the prefix
+    baked into the binaries at compile time is the one the printer sees: get
+    it wrong and status still works while every waiting verb fails.
+    """
+    s6 = _s6_tarball(config)
+    if not s6:
+        raise Skip("nothing in work/.s6 -- run ./bin/patch.sh first")
+    replica = Replica.start(config, want_output=on_output)
+    replica.run_case(_case(config, "case-supervisor.sh"),
+                     packages={"sup.tgz": s6}, on_output=on_output)
+
+
 def services(config, on_output=None):
     """Do all five init.d services behave like the same kind of thing?
 
@@ -137,9 +176,21 @@ def services(config, on_output=None):
     contract they share -- the library loads, `status` answers, the output
     names the service, an unknown verb gets a usage line and exit 1 -- rather
     than grepping the scripts for how they are spelled.
+
+    Handed the real cross-built s6 whenever one exists, because S40s6 is one
+    of those services now and a gate that only ever ran against a stand-in
+    scanner would pass happily on a printer that cannot exec the supervisor it
+    ships. The case falls back to its stand-in on its own when no tarball
+    arrives -- which keeps this useful in a checkout that has not built yet --
+    and says out loud which of the two it used.
     """
+    packages = {}
+    s6 = _s6_tarball(config)
+    if s6:
+        packages["sup.tgz"] = s6
     replica = Replica.start(config, want_output=on_output)
-    replica.run_case(_case(config, "case-services.sh"), on_output=on_output)
+    replica.run_case(_case(config, "case-services.sh"),
+                     packages=packages, on_output=on_output)
 
 
 def upgrade(config, on_output=None):

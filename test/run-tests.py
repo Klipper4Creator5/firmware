@@ -411,6 +411,9 @@ def main():
         with reporter.gate("moonraker"):
             gates.moonraker(config, on_output=emit)
 
+        with reporter.gate("s6 supervises, waits and reports"):
+            gates.supervisor(config, on_output=emit)
+
         with reporter.gate("init.d services"):
             gates.services(config, on_output=emit)
 

@@ -44,6 +44,17 @@
 #                                   the start(), stop() and status() the script
 #                                   defines, and exits
 #
+#   -- talking to s6, for the services that have been moved to it --
+#   SVC_S6_BIN        where the s6 binaries are; $MODDIR/bin
+#   SVC_S6_SCANDIR    the scandir S40s6 scans; $MODDIR/etc/s6
+#
+#   svc_s6_running                  is the SCANNER alive and listening?
+#   svc_s6_svc NAME OPT...          s6-svc OPT... $SVC_S6_SCANDIR/NAME
+#   svc_s6_up NAME [SECONDS]        bring NAME up and WAIT until it is up
+#   svc_s6_down NAME [SECONDS]      bring NAME down and WAIT until it is down
+#   svc_s6_stat NAME                one line of s6-svstat, on stdout
+#   svc_s6_ready NAME [SECONDS]     block until NAME declares itself READY
+#
 # The script defines start(), stop() and status(); this file defines
 # everything else. A script with an extra verb intercepts it before handing the
 # rest over -- see svc_dispatch.
@@ -187,6 +198,108 @@ svc_detach() {
     "$@" &
     SVC_BG_PID=$!
     return 0
+}
+
+# ---- talking to s6 ---------------------------------------------------------
+#
+# Everything above this line is the hand-rolled supervisor: a liveness test we
+# wrote, a stop-and-wait we wrote, and -- in S65camera -- a respawn loop we
+# wrote. Everything below is how a service asks the real one instead. Both
+# sets exist at once and will for a while: S40s6 starts the scanner, and the
+# six services move into it ONE AT A TIME, each keeping its S* script as the
+# interface people already type. A service that has not moved uses the
+# functions above and does not know these exist.
+#
+# WHERE THE PATHS COME FROM, and why they are here rather than in each script.
+# s6 bakes its own prefix in at COMPILE time -- its waiting verbs exec
+# s6-svlisten, which spawns s6-ftrigrd out of the libexecdir chosen by
+# ./configure, so the binaries only work from the prefix they were built for
+# (/usr/data/anvil; see tools/supervisor/README.md, where shipping them
+# elsewhere made every waiting verb fail while status and respawn kept
+# working, i.e. it failed late and partially). The scandir is a second thing
+# every one of these scripts has to agree about with S40s6, and the way to
+# make several scripts agree is to say it once, in the file they all source.
+# Both are overridable so a test can point at a scandir of its own without
+# reinstalling the payload.
+SVC_S6_BIN=${SVC_S6_BIN:-${MODDIR:-/usr/data/anvil}/bin}
+SVC_S6_SCANDIR=${SVC_S6_SCANDIR:-${MODDIR:-/usr/data/anvil}/etc/s6}
+
+# Is the SCANNER there? Not "is there a process called s6-svscan" -- this is
+# asked BY BEHAVIOUR, which is the rule the rest of this file was rewritten to
+# follow. `s6-svscanctl -a` is the request to rescan the scandir: harmless,
+# idempotent, and it travels down $SCANDIR/.s6-svscan/control, a FIFO opened
+# non-blocking. If nothing is reading that FIFO the open fails with ENXIO and
+# s6-svscanctl exits 100 saying "supervisor not listening" -- measured on the
+# replica, both ways round. A dead scanner leaves the FIFO on disk, so this is
+# a distinction `ps | grep` genuinely cannot make, and it is the same class of
+# lie as the stale pidfile and the stale klippy socket that this file already
+# has two comments about.
+#
+# It answers false rather than exploding when s6 is not installed at all,
+# because that is a real state on a printer half-way through an update.
+svc_s6_running() {
+    [ -x "$SVC_S6_BIN/s6-svscanctl" ] || return 1
+    "$SVC_S6_BIN/s6-svscanctl" -a "$SVC_S6_SCANDIR" >/dev/null 2>&1
+}
+
+# The raw verb, for anything the four wrappers below do not cover. NAME first
+# and the options after, which is the opposite order to s6-svc's own -- s6
+# wants `s6-svc OPTIONS servicedir` -- because in ash it is the first argument
+# that can be shifted off cleanly, and because every caller here is naming a
+# service, not a directory. The directory is this file's business.
+svc_s6_svc() {
+    _svc_s6_name=$1
+    shift
+    "$SVC_S6_BIN/s6-svc" "$@" "$SVC_S6_SCANDIR/$_svc_s6_name"
+    _svc_s6_rc=$?
+    unset _svc_s6_name
+    return $_svc_s6_rc
+}
+
+# Up and down, each WAITING for the thing it asked for -- which is the entire
+# reason for preferring a supervisor to start-stop-daemon. -wu/-wD mean "do
+# not return until the service is really up / really down", and -T is a bound
+# in MILLISECONDS so that a service which never comes down cannot hold a boot
+# or an ssh session open for ever. The default is 15 seconds, the same bound
+# and the same reasoning as svc_stop_daemon: long enough for moonraker to
+# finish writing its database, short enough not to hang a boot.
+#
+# This pair is what deletes the busybox correction at the top of this file.
+# start-stop-daemon -K returns before the process is dead, which is how
+# `restart` came to race its own start; s6-svc -wD returns when it is dead,
+# and it is C rather than a `while ... sleep 1` we maintain.
+svc_s6_up() {
+    svc_s6_svc "$1" -wu -T "$(( ${2:-15} * 1000 ))" -u
+}
+
+svc_s6_down() {
+    svc_s6_svc "$1" -wD -T "$(( ${2:-15} * 1000 ))" -d
+}
+
+# One line about a service, on stdout, for a status() to print. s6-svstat's
+# own output is already the right shape -- "up (pid 1234) 71 seconds" or
+# "down 5 seconds, normally up" -- so it is passed through rather than
+# paraphrased, exactly as S50wifi passes ifconfig through: it is the answer
+# you came for, in the shape you would have typed the command to get.
+# 2>&1 because "unable to open supervise/status" is also an answer.
+svc_s6_stat() {
+    "$SVC_S6_BIN/s6-svstat" "$SVC_S6_SCANDIR/$1" 2>&1
+}
+
+# READINESS -- the reason this is s6 and not runit, and the one thing here
+# that no amount of shell could have provided. A service that writes to its
+# notification-fd is telling the supervisor it is USABLE, not merely forked,
+# and s6-svwait -U blocks until it does. runit's `sv start` returns when the
+# process has been forked, which says nothing at all.
+#
+# It is unused today and that is expected: it is the seam phase 4 is aimed at.
+# S65camera currently polls /dev/video0 for up to 30 seconds and S70klipper
+# retries an MCU handshake for up to 90, both inside their own scripts, and
+# both of those become "declare ready when the device is there" plus a caller
+# that waits here. Timeout in seconds, converted to the milliseconds s6 wants;
+# non-zero if it ran out, so a caller can carry on degraded rather than block.
+svc_s6_ready() {
+    "$SVC_S6_BIN/s6-svwait" -U -t "$(( ${2:-30} * 1000 ))" "$SVC_S6_SCANDIR/$1"
 }
 
 # ---- the verb block --------------------------------------------------------

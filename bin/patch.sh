@@ -26,8 +26,20 @@ rm -rf "$MOD_PAYLOAD" "$SOFTWARE_DIR/mod"   # $SOFTWARE_DIR/mod: leftover from a
 # now means s6-ftrigrd. It has to be a sibling of bin/ and spelled exactly
 # this way -- s6 resolves it from the --prefix baked into its binaries at
 # compile time, so the directory name is part of the ABI, not a preference.
+# etc/ is the same idea one directory further on: a --prefix root keeps the
+# mod's own configuration in etc/, and etc/s6/ is the s6 SCANDIR -- the
+# directory s6-svscan watches, one subdirectory per supervised service. It is
+# staged here, EMPTY, rather than created at runtime by payload/init.d/S40s6,
+# and the reason is the install manifest: the manifest is read off this staged
+# tree, so a directory that only ever appeared on the printer would be a path
+# the mod creates and no update can ever account for. Staged, it is listed,
+# and run-append.sh's rmdir pass tidies it exactly when it is empty and leaves
+# it alone the moment phase 4 puts a service in it. S40s6 still does its own
+# mkdir -p on top of this -- see the comment there -- because the manifest
+# pass runs BEFORE the new tarball is extracted, and because hand-made
+# installs exist.
 mkdir -p "$MOD_PAYLOAD/bin" "$MOD_PAYLOAD/libexec" "$MOD_PAYLOAD/nginx" \
-         "$MOD_PAYLOAD/www" "$MOD_PAYLOAD/config"
+         "$MOD_PAYLOAD/www" "$MOD_PAYLOAD/config" "$MOD_PAYLOAD/etc/s6"
 
 # ---------------------------------------------------------------- 1. Klipper
 # BUILD_KLIPPER=fork (the default) ships the creator5 Klipper tree; =stock
