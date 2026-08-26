@@ -179,8 +179,9 @@ print drives them, and leaves something on the plate you can measure:
 | 6 | `END_PRINT` via the machine end block |
 
 Two things it deliberately does **not** do. It never calibrates —
-`TOOL_OFFSET_CALIBRATE` and `STATION_CALIBRATE` need the build plate off, which
-a print does not have, so the file only reads the geometry. And it contains no
+`TOOL_CALIBRATE_TOOL_OFFSET` and `TOOL_LOCATE_SENSOR` need the build plate
+off, which a print does not have, so the file only reads the geometry.
+And it contains no
 `PAUSE`: press Pause in Mainsail during the tower and then Resume, which is the
 one check that wants a human at the machine.
 

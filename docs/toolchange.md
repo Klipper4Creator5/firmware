@@ -26,7 +26,7 @@ documented in the file headers.
 | [`payload/helixscreen/printer_database.d/flashforge_creator5.json`](../payload/helixscreen/printer_database.d/flashforge_creator5.json) | HelixScreen `config/printer_database.d/` | Printer-database entry so HelixScreen auto-detects both Creator 5 models as tool changers (the Pro and the non-Pro differ only by the chamber heater) |
 | [`payload/klipper/extras/ff_print.py`](../payload/klipper/extras/ff_print.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_print]` — takes over `SDCARD_PRINT_FILE` and `M23`, reads bed/nozzle/initial tool/first-layer height out of the file itself, and calls `FF_BEFORE_PRINT_START` before the file's first line and `FF_AFTER_PRINT_END` once the job leaves the printing state. Declared in `ff-print-macros.cfg`; holds no policy of its own |
 | [`payload/klipper/extras/ff_tool.py`](../payload/klipper/extras/ff_tool.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_tool n]` — one section per tool; `dock_x/dock_y`, `nozzle_x/y/z` and `z_adjust` are all autosaved (import or calibration + `SAVE_CONFIG`) |
-| [`payload/klipper/extras/ff_tool_offset.py`](../payload/klipper/extras/ff_tool_offset.py) | `/usr/prog/klipper/klippy/extras/` | `TOOL_OFFSET_CALIBRATE` / `STATION_CALIBRATE` / `TOOL_OFFSET_STATUS` — the touchscreen's nozzle XY/Z offset calibration, recovered from the binary and reimplemented in Klipper |
+| [`payload/klipper/extras/ff_tool_offset.py`](../payload/klipper/extras/ff_tool_offset.py) | `/usr/prog/klipper/klippy/extras/` | `TOOL_CALIBRATE_TOOL_OFFSET` / `TOOL_LOCATE_SENSOR` / `TOOL_OFFSET_STATUS` — the touchscreen's nozzle XY/Z offset calibration, recovered from the binary and reimplemented in Klipper |
 | [`payload/klipper/extras/ff_legacy.py`](../payload/klipper/extras/ff_legacy.py) | `/usr/prog/klipper/klippy/extras/` | `FF_IMPORT_FIRMWARE_CONFIG` — one-shot import of the factory/touchscreen JSON into Klipper config. The command and nothing else: no startup behaviour. `bin/ff-startup.py` is what runs it on the first boot |
 | [`payload/klipper/config/ff-toolchange.cfg`](../payload/klipper/config/ff-toolchange.cfg) | `/usr/data/config/` | empty `[ff_tool 0..3]` sections (the per-unit dock/nozzle data is autosaved, nothing unit-specific ships), `[ff_toolchange]` feeds/geometry, the `G28` dock-first wrapper |
 | [`payload/klipper/config/ff-tool-offset.cfg`](../payload/klipper/config/ff-tool-offset.cfg) | `/usr/data/config/` | `[ff_tool_offset]` — probe geometry and guards for the calibration commands |
@@ -237,33 +237,52 @@ The nozzle XY/Z offset calibration is the touchscreen's own sequence
 [`docs/notes/45-tool-offset-calibration.md`](notes/45-tool-offset-calibration.md)
 and [`46-offset-calibration-recovered.md`](notes/46-offset-calibration-recovered.md)),
 constants included. **Take the PEI sheet off first** — the calibration
-station sits below the bed plane. `PLATE_REMOVED=1` is your promise; both
-commands also verify it: with the empty carriage they probe the station Z
-(must not land more than 0.8 mm **above** the calibrated `station_z` — the
-check is one-sided, since a plate can only hold the probe high) and sweep
-sideways
-for the circle's edge — a plate left on lands the Z probe high and has no
-edge, and the command refuses before any nozzle descends (`PLATE_CHECK=0`
-or `plate_check: False` skips it). Home, then:
+station sits below the bed plane. Nothing asks you to promise that: both
+commands park the carriage and *measure* it, probing the station Z with the
+bare carriage (it must not land more than 0.8 mm **above** the calibrated
+`station_z` — the check is one-sided, since a plate can only hold the probe
+high) and sweeping sideways for the circle's edge. A plate left on lands
+the Z probe high and has no edge, so the command refuses before any nozzle
+descends (`PLATE_CHECK=0` or `plate_check: False` skips it). Home, then:
 
 ```gcode
-STATION_CALIBRATE PLATE_REMOVED=1              ; empty carriage, no tool mounted
-TOOL_OFFSET_CALIBRATE TOOL=ALL PLATE_REMOVED=1 ; or TOOL=<0..3> for one tool
+CALIBRATE_TOOL_OFFSETS   ; or, by hand:
+TOOL_LOCATE_SENSOR       ; empty carriage, parks the mounted tool for you
+SELECT_TOOL T=0
+TOOL_CALIBRATE_TOOL_OFFSET   ; measures whatever is on the carriage
 SAVE_CONFIG
 ```
 
-`STATION_CALIBRATE` probes the fixed under-bed station with the empty
-carriage (eddy frame) and stores `station_x/y/z`; `TOOL_OFFSET_CALIBRATE`
-then picks up each tool, touches the station's cylinder in four directions
-with the nozzle, fits a circle, repeats the pass centred on that fit and
+`TOOL_LOCATE_SENSOR` probes the fixed under-bed station with the empty
+carriage (eddy frame) and stores `station_x/y/z`; `TOOL_CALIBRATE_TOOL_OFFSET`
+touches the station's cylinder in four directions with the mounted tool's
+nozzle, fits a circle, repeats the pass centred on that fit and
 stores the nozzle's absolute `nozzle_x/y/z`. Results are station-frame
 absolutes per tool, so recalibrating one tool leaves the others valid;
 `nozzle_z − station_z` is the ~3.2 mm gap the print-start Z offset uses.
-Re-run `STATION_CALIBRATE` whenever the station or bed is disturbed.
+Re-run `TOOL_LOCATE_SENSOR` whenever the station or bed is disturbed.
 
 `CALIBRATE_TOOL_OFFSETS` runs both passes in one command. It is
 klipper-toolchanger's documented entry point, so it is the name HelixScreen's
 setup wizard and other UIs look for — the two commands above are what it calls.
+[`calibration.md`](calibration.md) is the operator's walkthrough: the order,
+the expected output, and every refusal the commands can raise.
+
+**Probe sampling.** Both commands take klipper-toolchanger's parameters —
+`SAMPLES`, `SAMPLES_TOLERANCE`, `SAMPLES_TOLERANCE_RETRIES`,
+`SAMPLES_RESULT` (`average` or `median`), `SAMPLE_RETRACT_DIST`,
+`PROBE_SPEED` — applied to every probe of the run, or set once in
+`[ff_tool_offset]`. Left alone they follow the fork's own `[e_stop <axis>]`
+settings, which already sample: three touches, spread rejected above
+`error_v` (0.02 mm), retried up to `main_cycle_cnt` times, `back_v` retract
+between them, averaged. So the defaults probe exactly as before this was
+reachable; the parameters widen or narrow that, and add the median upstream
+offers and the fork does not. Upstream's `LIFT_SPEED` has no counterpart:
+the retract between touches runs along the probe axis, at `PROBE_SPEED`.
+
+```gcode
+TOOL_CALIBRATE_TOOL_OFFSET SAMPLES=5 SAMPLES_RESULT=median
+```
 
 Note on the word "gap": `station_z` is where the *empty carriage* trips the
 station, and the feature it trips sits about 12.4 mm +X of the nozzle and lower
@@ -298,8 +317,8 @@ tool is mounted, is added on every later grab of that tool, and persists.
   before anything heats, homes or grabs, with the fix spelled out. Override
   only for bench tests:
   `SET_GCODE_VARIABLE MACRO=_FF_JOB VARIABLE=allow_uncalibrated VALUE=1`.
-* **Calibration moves are bounded.** Both calibration commands require
-  `PLATE_REMOVED=1`; the Z probe targets −3 by default (the app's own
+* **Calibration moves are bounded.** The plate check gates both
+  calibration commands; the Z probe targets −3 by default (the app's own
   station value) and, once a trigger height is known, stops 2 mm below it
   instead of driving on.
 * **Implausible results are not saved.** A circle-fit residual above
@@ -514,8 +533,8 @@ the running script; we hold no error latch to set, because status is derived
 from the sensors every time it is asked for.
 Upstream's docking-mode and tool-parameter commands (`TEST_TOOL_DOCKING`,
 `ENTER_DOCKING_MODE`, `SET_TOOL_PARAMETER` and friends) are deliberately
-absent: calibration here is `TOOL_OFFSET_CALIBRATE` / `STATION_CALIBRATE` /
-`TOOL_Z_ADJUST`, already tied to the factory numbers.
+absent: calibration here is `TOOL_CALIBRATE_TOOL_OFFSET` /
+`TOOL_LOCATE_SENSOR` / `TOOL_Z_ADJUST`, already tied to the factory numbers.
 `ASSIGN_TOOL` is refused — remap tools in the slicer. Nothing to enable; it is
 always on. `part_fan` in `[ff_toolchange]` is what gets reported as each
 tool's fan (shared `fan_generic fanM106` on this machine). `ff_toolchange`

@@ -20,7 +20,7 @@
 #
 # reads extruder.json / test.json / zoffset.json and
 #   * stages the per-unit data for SAVE_CONFIG (configfile.set), exactly
-#     as TOOL_OFFSET_CALIBRATE / STATION_CALIBRATE would:
+#     as TOOL_CALIBRATE_TOOL_OFFSET / TOOL_LOCATE_SENSOR would:
 #         [ff_tool n]      dock_x/dock_y  <- x_check_pos<n>/y_check_pos<n>
 #                          nozzle_x/y/z   <- t<n>_offset_x/y/z
 #                          z_adjust       <- zoffset.json z_offset_t<n+1> (if != 0)

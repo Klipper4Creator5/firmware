@@ -30,7 +30,8 @@ UI. What is genuinely still unported is marked as such per item. Kept as referen
   each nozzle, probes the fixed under-bed sensor with the eddy, then touches it with
   each nozzle; circular probing + least-squares circle fit for XY; results →
   `tN_offset_x/y/z`, `z_station_pos` in extruder.json. Reimplemented in Klipper as
-  `STATION_CALIBRATE` / `TOOL_OFFSET_CALIBRATE` (`45-tool-offset-calibration.md`,
+  `TOOL_LOCATE_SENSOR` / `TOOL_CALIBRATE_TOOL_OFFSET`
+  (`45-tool-offset-calibration.md`,
   `46-offset-calibration-recovered.md`); the JSON is imported by
   `FF_IMPORT_FIRMWARE_CONFIG` — once per install, run for you at the first boot
   by `bin/ff-startup.py` — and is never a runtime source.

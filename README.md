@@ -148,10 +148,13 @@ sequence is short, and the first part happens without you.
    plane — then home and calibrate:
 
    ```gcode
-   STATION_CALIBRATE PLATE_REMOVED=1
-   TOOL_OFFSET_CALIBRATE TOOL=ALL PLATE_REMOVED=1
+   G28
+   CALIBRATE_TOOL_OFFSETS
    SAVE_CONFIG
    ```
+
+   Step by step, with every message it can refuse with:
+   [docs/calibration.md](docs/calibration.md).
 
 3. `TOOLCHANGE_STATUS` and `TOOL_OFFSET_STATUS` — every tool should show a
    nozzle triple and a dock position, nothing should say `NOT CALIBRATED`.
@@ -227,6 +230,7 @@ to ask on [the Discord](https://discord.gg/ggJyfgVA4v).
 | [docs/hardware-testing.md](docs/hardware-testing.md) | The on-hardware procedure, with the checks that say go or stop |
 | [docs/how-it-works.md](docs/how-it-works.md) | How the mod hooks into the stock firmware, and what the stock firmware does that surprises people |
 | [docs/toolchange.md](docs/toolchange.md) | The toolchanger mod: the `ff_*` Klipper extras, the `ff-*.cfg` configs, and the Z offsets to get right before you print |
+| [docs/calibration.md](docs/calibration.md) | XYZ tool calibration from the operator's side: the order of commands, what each prints, and what every error means |
 | [docs/notes/70-error-codes.md](docs/notes/70-error-codes.md) | Every error code the firmware can raise, by subsystem |
 | [docs/building.md](docs/building.md) | Building your own packages from a stock FlashForge one |
 | [docs/testing.md](docs/testing.md) | The test suite, and how we know a package does not brick a printer |

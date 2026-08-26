@@ -13,7 +13,7 @@ per-tool sections, modelled on `[bed_mesh <profile>]` / klipper-toolchanger's `[
 | file | role |
 |---|---|
 | `payload/klipper/extras/ff_tool.py` | `[ff_tool n]`: `dock_x/dock_y` (autosaved by `FF_IMPORT_FIRMWARE_CONFIG`), `nozzle_x/y/z` (measured) and `z_adjust` (user per-tool Z correction, `TOOL_Z_ADJUST`) all autosaved |
-| `payload/klipper/extras/ff_tool_offset.py` | `TOOL_OFFSET_CALIBRATE`, `STATION_CALIBRATE`, `TOOL_OFFSET_STATUS`; `[ff_tool_offset]` holds `station_x/y/z` (autosaved) + probe geometry |
+| `payload/klipper/extras/ff_tool_offset.py` | `TOOL_CALIBRATE_TOOL_OFFSET`, `TOOL_LOCATE_SENSOR`, `TOOL_OFFSET_STATUS`; `[ff_tool_offset]` holds `station_x/y/z` (autosaved) + probe geometry |
 | `payload/klipper/extras/ff_toolchange.py` | takes docks/offsets from the `ff_tool` objects; `refresh_offsets()`; `_station_z()`; JSON reader and `TOOLCHANGE_RELOAD` removed |
 | `payload/klipper/extras/ff_legacy.py` | `FF_IMPORT_FIRMWARE_CONFIG [DIR=] [APPLY=1]` — one-shot import of extruder/test/zoffset.json |
 | `payload/klipper/config/ff-toolchange.cfg` | four deliberately empty `[ff_tool 0..3]` sections + `[ff_toolchange]`. Per-unit values must NOT go here — `SAVE_CONFIG` refuses to autosave an option an include already sets |
@@ -64,9 +64,8 @@ RESTART
 FF_IMPORT_FIRMWARE_CONFIG        ; stages factory dock/nozzle/station
 SAVE_CONFIG
 TOOLCHANGE_STATUS                ; all four tools calibrated, station_z present
-# later, PEI off, homed -- both commands REFUSE without PLATE_REMOVED=1:
-STATION_CALIBRATE PLATE_REMOVED=1
-TOOL_OFFSET_CALIBRATE TOOL=ALL PLATE_REMOVED=1
+# later, PEI off, homed -- the plate check REFUSES if it is still on:
+CALIBRATE_TOOL_OFFSETS
 SAVE_CONFIG
 ```
 `ff-legacy.cfg` stays included permanently, but only to register the command:
@@ -80,7 +79,8 @@ since 2026-08-25 the first-boot import is driven from outside klippy by
   `FF_BEFORE_PRINT_START` before the file is loaded: no
   `nozzle_z`/`station_z` → refuse before heating/homing/grabbing, with the fix spelled out.
   Escape hatch for tests: `SET_GCODE_VARIABLE MACRO=_FF_JOB VARIABLE=allow_uncalibrated VALUE=1`.
-- `TOOL_OFFSET_CALIBRATE` / `STATION_CALIBRATE` require `PLATE_REMOVED=1`; default `z_target`
+- `TOOL_CALIBRATE_TOOL_OFFSET` / `TOOL_LOCATE_SENSOR` are gated by the
+  plate check, not by an operator flag; default `z_target`
   is −3 (the app's station pass-2 value) not −5; once a trigger height is known (calibrated
   `nozzle_z`/`station_z`, or `station_z + ~3.25` for a first tool pass) the Z probe stops
   `z_margin` (2 mm) below it.
@@ -109,7 +109,7 @@ Emitted G-code order matches the recovered list; fitted centre = virtual centre;
 receives exactly `nozzle_x/y/z` for the calibrated tool and `station_x/y/z`; live offsets
 update without restart; `TOOLCHANGE_SET_PRINT_OFFSET` gives 3.240 for T0/220 °C/80 °C/0.25 mm
 (the value in docs/notes/40-offsets.md) and refuses without `station_z`; `TOOL_Z_ADJUST` applies live and stages;
-PLATE_REMOVED gate, bounded Z target, gap and residual guards all fire; `FF_IMPORT_FIRMWARE_CONFIG` against
+plate check, bounded Z target, gap and residual guards all fire; `FF_IMPORT_FIRMWARE_CONFIG` against
 `live/firmwareRes-config` stages 15 values and reproduces the offset table in docs/notes/40-offsets.md.
 **Not yet run on the printer.**
 

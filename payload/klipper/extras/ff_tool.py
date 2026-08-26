@@ -15,7 +15,7 @@
 #   #*# nozzle_x = 16.416023   MEASUREMENT. The station bore axis as probed
 #   #*# nozzle_y = 212.585861  with this tool's nozzle, raw machine coords,
 #   #*# nozzle_z = 1.515972    G-code offset zeroed. Written as a triple by
-#                              TOOL_OFFSET_CALIBRATE; all three or none.
+#                              TOOL_CALIBRATE_TOOL_OFFSET; all three or none.
 #   #*# z_adjust = -0.020      USER CORRECTION. A persistent per-tool Z tweak
 #                              added on top of the measured difference at
 #                              every grab (the app's zoffset.json). Klipper's
@@ -56,7 +56,8 @@ class FFTool:
         # Klipper's own naming: tool 0 is [extruder], tool n is [extruderN].
         self.extruder_name = ('extruder' if self.index == 0
                               else 'extruder%d' % self.index)
-        # Measured (TOOL_OFFSET_CALIBRATE) -- one probe run yields all three.
+        # Measured (TOOL_CALIBRATE_TOOL_OFFSET) -- one probe run yields
+        # all three.
         nozzle = [config.getfloat('nozzle_' + axis, None)
                   for axis in 'xyz']
         if None in nozzle and nozzle != [None, None, None]:

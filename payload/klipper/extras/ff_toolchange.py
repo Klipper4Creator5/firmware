@@ -58,8 +58,9 @@ ERR_RELEASE_STATE = 144         # E0144    state error after release verify
 # Everything per-unit lives in Klipper's own config:
 #   [ff_tool <n>]   dock_x/dock_y <- FF_IMPORT_FIRMWARE_CONFIG via SAVE_CONFIG
 #                   z_adjust      <- TOOL_Z_ADJUST          via SAVE_CONFIG
-#                   nozzle_x/y/z  <- TOOL_OFFSET_CALIBRATE via SAVE_CONFIG
-#   [ff_tool_offset] station_x/y/z <- STATION_CALIBRATE  via SAVE_CONFIG
+#                   nozzle_x/y/z  <- TOOL_CALIBRATE_TOOL_OFFSET
+#                                                        via SAVE_CONFIG
+#   [ff_tool_offset] station_x/y/z <- TOOL_LOCATE_SENSOR  via SAVE_CONFIG
 #   [ff_toolchange]  feeds, x_correction, temp_offset, staging positions
 # firmwareExe's JSON (extruder.json / test.json / zoffset.json) is no longer
 # read at runtime; ff_legacy.py's FF_IMPORT_FIRMWARE_CONFIG copies the
@@ -360,10 +361,10 @@ class FFToolchange:
         added by TOOLCHANGE_SET_PRINT_OFFSET on top.
 
         nozzle_* are the station-bore centre measured with each tool's
-        nozzle ([ff_tool n], written by TOOL_OFFSET_CALIBRATE); z_adjust is
-        the user's per-tool Z tune (the app's zoffset.json).
+        nozzle ([ff_tool n], written by TOOL_CALIBRATE_TOOL_OFFSET);
+        z_adjust is the user's per-tool Z tune (the app's zoffset.json).
 
-        Without station_z (STATION_CALIBRATE) Z falls back to the app's
+        Without station_z (TOOL_LOCATE_SENSOR) Z falls back to the app's
         relative form, nozzle_z[tool] - nozzle_z[base]. A tool without a
         calibration contributes no MEASURED offset -- X and Y are zero, and Z
         is that tool's z_adjust, which is not zero if one was ever set. Such
@@ -438,7 +439,7 @@ class FFToolchange:
         return [tool.index for tool in self.tools if not tool.calibrated()]
 
     def _station_z(self):
-        """station_z from [ff_tool_offset] (STATION_CALIBRATE), or None."""
+        """station_z from [ff_tool_offset] (TOOL_LOCATE_SENSOR), or None."""
         offsets = self.printer.lookup_object('ff_tool_offset', None)
         if offsets is None or offsets.station is None:
             return None
@@ -525,8 +526,8 @@ class FFToolchange:
             self.gcode.respond_info(
                 "ff_toolchange: WARNING: no nozzle calibration for %s --"
                 " those tools get ZERO X/Y and only their z_adjust in Z."
-                " Run"
-                " TOOL_OFFSET_CALIBRATE (or FF_IMPORT_FIRMWARE_CONFIG once)"
+                " Run TOOL_CALIBRATE_TOOL_OFFSET (or"
+                " FF_IMPORT_FIRMWARE_CONFIG once)"
                 " and SAVE_CONFIG." % ", ".join("T%d" % i for i in missing))
 
     def _make_tn(self, index):
@@ -1169,7 +1170,7 @@ class FFToolchange:
                 " [ff_tool_offset] station_z are not calibrated -- cannot"
                 " compute the print Z offset. Without it the eddy-homed Z is"
                 " several mm too low; NOT printing is the safe choice. Run"
-                " STATION_CALIBRATE / TOOL_OFFSET_CALIBRATE (or"
+                " TOOL_LOCATE_SENSOR / TOOL_CALIBRATE_TOOL_OFFSET (or"
                 " FF_IMPORT_FIRMWARE_CONFIG) and SAVE_CONFIG." % tool)
         nozzles = [tool_object.nozzle or (0.0, 0.0, 0.0)
                    for tool_object in self.tools]

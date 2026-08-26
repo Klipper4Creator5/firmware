@@ -38,7 +38,6 @@
 # the next move (the second pass is centred on the first fit) and a gcode_macro
 # renders its whole template before anything executes.
 
-import logging
 import math
 
 EXTRUDER_COUNT = 4
@@ -134,6 +133,18 @@ def _solve3(matrix, rhs):
     return [augmented[i][3] / augmented[i][i] for i in range(3)]
 
 
+def _combine(positions, how):
+    """klipper-toolchanger's samples_result. 'median' of an even count is
+    the mean of the middle two, as upstream's _calc_median does."""
+    ordered = sorted(positions)
+    if how == 'median':
+        middle = len(ordered) // 2
+        if len(ordered) % 2:
+            return ordered[middle]
+        return 0.5 * (ordered[middle - 1] + ordered[middle])
+    return sum(ordered) / len(ordered)
+
+
 class FFToolOffsetError(Exception):
     pass
 
@@ -164,6 +175,23 @@ class FFToolOffset:
         self.z_start = config.getfloat('z_start', Z_START)
         self.z_final = config.getfloat('z_final', Z_FINAL)
         self.probe_accel = config.getfloat('probe_accel', PROBE_ACCEL, above=0.)
+        # Probe sampling, klipper-toolchanger's names. None everywhere means
+        # "whatever [e_stop <axis>] already does" -- see _sampling(). Set
+        # any of these to override that for every probe of a calibration
+        # run; the command line overrides them again per run.
+        self.samples = config.getint('samples', None, minval=1)
+        self.samples_tolerance = config.getfloat('samples_tolerance', None,
+                                                 minval=0.)
+        self.samples_retries = config.getint('samples_tolerance_retries',
+                                             None, minval=0)
+        self.samples_result = config.getchoice(
+            'samples_result', {'average': 'average', 'median': 'median'},
+            'average')
+        # Retract between samples; None = the fork's back_v.
+        self.sample_retract_dist = config.getfloat('sample_retract_dist',
+                                                   None, above=0.)
+        # Probe feed; None = the [e_stop <axis>] speed.
+        self.probe_speed = config.getfloat('probe_speed', None, above=0.)
         # None = restore the accel limit that was live when we started
         # (same policy as ff_toolchange); set to force the app's 20000.
         self.accel_restore = config.getfloat('accel_restore', None)
@@ -194,7 +222,7 @@ class FFToolOffset:
                                                  above=0.)
 
         # Station position measured with the empty carriage
-        # (STATION_CALIBRATE), autosaved here as station_x/y/z.
+        # (TOOL_LOCATE_SENSOR), autosaved here as station_x/y/z.
         station_x = config.getfloat('station_x', None)
         station_y = config.getfloat('station_y', None)
         station_z = config.getfloat('station_z', None)
@@ -212,11 +240,11 @@ class FFToolOffset:
         self.last = {}
 
         self.gcode.register_command(
-            'TOOL_OFFSET_CALIBRATE', self.cmd_TOOL_OFFSET_CALIBRATE,
-            desc=self.cmd_TOOL_OFFSET_CALIBRATE_help)
+            'TOOL_CALIBRATE_TOOL_OFFSET', self.cmd_TOOL_CALIBRATE_TOOL_OFFSET,
+            desc=self.cmd_TOOL_CALIBRATE_TOOL_OFFSET_help)
         self.gcode.register_command(
-            'STATION_CALIBRATE', self.cmd_STATION_CALIBRATE,
-            desc=self.cmd_STATION_CALIBRATE_help)
+            'TOOL_LOCATE_SENSOR', self.cmd_TOOL_LOCATE_SENSOR,
+            desc=self.cmd_TOOL_LOCATE_SENSOR_help)
         self.gcode.register_command(
             'TOOL_OFFSET_STATUS', self.cmd_TOOL_OFFSET_STATUS,
             desc=self.cmd_TOOL_OFFSET_STATUS_help)
@@ -264,22 +292,124 @@ class FFToolOffset:
         toolhead = self.printer.lookup_object('toolhead')
         return toolhead.get_status(self.reactor.monotonic())['max_accel']
 
-    def _estop(self, gcmd, axis, target):
-        """One ESTOP AXES=<axis> TARGET=<target>, calling the fork's e_stop
-        object directly instead of parsing its JSON reply. Same code path as
-        the command: run_probe() takes sub_cycle_cnt samples (3 in
-        printer.base.cfg) each retracting back_v, rejects a spread above
-        error_v, and raises on no-trigger / triggered-before-move."""
-        axis_probe = self.estop[axis]
-        axis_probe.position_offset = target
+    def _touch(self, gcmd, axis_probe, axis, target, speed):
+        """One approach-trigger-retract against the fork's e_stop object,
+        calling it directly instead of parsing ESTOP's JSON reply.
+
+        _probe(speed) is the fork's single touch: it refuses to start on an
+        already-triggered pin, moves to position_offset, and backs off
+        back_v before returning. run_probe() is the fork's own averaging
+        loop built on it (sub_cycle_cnt touches, spread rejected above
+        error_v, retried main_cycle_cnt times) -- we do that loop ourselves
+        in _estop so the sample count, tolerance and median are reachable
+        from the command line, and fall back to run_probe on an e_stop that
+        does not expose _probe."""
+        single = getattr(axis_probe, '_probe', None)
         try:
-            triggered_at = axis_probe.run_probe(gcmd)
+            if single is None:
+                triggered_at = axis_probe.run_probe(gcmd)
+            else:
+                triggered_at = single(speed)
+                # e_stop_move reports a failed move as the sentinel 9999
+                # rather than raising, and the fork's run_probe just spins
+                # on it. Bounded here: it is a failure like any other.
+                if triggered_at == 9999:
+                    raise FFToolOffsetError(
+                        "ESTOP %s TARGET=%.3f: probe move failed"
+                        % (axis, target))
         except self.printer.command_error as err:
             raise FFToolOffsetError("ESTOP %s TARGET=%.3f failed: %s"
                                     % (axis, target, err))
         if triggered_at is None:
             raise FFToolOffsetError("ESTOP %s returned no position" % axis)
         return float(triggered_at)
+
+    def _sampling(self, gcmd, axis_probe, single_touch):
+        """klipper-toolchanger's probe sampling parameters.
+
+        Defaults come from the fork's own [e_stop <axis>] settings, so a
+        command with none of these passed probes exactly as it did before
+        this was configurable: sub_cycle_cnt touches, spread rejected above
+        error_v, retried main_cycle_cnt times, averaged. Upstream's
+        LIFT_SPEED has no counterpart -- the retract between touches is
+        along the probe axis, inside the fork's _probe, at PROBE_SPEED."""
+        if self.samples is not None:
+            default_samples = self.samples
+        elif single_touch:
+            default_samples = int(getattr(axis_probe, 'sub_cnt', 1) or 1)
+        else:
+            # run_probe already took sub_cycle_cnt of its own.
+            default_samples = 1
+        if self.samples_tolerance is not None:
+            default_tolerance = self.samples_tolerance
+        else:
+            default_tolerance = float(getattr(axis_probe, 'err_v', 0.0))
+        if self.samples_retries is not None:
+            default_retries = self.samples_retries
+        else:
+            default_retries = int(getattr(axis_probe, 'main_cnt', 0) or 0)
+        result = gcmd.get('SAMPLES_RESULT', self.samples_result).lower()
+        if result not in ('average', 'median'):
+            raise gcmd.error("SAMPLES_RESULT must be average or median")
+        return {
+            'samples': gcmd.get_int('SAMPLES', default_samples, minval=1),
+            'tolerance': gcmd.get_float('SAMPLES_TOLERANCE',
+                                        default_tolerance, minval=0.),
+            'retries': gcmd.get_int('SAMPLES_TOLERANCE_RETRIES',
+                                    default_retries, minval=0),
+            'result': result,
+            'retract': gcmd.get_float('SAMPLE_RETRACT_DIST',
+                                      self.sample_retract_dist, above=0.),
+            'speed': gcmd.get_float('PROBE_SPEED', self.probe_speed,
+                                    above=0.),
+        }
+
+    def _estop(self, gcmd, axis, target):
+        """ESTOP AXES=<axis> TARGET=<target>, sampled per _sampling()."""
+        axis_probe = self.estop[axis]
+        axis_probe.position_offset = target
+        single_touch = hasattr(axis_probe, '_probe')
+        opts = self._sampling(gcmd, axis_probe, single_touch)
+        speed = opts['speed']
+        if speed is None:
+            speed = float(getattr(axis_probe, 'speed', 5.0))
+        # The retract between touches is the fork's own back_v, so
+        # SAMPLE_RETRACT_DIST is applied by lending it ours for the run.
+        restore_back_v = None
+        if opts['retract'] is not None and hasattr(axis_probe, 'back_v'):
+            restore_back_v = axis_probe.back_v
+            axis_probe.back_v = opts['retract']
+        try:
+            # Spread is judged after every touch, not at the end of the
+            # round: the fork's run_probe does that, and a round already
+            # known to be bad is not worth finishing.
+            attempt = 0
+            positions = []
+            while len(positions) < opts['samples']:
+                positions.append(self._touch(gcmd, axis_probe, axis,
+                                             target, speed))
+                if len(positions) < 2 or not opts['tolerance']:
+                    continue
+                spread = max(positions) - min(positions)
+                if spread <= opts['tolerance']:
+                    continue
+                if attempt >= opts['retries']:
+                    raise FFToolOffsetError(
+                        "ESTOP %s TARGET=%.3f: sample spread %.4f over"
+                        " samples_tolerance %.4f after %d retries (%s)"
+                        % (axis, target, spread, opts['tolerance'],
+                           attempt, ", ".join("%.4f" % p
+                                              for p in positions)))
+                attempt += 1
+                gcmd.respond_info(
+                    "  ESTOP %s spread %.4f over %.4f, retrying (%d/%d)"
+                    % (axis, spread, opts['tolerance'], attempt,
+                       opts['retries']))
+                positions = []
+        finally:
+            if restore_back_v is not None:
+                axis_probe.back_v = restore_back_v
+        return _combine(positions, opts['result'])
 
     # ---------------- the recovered sequence ----------------
 
@@ -337,21 +467,17 @@ class FFToolOffset:
             return nominal
         return max(nominal, expected - self.z_margin)
 
-    def _require_plate_removed(self, gcmd):
-        if not gcmd.get_int('PLATE_REMOVED', 0, minval=0, maxval=1):
-            raise gcmd.error(
-                "%s: the station sits BELOW the bed plane and the Z probe"
-                " cannot tell a build plate from thin air. Take the PEI sheet"
-                " off, then repeat with PLATE_REMOVED=1." % self.name)
-
     def _plate_check(self, gcmd):
         """Empty-carriage look at the station before anything descends with
-        a nozzle -- PLATE_REMOVED=1 is only a promise. The station's sensor
-        sees the circle's edge when nothing covers it; with the build plate
-        on, the Z probe lands on the sheet (or never triggers) and the
-        sideways probe finds no edge. Raises FFToolOffsetError either way,
-        so nothing is damaged and nothing is saved. Runs inside
-        _with_accel_guard."""
+        a nozzle.
+
+        This is the ONLY guard that the build plate is off, and deliberately
+        so: it measures, where the PLATE_REMOVED=1 flag it replaced only
+        asked the operator to promise. The station's sensor sees the
+        circle's edge when nothing covers it; with the build plate on, the Z
+        probe lands on the sheet (or never triggers) and the sideways probe
+        finds no edge. Raises FFToolOffsetError either way, so nothing is
+        damaged and nothing is saved. Runs inside _with_accel_guard."""
         cylinder_x, cylinder_y = self._cylinder()
         expected_z = self.station[2] if self.station is not None else None
         z_target = self._z_target_for(self.z_target, expected_z)
@@ -378,7 +504,7 @@ class FFToolOffset:
                 " calibrated %.3f%s"
                 % (station_z, station_z - expected_z, expected_z, hint))
         self._run('G1 X%.3f Y%.3f F%d' % (cylinder_x, cylinder_y, FEED_PASS1))
-        self._run('G1 Z%.3f F%d' % (z_trigger + self.z_clear, FEED_PASS1))
+        self._run('G1 Z%.3f F%d' % (station_z + self.z_clear, FEED_PASS1))
         self._run('M400')
         try:
             edge_x = self._estop(gcmd, 'X', cylinder_x + self.probe_travel)
@@ -395,10 +521,13 @@ class FFToolOffset:
 
     def _run_plate_check(self, gcmd):
         """Park whatever is mounted, then _plate_check. Shared prologue of
-        both calibration commands; PLATE_CHECK=0 on the command skips it."""
+        both calibration commands; PLATE_CHECK=0 on the command skips it.
+
+        Returns True when the check ran -- the carriage is then empty, and
+        TOOL_CALIBRATE_TOOL_OFFSET has to pick its tool back up."""
         if not gcmd.get_int('PLATE_CHECK', 1 if self.plate_check else 0,
                             minval=0, maxval=1):
-            return
+            return False
         if self.toolchange is not None:
             carriage = self.toolchange.get_status(self.reactor.monotonic())
             if carriage.get('current_tool', -1) != -1:
@@ -412,6 +541,7 @@ class FFToolOffset:
                     " the plate check"
                     % (self.name, carriage.get('state_reason')))
         self._with_accel_guard(gcmd, lambda: self._plate_check(gcmd))
+        return True
 
     def _two_pass(self, gcmd, x0, y0, z_target_2, expected_z=None):
         """moveCylinderPos + both passes.
@@ -513,130 +643,95 @@ class FFToolOffset:
 
     # ---------------- commands ----------------
 
-    cmd_TOOL_OFFSET_CALIBRATE_help = (
-        "Measure a tool's nozzle position against the station "
-        "(TOOL=<0..3|ALL> PLATE_REMOVED=1 [GRAB=1] [RELEASE=0] [SAVE=1]"
-        " [PLATE_CHECK=1])")
+    cmd_TOOL_CALIBRATE_TOOL_OFFSET_help = (
+        "Measure the MOUNTED tool's nozzle position against the station "
+        "([SAVE=1] [PLATE_CHECK=1] [SAMPLES=] [SAMPLES_TOLERANCE=]"
+        " [SAMPLES_TOLERANCE_RETRIES=] [SAMPLES_RESULT=]"
+        " [SAMPLE_RETRACT_DIST=] [PROBE_SPEED=])")
 
-    def cmd_TOOL_OFFSET_CALIBRATE(self, gcmd):
-        requested = gcmd.get('TOOL')
-        if requested.upper() == 'ALL':
-            tools = list(range(EXTRUDER_COUNT))
-        else:
-            try:
-                tool_index = int(requested)
-            except ValueError:
-                raise gcmd.error("TOOL must be 0..%d or ALL"
-                                 % (EXTRUDER_COUNT - 1))
-            if not 0 <= tool_index < EXTRUDER_COUNT:
-                raise gcmd.error("TOOL must be 0..%d or ALL"
-                                 % (EXTRUDER_COUNT - 1))
-            tools = [tool_index]
-        grab = gcmd.get_int('GRAB', 1, minval=0, maxval=1)
-        release = gcmd.get_int('RELEASE', 0, minval=0, maxval=1)
-        save = gcmd.get_int('SAVE', 1, minval=0, maxval=1)
-        if (grab or release) and self.toolchange is None:
-            raise gcmd.error("%s: [ff_toolchange] not loaded -- cannot pick"
-                             " up tools. Mount the tool by hand and pass"
-                             " GRAB=0 RELEASE=0." % self.name)
-        self._require_plate_removed(gcmd)
-        self._check_homed(gcmd)
-        # GRAB=0 means the operator mounted the tool by hand. The plate check
-        # needs an EMPTY carriage, so it starts by parking whatever is mounted
-        # -- which would silently undo that, measure the bare carriage and save
-        # it as this tool's nozzle position, ~3.2 mm out in the crash
-        # direction. Refuse instead of quietly doing the wrong thing; the gap
-        # guard only catches it once a station_z exists.
-        if not grab and self.toolchange is not None \
-           and self.toolchange.get_status(
-               self.reactor.monotonic()).get('current_tool', -1) != -1 \
-           and gcmd.get_int('PLATE_CHECK', 1 if self.plate_check else 0,
-                            minval=0, maxval=1):
+    def cmd_TOOL_CALIBRATE_TOOL_OFFSET(self, gcmd):
+        """klipper-toolchanger's signature: no arguments, measures whatever
+        is on the carriage. Select the tool first (SELECT_TOOL T=<n>, or
+        T<n>), exactly as upstream's CALIBRATE_TOOL_OFFSETS loop does."""
+        if self.toolchange is None:
+            raise gcmd.error("%s: [ff_toolchange] not loaded -- there is no"
+                             " mounted tool to measure." % self.name)
+        tool = self.toolchange.get_status(
+            self.reactor.monotonic()).get('current_tool', -1)
+        if tool < 0:
             raise gcmd.error(
-                "%s: GRAB=0 with a tool mounted, but the plate check has to"
-                " park it to measure an empty carriage -- which would"
-                " calibrate the bare carriage as T%s. Pass PLATE_CHECK=0 to"
-                " keep the tool you mounted (you have already promised"
-                " PLATE_REMOVED=1), or use GRAB=1 and let the toolchanger"
-                " pick it up." % (self.name, tools[0] if tools else '?'))
-        self._run_plate_check(gcmd)
+                "%s: no tool is mounted. SELECT_TOOL T=<0..%d> first --"
+                " this measures the tool on the carriage, and with an empty"
+                " one it would save the bare carriage as a nozzle position,"
+                " ~3.2 mm out in the crash direction. (TOOL_LOCATE_SENSOR"
+                " is the command that wants an empty carriage.)"
+                % (self.name, EXTRUDER_COUNT - 1))
+        save = gcmd.get_int('SAVE', 1, minval=0, maxval=1)
+        self._check_homed(gcmd)
+        # The plate check has to measure an EMPTY carriage, so it parks the
+        # tool we were asked about. Pick it straight back up.
+        if self._run_plate_check(gcmd):
+            self._run('T%d' % tool)
+            self._wait_moves()
         cylinder_x, cylinder_y = self._cylinder()
         x0, y0 = cylinder_x - self.nozzle_x_shift, cylinder_y
+        gcmd.respond_info("T%d: offset calibration, start %.3f, %.3f"
+                          % (tool, x0, y0))
 
-        results = {}
-        for tool in tools:
-            gcmd.respond_info("T%d: offset calibration, start %.3f, %.3f"
-                              % (tool, x0, y0))
-            if grab:
-                # changeExtruderManager(ext, true, false): releases whatever
-                # is mounted, grabs `tool`, applies its G-code offsets
-                # (zeroed again by moveCylinderPos below).
-                self._run('T%d' % tool)
-                self._wait_moves()
+        tool_object = self.tools[tool]
+        expected_z = (tool_object.nozzle[2]
+                      if tool_object.calibrated() else None)
+        if expected_z is None and self.station is not None:
+            # nozzle fires ~3.2 mm above the empty-carriage trigger
+            expected_z = self.station[2] + 0.5 * (self.gap_min + self.gap_max)
 
-            tool_object = self.tools[tool]
-            expected_z = (tool_object.nozzle[2]
-                          if tool_object.calibrated() else None)
-            if expected_z is None and self.station is not None:
-                # nozzle fires ~3.2 mm above the empty-carriage trigger
-                expected_z = self.station[2] + 0.5 * (self.gap_min
-                                                      + self.gap_max)
-
-            def body():
-                return self._two_pass(gcmd, x0, y0, self.z_target,
-                                      expected_z)
-            center_x, center_y, z_trigger = self._with_accel_guard(gcmd, body)
-            if self.station is not None and (self.gap_min or self.gap_max):
-                gap = z_trigger - self.station[2]
-                if gap < self.gap_min or gap > self.gap_max:
-                    raise gcmd.error(
-                        "%s: T%d nozzle_z %.3f is %.3f above station_z %.3f,"
-                        " outside gap_min/gap_max [%.2f, %.2f] -- probe"
-                        " mis-trigger suspected, nothing saved"
-                        % (self.name, tool, z_trigger, gap, self.station[2],
-                           self.gap_min, self.gap_max))
-            results[tool] = (center_x, center_y, z_trigger)
-            self.last['t%d' % tool] = (center_x, center_y, z_trigger)
-            gcmd.respond_info("T%d: offset = (%.4f, %.4f, %.4f)"
-                              % (tool, center_x, center_y, z_trigger))
-            if release:
-                self._run('TOOLCHANGE_PARK')
-                self._wait_moves()
-
-        # Staged only once every tool has passed its guards, so that a failure
-        # part-way through TOOL=ALL really does leave nothing saved -- which is
-        # what the guard messages above promise.
+        def body():
+            return self._two_pass(gcmd, x0, y0, self.z_target, expected_z)
+        center_x, center_y, z_trigger = self._with_accel_guard(gcmd, body)
+        if self.station is not None and (self.gap_min or self.gap_max):
+            gap = z_trigger - self.station[2]
+            if gap < self.gap_min or gap > self.gap_max:
+                raise gcmd.error(
+                    "%s: T%d nozzle_z %.3f is %.3f above station_z %.3f,"
+                    " outside gap_min/gap_max [%.2f, %.2f] -- probe"
+                    " mis-trigger suspected, nothing saved"
+                    % (self.name, tool, z_trigger, gap, self.station[2],
+                       self.gap_min, self.gap_max))
+        results = {tool: (center_x, center_y, z_trigger)}
+        self.last['t%d' % tool] = (center_x, center_y, z_trigger)
+        gcmd.respond_info("T%d: offset = (%.4f, %.4f, %.4f)"
+                          % (tool, center_x, center_y, z_trigger))
+        # Staged only once the guards above have passed, so a failed run
+        # really does leave nothing saved -- which is what they promise.
         if save:
-            for tool, (center_x, center_y, z_trigger) in results.items():
-                self.tools[tool].set_nozzle(center_x, center_y, z_trigger)
+            tool_object.set_nozzle(center_x, center_y, z_trigger)
 
-        # the app's exit block: heater off for the tool(s), Z15
-        for tool in tools:
-            self._run('M104 S0 T%d' % tool)
+        # the app's exit block: heater off for the tool, Z15
+        self._run('M104 S0 T%d' % tool)
         self._run('G1 Z%.3f F%d' % (self.z_final, FEED_PASS1))
         self._run('M400')
         if save:
             self._refresh_toolchange(gcmd)
             gcmd.respond_info(
                 "The SAVE_CONFIG command will update the printer config file"
-                " with the new nozzle position(s) and restart the printer.")
+                " with the new nozzle position and restart the printer.")
         # Probing zeroed the G-code offsets to work in raw coordinates. Put
-        # the frame back before handing control to the operator: RELEASE
-        # defaults to 0, so this usually ends with a tool still on the
-        # carriage, and leaving Z=0 at the eddy plane means the next jog to
-        # Z0 -- or the next toolchange, which would carry the zeroing -- puts
-        # the nozzle into the plate.
+        # the frame back before handing control to the operator: the tool
+        # stays on the carriage, and leaving Z=0 at the eddy plane means the
+        # next jog to Z0 -- or the next toolchange, which would carry the
+        # zeroing -- puts the nozzle into the plate.
         self._restore_offset_frame(gcmd)
         self._report_diffs(gcmd, results)
 
-    cmd_STATION_CALIBRATE_help = (
-        "Measure the station position with an EMPTY carriage "
-        "(station_x/y/z) (PLATE_REMOVED=1 [PARK=1] [SAVE=1] [PLATE_CHECK=1])")
+    cmd_TOOL_LOCATE_SENSOR_help = (
+        "Locate the station with an EMPTY carriage (station_x/y/z) "
+        "([PARK=1] [SAVE=1] [PLATE_CHECK=1] [SAMPLES=] [SAMPLES_TOLERANCE=]"
+        " [SAMPLES_TOLERANCE_RETRIES=] [SAMPLES_RESULT=]"
+        " [SAMPLE_RETRACT_DIST=] [PROBE_SPEED=])")
 
-    def cmd_STATION_CALIBRATE(self, gcmd):
+    def cmd_TOOL_LOCATE_SENSOR(self, gcmd):
         park = gcmd.get_int('PARK', 1, minval=0, maxval=1)
         save = gcmd.get_int('SAVE', 1, minval=0, maxval=1)
-        self._require_plate_removed(gcmd)
         self._check_homed(gcmd)
         if self.toolchange is not None:
             if park:

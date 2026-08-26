@@ -29,7 +29,8 @@ a partial write could revert unrelated per-unit calibration. On the `klipper-van
 branch these files are not read at runtime at all: `ff_legacy.py`'s
 `FF_IMPORT_FIRMWARE_CONFIG` imports them once into `[ff_tool n]` / `[ff_tool_offset]`
 (`SAVE_CONFIG` block of `printer.cfg`), and calibration is redone from Klipper with
-`STATION_CALIBRATE` / `TOOL_OFFSET_CALIBRATE` (see `45-tool-offset-calibration.md`).
+`TOOL_LOCATE_SENSOR` / `TOOL_CALIBRATE_TOOL_OFFSET`
+(see `45-tool-offset-calibration.md`).
 
 ## Per-tool offsets — `setGrabGcodeOffsetMgr` @0x77f1dc
 
