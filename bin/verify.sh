@@ -155,6 +155,39 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
                                           || bad "no s6 in the payload -- bin/patch.sh did not stage the cross-build"
     grep -q 'libexec/s6-ftrigrd' <<<"$LIST" && ok "s6-ftrigrd present in libexec (the waiting verbs can spawn it)" \
                                           || bad "no libexec/s6-ftrigrd -- s6-svwait and s6-svc -w will fail on the printer"
+    # CPython 3.13, which the payload SHIPS AND DOES NOT RUN -- anvil-env.sh
+    # still points FF_PYTHON at FlashForge's 3.8.2, deliberately, until the
+    # third-party C extensions klippy and Moonraker need have been cross-built
+    # (bin/patch.sh section 5c). A package missing it therefore breaks nothing
+    # today, which is exactly why it needs a check: without one the whole tree
+    # could silently stop being staged and the first symptom would be the
+    # release AFTER the switch.
+    #
+    # Two checks, not one, and the second is the one worth having. The
+    # interpreter can be present and perfectly runnable while _sqlite3 is
+    # absent, because a dropped -lm makes configure's link probe fail and
+    # CPython records the module as "missing" rather than stopping -- see the
+    # LIBS comment in patch.sh. sqlite3 is the entire reason this interpreter
+    # is built (it is what eventually unpins MOONRAKER_VERSION), so a tree
+    # without it is a 30MB payload that bought nothing. Build bugs both: a
+    # package that ships neither cannot be fixed on the printer.
+    grep -q 'bin/python3\.13$' <<<"$LIST" \
+        && ok "CPython 3.13 present (shipped, not yet used -- FF_PYTHON is still 3.8.2)" \
+        || bad "no bin/python3.13 in the payload -- bin/patch.sh did not stage the cross-build"
+    grep -q 'lib-dynload/_sqlite3' <<<"$LIST" \
+        && ok "python3.13 carries _sqlite3 (the module FlashForge's 3.8.2 has not got)" \
+        || bad "python3.13 ships WITHOUT _sqlite3 -- the one module it exists for; check LIBS/LIBSQLITE3_LIBS in patch.sh"
+    # And the other half of the same decision: the interpreter goes into the
+    # prefix root's bin/ like everything else, but WITHOUT the `python3`
+    # symlink CPython installs beside it. $MODDIR/bin is prepended to PATH by
+    # anvil-env.sh (s6 needs that), so shipping one would silently put our
+    # interpreter ahead of FlashForge's for every process that says `python3`
+    # -- an accidental switch, on a printer whose Moonraker and klippy still
+    # need 3.8's C extensions. Reads the way round it does for the same reason
+    # the dropbear check below does: its presence is the bug.
+    grep -qE '(^|/)bin/python3$' <<<"$LIST" \
+        && bad "payload ships bin/python3 -- it would shadow FlashForge's interpreter on PATH" \
+        || ok "no bin/python3 symlink (nothing shadows FlashForge's python3 on PATH)"
     grep -q 'mainsail/index.html' <<<"$LIST" && ok "Mainsail present" || warn "no Mainsail in payload"
     grep -q 'helixscreen/bin/helix-screen' <<<"$LIST" && ok "HelixScreen present" || warn "no HelixScreen in payload"
     # We deliberately ship no dropbear: the stock rootfs already has one, with

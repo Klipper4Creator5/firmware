@@ -4,6 +4,18 @@
 # and the install simulations. The docker CLI is included so the simulation
 # targets can start sibling containers through the mounted socket, and
 # qemu-user-static so the printer's real MIPS userland can be executed.
+#
+# A HOST C compiler is in here as well, which looks redundant next to two
+# cross-toolchains that arrive as pinned tarballs. It is not: cross-building
+# CPython needs a build-python of exactly the same version to freeze modules
+# and byte-compile the stdlib, so bin/patch.sh builds an x86-64 3.13 out of
+# the same source tarball first, and that one needs the host's own gcc.
+# pkg-config and perl are for the same section -- CPython's configure probes
+# libffi through pkg-config, and OpenSSL's Configure is a perl program.
+#
+# The alternative was a container of its own, the way tools/supervisor and
+# tools/python build for measurement. The build lane deliberately gets no
+# docker socket (only the test lane does), so there is no daemon to ask.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -13,6 +25,7 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
       python3 python3-jinja2 python3-pytest python3-pyflakes \
       binutils file findutils grep sed gawk make git diffutils procps \
       squashfs-tools qemu-user-static docker.io shellcheck \
+      gcc g++ libc6-dev pkg-config perl \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

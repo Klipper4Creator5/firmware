@@ -414,6 +414,12 @@ def main():
         with reporter.gate("s6 supervises, waits and reports"):
             gates.supervisor(config, on_output=emit)
 
+        # Runs even though nothing on the printer uses this interpreter yet:
+        # a shipped artefact that nothing exercises is a shipped artefact
+        # nobody notices rotting. See the header of case-python.sh.
+        with reporter.gate("cpython 3.13 runs, with a working sqlite3"):
+            gates.python(config, on_output=emit)
+
         with reporter.gate("nginx under s6"):
             gates.nginx(config, on_output=emit)
 

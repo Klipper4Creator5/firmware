@@ -103,6 +103,30 @@ export LD_LIBRARY_PATH
 # resolved to something we have never tested and the failure moved somewhere
 # harder to read. A missing interpreter is a broken printer and should say so
 # at the point it is missing.
+#
+# IT IS STILL FLASHFORGE'S 3.8.2, AND THAT IS A STATEMENT ABOUT TIMING, NOT A
+# PREFERENCE. Since phase 6 the payload carries a complete CPython 3.13 of our
+# own, installed into this same prefix root -- $MODDIR/bin/python3.13, with its
+# stdlib in $MODDIR/lib/python3.13 -- cross-built by bin/patch.sh section 5c,
+# with the working sqlite3 this firmware's 3.8.2 has not got. Nothing runs on
+# it yet, because klippy, Moonraker and bin/ff-startup.py import third-party C
+# extensions -- tornado, lmdb, cffi, greenlet, pillow, libnacl -- that exist on
+# this printer only as mipsel .so files built against 3.8, in FlashForge's
+# site-packages. None has been cross-built for 3.13. Point FF_PYTHON at ours
+# before they exist and the printer boots to a dark screen with an ImportError
+# in a log nobody is reading.
+#
+# FlashForge's tree is not touched either way: nothing here writes to
+# /usr/prog, and the 3.13 interpreter lives entirely under /usr/data/anvil like
+# every other thing this mod installs. The switch, when the extensions are
+# built, is this one line -- and `make test-python` and `make test-moonraker`
+# are what have to be green first.
+#
+# Note what is NOT on PATH below: $MODDIR/bin is prepended (s6 needs it), and
+# the interpreter is in there, but it is called python3.13 and only that.
+# bin/patch.sh deliberately drops the `python3` symlink CPython installs, so
+# that adding our bin/ to PATH cannot quietly change what `python3` means for
+# every process that sources this file.
 FF_PYTHON=/usr/prog/Python-3.8.2/bin/python3
 export FF_PYTHON
 

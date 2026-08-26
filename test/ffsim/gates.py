@@ -187,6 +187,53 @@ def supervisor(config, on_output=None):
                      packages={"sup.tgz": s6}, on_output=on_output)
 
 
+def _python_tarball(config):
+    """The cross-built CPython 3.13 tree, packed the way a printer sees it.
+
+    bin/patch.sh leaves it in work/.py313 as bin/ + lib/ -- the same shape
+    work/.s6 holds for s6, because it is the same prefix: the interpreter is
+    configured --prefix=/usr/data/anvil and its stdlib lives in
+    lib/python3.13/. So a tarball made from here unpacks straight into $MODDIR
+    and every file lands where it was compiled to expect itself. Returns None
+    when nothing has built it yet; the same shape as _s6_tarball above, and
+    for the same reason: whether that is a Skip or a fallback is the caller's
+    question.
+    """
+    built = config.root / "work" / ".py313"
+    if not (built / "bin" / "python3.13").is_file():
+        return None
+    out = config.root / "work" / ".py-gate.tgz"
+    with tarfile.open(str(out), "w:gz") as tar:
+        for sub in ("bin", "lib"):
+            tar.add(str(built / sub), arcname=sub)
+    return str(out)
+
+
+def python(config, on_output=None):
+    """Does the CPython 3.13 we cross-compiled run on the printer, with sqlite?
+
+    Not "did it build" -- the kernel loads it, a database is created, written,
+    closed and reopened from disk by a second process, ssl/ctypes/zlib/lzma/
+    bz2/hashlib/asyncio all import, and /proc/self/maps shows nothing under
+    /usr/prog, which is what "independent of FlashForge's libraries" means
+    when it is measured rather than asserted.
+
+    The negative control is what gives the rest its meaning: FlashForge's own
+    3.8.2, handed the library path it needs to start, cannot import sqlite3 --
+    the single fact that pins MOONRAKER_VERSION to a 2023 commit.
+
+    Skips rather than degrading when nothing has been built. Unlike
+    case-moonraker there is no fallback worth having here: the whole case is
+    about one artefact, and a stand-in interpreter would be testing python.
+    """
+    tree = _python_tarball(config)
+    if not tree:
+        raise Skip("nothing in work/.py313 -- run ./bin/patch.sh first")
+    replica = Replica.start(config, want_output=on_output)
+    replica.run_case(_case(config, "case-python.sh"),
+                     packages={"py.tgz": tree}, on_output=on_output)
+
+
 def nginx(config, on_output=None):
     """Is nginx really supervised, and does a stop really stop it?
 

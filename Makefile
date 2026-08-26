@@ -69,7 +69,7 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
         printer-image printer-image-push \
         test-recovery test-mcu test-boot-screen test-moonraker test-services \
         test-libpath \
-        test-upgrade test-supervisor test-nginx test-camera \
+        test-upgrade test-supervisor test-nginx test-camera test-python \
         boot-screen boot-screen-sim \
         release clean distclean
 
@@ -101,6 +101,7 @@ help:
 	@echo '  make test-supervisor  the s6 we cross-compiled supervises and waits'
 	@echo '  make test-nginx       nginx runs under s6, and a stop stays stopped'
 	@echo '  make test-camera      readiness gates: ready means serving, not forked'
+	@echo '  make test-python      the cross-built CPython 3.13 runs, with a real sqlite3'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo
 	@echo 'Look at things:'
@@ -259,6 +260,15 @@ test-nginx: image
 test-camera: image
 	@tar -czf work/.s6-gate.tgz -C work/.s6 bin libexec
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-camera.sh sup.tgz=work/.s6-gate.tgz
+
+# The CPython 3.13 the build cross-compiles, on the printer's own kernel.
+# Needs work/.py313, which bin/patch.sh fills -- the same relationship
+# test-supervisor has to work/.s6. Nothing on the printer RUNS this
+# interpreter yet, which is exactly why it has a gate of its own: see the
+# header of case-python.sh.
+test-python: image
+	@tar -czf work/.py-gate.tgz -C work/.py313 bin lib
+	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-python.sh py.tgz=work/.py-gate.tgz
 
 # The installer, run for real over two payloads: what the last one shipped
 # goes, what nobody shipped stays.

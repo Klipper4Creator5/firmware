@@ -40,7 +40,16 @@ rm -rf "$MOD_PAYLOAD" "$SOFTWARE_DIR/mod"   # $SOFTWARE_DIR/mod: leftover from a
 # mkdir -p on top of this -- see the comment there -- because the manifest
 # pass runs BEFORE the new tarball is extracted, and because hand-made
 # installs exist.
-mkdir -p "$MOD_PAYLOAD/bin" "$MOD_PAYLOAD/libexec" "$MOD_PAYLOAD/nginx" \
+#
+# lib/ completes the prefix root and is CPython's, in the same way libexec/ is
+# s6's: `--prefix=/usr/data/anvil` puts the interpreter in bin/ and its whole
+# stdlib in lib/python3.13/, so the two directories are one install, not two
+# packages sharing a namespace. It is created here rather than only by the
+# python step below for the manifest's sake -- the same argument as etc/s6/
+# above -- so that a payload which somehow shipped without the interpreter
+# still names the directory it would have used.
+mkdir -p "$MOD_PAYLOAD/bin" "$MOD_PAYLOAD/lib" "$MOD_PAYLOAD/libexec" \
+         "$MOD_PAYLOAD/nginx" \
          "$MOD_PAYLOAD/www" "$MOD_PAYLOAD/config" "$MOD_PAYLOAD/etc/s6"
 
 # ---------------------------------------------------------------- 1. Klipper
@@ -481,6 +490,430 @@ cp -f "$S6_BUILD/libexec"/* "$MOD_PAYLOAD/libexec/"
 chmod +x "$MOD_PAYLOAD/bin"/s6-* "$MOD_PAYLOAD/libexec"/*
 du -sh "$S6_BUILD/bin"     | awk '{print "   "$1"\tbin/"}'
 du -sh "$S6_BUILD/libexec" | awk '{print "   "$1"\tlibexec/"}'
+
+# -------------------------------------------------- 5c. CPython 3.13 (shipped)
+# A second Python for the printer, cross-compiled here from the sources pinned
+# in versions.env with the SAME Ingenic glibc toolchain that builds c_helper.so
+# above. Same shape as s6 in 5b -- pinned tarballs, compiled in place, cached
+# on a version stamp, gated on the tree that ships -- and for the same reason:
+# nothing binary is vendored, so anything the printer executes is built from a
+# hash we pinned.
+#
+# ############################################################################
+# # NOTHING USES THIS INTERPRETER YET, AND THAT IS DELIBERATE.               #
+# #                                                                          #
+# # payload/anvil-env.sh points FF_PYTHON at /usr/prog/Python-3.8.2/bin/     #
+# # python3 and MUST KEEP DOING SO. Moonraker, klippy and bin/ff-startup.py  #
+# # need third-party C extensions -- tornado, lmdb, cffi, greenlet, pillow,  #
+# # libnacl -- that live in FlashForge's site-packages as mipsel .so files    #
+# # built against 3.8. None of them has been cross-built for 3.13. Point     #
+# # FF_PYTHON here and the printer loses klippy AND its web UI on the next   #
+# # boot, with an ImportError nobody sees because the screen is already dark. #
+# #                                                                          #
+# # This is exactly how s6 shipped in phase 2: in the payload, started by     #
+# # nothing, for one release, so that the switch is later a one-file change   #
+# # rather than a build change and a boot change at once. The extensions are  #
+# # the next piece of work; until they exist this is 30MB of dead weight that #
+# # can be measured on a real printer, which is worth more than 30MB saved.   #
+# ############################################################################
+#
+# WHY IT IS WORTH SHIPPING DEAD. FlashForge built 3.8.2 without _sqlite3, and
+# that single omission is what pins MOONRAKER_VERSION to a 2023 commit: every
+# Moonraker from v0.9.0 on keeps its database in sqlite. This interpreter has
+# a working sqlite3 (measured on the replica, create/insert/select/reopen --
+# test/integration/printer/case-python.sh), which is what eventually unpins it.
+#
+# WHERE IT LANDS. $MODDIR is a --prefix root -- that is the whole reason s6 was
+# configured for it, and it is why the mod's tree has bin/, lib/, libexec/ and
+# etc/ directly inside it rather than a directory per package. The interpreter
+# is configured --prefix=$MODDIR like everything else, so `make install` puts
+# bin/python3.13 beside bin/s6-svscan and lib/python3.13/ beside lib/. One
+# prefix, one library path, one place to look.
+#
+# That path is COMPILED IN (sys.prefix, and the stdlib search that follows from
+# it), so moving the directory on the printer breaks the interpreter exactly
+# the way moving s6 breaks its waiting verbs -- it has to be rebuilt, not
+# renamed. Which is also the argument for putting it here and not somewhere
+# private: there is only one prefix to keep stable, not two.
+#
+# WHAT IS DELETED OUT OF bin/ BEFORE STAGING, and why it is not fussiness.
+# `make install` also creates bin/python3 -- a symlink to python3.13 -- plus
+# idle3, pydoc3 and the *-config scripts. anvil-env.sh PREPENDS $MODDIR/bin to
+# PATH (s6-svscan execs s6-supervise by name off PATH, so it has to), so a
+# bin/python3 of ours would sit AHEAD of FlashForge's on the PATH of every
+# process that sources it. Anything that says `python3` rather than
+# "$FF_PYTHON" -- a hand-typed ssh command, a subprocess in someone's
+# component, a shebang -- would silently change interpreter. That is the
+# accidental version of the switch the box above says must not happen yet, so
+# the symlink does not ship. The name python3.13 is unambiguous and nothing on
+# this printer answers to it. idle3 and pydoc3 go with it because idlelib and
+# the config directory they need are trimmed away anyway.
+#
+# PY_MM is spelled out rather than derived from PY_VERSION with a sed, because
+# it is not a substring of it in any interesting sense: it is the ABI series
+# CPython names its own directories and binaries after, and a 3.14 bump has to
+# be a deliberate edit of both lines.
+PY_MM="3.13"
+PY_PREFIX="$MODDIR"
+PY_HOST=mips-linux-gnu
+PY_TOOLCHAIN_DIR=work/.mips-toolchain/mips-gcc720-glibc229
+# The cache key is every version that goes into the tree, not just CPython's:
+# a bumped OpenSSL with an unchanged PY_VERSION has to rebuild, and the failure
+# if it does not is an interpreter linked against a library nobody can name.
+PY_STAMP="$PY_VERSION $OPENSSL_VERSION $SQLITE_VERSION $ZLIB_VERSION $LIBFFI_VERSION $XZ_VERSION $BZIP2_VERSION $EXPAT_VERSION"
+
+if [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ]; then
+    if [ ! -x "$PY_TOOLCHAIN_DIR/bin/$PY_HOST-gcc" ]; then
+        [ -f "${MIPS_TOOLCHAIN_TGZ:-}" ] || {
+            echo "   !! python needs (re)building and there is no toolchain:" >&2
+            echo "      $MIPS_TOOLCHAIN_TGZ is missing. Run ./bin/fetch-assets.sh." >&2
+            exit 1; }
+        say "python: unpacking the Ingenic MIPS toolchain"
+        mkdir -p work/.mips-toolchain
+        tar -xzf "$MIPS_TOOLCHAIN_TGZ" -C work/.mips-toolchain
+    fi
+    for t in "${PY_TGZ:-}" "${OPENSSL_TGZ:-}" "${SQLITE_TGZ:-}" "${ZLIB_TGZ:-}" \
+             "${LIBFFI_TGZ:-}" "${XZ_TGZ:-}" "${BZIP2_TGZ:-}" "${EXPAT_TGZ:-}"; do
+        [ -f "$t" ] || { echo "   !! no python sources at '$t' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
+    done
+    command -v gcc >/dev/null || {
+        echo "   !! no host gcc. Cross-building CPython needs a build-python of" >&2
+        echo "      the SAME version, which is compiled here for x86-64 first." >&2
+        echo "      Run through 'make build' -- docker/Dockerfile.build has it." >&2
+        exit 1; }
+    say "python: cross-compiling CPython $PY_VERSION + 7 libraries for $PY_PREFIX"
+    say "        (a few minutes, once -- work/.py313 caches it after that)"
+    rm -rf work/.py-src work/.py-dep work/.py-host work/.py-stage work/.py-xw "$PY_BUILD"
+    mkdir -p work/.py-src work/.py-dep work/.py-host work/.py-xw/bin
+    for t in "$PY_TGZ" "$OPENSSL_TGZ" "$SQLITE_TGZ" "$ZLIB_TGZ" \
+             "$LIBFFI_TGZ" "$XZ_TGZ" "$BZIP2_TGZ" "$EXPAT_TGZ"; do
+        tar -xzf "$t" -C work/.py-src
+    done
+    # CPython twice, into two directories. The host build leaves its own
+    # Makefile, config.status, pyconfig.h and .o files behind, and a cross
+    # ./configure run on top of that inherits host answers -- the resulting
+    # interpreter is x86 in places and mipsel in others, and it fails at
+    # `make` in a way that reads like a compiler bug. Two trees, no sharing.
+    mkdir -p work/.py-src/cross
+    tar -xzf "$PY_TGZ" -C work/.py-src/cross
+    (
+        # A subshell, as in 5b: the cross-compiler's CC/CFLAGS/PATH must not
+        # leak into anything patch.sh does afterwards -- and unlike s6 this
+        # section also exports LIBS and CONFIG_SITE, which would wreck a later
+        # ./configure in ways that are very hard to read.
+        set -e
+        SRC="$PWD/work/.py-src"
+        DEP="$PWD/work/.py-dep"        # cross-built C libraries, STATIC. Not shipped.
+        HOSTPY="$PWD/work/.py-host"    # the x86-64 build-python
+        STAGE="$PWD/work/.py-stage"    # DESTDIR
+        TC="$PWD/$PY_TOOLCHAIN_DIR"
+        XW="$PWD/work/.py-xw"
+        # Absolute, because everything below runs from inside a source tree.
+        # A relative log path here means eight ./configure runs each writing a
+        # log into their own directory, which is then deleted with them --
+        # i.e. no log at all on the one run where you want one.
+        LOG="$PWD/work"
+        JOBS=$(nproc 2>/dev/null || echo 4)
+
+        # ---------------------------------------------------------- wrappers
+        # THE SINGLE MOST IMPORTANT THING IN THIS SECTION. `-EL -mnan=2008`
+        # has to reach the COMPILE and the LINK of every object: this
+        # toolchain defaults to big-endian legacy-NaN, and the printer's
+        # kernel refuses anything that is not little-endian NAN2008 -- it
+        # says ENOEXEC and explains nothing. Passing them in CFLAGS is not
+        # enough, because several of the eight projects below do not forward
+        # CFLAGS to their link line. So the two flags are baked into the gcc
+        # driver itself by a wrapper on PATH, and no build system gets a vote.
+        for t in gcc g++ cpp; do
+            printf '#!/bin/sh\nexec %s/bin/%s-%s -EL -mnan=2008 "$@"\n' \
+                "$TC" "$PY_HOST" "$t" > "$XW/bin/$PY_HOST-$t"
+            chmod +x "$XW/bin/$PY_HOST-$t"
+        done
+        # The binutils have no flags to bake in, so they are plain symlinks --
+        # but they must be on the SAME PATH entry, or configure finds the
+        # host's ar/ranlib and produces archives the cross-linker cannot read.
+        for t in ar as ld nm objcopy objdump ranlib readelf strip strings size; do
+            ln -sf "$TC/bin/$PY_HOST-$t" "$XW/bin/$PY_HOST-$t"
+        done
+        export PATH="$XW/bin:$PATH"
+
+        # Gate the wrapper before building 300MB on top of it. A wrapper that
+        # silently lost its flags produces a tree that builds perfectly and is
+        # ENOEXEC on the printer, and the ship gate below would then be the
+        # first thing to notice -- twenty minutes later.
+        echo 'int main(void){return 0;}' > "$SRC/abi.c"
+        "$PY_HOST-gcc" "$SRC/abi.c" -o "$SRC/abi.out"
+        abi=$("$PY_HOST-readelf" -h "$SRC/abi.out" | awk '/Flags:/{print $2}' | tr -d ,)
+        [ "$abi" = "0x70001405" ] || {
+            echo "   !! the toolchain wrapper produces e_flags=$abi, want 0x70001405" >&2
+            exit 1; }
+
+        # ------------------------------------------------- 1. the build-python
+        # Cross-building CPython needs a build-python of the SAME version:
+        # the Makefile runs it to freeze modules, generate the deepfreeze
+        # sources and byte-compile the stdlib, and configure hard-errors when
+        # the version does not match. The image's python3.11 cannot stand in.
+        # x86-64, thrown away at the end of this section, never shipped.
+        ( cd "$SRC/Python-$PY_VERSION"
+          ./configure --prefix="$HOSTPY" --without-ensurepip >"$LOG/.py-hostpy.log" 2>&1
+          make -j"$JOBS" >>"$LOG/.py-hostpy.log" 2>&1
+          make install >>"$LOG/.py-hostpy.log" 2>&1 )
+
+        # ------------------------------------------- 2. the C libraries, STATIC
+        # All seven go into $DEP as .a with -fPIC, and NONE of them ships. The
+        # interpreter and its extension modules link them in, so the tree on
+        # the printer has no .so of ours to find at runtime: no
+        # LD_LIBRARY_PATH to get right, no chance of picking up one of
+        # FlashForge's /usr/prog copies (which is a real hazard -- /usr/prog
+        # carries libffi.so.8 and the rootfs carries libffi.so.7), and nothing
+        # to version-skew. The cost is a few MB of duplicated libcrypto
+        # between _ssl.so and _hashlib.so, which is a good trade at 30MB.
+        export CC="$PY_HOST-gcc" CXX="$PY_HOST-g++"
+        export AR="$PY_HOST-ar" RANLIB="$PY_HOST-ranlib" STRIP="$PY_HOST-strip"
+        export CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64"
+        export CPPFLAGS="-I$DEP/include"
+        export LDFLAGS="-L$DEP/lib"
+        # pkg-config must see ONLY our sysroot. Left alone it answers out of
+        # the build image's /usr/lib/pkgconfig, and configure then links an
+        # x86-64 .so into a mipsel interpreter -- or, more often, decides a
+        # module is buildable and finds out at `make` time that it is not.
+        export PKG_CONFIG_LIBDIR="$DEP/lib/pkgconfig"
+        export PKG_CONFIG_PATH="$DEP/lib/pkgconfig"
+        BUILDTRIPLE=x86_64-linux-gnu
+
+        ( cd "$SRC/zlib-$ZLIB_VERSION"
+          CHOST=$PY_HOST ./configure --prefix="$DEP" --static >/dev/null
+          make -j"$JOBS" >/dev/null && make install >/dev/null )
+
+        # OpenSSL, and two traps that were both hit for real:
+        #  * `no-docs` only exists from 3.1. On 3.0.x it is an "Unsupported
+        #    options" HARD ERROR, not a warning -- so it is not passed here.
+        #  * the linux-mips32 target hardcodes -mips2 into its cflags, and
+        #    this toolchain defaults to -mfp64, which gcc refuses below
+        #    mips32r2 ("'-mgp32' and '-mfp64' can only be combined if the
+        #    target supports the mfhc1 and mthc1 instructions"). User cflags
+        #    land AFTER the target's, so -mips32r2 below puts the ISA back
+        #    where the printer actually is. If a future OpenSSL orders them
+        #    the other way round, linux-generic32 (portable C, no mips
+        #    assembly) is the fallback -- and it is taken automatically rather
+        #    than left as a note, because the failure is a wall of assembler
+        #    errors that says nothing about ISA levels.
+        #  * --openssldir is where the interpreter looks for CA certificates
+        #    ON THE PRINTER. Nothing installs any there. `import ssl` works,
+        #    but verifying a certificate chain does not until someone ships a
+        #    ca-certificates bundle -- see tools/python/README.md.
+        ( cd "$SRC/openssl-$OPENSSL_VERSION"
+          ossl() { ./Configure "$@" --prefix="$DEP" --libdir=lib \
+                       --openssldir="$PY_PREFIX/ssl" no-shared no-tests \
+                       -fPIC -O2 -D_FILE_OFFSET_BITS=64 >/dev/null; }
+          ossl linux-mips32 -mips32r2
+          if ! make -j"$JOBS" >"$LOG/.py-openssl.log" 2>&1; then
+              echo "   .. openssl linux-mips32 failed; falling back to linux-generic32"
+              make distclean >/dev/null 2>&1 || true
+              ossl linux-generic32 no-asm
+              make -j"$JOBS" >"$LOG/.py-openssl.log" 2>&1
+          fi
+          make install_sw >/dev/null )
+
+        for p in "libffi-$LIBFFI_VERSION --disable-docs" \
+                 "sqlite-autoconf-$SQLITE_VERSION --disable-readline --disable-editline" \
+                 "xz-$XZ_VERSION --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo --disable-scripts --disable-doc --disable-nls" \
+                 "expat-$EXPAT_VERSION --without-docbook --without-examples --without-tests"; do
+            # Deliberately unquoted: each entry is a directory plus the flags
+            # that turn that project's command-line tools and documentation
+            # off. We want the library, never the programs.
+            # shellcheck disable=SC2086
+            set -- $p
+            d=$1; shift
+            ( cd "$SRC/$d"
+              ./configure --host=$PY_HOST --build=$BUILDTRIPLE --prefix="$DEP" \
+                  --disable-shared --enable-static --with-pic "$@" >/dev/null
+              make -j"$JOBS" >/dev/null && make install >/dev/null )
+        done
+
+        # bzip2 has no configure and no install target worth using; drive its
+        # Makefile at the one target we want and place the two files by hand.
+        ( cd "$SRC/bzip2-$BZIP2_VERSION"
+          make -j"$JOBS" libbz2.a CC="$CC" AR="$AR" RANLIB="$RANLIB" \
+              CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64 -Wall -Winline" >/dev/null
+          install -m644 libbz2.a "$DEP/lib/"
+          install -m644 bzlib.h  "$DEP/include/" )
+
+        # ------------------------------------------------ 3. CPython, cross
+        cd "$SRC/cross/Python-$PY_VERSION"
+        # Answers to the questions configure settles by COMPILING AND RUNNING
+        # a probe, which it cannot do when the target is mipsel and the
+        # builder is x86. Left unanswered these either stop configure or --
+        # worse -- default to the conservative answer and produce a working
+        # interpreter with subtly wrong float and time behaviour.
+        cat > "$SRC/config.site" <<'EOF'
+ac_cv_file__dev_ptmx=yes
+ac_cv_file__dev_ptc=no
+ac_cv_buggy_getaddrinfo=no
+ac_cv_little_endian_double=yes
+ac_cv_big_endian_double=no
+ac_cv_mixed_endian_double=no
+ac_cv_working_tzset=yes
+ac_cv_have_long_long_format=yes
+ac_cv_no_strict_aliasing=no
+ac_cv_pthread_system_supported=yes
+EOF
+        export CONFIG_SITE="$SRC/config.site"
+        export CFLAGS="-O2 -D_FILE_OFFSET_BITS=64"
+        # THE TRAP THAT COSTS A DAY IF YOU MISS IT, and the reason the gate
+        # below exists:
+        #   -latomic  64-bit atomics on mips32 are out-of-line calls into
+        #             libatomic, and CPython 3.13's _Py_atomic_* on 64-bit
+        #             types needs them. libatomic.so.1 IS on the printer's
+        #             rootfs -- measured -- so this one is a runtime dep, not
+        #             a static link.
+        #   -lm       because libsqlite3 here is STATIC. A shared libsqlite3.so
+        #             carries its own DT_NEEDED on libm; a libsqlite3.a does
+        #             not. configure's `checking for sqlite3_bind_double in
+        #             -lsqlite3` link probe then fails on undefined floor/log/
+        #             pow, and CPython records _sqlite3 as "missing" AND
+        #             CARRIES ON -- a probe failure, not a compile failure, so
+        #             nothing in 400 lines of build output says why the one
+        #             module this whole section exists for is absent.
+        export LIBS="-latomic -lm"
+        # And the same link line stated outright, bypassing pkg-config, so
+        # that -lm cannot be reordered out from under the probe.
+        export LIBSQLITE3_CFLAGS="-I$DEP/include"
+        export LIBSQLITE3_LIBS="-L$DEP/lib -lsqlite3 -lm"
+        # --disable-shared: no libpython3.13.so to find at runtime, for the
+        #   same reason the seven libraries above are static. An out-of-tree
+        #   extension module was proven to build and import against this.
+        # --without-ensurepip: pip needs a network and a compiler; neither is
+        #   on a printer, and a pip that half works is worse than none.
+        # --disable-test-modules: the CPython test suite is a third of the
+        #   tree and none of it runs here.
+        ./configure \
+            --host=$PY_HOST --build=$BUILDTRIPLE \
+            --with-build-python="$HOSTPY/bin/python3.13" \
+            --prefix="$PY_PREFIX" \
+            --disable-shared \
+            --without-ensurepip \
+            --disable-test-modules \
+            --with-openssl="$DEP" \
+            --with-system-expat >"$LOG/.py-configure.log" 2>&1
+        make -j"$JOBS" >"$LOG/.py-make.log" 2>&1
+        make install DESTDIR="$STAGE" >>"$LOG/.py-make.log" 2>&1
+    ) || { echo "   !! the python cross-build failed. The most recently" >&2
+           echo "      written of work/.py-hostpy.log, work/.py-openssl.log," >&2
+           echo "      work/.py-configure.log and work/.py-make.log is where it" >&2
+           echo "      stopped; the source trees under work/.py-src are still" >&2
+           echo "      there, config.log included." >&2
+           exit 1; }
+
+    # --------------------------------------------------------------- trim
+    # 183MB staged, 30MB shipped. What goes: the test package and idlelib
+    # (nothing on a printer runs either), tkinter (there is no X11), the
+    # config-*/ directory, include/ and lib/pkgconfig (they exist to BUILD
+    # extension modules, which happens on a developer's machine and not here
+    # -- and lib/pkgconfig would otherwise put four .pc files describing that
+    # build into the prefix's SHARED lib/, next to s6's neighbours), every
+    # static archive, and every __pycache__ -- which is 12MB of .pyc for
+    # modules that will be imported once, if ever, and which the interpreter
+    # regenerates into /usr/data anyway if it ever wants them.
+    say "python: trimming the staged tree"
+    PY_TRIM="work/.py-stage$PY_PREFIX"
+    rm -rf "$PY_TRIM/lib/python$PY_MM/test" \
+           "$PY_TRIM/lib/python$PY_MM/idlelib" \
+           "$PY_TRIM/lib/python$PY_MM/tkinter" \
+           "$PY_TRIM/lib/python$PY_MM/turtledemo" \
+           "$PY_TRIM/lib/python$PY_MM/config-"* \
+           "$PY_TRIM/include" "$PY_TRIM/share" "$PY_TRIM/lib/pkgconfig"
+    find "$PY_TRIM" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
+    find "$PY_TRIM" -name '*.a' -delete
+    # And out of bin/, everything except the one unambiguously-named binary --
+    # see the comment at the top of this section. bin/python3 is the one that
+    # matters (it would shadow FlashForge's on the PATH anvil-env.sh exports);
+    # the rest are launchers for a package the trim above just deleted.
+    rm -f "$PY_TRIM/bin/python3" "$PY_TRIM/bin/idle3" "$PY_TRIM/bin/idle$PY_MM" \
+          "$PY_TRIM/bin/pydoc3" "$PY_TRIM/bin/pydoc$PY_MM" \
+          "$PY_TRIM/bin/python3-config" "$PY_TRIM/bin/python$PY_MM-config"
+    "$PY_TOOLCHAIN_DIR/bin/$PY_HOST-strip" "$PY_TRIM/bin/python$PY_MM" 2>/dev/null || true
+    find "$PY_TRIM/lib/python$PY_MM/lib-dynload" -name '*.so' \
+        -exec "$PY_TOOLCHAIN_DIR/bin/$PY_HOST-strip" {} + 2>/dev/null || true
+    # Nothing must be left in bin/ but the interpreter: a future CPython that
+    # installs one more launcher would otherwise put an unreviewed name on the
+    # PATH of every mod process, which is precisely the accident the rm above
+    # is for. Cheap to assert, and it fails at build time rather than on a
+    # printer.
+    left=$(ls "$PY_TRIM/bin")
+    [ "$left" = "python$PY_MM" ] || {
+        echo "   !! python: bin/ should hold python$PY_MM and nothing else, got: $left" >&2
+        exit 1; }
+
+    # The cache holds bin/ and lib/ -- exactly the shape work/.s6 holds for s6,
+    # and for the same reason: unpacking it at $MODDIR puts every file back
+    # where it was compiled to live. The .version stamp sits BESIDE them rather
+    # than inside, so it can never be mistaken for something that ships.
+    mkdir -p "$PY_BUILD"
+    cp -a "$PY_TRIM/bin" "$PY_TRIM/lib" "$PY_BUILD/"
+    rm -rf work/.py-src work/.py-dep work/.py-host work/.py-stage work/.py-xw
+    echo "$PY_STAMP" > "$PY_BUILD/.version"
+else
+    skip "python: work/.py313 already holds CPython $PY_VERSION"
+fi
+
+# The gates, asked of the TREE THAT SHIPS rather than of the build -- so a
+# cached tree from an older, wronger build is checked too, and so the answer
+# comes from the bytes the printer will execute.
+[ -x "$PY_BUILD/bin/python$PY_MM" ] \
+    || { echo "   !! python: no bin/python$PY_MM in $PY_BUILD" >&2; exit 1; }
+# bin/ holds the interpreter and NOTHING ELSE -- re-asserted here and not only
+# at build time, because this runs against the cache as well, and a cache
+# built before that rule existed would otherwise stage a bin/python3 that
+# shadows FlashForge's on PATH. See the top of this section.
+PY_BINS=$(ls "$PY_BUILD/bin")
+[ "$PY_BINS" = "python$PY_MM" ] \
+    || { echo "   !! python: $PY_BUILD/bin holds '$PY_BINS', expected only python$PY_MM." >&2
+         echo "      Delete work/.py313 and rebuild." >&2; exit 1; }
+# _sqlite3 is THE reason this section exists, and its absence is silent: see
+# the LIBS comment above. A hard failure here, at build time, is the only
+# thing standing between a dropped -lm and a release that ships an
+# interpreter with the one module it was built for missing.
+PY_SQLITE=$(ls "$PY_BUILD/lib/python$PY_MM/lib-dynload/"_sqlite3*.so 2>/dev/null | head -n1)
+[ -n "$PY_SQLITE" ] \
+    || { echo "   !! python: NO _sqlite3 MODULE. configure's link probe failed" >&2
+         echo "      silently -- check LIBS/LIBSQLITE3_LIBS and work/.py-configure.log" >&2
+         exit 1; }
+# ABI, over every ELF in the tree: interpreter, 56 extension modules and
+# whatever else `make install` put there. The printer's kernel wants
+# nan2008/o32/mips32r2 and says ENOEXEC to anything else, and a cross-build
+# that quietly emitted one host object -- or one legacy-NaN object, because a
+# flag did not reach one link line -- looks like a clean build here.
+#
+# TWO expected words, not one. 0x70001405 is the measured value for an
+# EXECUTABLE; a shared object additionally carries EF_MIPS_PIC (0x2) and so
+# reads 0x70001407. That is correct and unavoidable for a DYN -- klippy's own
+# c_helper.so has it too -- so a gate that pinned one word would fail on every
+# extension module in the tree.
+PY_ELF=0
+while IFS= read -r f; do
+    [ "$(head -c 4 "$f" 2>/dev/null)" = "$(printf '\177ELF')" ] || continue
+    hdr=$(readelf -h "$f" 2>/dev/null || true)
+    case "$hdr" in
+        *nan2008*o32*mips32r2*) ;;
+        *) echo "   !! python: $f is not nan2008/o32/mips32r2" >&2
+           readelf -h "$f" 2>&1 | sed 's/^/      /' >&2; exit 1 ;;
+    esac
+    flags=$(awk '/Flags:/{print $2}' <<<"$hdr" | tr -d ,)
+    want=0x70001405; grep -q '^  Type:.*DYN' <<<"$hdr" && want=0x70001407
+    [ "$flags" = "$want" ] || {
+        echo "   !! python: $f has e_flags=$flags, want $want" >&2; exit 1; }
+    PY_ELF=$((PY_ELF + 1))
+done < <(find "$PY_BUILD/bin" "$PY_BUILD/lib" -type f)
+say "python: $PY_ELF ELF objects, all nan2008/o32/mips32r2; $(basename "$PY_SQLITE") present"
+# Staged into the SAME bin/ and lib/ as everything else in this prefix root,
+# which is why this is a copy of the contents and not of the directories: s6's
+# binaries are already in $MOD_PAYLOAD/bin and must stay there.
+cp -a "$PY_BUILD/bin/." "$MOD_PAYLOAD/bin/"
+mkdir -p "$MOD_PAYLOAD/lib"
+cp -a "$PY_BUILD/lib/." "$MOD_PAYLOAD/lib/"
+chmod +x "$MOD_PAYLOAD/bin/python$PY_MM"
+du -sh "$PY_BUILD/lib/python$PY_MM" | awk '{print "   "$1"\tlib/python'"$PY_MM"'/"}'
 
 # ------------------------------------------------------------------- 6. SSH
 # Nothing to install. The stock rootfs (kernel-*.tar.xz -> rootfs.squashfs)

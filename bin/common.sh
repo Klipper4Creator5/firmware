@@ -78,6 +78,35 @@ S6_BUILD="${S6_BUILD:-$ROOT/work/.s6}"
 export MAINSAIL_ZIP HELIX_TGZ MOONRAKER_TGZ KLIPPER_TGZ MIPS_TOOLCHAIN_TGZ
 export SKALIBS_TGZ S6_TGZ MUSL_TOOLCHAIN_TGZ S6_BUILD
 
+# CPython and the seven C libraries it is linked against, all pinned in
+# versions.env and all cross-built by bin/patch.sh section 5c. Eight tarballs
+# and not one, because there is no such thing as a "CPython with batteries"
+# source drop: sqlite, openssl, libffi, xz, bzip2, zlib and expat are separate
+# projects the interpreter merely knows how to use, and on this printer NONE
+# of them can be borrowed from the rootfs -- which is the whole reason the
+# stock 3.8.2 has no sqlite3 module to begin with.
+#
+# The compiler is MIPS_TOOLCHAIN_TGZ above, the Ingenic GLIBC one, and not the
+# musl toolchain s6 is built with. That is not a preference: a musl-linked
+# interpreter cannot dlopen a glibc c_helper.so, and dlopen is exactly how
+# klippy loads it. See tools/python/README.md.
+#
+# PY_BUILD is patch.sh's cache of the cross-built, trimmed tree -- the same
+# thing S6_BUILD is for s6, and named here for the same reason: it is what
+# decides whether anything has to be compiled at all, and both patch.sh and
+# fetch-assets.sh need that answer.
+PY_TGZ="${PY_TGZ:-$ROOT/vendor/Python-${PY_VERSION:-unpinned}.tgz}"
+OPENSSL_TGZ="${OPENSSL_TGZ:-$ROOT/vendor/openssl-${OPENSSL_VERSION:-unpinned}.tar.gz}"
+SQLITE_TGZ="${SQLITE_TGZ:-$ROOT/vendor/sqlite-autoconf-${SQLITE_VERSION:-unpinned}.tar.gz}"
+ZLIB_TGZ="${ZLIB_TGZ:-$ROOT/vendor/zlib-${ZLIB_VERSION:-unpinned}.tar.gz}"
+LIBFFI_TGZ="${LIBFFI_TGZ:-$ROOT/vendor/libffi-${LIBFFI_VERSION:-unpinned}.tar.gz}"
+XZ_TGZ="${XZ_TGZ:-$ROOT/vendor/xz-${XZ_VERSION:-unpinned}.tar.gz}"
+BZIP2_TGZ="${BZIP2_TGZ:-$ROOT/vendor/bzip2-${BZIP2_VERSION:-unpinned}.tar.gz}"
+EXPAT_TGZ="${EXPAT_TGZ:-$ROOT/vendor/expat-${EXPAT_VERSION:-unpinned}.tar.gz}"
+PY_BUILD="${PY_BUILD:-$ROOT/work/.py313}"
+export PY_TGZ OPENSSL_TGZ SQLITE_TGZ ZLIB_TGZ LIBFFI_TGZ XZ_TGZ BZIP2_TGZ
+export EXPAT_TGZ PY_BUILD
+
 # Replica-only settings: the factory image and the partition sizes. They exist
 # for the tests and never reach a printer, so they live in their own file --
 # see test.env.example. Values left in config.env keep working.
