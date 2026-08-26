@@ -414,6 +414,12 @@ def main():
         with reporter.gate("s6 supervises, waits and reports"):
             gates.supervisor(config, on_output=emit)
 
+        with reporter.gate("nginx under s6"):
+            gates.nginx(config, on_output=emit)
+
+        with reporter.gate("camera readiness under s6"):
+            gates.camera(config, on_output=emit)
+
         with reporter.gate("init.d services"):
             gates.services(config, on_output=emit)
 

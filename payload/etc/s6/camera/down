@@ -1,0 +1,26 @@
+# The presence of this file is the whole message: s6-supervise starts a service
+# whose directory contains a `down` file in the DOWN state. s6 never reads the
+# contents, so this text is here purely for whoever finds the file on a printer
+# and wants to know why it exists.
+#
+# WHY THE CAMERA SHIPS DOWN. MOD_CAM lives in /usr/data/anvil/anvil.conf and is
+# read at RUNTIME, on the printer, by a user who may have edited it after the
+# install; this payload is built ONCE, in CI, months earlier. So the build
+# cannot know whether the camera is wanted, and the alternative -- shipping no
+# `down` file and letting bin/patch.sh drop one in when MOD_CAM=0 -- would bake
+# a build-time answer into the image and quietly ignore the file the user
+# actually edits.
+#
+# Shipping `down` unconditionally moves the decision to the only place that can
+# make it. The moment s6-svscan notices this directory it starts an
+# s6-supervise for it, and without this file that supervise would launch the
+# streamer immediately, before any init script had read anvil.conf -- MOD_CAM=0
+# would mean "the camera runs for a second and is then killed", which is not
+# what it says. With this file the service sits down and idle, costing one
+# ~30KB supervisor and nothing else, until payload/init.d/S65camera -- which
+# HAS read anvil.conf -- brings it up with `s6-svc -u`.
+#
+# The state is not sticky across boots, and that is correct: `down` is consulted
+# by s6-supervise when the scandir is scanned, which happens fresh on every
+# boot, so a camera someone brought up by hand does not silently outlive the
+# MOD_CAM=0 they set afterwards.

@@ -29,12 +29,14 @@ rm -rf "$MOD_PAYLOAD" "$SOFTWARE_DIR/mod"   # $SOFTWARE_DIR/mod: leftover from a
 # etc/ is the same idea one directory further on: a --prefix root keeps the
 # mod's own configuration in etc/, and etc/s6/ is the s6 SCANDIR -- the
 # directory s6-svscan watches, one subdirectory per supervised service. It is
-# staged here, EMPTY, rather than created at runtime by payload/init.d/S40s6,
-# and the reason is the install manifest: the manifest is read off this staged
-# tree, so a directory that only ever appeared on the printer would be a path
-# the mod creates and no update can ever account for. Staged, it is listed,
-# and run-append.sh's rmdir pass tidies it exactly when it is empty and leaves
-# it alone the moment phase 4 puts a service in it. S40s6 still does its own
+# created here rather than at runtime by payload/init.d/S40s6, and the reason
+# is the install manifest: the manifest is read off this staged tree, so a
+# directory that only ever appeared on the printer would be a path the mod
+# creates and no update can ever account for. It was empty when S40s6 first
+# landed and is not any more -- the service directories themselves are copied
+# in further down, next to init.d -- but the mkdir stays, because a payload
+# that happens to ship no services still needs somewhere for the scanner to
+# look. S40s6 still does its own
 # mkdir -p on top of this -- see the comment there -- because the manifest
 # pass runs BEFORE the new tarball is extracted, and because hand-made
 # installs exist.
@@ -552,6 +554,17 @@ cp -f payload/anvil-service.sh "$MOD_PAYLOAD/anvil-service.sh"
 [ -d payload/bin ] && cp -f payload/bin/* "$MOD_PAYLOAD/bin/" && chmod +x "$MOD_PAYLOAD/bin"/*
 cp -f payload/init.d/S* "$MOD_PAYLOAD/init.d/"
 chmod +x "$MOD_PAYLOAD/init.d"/S*
+# The s6 service directories: one per supervised service, each holding a `run`
+# script and whatever s6 control files it needs beside it (`down` to start in
+# the down state, `notification-fd` to say which descriptor readiness arrives
+# on). cp -a rather than cp -f because those control files are not scripts and
+# a plain glob of *.sh would miss them -- and because a `run` that arrives
+# without its executable bit is a service s6 can never start, which it reports
+# only in its own log. The chmod is belt and braces for exactly that.
+if [ -d payload/etc/s6 ]; then
+    cp -a payload/etc/s6/. "$MOD_PAYLOAD/etc/s6/"
+    chmod +x "$MOD_PAYLOAD"/etc/s6/*/run 2>/dev/null || true
+fi
 sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
     -e "s/^MOD_CAM=.*/MOD_CAM=${MOD_CAM:-1}/" \
     -e "s/^MOD_UI=.*/MOD_UI=${MOD_UI:-1}/" \

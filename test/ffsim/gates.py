@@ -166,6 +166,41 @@ def supervisor(config, on_output=None):
                      packages={"sup.tgz": s6}, on_output=on_output)
 
 
+def nginx(config, on_output=None):
+    """Is nginx really supervised, and does a stop really stop it?
+
+    The migration bug this exists to catch is the one that looks fine: a
+    service that starts, and a `stop` the supervisor quietly undoes a second
+    later. It also pins down what killing nginx hard actually does here --
+    SIGKILL orphans the worker, the worker keeps :80, and the respawned master
+    cannot bind, so s6 loops for ever while svstat cheerfully says up.
+    """
+    s6 = _s6_tarball(config)
+    if not s6:
+        raise Skip("nothing in work/.s6 -- run ./bin/patch.sh first")
+    replica = Replica.start(config, want_output=on_output)
+    replica.run_case(_case(config, "case-nginx.sh"),
+                     packages={"sup.tgz": s6}, on_output=on_output)
+
+
+def camera(config, on_output=None):
+    """Does readiness actually gate, or does it just mean "forked"?
+
+    The camera is why s6 was chosen over runit. Its old script hand-rolled a
+    respawn loop and a 30-second poll of /dev/video0; both are gone, and the
+    replacement is only worth anything if s6-svwait -U blocks until the
+    streamer is genuinely serving rather than merely running. The case asserts
+    up-and-not-ready together, so it cannot pass vacuously against a service
+    that never started at all.
+    """
+    s6 = _s6_tarball(config)
+    if not s6:
+        raise Skip("nothing in work/.s6 -- run ./bin/patch.sh first")
+    replica = Replica.start(config, want_output=on_output)
+    replica.run_case(_case(config, "case-camera.sh"),
+                     packages={"sup.tgz": s6}, on_output=on_output)
+
+
 def services(config, on_output=None):
     """Do all five init.d services behave like the same kind of thing?
 

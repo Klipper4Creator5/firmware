@@ -1,0 +1,163 @@
+#!/bin/sh
+# The camera, as s6 supervises it: mjpg_streamer on :8080, in the FOREGROUND.
+#
+# WHAT THIS REPLACES. Until phase 4 this was a `while true; do mjpg_streamer
+# ...; sleep 3; done` inside a background subshell of payload/init.d/S65camera,
+# started with svc_detach and remembered by a pidfile that held THE LOOP rather
+# than the streamer -- because killing only the streamer got it restarted three
+# seconds later. All of that is gone. s6-supervise runs this script, notices
+# when it exits, and runs it again; the respawn loop, the pidfile, the "which
+# of the two processes do I kill first" ordering and the 15-second
+# wait-for-it-to-die in stop() are the supervisor's problem now, in C, once,
+# instead of ours in ash, per service.
+#
+# So the ONE rule this file has to keep is: never fork the streamer, never
+# background it, never return while the camera is meant to be running. `exec`
+# at the bottom is what makes the process s6 supervises BE mjpg_streamer, so
+# that s6-svstat reports the streamer's own pid and `s6-svc -d` signals the
+# streamer rather than a shell that has long since gone.
+#
+# EVERYTHING BELOW THE WAIT IS COPIED FROM THE OLD supervise(), DELIBERATELY.
+# LD_LIBRARY_PATH matters: libjpeg.so.9 lives in the mjpg-streamer directory
+# itself, so without it the binary dies on a missing shared object. The plugin
+# names (input_uvc.so, output_http.so) and the www/ path are resolved relative
+# to the working directory, hence the cd. That one directory is prepended here
+# rather than in anvil-env.sh, which carries the shared list: it is a plugin
+# directory with its own libjpeg, and putting it in front of every python
+# process on the printer would risk a version conflict to benefit one service.
+MODDIR=/usr/data/anvil
+# anvil.conf is read HERE, not inherited. s6-supervise starts this script from
+# the SCANNER's environment, which is whatever firmwareExe had at boot -- and
+# on a `s6-svc -u` typed over ssh it is whatever that ssh session had, which is
+# not the same thing at all. Reading the file in the run script is what makes
+# MOD_CAM_RES/FPS/PORT mean the same on both paths, and it is why editing
+# anvil.conf and restarting the service is enough to change the resolution.
+[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
+[ -f $MODDIR/anvil-env.sh ] && . $MODDIR/anvil-env.sh
+
+CAMDIR=/usr/prog/mjpg-streamer
+VIDEO=/dev/video0
+LOG=/usr/data/logs/mjpg.log
+RES="${MOD_CAM_RES:-1280x720}"
+FPS="${MOD_CAM_FPS:-30}"
+PORT="${MOD_CAM_PORT:-8080}"
+
+# The same log file the hand-rolled loop wrote to, for the same reason: it is
+# the file the troubleshooting notes name, and mjpg_streamer is chatty enough
+# (a banner per start, a line per plugin option) that leaving it on the
+# inherited descriptor would put it in the boot log of a boot that finished
+# hours ago -- s6-svscan's descriptors outlive firmwareExe's redirection
+# exactly as the scanner itself does. Appending, not truncating, so a respawn
+# cannot erase the reason for the respawn.
+mkdir -p /usr/data/logs
+exec >>"$LOG" 2>&1
+
+# ---- the 30-second wait for /dev/video0 ------------------------------------
+#
+# WHY THE WAIT LIVES HERE AND NOT IN S65camera. It used to be the first half of
+# the detached supervise(): poll for the device, give up after 30s, print
+# "no camera plugged in?" and never try again until somebody re-ran the script.
+# The other candidate home for it was a `svc_s6_ready camera 30` in the init
+# script -- wait in the caller instead of the callee. This is the callee, and
+# the reason is that only here does giving up turn into RETRYING:
+#
+#   * The device is not a boot-time fact. A USB camera plugged in ten minutes
+#     after boot, or unplugged and replugged mid-print, used to mean a dark
+#     camera until somebody ssh'd in and typed `S65camera restart`. Here the
+#     script exits non-zero, s6 runs it again, and the next thirty seconds of
+#     waiting cost one sleeping shell. The retry is free because it is exactly
+#     what the supervisor is already doing for a streamer that dies.
+#   * Waiting in the init script would put a 30-second block on the boot path
+#     of precisely the printer with no camera -- the machine somebody needs to
+#     ssh into to find out why. S65camera does still wait, but DETACHED and
+#     only in order to report; nothing on the boot path blocks on it.
+#   * A caller-side wait happens once. This one is the service's own
+#     precondition, and a precondition belongs with the thing it precedes.
+#
+# 30 seconds is the number the old poll used and there is no reason to move it:
+# it is how long a USB camera can take to enumerate on this box.
+waited=0
+while [ ! -e "$VIDEO" ] && [ $waited -lt 30 ]; do
+    sleep 1
+    waited=$((waited + 1))
+done
+if [ ! -e "$VIDEO" ]; then
+    # No readiness notification is sent on this path, and that is the point:
+    # `s6-svwait -U` in the caller keeps blocking, times out, and S65camera
+    # prints the honest line. A service that declared itself ready here would
+    # be telling nginx's /webcam/ proxy there is a stream to proxy.
+    echo "camera: !! $VIDEO never appeared after ${waited}s -- no camera plugged in?"
+    exit 1
+fi
+
+export LD_LIBRARY_PATH=$CAMDIR:$LD_LIBRARY_PATH
+cd "$CAMDIR" || exit 1
+
+# ---- readiness: fd 3, and what "ready" is allowed to mean ------------------
+#
+# The `notification-fd` file next to this script holds "3", which is s6's
+# contract: this service is READY once a line is written to file descriptor 3,
+# and `s6-svwait -U` blocks until it is. This is the one thing s6 has that
+# runit has no concept of, and it is the reason the supervisor choice went the
+# way it did -- see tools/supervisor/README.md.
+#
+# WHEN IS THE CAMERA READY? Three candidate answers, and only one of them is
+# worth anything to whoever asks:
+#
+#   "the process was forked"   -- worthless. That is what runit's `sv start`
+#       already gives you and what a pidfile already told us. mjpg_streamer
+#       forks, opens /dev/video0, negotiates a pixel format and a resolution,
+#       and only then binds its port; the gap between fork and usable is
+#       exactly where a camera that enumerated but cannot do 1280x720 dies.
+#   "/dev/video0 exists"       -- better, and it is what the old poll checked,
+#       but it is a PRECONDITION, not readiness. The node appears the instant
+#       the kernel enumerates the device, before anything has proved it can be
+#       opened, and it is equally there for a webcam whose format negotiation
+#       is about to fail.
+#   "the HTTP port answers"    -- this one. The only consumer of this service
+#       is nginx's /webcam/ proxy (moonraker.conf's [webcam] entry points at
+#       the proxy rather than at :8080, so that a tunnel forwarding one port
+#       still shows the stream), and what a proxy needs is a socket that
+#       accepts. By the time mjpg_streamer has bound the port it has already
+#       opened the device and set the format -- output_http.so is started
+#       last. So this is the strongest claim available and the only one that
+#       means what a caller thinks it means.
+#
+# HOW IT IS CHECKED, and why it needs no tool. /proc/net/tcp lists every TCP
+# socket on the box: field 2 is LOCAL_ADDRESS:PORT with the port in uppercase
+# hex, field 4 is the state, and 0A is TCP_LISTEN. No nc, no curl, no wget --
+# measured on the replica, whose busybox has no nc applet at all, so a
+# shell-level port test that reached for one would have failed on the printer
+# and nowhere else. The address half is deliberately not matched:
+# mjpg_streamer binds 0.0.0.0 today, and a future `-l 127.0.0.1` should still
+# count as listening.
+#
+# The prober is a subshell because the last thing this script does is exec, and
+# an exec'd mjpg_streamer cannot report on itself. It inherits fd 3 across the
+# fork; the exec below closes fd 3 in the STREAMER (3>&-) so the only process
+# holding the notification pipe is the one with something to say about it. It
+# gives up after 60s rather than looping for ever, because a prober that never
+# exits is one stray process per respawn -- and giving up simply means no
+# notification is ever sent, which is the same honest outcome as the no-device
+# path above.
+PORTHEX=`printf '%04X' "$PORT"`
+(
+    n=0
+    while [ $n -lt 60 ]; do
+        if awk -v p=":$PORTHEX" '$2 ~ p"$" && $4 == "0A" { found = 1 }
+                                 END { exit !found }' /proc/net/tcp 2>/dev/null
+        then
+            echo ready >&3
+            exit 0
+        fi
+        sleep 1
+        n=$((n + 1))
+    done
+) &
+
+# The exact invocation the hand-rolled loop used, argument for argument. Do not
+# "tidy" the quoting: mjpg_streamer takes a plugin and all of its options as
+# ONE argv entry and splits it itself, so those quotes are load-bearing.
+exec ./mjpg_streamer \
+    -i "input_uvc.so -d $VIDEO -r $RES -f $FPS" \
+    -o "output_http.so -p $PORT -w www" 3>&-

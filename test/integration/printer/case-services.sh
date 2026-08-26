@@ -40,6 +40,13 @@ mkdir -p $MODDIR/init.d
 cp -f $PAYLOAD/anvil-env.sh $MODDIR/ 2>/dev/null
 cp -f $PAYLOAD/anvil-service.sh $MODDIR/ 2>/dev/null
 cp -f $PAYLOAD/init.d/S* $MODDIR/init.d/ 2>/dev/null
+# The s6 service directories, as bin/patch.sh stages them. Installing init.d
+# without these would be a layout no printer ever has, and it is exactly the
+# half where the interesting mistakes live: a `run` that arrived without its
+# executable bit, or a service that ships without `down` and therefore starts
+# before anything has read anvil.conf.
+mkdir -p $MODDIR/etc/s6
+[ -d $PAYLOAD/etc/s6 ] && cp -a $PAYLOAD/etc/s6/. $MODDIR/etc/s6/ 2>/dev/null
 chmod +x $MODDIR/init.d/S* 2>/dev/null
 
 # ---- the supervisor S40s6 needs -------------------------------------------
@@ -271,18 +278,33 @@ fi
 # that -- if it exited, or complained, every boot would carry a scary log line
 # and the first service to move in phase 4 would be debugged against a
 # scanner that was already unhappy.
+# Every service directory the payload ships has to be startable BY s6 and has
+# to start DOWN. The executable bit is the one that goes wrong quietly: s6
+# reports a non-executable `run` in its own log and nowhere else, so the
+# service simply never comes up and nothing says why. And `down` is what keeps
+# the gate in anvil.conf meaningful -- without it the scanner starts the
+# service the instant it appears, before any script has read MOD_WEB or
+# MOD_CAM, so "disabled" would mean "runs for a moment on every boot".
 SVCDIRS=0
 for d in $MODDIR/etc/s6/*; do
-    [ -d "$d" ] && SVCDIRS=$((SVCDIRS + 1))
+    [ -d "$d" ] || continue
+    SVCDIRS=$((SVCDIRS + 1))
+    n=`basename "$d"`
+    [ -x "$d/run" ] \
+        && ok "$n ships a run script s6 can execute" \
+        || bad "$n has no executable run -- s6 would report that only in its own log"
+    [ -f "$d/down" ] \
+        && ok "$n ships 'down', so the scanner does not start it before anvil.conf is read" \
+        || bad "$n has no 'down' file -- it would start regardless of its MOD_* gate"
 done
-[ $SVCDIRS -eq 0 ] \
-    && ok "the scandir holds no service directories -- nothing is supervised yet" \
-    || bad "$SVCDIRS service directories in $MODDIR/etc/s6 -- phase 3 migrates nothing"
+[ $SVCDIRS -gt 0 ] \
+    && ok "$SVCDIRS service directories shipped in $MODDIR/etc/s6" \
+    || bad "no service directories in $MODDIR/etc/s6 -- nothing was staged"
 sleep 3
 if $MODDIR/init.d/S40s6 status | grep -q scanning; then
-    ok "the scanner is still up 3s later with an empty scandir -- it did not exit"
+    ok "the scanner is still up 3s later -- it did not exit"
 else
-    bad "the scanner exited on an empty scandir"
+    bad "the scanner exited"
 fi
 if [ "$S6_REAL" = 1 ]; then
     # A healthy s6-svscan says nothing at all. Anything in its log is a fault,
@@ -290,9 +312,9 @@ if [ "$S6_REAL" = 1 ]; then
     # tools/supervisor/README.md: "unable to readdir .: Value too large for
     # defined data type", which is a scanner that started and then went blind.
     if [ -s /usr/data/logs/s6.log ]; then
-        bad "s6-svscan wrote to its log on an empty scandir: `head -3 /usr/data/logs/s6.log | tr '\n' ' '`"
+        bad "s6-svscan wrote to its log: `head -3 /usr/data/logs/s6.log | tr '\n' ' '`"
     else
-        ok "s6-svscan logged nothing -- an empty scandir is a quiet, healthy state"
+        ok "s6-svscan logged nothing -- a scandir of services that all ship 'down' is a quiet, healthy state"
     fi
 else
     echo "  ..    skipped (stand-in scanner): whether the real s6 is quiet on an"

@@ -68,7 +68,7 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
         rootfs verify test test-py test-install \
         printer-image printer-image-push \
         test-recovery test-mcu test-boot-screen test-moonraker test-services \
-        test-upgrade test-supervisor \
+        test-upgrade test-supervisor test-nginx test-camera \
         boot-screen boot-screen-sim \
         release clean distclean
 
@@ -97,6 +97,8 @@ help:
 	@echo '  make test-services    every init.d service dispatches the same way'
 	@echo '  make test-upgrade     an update deletes what it installed, and only that'
 	@echo '  make test-supervisor  the s6 we cross-compiled supervises and waits'
+	@echo '  make test-nginx       nginx runs under s6, and a stop stays stopped'
+	@echo '  make test-camera      readiness gates: ready means serving, not forked'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo
 	@echo 'Look at things:'
@@ -239,6 +241,17 @@ test-services: image
 test-supervisor: image
 	@tar -czf work/.s6-gate.tgz -C work/.s6 bin libexec
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-supervisor.sh sup.tgz=work/.s6-gate.tgz
+
+# The two services that moved into the scandir. Same tarball, same reason:
+# what is under test is s6 supervising OUR service definitions, so a stand-in
+# supervisor would be testing the wrong half.
+test-nginx: image
+	@tar -czf work/.s6-gate.tgz -C work/.s6 bin libexec
+	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-nginx.sh sup.tgz=work/.s6-gate.tgz
+
+test-camera: image
+	@tar -czf work/.s6-gate.tgz -C work/.s6 bin libexec
+	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-camera.sh sup.tgz=work/.s6-gate.tgz
 
 # The installer, run for real over two payloads: what the last one shipped
 # goes, what nobody shipped stays.

@@ -72,6 +72,36 @@ case ":$PATH:" in
     *":/usr/prog/Python-3.8.2/bin:"*) ;;
     *) PATH="$PATH:/usr/prog/Python-3.8.2/bin" ;;
 esac
+
+# And the mod's own bin, which s6 needs on PATH and not merely installed.
+#
+# s6 bakes its --prefix in at compile time, so it was reasonable to assume the
+# binaries could find each other wherever they were. They cannot, and the two
+# rules are different: s6-ftrigrd is found through the compiled-in libexecdir,
+# but s6-svscan execs S6-SUPERVISE BY NAME OFF PATH, and s6-svc -w execs
+# s6-svlisten the same way. With $MODDIR/bin absent from PATH the scanner
+# starts, stays up, answers its control socket -- and supervises nothing,
+# saying so once, in its own log, where nobody is looking:
+#
+#     s6-svscan: warning: unable to spawn s6-supervise for camera:
+#                No such file or directory
+#     s6-svc: fatal: unable to exec s6-svlisten: No such file or directory
+#
+# It is here rather than in one init script because both halves need it and
+# they inherit it from different places: S40s6 sources this file before
+# starting the SCANNER, which is the process that has to find s6-supervise,
+# and every service script sources it before running s6-svc, which is the
+# process that has to find s6-svlisten. Prepended, not appended: these are
+# ours and nothing on the base rootfs answers to those names, but a printer
+# that ever grows a second s6 should get the one we shipped.
+#
+# Note this could not have been caught one phase earlier. The scanner ran with
+# an EMPTY scandir, so it never spawned a supervisor, so it never needed the
+# thing it could not find.
+case ":$PATH:" in
+    *":/usr/data/anvil/bin:"*) ;;
+    *) PATH="/usr/data/anvil/bin:$PATH" ;;
+esac
 export PATH
 
 # Callers that are about to run the interpreter use this to fail with a
