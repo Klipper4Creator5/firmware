@@ -148,7 +148,26 @@ rather than for *forked*.
 *Gate:* `case-services.sh` and a camera case that proves readiness actually
 gates -- not that the file exists.
 
-## Phase 5 -- move the Klipper config, then moonraker
+## Phase 5 -- moonraker
+
+**The config move was planned for here and has moved to phase 7.** The reason
+is a dependency this plan originally missed: `klipperDaemon` is FlashForge's
+script, not ours, and it hardcodes
+
+    KLIPPER_CONF=/usr/data/config/printer.cfg
+
+so moving the directory while klippy is still launched through that script
+produces a printer that cannot find its own config. Taking over the launch is
+phase 7 work -- it also means owning what `S70klipper` and `bin/ff-startup.py`
+call, since both drive `klipperDaemon` directly -- and pulling it forward to
+satisfy a directory rename would make the riskiest phase bigger rather than
+smaller. Moonraker is entangled too: it is invoked with `-d /usr/data`, so its
+own config path moves with the same change.
+
+So phase 5 is moonraker onto s6 and nothing else. The argument for moving the
+config is unchanged and is restated in phase 7.
+
+## Phase 7a -- move the Klipper config
 
 Klipper's live config is `/usr/data/config/`. Every `[include]` in it is
 relative and the only absolute path anywhere is `/usr/data/gcodes`, so the
@@ -169,12 +188,27 @@ invoked with `-d /usr/data`), and updating the `config-installed` three-way
 diff in `run-append.sh`. The `/usr/prog/klipper/runConfig` pristine-template
 lookup can stay -- it is read-only and only used on a fresh install.
 
-Moonraker moves to s6 **after** the config move, so its `run` script is written
-once against the final path.
-
 *Gate:* a migration case -- install the old layout with a hand-edited
 `printer.override.cfg`, upgrade, assert the edit survived at the new path and
-that klippy still parses the tree. Plus `case-moonraker.sh` unchanged in intent.
+that klippy still parses the tree.
+
+Moonraker's `run` script is written in phase 5 against `/usr/data/config` and
+is repointed here, in the same change that moves the directory. That costs one
+edited line and is the price of not entangling a user-data migration with a
+supervision change.
+
+## Phase 5, continued -- moonraker onto s6
+
+Same shape as nginx: a service directory whose `run` execs moonraker in the
+foreground under `$FF_PYTHON`, `MOD_WEB` honoured through a shipped `down`
+file, and `S62moonraker` kept as a thin wrapper so the verbs people use do not
+change. Moonraker's own readiness -- it serves an HTTP API and klippy connects
+to it over `/tmp/uds` -- makes it a genuine `notification-fd` candidate, which
+matters because `bin/ff-startup.py` currently polls its API to learn
+`klippy_state`.
+
+*Gate:* `case-moonraker.sh`, extended rather than replaced -- it already proves
+moonraker runs from `/usr/data` on the printer's own Python.
 
 ## Phase 6 -- own the Python environment (separate project)
 

@@ -119,12 +119,33 @@ def moonraker(config, on_output=None):
     With the pre-flight gone from the firmware, this is also the only place a
     Moonraker pin that cannot load gets caught -- before it ships.
 
+    Since phase 5 moonraker is supervised, so the case also proves what that
+    bought: s6 respawns a killed moonraker, `S62moonraker stop` is a stop the
+    supervisor does not undo, MOD_WEB=0 leaves the service down, and readiness
+    means the API is LISTENING rather than the process was forked.
+
+    HANDED THE REAL s6 WHENEVER ONE EXISTS, and it DEGRADES rather than
+    skipping when one does not -- which is the opposite of nginx and camera,
+    on purpose. Those two cases are about supervision and have nothing to say
+    without a supervisor. This one is also the only gate that runs the shipped
+    Moonraker at all, so skipping it in a checkout that has not built s6 yet
+    would take the component-import checks with it and let a broken pin
+    through. Without a tarball the case runs sections 1-11 against
+    S62moonraker's no-supervisor fallback -- which is real shipped code, the
+    path a printer with MOD_S6=0 takes -- and says so in its output.
+
     The negative controls carry as much weight as the rest: take the library
     path away and the interpreter must fail, take libsodium away and the
-    authorization component must fail, or the list is cargo.
+    authorization component must fail, supervise a daemonising service and it
+    must churn, or the list is cargo and the supervision is decoration.
     """
+    packages = {}
+    s6 = _s6_tarball(config)
+    if s6:
+        packages["sup.tgz"] = s6
     replica = Replica.start(config, want_output=on_output)
-    replica.run_case(_case(config, "case-moonraker.sh"), on_output=on_output)
+    replica.run_case(_case(config, "case-moonraker.sh"),
+                     packages=packages, on_output=on_output)
 
 
 def _s6_tarball(config):

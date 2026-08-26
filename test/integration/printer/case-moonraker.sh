@@ -15,18 +15,48 @@
 # S60web is gone: nginx and moonraker are two scripts now, because they fail
 # separately and are debugged separately. That split is itself a claim about
 # behaviour -- stopping one must leave the other alone -- so it is checked
-# here too, at step 10.
+# here too, at step 10. Both of them are supervised services now, so that
+# claim involves two s6 services as well as two scripts.
+#
+# WHAT PHASE 5 ADDED, and why this case grew rather than being replaced.
+# moonraker is supervised by s6: $MODDIR/etc/s6/moonraker/ holds a `run` script
+# that execs it in the FOREGROUND, a `down` file so the scanner does not start
+# it before anvil.conf has been read, and a `notification-fd` so that "ready"
+# means the API is LISTENING rather than the process was forked.
+# init.d/S62moonraker is a thin wrapper over s6-svc. Every one of those is a
+# claim about behaviour and every one of them is measured below by running
+# things: sections 7b and 12 through 15. What was here before is untouched,
+# because it proves something the supervision does not -- that the printer runs
+# the moonraker WE shipped, on the interpreter we meant, from the data
+# partition, with a TMPDIR off the ramdisk.
+#
+# THE REAL s6, OR NONE. The cross-built binaries are not in payload/ -- they
+# are built by bin/patch.sh into work/.s6 -- so they arrive as a tarball:
+#
+#     printer-exec.py case-moonraker.sh sup.tgz=work/.s6-gate.tgz
+#
+# Without one this case DEGRADES rather than skipping: sections 1 to 7 are
+# about the Moonraker build and not about s6 at all (they are the only place a
+# pin that cannot import gets caught before it ships), and the start/stop/
+# restart sections then exercise the no-supervisor fallback in S62moonraker,
+# which is real shipped code that a printer with MOD_S6=0 or a failed s6 build
+# genuinely runs. Which of the two it did is said out loud at 7b, because a
+# case that quietly tests half of itself is worse than one that fails.
 #
 # The negative controls matter as much as the positive ones. Proving moonraker
 # starts WITH the environment says nothing unless taking the environment away
 # stops it, or the whole library list is cargo and the comments in
-# anvil-env.sh are wrong.
+# anvil-env.sh are wrong. The same applies to everything s6 is asked here: a
+# readiness wait that returns for a service nobody started, or a service
+# directory that looks supervised while daemonising behind s6's back, would
+# make the sections below pass while proving nothing. Both are controlled for.
 #
 # The payload under test is mounted at /tmp/payload.
 FAIL=0
 ok()  { echo "  PASS  $*"; }
 bad() { echo "  FAIL  $*"; FAIL=1; }
 skip() { echo "  SKIP  $*"; }
+note() { echo "  ..    $*"; }
 
 MODDIR=/usr/data/anvil
 PAYLOAD=/tmp/payload
@@ -43,6 +73,15 @@ MOONRAKER_MAIN=$MRROOT/moonraker/moonraker.py
 STOCK_MR=/usr/prog/moonraker/moonraker/moonraker
 S62=$MODDIR/init.d/S62moonraker
 S60N=$MODDIR/init.d/S60nginx
+S40=$MODDIR/init.d/S40s6
+# s6: the binaries, the scandir, and our service directory inside it. S6_REAL
+# is set at 7b and every s6 assertion below is guarded on it -- see the header
+# for why this case degrades instead of skipping when no tarball arrives.
+S6=$MODDIR/bin
+SCANDIR=$MODDIR/etc/s6
+SVCDIR=$SCANDIR/moonraker
+S6_REAL=0
+PORT=7125
 
 [ -d "$PAYLOAD" ] || { bad "no payload mounted at $PAYLOAD"; exit 1; }
 [ -x "$PY" ] || { bad "no interpreter at $PY"; exit 1; }
@@ -59,6 +98,13 @@ cp -f $PAYLOAD/anvil-service.sh $MODDIR/ 2>/dev/null
 cp -f $PAYLOAD/anvil.conf $MODDIR/ 2>/dev/null
 cp -f $PAYLOAD/init.d/S* $MODDIR/init.d/ 2>/dev/null
 chmod +x $MODDIR/init.d/S* 2>/dev/null
+# The s6 service directories, staged the way bin/patch.sh stages payload/etc/ --
+# with cp -a, contents and mode. A per-file cp would silently drop the `down`
+# and `notification-fd` control files (they are not scripts and match no *.sh
+# glob) and could lose the executable bit on `run`, which is a service s6 can
+# never start and reports only in its own log.
+mkdir -p $MODDIR/etc
+[ -d $PAYLOAD/etc/s6 ] && cp -a $PAYLOAD/etc/s6 $MODDIR/etc/ 2>/dev/null
 [ -f $MODDIR/anvil-env.sh ] || { bad "the payload ships no anvil-env.sh"; exit 1; }
 [ -f $MODDIR/anvil-service.sh ] \
     || { bad "the payload ships no anvil-service.sh -- every service script exits at once without it"; exit 1; }
@@ -259,14 +305,116 @@ PY
     fi
 fi
 
+# ---- 7b. the supervisor, and the service directory it is handed ------------
+#
+# Everything from here down runs against s6 when a tarball was passed, and
+# against S62moonraker's no-supervisor fallback when one was not. Both are code
+# a printer really runs; what must not happen is that the case does not say
+# which.
+echo
+echo "--- s6 ---"
+if [ -f /mnt/sup.tgz ]; then
+    gzip -dc /mnt/sup.tgz | tar -x -C $MODDIR && S6_REAL=1
+    chmod +x $S6/* $MODDIR/libexec/* 2>/dev/null
+fi
+if [ "$S6_REAL" = 1 ] && [ -x $S6/s6-svscan ]; then
+    ok "the real cross-built s6 is installed in $S6"
+else
+    S6_REAL=0
+    skip "no sup.tgz -- sections 12 to 15 need the real s6; the rest of this case"
+    skip "now exercises S62moonraker's no-supervisor fallback instead"
+fi
+
+if [ "$S6_REAL" = 1 ]; then
+    # THE SERVICE DIRECTORY, as it arrived from the payload. These three files
+    # are the whole of what the payload has to ship for moonraker to be
+    # supervised, and each of them fails silently if it is wrong: a `run`
+    # without +x is reported by s6 in its own log and nowhere else, a missing
+    # `down` means the scanner starts moonraker before anything read MOD_WEB,
+    # and a missing `notification-fd` means readiness quietly never happens.
+    [ -x $SVCDIR/run ] \
+        && ok "the payload ships an executable $SVCDIR/run" \
+        || bad "$SVCDIR/run is missing or not executable -- s6 could never start it"
+    [ -f $SVCDIR/notification-fd ] \
+        && ok "the service directory declares a notification-fd (`cat $SVCDIR/notification-fd`)" \
+        || bad "no notification-fd -- readiness cannot work at all"
+    [ -s $SVCDIR/down ] \
+        && ok "it ships a 'down' file with `wc -l < $SVCDIR/down | tr -d ' '` lines of prose in it -- existence is the signal, not content" \
+        || bad "no 'down' file -- s6 would start moonraker before anything read MOD_WEB"
+
+    # s6-svscan execs s6-supervise BY NAME off PATH, and s6-svc -w execs
+    # s6-svlisten the same way, so $MODDIR/bin has to be on PATH or the scanner
+    # supervises nothing and every waiting verb dies. anvil-env.sh is the file
+    # that puts it there; this asks the question by behaviour rather than by
+    # grepping it, because it is the one that made the first run of the camera
+    # case fail on every section at once.
+    if ( . $MODDIR/anvil-env.sh >/dev/null 2>&1; command -v s6-supervise >/dev/null 2>&1 ); then
+        ok "anvil-env.sh puts $S6 on PATH -- s6-svscan can exec s6-supervise"
+    else
+        bad "anvil-env.sh leaves $S6 off PATH: the scanner could not spawn a supervisor"
+    fi
+
+    $S40 start 2>&1 | sed 's/^/      /'
+    sleep 3
+    if $S40 status | grep -q "scanning $SCANDIR"; then
+        ok "S40s6 has a scanner on $SCANDIR"
+    else
+        bad "no scanner after S40s6 start: `$S40 status 2>&1 | head -2 | tr '\n' ' '`"
+        S6_REAL=0
+    fi
+fi
+
+if [ "$S6_REAL" = 1 ]; then
+    # THE 'down' FILE, PROVED BY BEHAVIOUR. The scanner has now seen the
+    # service directory and started an s6-supervise for it. Nothing has read
+    # MOD_WEB yet, so a moonraker that is up at this point means the `down`
+    # file did not work and the MOD_WEB gate is decorative -- it would mean
+    # "moonraker runs for a moment on every boot and is then shot".
+    st=`$S6/s6-svstat $SVCDIR 2>&1`
+    case "$st" in
+        down*) ok "the scanner picked moonraker up and left it DOWN, as the down file asks: $st" ;;
+        *)     bad "moonraker came up on its own, before anything read anvil.conf: $st" ;;
+    esac
+    # NEGATIVE CONTROL FOR READINESS ITSELF, and it belongs here rather than at
+    # section 12: s6-svwait -U against a service that has never declared itself
+    # must FAIL. If it succeeded, the timing measured there would mean nothing.
+    if $S6/s6-svwait -U -t 4000 $SVCDIR >/dev/null 2>&1; then
+        bad "negative control: s6-svwait -U SUCCEEDED on a service that never notified -- readiness is a no-op here"
+    else
+        ok "negative control: s6-svwait -U times out on a service that has not declared itself ready"
+    fi
+fi
+echo
+
 # ---- 8. S62moonraker starts moonraker, and it comes up ---------------------
-moonraker_pid() { cat /run/moonraker.pid 2>/dev/null; }
+# WHERE THE PID COMES FROM NOW. Under s6 there is no pidfile at all: the
+# supervisor holds the process and s6-svstat -p is the answer to "which
+# moonraker is this printer running" that /run/moonraker.pid used to give -- and
+# it is a better one, because it cannot be stale. The fallback path still writes
+# the pidfile, so both are read here, and every check below is written in terms
+# of moonraker_pid so that the two paths prove the same things.
+moonraker_pid() {
+    if [ "$S6_REAL" = 1 ]; then
+        p=`$S6/s6-svstat -p $SVCDIR 2>/dev/null`
+        # s6-svstat -p prints -1 for a service that is down, which is not a pid.
+        [ -n "$p" ] && [ "$p" -gt 0 ] 2>/dev/null && echo "$p"
+        return 0
+    fi
+    cat /run/moonraker.pid 2>/dev/null
+}
 moonraker_alive() {
     p=`moonraker_pid`
     [ -n "$p" ] && kill -0 "$p" 2>/dev/null
 }
 answers() {
-    wget -q -O - -T 3 http://127.0.0.1:7125/server/info 2>/dev/null | grep -q klippy
+    wget -q -O - -T 3 http://127.0.0.1:$PORT/server/info 2>/dev/null | grep -q klippy
+}
+# Is anything LISTENING on :7125? Exactly the test the run script uses for
+# readiness, spelled the same way, so that a bug in one shows up as a
+# disagreement with the other rather than as two matching wrong answers.
+port_listening() {
+    awk -v p=":`printf '%04X' $PORT`" '$2 ~ p"$" && $4 == "0A" { f = 1 }
+                                       END { exit !f }' /proc/net/tcp 2>/dev/null
 }
 
 if [ ! -f "$MOONRAKER_MAIN" ]; then
@@ -274,6 +422,12 @@ if [ ! -f "$MOONRAKER_MAIN" ]; then
 else
     ok "the entry point S62moonraker names is present ($MOONRAKER_MAIN)"
     $S62 stop >/dev/null 2>&1
+    # A negative control for every port check below: if something in this
+    # rootfs were already bound to :7125, "moonraker is listening" would be
+    # true for free and the readiness section would measure nothing.
+    port_listening \
+        && bad "negative control: something is ALREADY listening on :$PORT before anything started" \
+        || ok "negative control: nothing is listening on :$PORT before S62moonraker runs"
     $S62 start > /tmp/s62-start.out 2>&1
     sed 's/^/      /' /tmp/s62-start.out
 
@@ -286,6 +440,24 @@ else
     if moonraker_alive; then
         FIRST_PID=`moonraker_pid`
         ok "moonraker is running after ${waited}s (pid $FIRST_PID)"
+        # And it is the SUPERVISOR that says so, not a file we wrote. s6-svstat
+        # reads $SVCDIR's own supervise/status and answers "s6-supervise not
+        # running" when there is no supervisor behind that exact directory, so
+        # a status beginning with "up" is the supervisor identifying itself by
+        # the service directory it holds.
+        if [ "$S6_REAL" = 1 ]; then
+            st=`$S6/s6-svstat $SVCDIR 2>&1`
+            case "$st" in
+                up*) ok "s6-svstat: $st -- it is s6 that is holding it" ;;
+                *)   bad "moonraker is running but s6 does not have it: $st" ;;
+            esac
+            # No pidfile is written on this path at all, and that is the point:
+            # the supervisor is the handle now. A pidfile appearing here would
+            # mean something still went through start-stop-daemon.
+            [ -f /run/moonraker.pid ] \
+                && bad "a supervised moonraker wrote /run/moonraker.pid -- something still uses start-stop-daemon" \
+                || ok "no /run/moonraker.pid: the supervised path has no pidfile to go stale"
+        fi
     else
         FIRST_PID=""
         bad "moonraker did not start -- last words:"
@@ -295,8 +467,33 @@ else
     # It has to be OUR interpreter running OUR entry point, on the data
     # partition -- not the stock tree on /usr/prog and not something the stock
     # daemon left behind. This is what the old grep could not see.
+    #
+    # WAIT FOR THE EXEC FIRST, and this is a real difference from the pidfile
+    # era rather than a harness detail. start-stop-daemon wrote the pidfile
+    # after the fork, so by the time this case could read a pid the python was
+    # already running. s6-svstat hands over the pid the instant s6 FORKS the
+    # run script, and that script is still a shell for as long as it takes to
+    # source anvil-env.sh, sweep /proc and spawn the readiness prober -- seconds,
+    # on qemu-mipsel. Measured here: the first version of this section read
+    # "/bin/sh ./run moonraker" and reported a moonraker that was not running
+    # under the printer's interpreter, one second before it was.
+    #
+    # So the wait is bounded and its failure is a real failure: a run script
+    # that never execs is a shell holding the pid s6 signals, which is exactly
+    # the bug `exec` is there to prevent -- every `S62moonraker stop` would then
+    # signal a shell while moonraker carried on.
     if moonraker_alive; then
-        CMD=`tr '\0' ' ' < /proc/\`moonraker_pid\`/cmdline 2>/dev/null`
+        w=0
+        while [ $w -lt 60 ]; do
+            CMD=`tr '\0' ' ' < /proc/\`moonraker_pid\`/cmdline 2>/dev/null`
+            case "$CMD" in *"$PY"*) break ;; esac
+            sleep 2
+            w=$((w + 2))
+        done
+        case "$CMD" in
+            *"$PY"*) ok "the run script exec'd the interpreter (${w}s) -- s6 holds moonraker, not a shell" ;;
+            *) bad "after ${w}s the process s6 holds is still '$CMD' -- the run script never exec'd" ;;
+        esac
         case "$CMD" in
             *"$PY"*) ok "it is the printer's own interpreter that is running" ;;
             *) bad "moonraker is running under '$CMD', not $PY" ;;
@@ -345,10 +542,35 @@ else
     fi
     # svc_stop_daemon removes the pidfile because busybox start-stop-daemon
     # does not. A stale one is how `status` came to report a recycled pid as a
-    # running server.
+    # running server. On the supervised path nothing writes it in the first
+    # place, so this is a weaker statement there -- which is why the upgrade
+    # path is proved for real a few lines down.
     [ -f /run/moonraker.pid ] \
         && bad "stop left a stale pidfile -- status would report a recycled PID" \
         || ok "stop cleared the pidfile"
+
+    # THE UPGRADE PATH, which is the one case where a pidfile still matters
+    # under s6. A printer running the pre-phase-5 payload has a
+    # start-stop-daemon'd moonraker alive with its pid in /run/moonraker.pid.
+    # Install this payload and type `S62moonraker restart` rather than
+    # rebooting, and if stop() ignored that file the old server would still be
+    # holding :7125 -- and the supervised copy would then fail to bind, exit,
+    # be respawned, and loop for ever while s6-svstat cheerfully said "up".
+    # A `sleep` stands in for the old server: what is being measured is whether
+    # stop() reaps a pid it did not start, not what that pid was doing.
+    sleep 300 &
+    LEGACY=$!
+    echo $LEGACY > /run/moonraker.pid
+    $S62 stop >/dev/null 2>&1
+    if kill -0 $LEGACY 2>/dev/null; then
+        bad "stop left the pre-s6 moonraker (pid $LEGACY) running -- an upgraded printer would fight itself for :$PORT"
+        kill -9 $LEGACY 2>/dev/null
+    else
+        ok "stop reaped the pre-s6 moonraker named by /run/moonraker.pid (pid $LEGACY)"
+    fi
+    [ -f /run/moonraker.pid ] \
+        && bad "and it left the stale pidfile behind" \
+        || ok "and removed the stale pidfile with it"
 
     $S62 restart > /tmp/s62-restart.out 2>&1
     waited=0
@@ -403,6 +625,17 @@ else
         || cp -f /usr/prog/nginx/conf/nginx.conf $MODDIR/nginx/nginx.conf 2>/dev/null
     $S60N start > /tmp/s60nginx.out 2>&1
     sed 's/^/      /' /tmp/s60nginx.out
+    # nginx is a supervised service too now, so `S60nginx start` returns when
+    # s6 has FORKED it -- before it has parsed its config, bound :80 and
+    # written logs/nginx.pid. Under start-stop-daemon the pidfile was there the
+    # moment start returned; under s6 it is not, and reading it immediately
+    # reported a perfectly healthy nginx as never having come up. Same fork-is-
+    # not-ready gap as the exec wait above, and the same bounded fix.
+    w=0
+    while [ $w -lt 30 ] && ! nginx_alive; do
+        sleep 2
+        w=$((w + 2))
+    done
     if ! nginx_alive; then
         skip "nginx did not come up here -- cannot check the split"
     else
@@ -428,6 +661,24 @@ else
             $S60N status 2>&1 | grep -q 'nginx: running' \
                 && ok "S60nginx still reports itself running" \
                 || bad "S60nginx does not report itself running after moonraker stopped"
+            # AND THE INDEPENDENCE IS NOW TWO s6 SERVICES, not just two scripts.
+            # They share the scandir, the scanner and MOD_WEB, so "stop one" has
+            # a new way to go wrong: `s6-svc -d` against the wrong service
+            # directory, or an S62moonraker stop that reached for the scanner
+            # instead. Asked of s6 itself, which is the only thing that can tell
+            # a service that is down on purpose from one that was never started.
+            if [ "$S6_REAL" = 1 ]; then
+                nst=`$S6/s6-svstat $SCANDIR/nginx 2>&1`
+                mst=`$S6/s6-svstat $SVCDIR 2>&1`
+                case "$nst" in
+                    up*) ok "s6 still has nginx up: $nst" ;;
+                    *)   bad "stopping moonraker took the nginx SERVICE down too: $nst" ;;
+                esac
+                case "$mst" in
+                    down*) ok "and moonraker down: $mst" ;;
+                    *)     bad "moonraker is not down after S62moonraker stop: $mst" ;;
+                esac
+            fi
         fi
         $S60N stop >/dev/null 2>&1
         $S62 stop >/dev/null 2>&1
@@ -450,6 +701,345 @@ if [ -f "$MOONRAKER_MAIN" ]; then
     fi
     mv "$MOONRAKER_MAIN.hidden" "$MOONRAKER_MAIN"
     $S62 stop >/dev/null 2>&1
+fi
+
+# ============================================================================
+# Sections 12 to 16: moonraker AS A SUPERVISED SERVICE.
+#
+# Everything above ran the moonraker that is actually installed, which is what
+# makes it the right place to ask "is this the tree and the interpreter we
+# meant". It is the wrong place to ask about SUPERVISION, for the same reason
+# case-camera.sh wraps mjpg_streamer: the interesting behaviour is a timing
+# relationship -- forked at t=0, listening at t=n, respawned m seconds after a
+# kill -- and the real moonraker's n is "the better part of a minute, if the
+# tree on this replica can serve at all", which measures s6 badly and takes ten
+# minutes doing it.
+#
+# So the ENTRY POINT is stood in for, and nothing else is. The stand-in is a
+# python script at exactly the path the run script names, run by exactly the
+# interpreter the run script chooses, through exactly our shipped run script,
+# our shipped down file, our shipped notification-fd, our shipped
+# init.d/S62moonraker and the real cross-built s6. It waits a controllable
+# number of seconds and then binds :7125 and answers -- which is what a real
+# moonraker does, slowly, while it imports its components. That delay is what
+# makes readiness observable at all.
+#
+# NOT TESTED HERE: that the real Moonraker binds its port promptly. That is a
+# statement about Moonraker, sections 6 to 8 are where the real tree is run,
+# and it is not a claim this change makes.
+if [ "$S6_REAL" != 1 ]; then
+    echo
+    skip "sections 12-16 (supervision, readiness, respawn, MOD_WEB) need the real s6"
+    skip "-- pass sup.tgz=work/.s6-gate.tgz to run them"
+else
+    echo
+    echo "=== 12. readiness gates: -U blocks on LISTENING, not on FORKED ==="
+    $S62 stop >/dev/null 2>&1
+    mv "$MOONRAKER_MAIN" "$MOONRAKER_MAIN.real"
+    cat > "$MOONRAKER_MAIN" <<'EOSTANDIN'
+# Stand-in moonraker. Sleeps /tmp/mr-delay seconds -- standing in for the
+# component imports a real moonraker spends its startup on -- and then binds
+# :7125 and answers, which is the condition our run script probes for
+# readiness. The -d argument the run script passes is accepted and ignored:
+# what is under test is our service definition and s6's behaviour, not
+# moonraker's config parsing.
+import sys, time
+try:
+    delay = int(open('/tmp/mr-delay').read().strip())
+except Exception:
+    delay = 0
+sys.stderr.write('standin: argv=%r, sleeping %ds before binding\n'
+                 % (sys.argv, delay))
+sys.stderr.flush()
+time.sleep(delay)
+import socketserver
+from http.server import BaseHTTPRequestHandler
+
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b'{"result": {"klippy_state": "ready"}}'
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a):
+        pass
+
+socketserver.TCPServer.allow_reuse_address = True
+socketserver.TCPServer(('0.0.0.0', 7125), H).serve_forever()
+EOSTANDIN
+    # THE DELAY IS 40 SECONDS, AND THAT NUMBER IS MEASURED. It has to be longer
+    # than everything between "T0" and the moment this case can look at the
+    # service -- and on qemu-mipsel that is not instant: `S62moonraker start`
+    # sources two shell libraries, pings the scanner, runs s6-svok and s6-svc
+    # -wu, and each of those is a qemu exec. The first version of this section
+    # used 12 seconds, `start` alone took 13, and the "is it still blocking?"
+    # check ran after the stand-in had already bound the port -- reporting that
+    # readiness had answered "forked" when in fact the measurement window had
+    # closed before it opened. So: a delay with room in it, and an assertion
+    # below that refuses to pass if the window closed anyway.
+    MRDELAY=40
+    echo $MRDELAY > /tmp/mr-delay
+
+    # Three things are measured against the SAME start:
+    #
+    #   * s6 reports the service UP almost immediately -- the process was
+    #     forked, which is all the old pidfile and the old moonraker_check ever
+    #     knew.
+    #   * s6-svwait -U is STILL BLOCKING at that moment.
+    #   * s6-svwait -U returns at about twelve seconds, when :7125 is bound.
+    #
+    # The middle one is the check that cannot be faked: a readiness that
+    # returned on fork would already have returned by then, and the elapsed-time
+    # assertion on its own could be satisfied by an s6-svwait that was slow for
+    # any reason at all.
+    rm -f /tmp/ready.at
+    T0=`date +%s`
+    ( $S6/s6-svwait -U -t 60000 $SVCDIR >/dev/null 2>&1 && date +%s > /tmp/ready.at ) &
+    # NOT `$S62 start | sed`, and this cost a whole run of this case to find.
+    # start() detaches its readiness reporter with svc_detach, and that child
+    # inherits stdout -- which is the POINT on a boot, where the verdict is
+    # meant to arrive in the log later, after the services that started next.
+    # Down a pipe it means something else: `sed` does not see end-of-input
+    # until every writer has closed, so the pipeline sat there for the whole
+    # 40-second readiness wait and `start` appeared to take 43s. Measured here.
+    # A file has no such property; the reporter's lines land in it when they
+    # are written and this shell carries on.
+    $S62 start > /tmp/s62-ready.out 2>&1
+    # However long `start` took, the window is whatever is left of MRDELAY. The
+    # observation is taken immediately and its elapsed time recorded with it, so
+    # that "still blocking" is only ever claimed at a moment when the stand-in
+    # genuinely had not bound yet.
+    OBS=$((`date +%s` - T0))
+    st=`$S6/s6-svstat $SVCDIR 2>&1`
+    if [ $OBS -ge $((MRDELAY - 5)) ]; then
+        bad "S62moonraker start took ${OBS}s, which is not less than the ${MRDELAY}s stand-in delay -- the readiness window closed before it could be measured; raise MRDELAY"
+    else
+        case "$st" in
+            up*)
+                ok "${OBS}s after start s6 reports the service UP: $st"
+                if [ -f /tmp/ready.at ]; then
+                    bad "s6-svwait -U had ALREADY returned while moonraker was still $((MRDELAY - OBS))s from binding -- it is answering 'forked', not 'ready'"
+                else
+                    ok "s6-svwait -U is still blocking although the process is up -- UP IS NOT READY"
+                fi ;;
+            *)
+                bad "the service is not up ${OBS}s after start, so nothing here measures readiness: $st" ;;
+        esac
+        port_listening \
+            && bad ":$PORT is bound ${OBS}s in, so the ${MRDELAY}s stand-in delay did not happen and this section measured nothing" \
+            || ok "and nothing is listening on :$PORT yet, which is why it is not ready"
+    fi
+
+    w=0
+    while [ ! -f /tmp/ready.at ] && [ $w -lt 90 ]; do
+        sleep 1
+        w=$((w + 1))
+    done
+    if [ -f /tmp/ready.at ]; then
+        E=$((`cat /tmp/ready.at` - T0))
+        if [ $E -ge $((MRDELAY - 4)) ] && [ $E -le $((MRDELAY + 40)) ]; then
+            ok "s6-svwait -U returned after ${E}s -- when moonraker bound :$PORT, not when it forked (the delay is ${MRDELAY}s)"
+        else
+            bad "s6-svwait -U returned after ${E}s, which is neither the ~${MRDELAY}s readiness delay nor a timeout"
+        fi
+    else
+        bad "s6-svwait -U never saw a readiness notification (waited ${w}s) -- the notification-fd path is broken"
+    fi
+    # And what S62moonraker itself said, now that its detached reporter has
+    # had its answer. The line is the whole reason the init script waits on
+    # readiness rather than on a pid: it is printed when the API is there.
+    sed 's/^/      /' /tmp/s62-ready.out
+    grep -q "answering on :$PORT" /tmp/s62-ready.out \
+        && ok "S62moonraker's detached reporter said so too: `grep 'answering' /tmp/s62-ready.out | head -1`" \
+        || bad "S62moonraker never reported the API as up: `tail -1 /tmp/s62-ready.out`"
+    # Readiness that is not followed by an API that answers is a bug in what
+    # "ready" was defined to mean, so the claim is checked against the thing a
+    # caller actually does: an HTTP request. ff-startup.py polls this exact
+    # endpoint to learn klippy_state.
+    if wget -q -O - -T 5 "http://127.0.0.1:$PORT/server/info" 2>/dev/null | grep -q klippy; then
+        ok "and http://127.0.0.1:$PORT/server/info answers -- ready meant usable"
+    else
+        bad ":$PORT is bound but /server/info served nothing"
+    fi
+
+    echo
+    echo "=== 13. kill it -- THE point of the migration ==="
+    # SIGKILL, not SIGTERM: SIGTERM is the polite path s6 itself uses and is not
+    # what a crash looks like. Before phase 5 a moonraker that fell over stayed
+    # fallen until somebody noticed the UI was dead and ssh'd in, because a
+    # shell that has returned cannot restart anything.
+    echo 0 > /tmp/mr-delay
+    pid1=`moonraker_pid`
+    if [ -z "$pid1" ]; then
+        bad "no pid to kill -- section 12 left nothing running"
+    else
+        note "killing pid $pid1 with SIGKILL"
+        kill -9 "$pid1" 2>/dev/null
+        w=0
+        pid2=$pid1
+        while [ $w -lt 40 ]; do
+            sleep 1
+            w=$((w + 1))
+            pid2=`moonraker_pid`
+            [ -n "$pid2" ] && [ "$pid2" != "$pid1" ] && break
+        done
+        if [ -n "$pid2" ] && [ "$pid2" != "$pid1" ]; then
+            ok "s6 respawned moonraker after kill -9 (pid $pid1 -> $pid2, ${w}s)"
+        else
+            bad "moonraker was NOT respawned after kill -9 (still '$pid2') -- nothing is supervising it"
+        fi
+        w=0
+        while [ $w -lt 40 ] && ! port_listening; do
+            sleep 1
+            w=$((w + 1))
+        done
+        port_listening \
+            && ok "and the respawned moonraker bound :$PORT again (${w}s)" \
+            || bad "the respawned moonraker is not serving -- see /usr/data/logs/s6.log"
+    fi
+
+    echo
+    echo "=== 14. S62moonraker stop, and STAY stopped ==="
+    # The bug this section exists for: `s6-svc -d` is not "kill the process", it
+    # is "the service is wanted down". A stop implemented as a kill would be
+    # undone by the supervisor a second later, and nobody would notice until
+    # they tried to stop moonraker and could not.
+    $S62 stop 2>&1 | sed 's/^/      /'
+    st=`$S6/s6-svstat $SVCDIR 2>&1`
+    case "$st" in
+        down*) ok "s6-svstat immediately after stop: $st" ;;
+        *)     bad "S62moonraker stop did not bring it down: $st" ;;
+    esac
+    port_listening \
+        && bad ":$PORT is still bound after stop" \
+        || ok ":$PORT stopped answering"
+    $S62 status 2>&1 | grep -q '^moonraker: not running' \
+        && ok "status is honest about it: `$S62 status 2>&1 | head -1`" \
+        || bad "status does not say 'not running' after stop: `$S62 status 2>&1 | head -1`"
+    note "waiting 12s to see whether the supervisor puts it back"
+    sleep 12
+    st=`$S6/s6-svstat $SVCDIR 2>&1`
+    case "$st" in
+        down*) ok "12 seconds later it is STILL down: $st" ;;
+        *)     bad "the supervisor undid the stop: $st" ;;
+    esac
+    port_listening \
+        && bad "something respawned moonraker after stop -- :$PORT is bound again" \
+        || ok "and :$PORT is still free"
+
+    echo
+    echo "=== 15. MOD_WEB=0 means no moonraker ==="
+    # The gate is read AT RUNTIME by init.d/S62moonraker, which is the only
+    # thing that has sourced anvil.conf. The `down` file is the other half: the
+    # scanner never starts moonraker on its own, so "disabled" cannot degrade
+    # into "runs for two seconds on every boot and is then shot".
+    sed -i 's/^MOD_WEB=.*/MOD_WEB=0/' $MODDIR/anvil.conf
+    grep -q '^MOD_WEB=0' $MODDIR/anvil.conf || bad "could not set MOD_WEB=0 in anvil.conf"
+    out=`$S62 start 2>&1`
+    echo "$out" | sed 's/^/      /'
+    echo "$out" | grep -q "MOD_WEB=0" \
+        && ok "S62moonraker start says it is disabled" \
+        || bad "S62moonraker start did not mention MOD_WEB: $out"
+    sleep 6
+    st=`$S6/s6-svstat $SVCDIR 2>&1`
+    case "$st" in
+        down*) ok "and moonraker is still down: $st" ;;
+        *)     bad "MOD_WEB=0 but moonraker is running: $st" ;;
+    esac
+    port_listening \
+        && bad ":$PORT answers with MOD_WEB=0 -- the gate does not gate" \
+        || ok "nothing is listening on :$PORT with MOD_WEB=0"
+    # And back on again in the same session, without reinstalling anything:
+    # the switch is a runtime read of a runtime file, which is exactly why it
+    # lives in the init script rather than in the payload.
+    sed -i 's/^MOD_WEB=.*/MOD_WEB=1/' $MODDIR/anvil.conf
+    $S62 start >/dev/null 2>&1
+    w=0
+    while [ $w -lt 40 ] && ! port_listening; do
+        sleep 1
+        w=$((w + 1))
+    done
+    port_listening \
+        && ok "MOD_WEB=1 after an edit brings it straight back (${w}s)" \
+        || bad "MOD_WEB=1 did not bring moonraker back after ${w}s"
+    $S62 stop >/dev/null 2>&1
+
+    echo
+    echo "=== 16. negative control: the same service, daemonised ==="
+    # Everything from section 12 down rests on the run script exec'ing moonraker
+    # in the FOREGROUND, and "we removed the -b" is precisely the kind of claim
+    # that goes on being true in a comment long after it has stopped being true
+    # in the code. So here is the service somebody would have written by copying
+    # the old start line -- start-stop-daemon -S -b, which forks and returns --
+    # supervised by the same s6, in a scandir of its own so it cannot disturb
+    # anything, running `sleep` so it is not fighting for :7125 either.
+    #
+    # It must CHURN: s6 supervises the process that forked and exited, sees it
+    # die at once, and starts it again, for ever, while an unsupervised child
+    # runs on. Beside it, in the SAME scandir under the SAME scanner, is the
+    # same service written the way ours is -- one `exec` and no backgrounding --
+    # which must sit there stable. The pair is the point: if both looked alike,
+    # the sections above would be measuring nothing.
+    #
+    # HOW CHURN IS MEASURED, and why it is not "the pid changed". A service
+    # being restarted several times a second is DOWN whenever you look at it --
+    # measured here: five samples of `s6-svstat -p` returned -1 every time,
+    # which a naive distinct-pid count reads as "perfectly stable". What
+    # separates the two is the AGE: s6-svstat's "N seconds" is the time since
+    # the service last changed state, so a churning service can never age past
+    # a second or two while a stable one climbs with the wall clock.
+    mkdir -p /tmp/negctl/daemonised /tmp/negctl/foreground
+    cat > /tmp/negctl/daemonised/run <<'EONEG'
+#!/bin/sh
+exec start-stop-daemon -S -b -m -p /tmp/negctl.pid --exec /bin/sleep -- 600
+EONEG
+    cat > /tmp/negctl/foreground/run <<'EOPOS'
+#!/bin/sh
+exec /bin/sleep 600
+EOPOS
+    chmod +x /tmp/negctl/daemonised/run /tmp/negctl/foreground/run
+    $S6/s6-svscan /tmp/negctl >/tmp/negctl.log 2>&1 &
+    sleep 6
+    # The oldest age either service reaches over ~15 seconds of sampling.
+    svc_max_age() {
+        _max=0
+        for _i in 1 2 3 4 5; do
+            _a=`$S6/s6-svstat "$1" 2>/dev/null | sed -n 's/.* \([0-9][0-9]*\) seconds.*/\1/p'`
+            [ -n "$_a" ] && [ "$_a" -gt "$_max" ] 2>/dev/null && _max=$_a
+            sleep 3
+        done
+        echo $_max
+    }
+    NEGAGE=`svc_max_age /tmp/negctl/daemonised`
+    POSAGE=`svc_max_age /tmp/negctl/foreground`
+    if [ "$NEGAGE" -le 5 ]; then
+        ok "negative control: a daemonising service never ages past ${NEGAGE}s -- s6 is respawning it over and over"
+    else
+        bad "negative control: a daemonising service aged to ${NEGAGE}s, i.e. it looked stable -- foregrounding is not what makes the checks above pass"
+    fi
+    if [ "$POSAGE" -gt 5 ]; then
+        ok "and the same service written with a plain exec sits stable (${POSAGE}s) under the same scanner"
+    else
+        bad "even a plain foreground service churned here (${POSAGE}s) -- this scandir proves nothing either way"
+    fi
+    $S6/s6-svc -d /tmp/negctl/daemonised 2>/dev/null
+    $S6/s6-svc -d /tmp/negctl/foreground 2>/dev/null
+    $S6/s6-svscanctl -t /tmp/negctl 2>/dev/null
+    sleep 2
+    kill -9 `cat /tmp/negctl.pid 2>/dev/null` 2>/dev/null
+
+    # ---- put the real tree back and leave nothing running ------------------
+    rm -f "$MOONRAKER_MAIN"
+    mv "$MOONRAKER_MAIN.real" "$MOONRAKER_MAIN"
+    $S62 stop >/dev/null 2>&1
+    $S60N stop >/dev/null 2>&1
+    $S40 stop >/dev/null 2>&1
+    sleep 2
+    LEFT=`ps 2>/dev/null | grep 's6-svscan\|s6-supervise' | grep -v grep | grep -v case`
+    [ -z "$LEFT" ] \
+        && ok "S40s6 stop took the supervisors down with it" \
+        || bad "s6 processes survived: `echo "$LEFT" | tr '\n' ';'`"
 fi
 
 echo
