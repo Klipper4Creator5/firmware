@@ -170,7 +170,14 @@ class Replica:
                 shutil.copy(base_pkg, str(stage / "pkgs" / "base.tgz"))
 
             argv = self.command(case, packages, base_pkg, usb_stick, stage)
-            completed = subprocess.run(argv, capture_output=True, text=True)
+            # errors="replace": a case that cats or heads one of the printer's
+            # MIPS binaries emits bytes that are not UTF-8, and the default
+            # strict decode raised UnicodeDecodeError out of communicate() --
+            # so the harness itself failed, reporting nothing about the case.
+            # A case is free to print whatever it likes; that is the case's
+            # problem to fix, not a reason to lose the whole run's output.
+            completed = subprocess.run(argv, capture_output=True, text=True,
+                                       errors="replace")
             output = (completed.stdout or "") + (completed.stderr or "")
             if on_output and output.strip():
                 on_output(output)
