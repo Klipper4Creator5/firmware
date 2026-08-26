@@ -151,11 +151,69 @@ class _ToolView:
                 'heater': tool.extruder_name,
                 'extruder_stepper': None,
                 'fan': toolchanger.part_fan,
-                # the differences actually applied on a grab
+                # What the per-tool frame applies while this tool is
+                # mounted (upstream's names). Derived, not stored: X/Y are
+                # differences against the base tool, Z is absolute and
+                # already carries z_adjust -- see _derive_offsets.
                 'gcode_x_offset': toolchanger.offset_x[self.index],
                 'gcode_y_offset': toolchanger.offset_y[self.index],
                 'gcode_z_offset': toolchanger.offset_z[self.index],
                 'calibrated': tool.calibrated()}
+
+
+class _ToolTransform:
+    """Per-tool XYZ, applied BELOW Klipper's own G-code offset.
+
+    A move transform sits between gcode_move and the toolhead: move() adds
+    the mounted tool's offsets on the way down, get_position() takes them
+    off on the way back, so G-code coordinates stay tool-independent and
+    M114 keeps reporting the frame the file is written in. Selecting a tool
+    is then one assignment plus reset_last_position() -- no motion, no
+    SET_GCODE_OFFSET, nothing to remember.
+
+    That separation is the point. Klipper's homing_origin is ONE number per
+    axis; folding the tool term into it meant carrying a shadow copy of
+    which part was ours (_z_tool_term) so that a grab could subtract the old
+    and add the new, and it meant SET_GCODE_OFFSET Z=0 -- which the
+    end/cancel block issues, and which is the natural thing for anyone to
+    type -- wiped the tool's ~3.2 mm nozzle-to-station gap along with the
+    babystep. Below the offset, homing_origin is what its name and every UI
+    label already claim it is: the operator's own number, global to all
+    tools.
+
+    The tool INDEX is stored rather than the offsets, so refresh_offsets()
+    reaches the live frame on its own -- which is what lets a per-tool Z
+    tune apply mid-print without a config write.
+    """
+
+    def __init__(self, toolchange):
+        self.toolchange = toolchange
+        self.next_transform = None
+        self.tool = None
+
+    def _offsets(self):
+        tool = self.tool
+        if tool is None:
+            return None
+        return (self.toolchange.offset_x[tool],
+                self.toolchange.offset_y[tool],
+                self.toolchange.offset_z[tool])
+
+    def move(self, newpos, speed):
+        offsets = self._offsets()
+        if offsets is None:
+            return self.next_transform.move(newpos, speed)
+        return self.next_transform.move(
+            [newpos[0] + offsets[0], newpos[1] + offsets[1],
+             newpos[2] + offsets[2]] + list(newpos[3:]), speed)
+
+    def get_position(self):
+        base = self.next_transform.get_position()
+        offsets = self._offsets()
+        if offsets is None:
+            return base
+        return [base[0] - offsets[0], base[1] - offsets[1],
+                base[2] - offsets[2]] + list(base[3:])
 
 
 class FFToolchangeError(Exception):
@@ -209,11 +267,10 @@ class FFToolchange:
                     "%s: Klipper object '%s' already exists (real"
                     " klipper-toolchanger installed?)" % (self.name, oname))
             self.printer.add_object(oname, view)
-        # The tool-derived part of the Z offset we last applied. The remainder
-        # of Klipper's gcode Z offset is the user's babystep, which the app
-        # keeps separately at CommMgr+0x130 and re-adds on every change so a
-        # toolchange does not discard it. Reset on restart, as the app's is.
-        self._z_tool_term = 0.0
+        # Per-tool XYZ lives here, below Klipper's own G-code offset.
+        # Installed at connect, once every transform that registers at
+        # config time is in place -- see _handle_connect.
+        self.gcode_transform = _ToolTransform(self)
 
         # Staging positions. These are code constants in the app, not config.
         self.x_safe = config.getfloat('x_safe', 250.0)
@@ -401,51 +458,15 @@ class FFToolchange:
                    != (self.offset_x, self.offset_y, self.offset_z))
         self.offset_x, self.offset_y, self.offset_z = (derived_x, derived_y,
                                                        derived_z)
+        # The transform reads these lists live, so new numbers are already
+        # in force -- but gcode_move's cached position is not, and a stale
+        # cache is a silent jump on the next move.
+        if changed and self.gcode_transform.next_transform is not None:
+            self.printer.lookup_object('gcode_move').reset_last_position()
         if gcmd is not None:
             gcmd.respond_info("ff_toolchange: offsets %s"
                               % ("updated" if changed else "unchanged"))
         return changed
-
-    def reapply_offsets_after_external_zero(self, gcmd=None):
-        """Re-establish the Z frame after something zeroed the G-code offsets.
-
-        ff_tool_offset probes in RAW machine coordinates: it issues
-        SET_GCODE_OFFSET X=0 Y=0 Z=0 and never puts them back. That leaves two
-        problems. The mounted tool has no offsets, so Z=0 is the eddy frame --
-        about 3.2 mm below the bed -- and a jog to Z0 drives the nozzle into
-        the plate, which is exactly the invariant _derive_offsets promises.
-        And _z_tool_term still holds the term from BEFORE the zeroing, so the
-        next grab computes its babystep against something no longer applied
-        and carries the zeroing forward instead of curing it.
-
-        Reset the remembered term to what is actually applied (nothing), then
-        re-apply the mounted tool's offsets so Z=0 is the bed again. With the
-        term at 0 and the live offset at 0 the recovered babystep is 0, so
-        this applies exactly offset_z[tool] -- the frame a fresh grab
-        would set.
-        """
-        self._z_tool_term = 0.0
-        tool, _reason = self._current_tool_or_none()
-        if tool is None or tool < 0:
-            return False
-        self._apply_tool_diff_offsets(tool)
-        if gcmd is not None:
-            gcmd.respond_info(
-                "ff_toolchange: re-applied T%d's offsets -- Z=0 is the bed"
-                " again (calibration had zeroed them to probe)" % tool)
-        return True
-
-    def uncalibrated_tools(self):
-        return [tool.index for tool in self.tools if not tool.calibrated()]
-
-    def _station_z(self):
-        """station_z from [ff_tool_offset] (TOOL_LOCATE_SENSOR), or None."""
-        offsets = self.printer.lookup_object('ff_tool_offset', None)
-        if offsets is None or offsets.station is None:
-            return None
-        return offsets.station[2]
-
-    # ---------------- plumbing ----------------
 
     def _handle_connect(self):
         """Validate every name we will later look up, all at once.
@@ -456,6 +477,17 @@ class FFToolchange:
         # was not visible to the refresh_offsets() in __init__ -- re-derive
         # now that every object exists, or Z would stay in the relative form.
         self.refresh_offsets()
+        # Insert the per-tool frame under gcode_move. Connect, not config
+        # time, so that everything registering a transform in its own
+        # __init__ (bed_mesh, skew_correction) is already installed and ends
+        # up BELOW us: the tool offset has to shift X/Y before bed_mesh
+        # looks up the mesh Z for that point, or the correction is read off
+        # the wrong part of the bed. force=True is how every transform after
+        # the first registers, and it is silent -- so the resulting chain is
+        # logged at ready rather than assumed.
+        gcode_move = self.printer.lookup_object('gcode_move')
+        self.gcode_transform.next_transform = gcode_move.set_move_transform(
+            self.gcode_transform, force=True)
         missing = []
 
         for name in self.dock_sensors + self.grab_sensors:
@@ -510,7 +542,27 @@ class FFToolchange:
         missing.extend(n for n in names if n not in found)
         return names
 
+    def _log_transform_chain(self):
+        """What actually ended up under gcode_move, in order.
+
+        set_move_transform(force=True) is how every transform after the
+        first registers, and it neither warns nor tells you where you
+        landed. Ours has to sit ABOVE bed_mesh -- the tool offset shifts
+        X/Y, and the mesh Z has to be looked up at the shifted point -- so
+        the order is worth a line in the log rather than a quarter of a
+        millimetre nobody can explain later."""
+        chain, node = [], self.gcode_transform
+        while node is not None and len(chain) < 8:
+            chain.append(type(node).__name__)
+            node = getattr(node, 'next_transform', None)
+        logging.info("ff_toolchange: move transforms: %s", " -> ".join(chain))
+
     def _handle_ready(self):
+        self._log_transform_chain()
+        # The frame after a restart is whatever is on the carriage: klippy
+        # restarts do not drop a tool, and leaving the frame at None would
+        # put Z=0 back at the eddy plane, ~3.2 mm into the plate.
+        self.restore_tool_frame()
         # Mirror the sensors to whatever is on the carriage after a
         # restart (the app re-arms at print start only; arming outside a
         # print is harmless -- _FF_RUNOUT ignores it unless printing).
@@ -829,7 +881,10 @@ class FFToolchange:
 
         with self._snapshot_motion_state():
             self._run('SET_VELOCITY_LIMIT ACCEL=%d' % self.accel_move)
-            self._run('SET_GCODE_OFFSET X=0 Y=0 MOVE=1 MOVE_SPEED=100')
+            # dock_x/dock_y are machine coordinates: the dance has to run
+            # with no tool frame at all. On a failed grab it stays off,
+            # which is the truth -- nothing is mounted.
+            self._set_tool_frame(None)
             self._run('G90')
             self._run('G1 X%.3f F%d' % (self.x_safe, self.fast_feed))
             self._run('G1 Y%.3f' % dock_y)
@@ -895,7 +950,7 @@ class FFToolchange:
             # the restored limit.
             self._run('ACTIVATE_EXTRUDER EXTRUDER=%s'
                       % self._extruder_name(tool))
-            self._apply_tool_diff_offsets(tool)
+            self._set_tool_frame(tool)
             # Tool is on the carriage and verified: its runout / clog
             # sensors become the live ones (the app does this 3 s later
             # from a thread; here the grab moves are already complete).
@@ -938,7 +993,10 @@ class FFToolchange:
 
         with self._snapshot_motion_state():
             self._run('SET_VELOCITY_LIMIT ACCEL=%d' % self.accel_move)
-            self._run('SET_GCODE_OFFSET X=0 Y=0 MOVE=1 MOVE_SPEED=100')
+            # dock_x/dock_y are machine coordinates: the dance has to run
+            # with no tool frame at all. On a failed grab it stays off,
+            # which is the truth -- nothing is mounted.
+            self._set_tool_frame(None)
             self._run('G90')
             # Release approach: X250 then dock Y, once, outside the retry
             # loop. There is NO X280 stage here -- that is grab-only; the
@@ -1047,7 +1105,7 @@ class FFToolchange:
                 # calls are idempotent.
                 self._run('ACTIVATE_EXTRUDER EXTRUDER=%s'
                           % self._extruder_name(tool))
-                self._apply_tool_diff_offsets(tool)
+                self._set_tool_frame(tool)
                 self._arm_runout(tool)
             # No channel to announce. FlashForge's virtual_sdcard tracked one
             # so it could rewrite bare M104/M109 to " T<channel>" and
@@ -1078,49 +1136,52 @@ class FFToolchange:
         gm = self.printer.lookup_object('gcode_move')
         return gm.get_status(self.reactor.monotonic())['homing_origin'].z
 
-    def _apply_tool_diff_offsets(self, tool):
-        """Apply this tool's offsets after a successful grab.
-        Port of CommMgr::setGrabGcodeOffsetMgr(tool, onlyZ=false).
+    def _set_tool_frame(self, tool):
+        """Make `tool` (or None for a bare carriage) the per-tool frame.
 
-        offset_x/offset_y are small tool-to-tool DIFFERENCES against the base
-        tool; offset_z is this tool's ABSOLUTE gap to the bed plane (~+3.2 mm,
-        see _derive_offsets). Unlike the app, which sets that gap once per
-        print (setZOffsetWhenPrint) and carries it across changes, every
-        grab establishes it here -- so the only thing carried is whatever
-        sits on top of it: TOOLCHANGE_SET_PRINT_OFFSET's job terms and the
-        user's live babystep.
+        Replaces CommMgr::setGrabGcodeOffsetMgr's two SET_GCODE_OFFSET
+        commands. The app moved the toolhead as it applied them (MOVE=1);
+        here nothing moves -- the frame is simply reinterpreted, and the
+        restore move that ends every toolchange lands in the new frame. That
+        is both the same net result and one fewer unexpected motion with the
+        carriage at a dock.
 
-            new Z = offset_z[new] + (old Z - offset_z[old])
-                  = [t_new_z - z_station + z_adjust[new]] + job terms
-                    + babystep
+        offset_x/offset_y are tool-to-tool DIFFERENCES against the base
+        tool; offset_z is this tool's ABSOLUTE gap to the bed plane
+        (~+3.2 mm, see _derive_offsets). Applying the gap on every grab --
+        rather than once per print, as the app's setZOffsetWhenPrint does --
+        is what makes Z=0 the bed plane whenever a tool is mounted, so a
+        manual move after T<n> cannot drive the nozzle into the plate.
 
-        The app sends two commands, different move speeds, 3-decimal
-        formatting (BaseFunction::float_to_string(v, 3)):
+        reset_last_position() is not optional: gcode_move caches
+        last_position from position_with_transform(), and that cache is
+        stale the instant the frame changes."""
+        self.gcode_transform.tool = tool
+        # Before connect the transform is not in the chain yet and
+        # reset_last_position() would walk into a None next_transform.
+        # refresh_offsets() runs from __init__, so this is reachable.
+        if self.gcode_transform.next_transform is not None:
+            self.printer.lookup_object('gcode_move').reset_last_position()
 
-            SET_GCODE_OFFSET X=<x> Y=<y> MOVE=1 MOVE_SPEED=100
-            SET_GCODE_OFFSET Z=<z> MOVE=1 MOVE_SPEED=40
+    def suspend_tool_frame(self):
+        """Drop to raw machine coordinates -- the offset calibration probes
+        there. Returns the tool that was in force, for the caller to log;
+        restore_tool_frame() puts back whatever is actually mounted, which
+        after a calibration is the honest answer rather than this one."""
+        previous = self.gcode_transform.tool
+        self._set_tool_frame(None)
+        return previous
 
-        Both real toolchange paths (changeExtruderChannel @0x7979b8 and
-        serialPrint @0x79d2c8) pass true for the argument that gates this
-        call, so it happens on every change -- it is not optional.
-
-        The Z carry: the app adds CommMgr+0x130 (set by setZOffsetWhenPrint)
-        to the tool diff on every grab. During a print that member holds the
-        ABSOLUTE print-start offset plus any live Z tuning from the UI --
-        not just a babystep. Klipper folds all of that into the one gcode Z
-        offset, so we recover the aggregate as (current offset - the tool
-        term we last applied); after TOOLCHANGE_SET_PRINT_OFFSET this is
-        exactly m_zOffset, and repeated toolchanges neither lose nor double
-        it. Outside a print the recovered aggregate is ~0 and this reduces
-        to plain tool diffs in the raw frame, which is what the stock app's
-        calibration flows expect."""
-        babystep = self._gcode_z_offset() - self._z_tool_term
-        z_term = self.offset_z[tool]
-        self._run('SET_GCODE_OFFSET X=%.3f Y=%.3f MOVE=1 MOVE_SPEED=100'
-                  % (self.offset_x[tool], self.offset_y[tool]))
-        self._run('SET_GCODE_OFFSET Z=%.3f MOVE=1 MOVE_SPEED=40'
-                  % (z_term + babystep))
-        self._z_tool_term = z_term
+    def restore_tool_frame(self, gcmd=None):
+        """Re-establish the frame of the mounted tool, if any."""
+        tool, _reason = self._current_tool_or_none()
+        if tool is None or tool < 0:
+            self._set_tool_frame(None)
+            return False
+        self._set_tool_frame(tool)
+        if gcmd is not None:
+            gcmd.respond_info("ff_toolchange: T%d offsets re-applied" % tool)
+        return True
 
     cmd_TOOLCHANGE_SET_PRINT_OFFSET_help = (
         "Apply the app's absolute print-start Z offset "
@@ -1147,13 +1208,20 @@ class FFToolchange:
         t*_offset_z / z_station_pos = nozzle-touch vs eddy-touch calibration
         against the fixed under-bed sensor. Derivation: docs/notes/40-offsets.md.
 
-        The gap term (nozzle_z - station_z + z_adjust) is already the grab
-        offset (offset_z, applied by every T<n>); this command re-asserts
-        it and
-        adds the job terms, which the next _apply_tool_diff_offsets then
-        carries as "babystep" -- the app re-adds m_zOffset on every grab.
-        END/CANCEL must reset with SET_GCODE_OFFSET Z=0 MOVE=1 (app exit
-        block @0x7a25f0)."""
+        Only the JOB terms are set here. The first line of the app's sum,
+        the gap (nozzle_z - station_z + z_adjust), is the per-tool frame --
+        already applied by every T<n> and carried by the transform, so
+        adding it again would double it. What is left is global to the job
+        rather than to a tool, which is exactly the layer homing_origin is:
+
+            SET_GCODE_OFFSET Z = temp + bed + layer   (+ the babystep,
+                                                       which stays put)
+
+        The X/Y this used to write are gone with the gap, for the same
+        reason. END/CANCEL still resets with SET_GCODE_OFFSET Z=0 MOVE=1
+        (app exit block @0x7a25f0), and that now clears the job terms
+        WITHOUT taking the tool calibration with them -- which is what it
+        did while all of this shared one number."""
         nozzle = gcmd.get_float('NOZZLE')
         bed = gcmd.get_float('BED', 0.)
         layer = gcmd.get_float('LAYER', 0.)
@@ -1175,26 +1243,20 @@ class FFToolchange:
         nozzles = [tool_object.nozzle or (0.0, 0.0, 0.0)
                    for tool_object in self.tools]
         z_adjusts = [tool_object.z_adjust for tool_object in self.tools]
-        z = nozzles[tool][2] - z_station + (nozzle - 120.0) * temp_coeff
+        z = (nozzle - 120.0) * temp_coeff
         if bed >= 100.0:
             z += 0.08
         int_layer = int(layer * 100.0)
         if 0 < int_layer <= 10:
             z += -0.06
-        z += z_adjusts[tool]
         gcmd.respond_info(
-            "print Z offset for T%d: %.3f (gap %.3f, temp %+.3f,"
-            " bed %+.2f, layer %+.2f, user %+.3f)"
-            % (tool, z, nozzles[tool][2] - z_station,
-               (nozzle - 120.0) * temp_coeff,
+            "print Z offset for T%d: %.3f (temp %+.3f, bed %+.2f,"
+            " layer %+.2f); T%d frame carries gap %+.3f, z_adjust %+.3f"
+            % (tool, z, (nozzle - 120.0) * temp_coeff,
                0.08 if bed >= 100.0 else 0.0,
-               -0.06 if 0 < int_layer <= 10 else 0.0, z_adjusts[tool]))
-        self._run('SET_GCODE_OFFSET X=%.3f Y=%.3f Z=%.3f'
-                  ' MOVE=1 MOVE_SPEED=100'
-                  % (self.offset_x[tool], self.offset_y[tool], z))
-        # offset_z[tool] is the gap + z_adjust part of z (station_z and the
-        # calibration were checked above); the remainder is the job terms.
-        self._z_tool_term = self.offset_z[tool]
+               -0.06 if 0 < int_layer <= 10 else 0.0,
+               tool, nozzles[tool][2] - z_station, z_adjusts[tool]))
+        self._run('SET_GCODE_OFFSET Z=%.3f MOVE=1 MOVE_SPEED=40' % z)
 
     cmd_TOOL_Z_ADJUST_help = (
         "Per-tool persistent Z correction: TOOL_Z_ADJUST TOOL=<0..3> "
@@ -1204,10 +1266,14 @@ class FFToolchange:
         """The per-tool counterpart of SET_GCODE_OFFSET Z_ADJUST.
 
         Klipper's babystep is one global number; this edits [ff_tool n]
-        z_adjust instead, which _apply_tool_diff_offsets adds on every grab of
-        that tool only. If the tool is mounted right now the new value is
-        applied immediately through the same path (so the live babystep is
-        preserved), and the change is staged for SAVE_CONFIG."""
+        z_adjust instead, which the per-tool frame carries for that tool
+        alone. The transform reads the derived offsets live, so
+        refresh_offsets() is the whole application: if the tool is mounted
+        the new value is in force before this returns, and if it is not, it
+        is in force on the next grab. Either way the global offset -- the
+        operator's babystep, the job terms -- is untouched.
+
+        The change is staged for SAVE_CONFIG."""
         tool = gcmd.get_int('TOOL', minval=0, maxval=EXTRUDER_COUNT - 1)
         adjust = gcmd.get_float('ADJUST', None)
         value = gcmd.get_float('VALUE', None)
@@ -1219,19 +1285,12 @@ class FFToolchange:
         updated = value if value is not None else previous + adjust
         tool_object.set_z_adjust(updated)
         self.refresh_offsets()
-        applied = ""
-        try:
-            self._wait_moves()
-            current, _reason = self._current_tool_or_none()
-        except FFToolchangeError:
-            current = None
-        if current == tool:
-            self._apply_tool_diff_offsets(tool)
-            applied = ", applied now"
+        live = ", in force now" if self.gcode_transform.tool == tool \
+            else ", applies on the next grab of T%d" % tool
         gcmd.respond_info(
             "T%d z_adjust %.3f -> %.3f%s. The SAVE_CONFIG command will update"
             " the printer config file and restart the printer."
-            % (tool, previous, updated, applied))
+            % (tool, previous, updated, live))
 
     # ---------------- klipper-toolchanger command aliases ----------------
 

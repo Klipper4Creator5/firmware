@@ -222,8 +222,8 @@ Before moving anything:
 
   ```gcode
   G1 Z10 F1200
-  TOOLCHANGE_PARK
-  SET_GCODE_OFFSET X=0 Y=0 Z=0 MOVE=1
+  TOOLCHANGE_PARK          ; parking drops the per-tool frame
+  SET_GCODE_OFFSET Z=0 MOVE=1   ; and this clears the job terms
   ```
 
 A touchscreen recalibration no longer affects this module. Recalibrate from

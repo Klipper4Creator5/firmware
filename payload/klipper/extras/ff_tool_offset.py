@@ -232,6 +232,9 @@ class FFToolOffset:
                                " be set together" % self.name)
         self.station = None if station_x is None else station
 
+        # Klipper's own G-code offset, held while probing runs in raw
+        # machine coordinates. None when we are not in the raw frame.
+        self._saved_gcode_offset = None
         self.estop = {}
         self.tools = []
         for i in range(EXTRUDER_COUNT):
@@ -269,6 +272,40 @@ class FFToolOffset:
 
     def _run(self, script):
         self.gcode.run_script_from_command(script)
+
+    def _enter_raw_frame(self):
+        """Probe in raw machine coordinates.
+
+        There are TWO frames to get out of the way, not one. Klipper's own
+        G-code offset (the operator's babystep, plus whatever
+        TOOLCHANGE_SET_PRINT_OFFSET left) is zeroed here and put back by
+        _leave_raw_frame -- it used to be zeroed and simply abandoned, which
+        threw away the babystep on every calibration. The per-tool frame
+        lives under it in [ff_toolchange]'s move transform and has to be
+        suspended separately; zeroing the G-code offset does NOT reach it,
+        and a calibration run with the previous tool's offsets still applied
+        measures numbers that look entirely plausible and are wrong by that
+        tool's offsets."""
+        if self._saved_gcode_offset is None:
+            gcode_move = self.printer.lookup_object('gcode_move')
+            origin = gcode_move.get_status(
+                self.reactor.monotonic())['homing_origin']
+            self._saved_gcode_offset = (origin.x, origin.y, origin.z)
+        self._run('SET_GCODE_OFFSET X=0 Y=0 Z=0 MOVE=0 MOVE_SPEED=600')
+        if self.toolchange is not None \
+           and hasattr(self.toolchange, 'suspend_tool_frame'):
+            self.toolchange.suspend_tool_frame()
+
+    def _leave_raw_frame(self, gcmd=None):
+        """Put both frames back: the operator's G-code offset as it was,
+        and the per-tool frame of whatever is actually mounted now."""
+        saved, self._saved_gcode_offset = self._saved_gcode_offset, None
+        if saved is not None:
+            self._run('SET_GCODE_OFFSET X=%.4f Y=%.4f Z=%.4f MOVE=0'
+                      % saved)
+        if self.toolchange is not None \
+           and hasattr(self.toolchange, 'restore_tool_frame'):
+            self.toolchange.restore_tool_frame(gcmd)
 
     def _wait_moves(self):
         self.printer.lookup_object('toolhead').wait_moves()
@@ -481,7 +518,7 @@ class FFToolOffset:
         cylinder_x, cylinder_y = self._cylinder()
         expected_z = self.station[2] if self.station is not None else None
         z_target = self._z_target_for(self.z_target, expected_z)
-        self._run('SET_GCODE_OFFSET X=0 Y=0 Z=0 MOVE=0 MOVE_SPEED=600')
+        self._enter_raw_frame()
         self._run('M400')
         self._run('G1 Z%.3f F%d' % (self.z_start, FEED_PASS1))
         self._run('G1 X%.3f Y%.3f F%d'
@@ -553,9 +590,9 @@ class FFToolOffset:
         both Z probes to expected_z - z_margin."""
         z_target_pass1 = self._z_target_for(self.z_target, expected_z)
         z_target_pass2 = self._z_target_for(z_target_2, expected_z)
-        # moveCylinderPos: zero the G-code offset (the grab applied this
-        # tool's SET_GCODE_OFFSET), lift, travel, Z probe.
-        self._run('SET_GCODE_OFFSET X=0 Y=0 Z=0 MOVE=0 MOVE_SPEED=600')
+        # moveCylinderPos: out of both frames (the grab put this tool's
+        # offsets in the transform), lift, travel, Z probe.
+        self._enter_raw_frame()
         self._run('M400')
         self._run('G1 Z%.3f F%d' % (self.z_start, FEED_PASS1))
         self._run('G1 X%.3f Y%.3f F%d' % (x0, y0, FEED_POSITION))
@@ -631,10 +668,8 @@ class FFToolOffset:
         configfile.set(self.name, 'station_z', "%.6f" % z)
 
     def _restore_offset_frame(self, gcmd):
-        """Undo _two_pass's SET_GCODE_OFFSET zeroing (see ff_toolchange)."""
-        if self.toolchange is not None \
-           and hasattr(self.toolchange, 'reapply_offsets_after_external_zero'):
-            self.toolchange.reapply_offsets_after_external_zero(gcmd)
+        """Undo _enter_raw_frame: both frames back as they were."""
+        self._leave_raw_frame(gcmd)
 
     def _refresh_toolchange(self, gcmd):
         if self.toolchange is not None \
@@ -667,61 +702,69 @@ class FFToolOffset:
                 " is the command that wants an empty carriage.)"
                 % (self.name, EXTRUDER_COUNT - 1))
         save = gcmd.get_int('SAVE', 1, minval=0, maxval=1)
-        self._check_homed(gcmd)
-        # The plate check has to measure an EMPTY carriage, so it parks the
-        # tool we were asked about. Pick it straight back up.
-        if self._run_plate_check(gcmd):
-            self._run('T%d' % tool)
-            self._wait_moves()
-        cylinder_x, cylinder_y = self._cylinder()
-        x0, y0 = cylinder_x - self.nozzle_x_shift, cylinder_y
-        gcmd.respond_info("T%d: offset calibration, start %.3f, %.3f"
-                          % (tool, x0, y0))
+        try:
+            self._check_homed(gcmd)
+            # The plate check has to measure an EMPTY carriage, so it parks the
+            # tool we were asked about. Pick it straight back up.
+            if self._run_plate_check(gcmd):
+                self._run('T%d' % tool)
+                self._wait_moves()
+            cylinder_x, cylinder_y = self._cylinder()
+            x0, y0 = cylinder_x - self.nozzle_x_shift, cylinder_y
+            gcmd.respond_info("T%d: offset calibration, start %.3f, %.3f"
+                              % (tool, x0, y0))
 
-        tool_object = self.tools[tool]
-        expected_z = (tool_object.nozzle[2]
-                      if tool_object.calibrated() else None)
-        if expected_z is None and self.station is not None:
-            # nozzle fires ~3.2 mm above the empty-carriage trigger
-            expected_z = self.station[2] + 0.5 * (self.gap_min + self.gap_max)
+            tool_object = self.tools[tool]
+            expected_z = (tool_object.nozzle[2]
+                          if tool_object.calibrated() else None)
+            if expected_z is None and self.station is not None:
+                # nozzle fires ~3.2 mm above the empty-carriage trigger
+                expected_z = self.station[2] + 0.5 * (self.gap_min
+                                                      + self.gap_max)
 
-        def body():
-            return self._two_pass(gcmd, x0, y0, self.z_target, expected_z)
-        center_x, center_y, z_trigger = self._with_accel_guard(gcmd, body)
-        if self.station is not None and (self.gap_min or self.gap_max):
-            gap = z_trigger - self.station[2]
-            if gap < self.gap_min or gap > self.gap_max:
-                raise gcmd.error(
-                    "%s: T%d nozzle_z %.3f is %.3f above station_z %.3f,"
-                    " outside gap_min/gap_max [%.2f, %.2f] -- probe"
-                    " mis-trigger suspected, nothing saved"
-                    % (self.name, tool, z_trigger, gap, self.station[2],
-                       self.gap_min, self.gap_max))
-        results = {tool: (center_x, center_y, z_trigger)}
-        self.last['t%d' % tool] = (center_x, center_y, z_trigger)
-        gcmd.respond_info("T%d: offset = (%.4f, %.4f, %.4f)"
-                          % (tool, center_x, center_y, z_trigger))
-        # Staged only once the guards above have passed, so a failed run
-        # really does leave nothing saved -- which is what they promise.
-        if save:
-            tool_object.set_nozzle(center_x, center_y, z_trigger)
+            def body():
+                return self._two_pass(gcmd, x0, y0, self.z_target, expected_z)
+            center_x, center_y, z_trigger = self._with_accel_guard(gcmd, body)
+            if self.station is not None and (self.gap_min or self.gap_max):
+                gap = z_trigger - self.station[2]
+                if gap < self.gap_min or gap > self.gap_max:
+                    raise gcmd.error(
+                        "%s: T%d nozzle_z %.3f is %.3f above station_z %.3f,"
+                        " outside gap_min/gap_max [%.2f, %.2f] -- probe"
+                        " mis-trigger suspected, nothing saved"
+                        % (self.name, tool, z_trigger, gap, self.station[2],
+                           self.gap_min, self.gap_max))
+            results = {tool: (center_x, center_y, z_trigger)}
+            self.last['t%d' % tool] = (center_x, center_y, z_trigger)
+            gcmd.respond_info("T%d: offset = (%.4f, %.4f, %.4f)"
+                              % (tool, center_x, center_y, z_trigger))
+            # Staged only once the guards above have passed, so a failed run
+            # really does leave nothing saved -- which is what they promise.
+            if save:
+                tool_object.set_nozzle(center_x, center_y, z_trigger)
 
-        # the app's exit block: heater off for the tool, Z15
-        self._run('M104 S0 T%d' % tool)
-        self._run('G1 Z%.3f F%d' % (self.z_final, FEED_PASS1))
-        self._run('M400')
-        if save:
-            self._refresh_toolchange(gcmd)
-            gcmd.respond_info(
-                "The SAVE_CONFIG command will update the printer config file"
-                " with the new nozzle position and restart the printer.")
-        # Probing zeroed the G-code offsets to work in raw coordinates. Put
-        # the frame back before handing control to the operator: the tool
-        # stays on the carriage, and leaving Z=0 at the eddy plane means the
-        # next jog to Z0 -- or the next toolchange, which would carry the
-        # zeroing -- puts the nozzle into the plate.
-        self._restore_offset_frame(gcmd)
-        self._report_diffs(gcmd, results)
+            # the app's exit block: heater off for the tool, Z15
+            self._run('M104 S0 T%d' % tool)
+            self._run('G1 Z%.3f F%d' % (self.z_final, FEED_PASS1))
+            self._run('M400')
+            if save:
+                self._refresh_toolchange(gcmd)
+                gcmd.respond_info(
+                    "The SAVE_CONFIG command will update the printer"
+                    " config file with the new nozzle position and restart"
+                    " the printer.")
+            # Probing zeroed the G-code offsets to work in raw coordinates. Put
+            # the frame back before handing control to the operator: the
+            # tool stays on the carriage, and leaving Z=0 at the eddy plane
+            # means the next jog to Z0 puts the nozzle into the plate.
+            self._restore_offset_frame(gcmd)
+            self._report_diffs(gcmd, results)
+        finally:
+            # Both frames go back even when a probe raised: leaving the
+            # G-code offset zeroed and the tool frame off puts Z=0 at the
+            # eddy plane, ~3.2 mm into the plate, for whatever the
+            # operator jogs next.
+            self._leave_raw_frame()
 
     cmd_TOOL_LOCATE_SENSOR_help = (
         "Locate the station with an EMPTY carriage (station_x/y/z) "
@@ -732,46 +775,55 @@ class FFToolOffset:
     def cmd_TOOL_LOCATE_SENSOR(self, gcmd):
         park = gcmd.get_int('PARK', 1, minval=0, maxval=1)
         save = gcmd.get_int('SAVE', 1, minval=0, maxval=1)
-        self._check_homed(gcmd)
-        if self.toolchange is not None:
-            if park:
-                # releaseFourExtruder: the carriage must be empty for TS.
-                self._run('TOOLCHANGE_PARK')
-                self._wait_moves()
-            carriage = self.toolchange.get_status(self.reactor.monotonic())
-            if carriage.get('current_tool', -1) != -1 \
-               or not carriage.get('state_ok'):
-                raise gcmd.error(
-                    "%s: carriage is not verifiably empty (%s) -- the station"
-                    " pass must run with no tool mounted"
-                    % (self.name, carriage.get('state_reason')))
-        elif park:
-            raise gcmd.error("%s: [ff_toolchange] not loaded -- park the tool"
-                             " by hand and pass PARK=0." % self.name)
-        self._run_plate_check(gcmd)
-        cylinder_x, cylinder_y = self._cylinder()
-        gcmd.respond_info("station calibration, start %.3f, %.3f"
-                          % (cylinder_x, cylinder_y))
+        try:
+            self._check_homed(gcmd)
+            if self.toolchange is not None:
+                if park:
+                    # releaseFourExtruder: the carriage must be empty for TS.
+                    self._run('TOOLCHANGE_PARK')
+                    self._wait_moves()
+                carriage = self.toolchange.get_status(self.reactor.monotonic())
+                if carriage.get('current_tool', -1) != -1 \
+                   or not carriage.get('state_ok'):
+                    raise gcmd.error(
+                        "%s: carriage is not verifiably empty (%s) -- the"
+                        " station pass must run with no tool mounted"
+                        % (self.name, carriage.get('state_reason')))
+            elif park:
+                raise gcmd.error("%s: [ff_toolchange] not loaded -- park"
+                                 " the tool by hand and pass PARK=0."
+                                 % self.name)
+            self._run_plate_check(gcmd)
+            cylinder_x, cylinder_y = self._cylinder()
+            gcmd.respond_info("station calibration, start %.3f, %.3f"
+                              % (cylinder_x, cylinder_y))
 
-        expected_z = self.station[2] if self.station is not None else None
+            expected_z = self.station[2] if self.station is not None else None
 
-        def body():
-            return self._two_pass(gcmd, cylinder_x, cylinder_y,
-                                  self.z_target_station_2, expected_z)
-        center_x, center_y, z_trigger = self._with_accel_guard(gcmd, body)
-        self.last['station'] = (center_x, center_y, z_trigger)
-        gcmd.respond_info("station = (%.4f, %.4f, %.4f)"
-                          % (center_x, center_y, z_trigger))
-        if save:
-            self.set_station(center_x, center_y, z_trigger)
-            self._refresh_toolchange(gcmd)
-            gcmd.respond_info(
-                "The SAVE_CONFIG command will update the printer config file"
-                " with the new station position and restart the printer.")
-        # Runs with an empty carriage, so there is usually no tool to re-apply
-        # -- but the probing zeroed the offsets all the same, and the stale
-        # _z_tool_term it leaves behind would be carried into the next grab.
-        self._restore_offset_frame(gcmd)
+            def body():
+                return self._two_pass(gcmd, cylinder_x, cylinder_y,
+                                      self.z_target_station_2, expected_z)
+            center_x, center_y, z_trigger = self._with_accel_guard(gcmd, body)
+            self.last['station'] = (center_x, center_y, z_trigger)
+            gcmd.respond_info("station = (%.4f, %.4f, %.4f)"
+                              % (center_x, center_y, z_trigger))
+            if save:
+                self.set_station(center_x, center_y, z_trigger)
+                self._refresh_toolchange(gcmd)
+                gcmd.respond_info(
+                    "The SAVE_CONFIG command will update the printer"
+                    " config file with the new station position and restart"
+                    " the printer.")
+            # Usually nothing to re-apply -- this runs with an empty
+            # carriage -- but the probing zeroed the operator's G-code
+            # offset all the same, and that has to go back.
+            self._restore_offset_frame(gcmd)
+        finally:
+            # Both frames go back even when a probe raised: leaving the
+            # G-code offset zeroed and the tool frame off puts Z=0 at the
+            # eddy plane, ~3.2 mm into the plate, for whatever the
+            # operator jogs next.
+            self._leave_raw_frame()
 
     cmd_TOOL_OFFSET_STATUS_help = "Show the configured nozzle/station positions"
 

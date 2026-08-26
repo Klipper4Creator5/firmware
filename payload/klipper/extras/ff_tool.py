@@ -21,7 +21,7 @@
 #                              every grab (the app's zoffset.json). Klipper's
 #                              own babystep (SET_GCODE_OFFSET Z_ADJUST) is
 #                              global, so this is the only per-tool one.
-#                              Set with TOOL_Z_ADJUST, persisted by SAVE_CONFIG.
+#                              Set with TOOL_Z_ADJUST.
 #
 # Offsets applied on a grab (ff_toolchange):
 #   X = nozzle_x[tool] - nozzle_x[base]        DIFFERENCE against a base tool
