@@ -195,12 +195,23 @@ class FFToolOffset:
         # None = restore the accel limit that was live when we started
         # (same policy as ff_toolchange); set to force the app's 20000.
         self.accel_restore = config.getfloat('accel_restore', None)
-        # Residual guard. The app has NONE -- any four numbers are accepted.
+        # Residual guard. The app has NONE -- any four numbers are accepted,
+        # so every abort here is one the stock firmware would not have had.
         # A point off the fitted circle is what a mis-trigger looks like;
         # abort without saving. With four symmetric points one bad point of
         # error e shows up as a residual of only ~e/4 while moving the centre
-        # by e/2, so 0.05 here catches centre errors of ~0.1 mm. 0 disables.
-        self.max_residual = config.getfloat('max_residual', 0.05, minval=0.)
+        # by e/2, so this catches centre errors of about 2x its value.
+        #
+        # 0.5 (centre error ~1 mm) is deliberately loose: it is a crash and
+        # gross-mis-trigger guard, not a quality gate. 0.05 was the first
+        # default and rejected real machines whose scatter was merely
+        # mediocre -- a 0.068 residual is a first layer someone can tune
+        # out, where the mm-scale mis-trigger this exists to catch is a
+        # nozzle driven into the plate. Tighten it if you would rather be
+        # told about a sloppy pass than discover it in a two-colour part;
+        # the numbers to judge it by are printed either way (max residual,
+        # radius, and the four points themselves). 0 disables.
+        self.max_residual = config.getfloat('max_residual', 0.5, minval=0.)
         # Sanity window for the fitted bore radius (0 disables).
         self.min_radius = config.getfloat('min_radius', 0.0, minval=0.)
         self.max_radius = config.getfloat('max_radius', 0.0, minval=0.)

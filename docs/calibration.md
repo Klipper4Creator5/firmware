@@ -262,7 +262,7 @@ Nothing is saved in any of these.
 
 | Message | What happened |
 |---|---|
-| `fit residual <r> exceeds max_residual 0.05 -- a probe mis-triggered` | One of the four points is off the fitted circle. With four symmetric points, one bad point of error *e* shows up as a residual of only ~*e*/4 while moving the centre by *e*/2 — so this threshold catches centre errors of about 0.1 mm. |
+| `fit residual <r> exceeds max_residual 0.50 -- a probe mis-triggered` | One of the four points is off the fitted circle. With four symmetric points, one bad point of error *e* shows up as a residual of only ~*e*/4 while moving the centre by *e*/2 — so the default catches centre errors of about 1 mm. It is a mis-trigger guard, not a quality gate: a residual well under it but above a few hundredths is a sloppy pass, not a rejected one, and the `max residual` line is printed on every pass so you can judge it. Set `max_residual: 0.05` in `[ff_tool_offset]` if you want the tight one back. |
 | `circle fit failed: circle fit is singular (points collinear?)` | The four points do not describe a circle at all. Usually two probes returned the same value. |
 | `fitted radius <r> below min_radius` / `above max_radius` | Off by default; set them if you want a hard window on the bore size. |
 | `T<n> nozzle_z <z> is <g> above station_z <s>, outside gap_min/gap_max [1.50, 5.00] -- probe mis-trigger suspected` | The last guard before a bad `nozzle_z` becomes a first layer driven into the plate. Checked only once `station_z` exists — another reason to run `TOOL_LOCATE_SENSOR` first. |

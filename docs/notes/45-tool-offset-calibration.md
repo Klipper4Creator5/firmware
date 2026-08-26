@@ -84,9 +84,12 @@ since 2026-08-25 the first-boot import is driven from outside klippy by
   is −3 (the app's station pass-2 value) not −5; once a trigger height is known (calibrated
   `nozzle_z`/`station_z`, or `station_z + ~3.25` for a first tool pass) the Z probe stops
   `z_margin` (2 mm) below it.
-- Guards on by default: `max_residual 0.05` (4 symmetric points dilute one bad point's error to
-  ~1/4 in the residual while moving the centre by half), `gap_min/gap_max 1.5..5 mm` for
-  `nozzle_z − station_z` (3.19 here). A failed guard saves nothing.
+- Guards on by default: `max_residual 0.5` (4 symmetric points dilute one bad point's error to
+  ~1/4 in the residual while moving the centre by half, so this catches centre errors of ~1 mm),
+  `gap_min/gap_max 1.5..5 mm` for `nozzle_z − station_z` (3.19 here). A failed guard saves
+  nothing. `max_residual` is a gross-mis-trigger guard, not a quality gate: it started at 0.05
+  and rejected machines whose scatter was only mediocre, which the app — having no residual
+  check at all — would have accepted.
 - `TOOL_Z_ADJUST TOOL=n ADJUST=±mm|VALUE=mm [SAVE=1]` is the per-tool babystep (Klipper's is
   global). Live at once; staged for SAVE_CONFIG only on SAVE=1.
 
