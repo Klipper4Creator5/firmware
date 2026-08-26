@@ -136,7 +136,12 @@ LOGFILE = '/USR/DATA/LOGS/ANVIL-BOOT.LOG'
 
 
 def log(msg):
-    sys.stdout.write('ff-import: %s\n' % msg)
+    # The boot log is where somebody looks when the printer did not come up,
+    # so the prefix has to be the name of the thing they would then go and
+    # read. This said 'ff-import' for as long as that was the whole job; it
+    # now waits for the boards and owns klipper on every boot, and a line
+    # saying 'ff-import: starting klipper' sends the reader to the wrong file.
+    sys.stdout.write('ff-startup: %s\n' % msg)
     sys.stdout.flush()
 
 

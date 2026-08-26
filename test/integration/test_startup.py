@@ -335,20 +335,24 @@ def test_klipper_that_never_comes_back_leaves_no_stamp(tmp_path, stack):
     assert not os.path.exists(a.stamp)
 
 
-@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
-                    reason="root writes through a read-only directory")
 def test_an_unwritable_stamp_still_reports_success(tmp_path, stack, capsys):
     # The values ARE saved; only the bookkeeping failed. Re-importing next
     # boot is harmless (already-calibrated short-circuits it), so this must
     # not be reported to the wrapper as a failed migration.
-    a = args(tmp_path, stamp=str(tmp_path / "nodir" / "x" / "stamp"))
-    os.makedirs(os.path.dirname(os.path.dirname(a.stamp)))
-    os.chmod(os.path.dirname(os.path.dirname(a.stamp)), 0o500)
-    try:
-        assert imp.run(a) == 0
-        assert "WARNING" in capsys.readouterr().out
-    finally:
-        os.chmod(os.path.dirname(os.path.dirname(a.stamp)), 0o700)
+    #
+    # The stamp is put UNDER A REGULAR FILE rather than under a chmod 0o500
+    # directory. Both make the write fail, but only this one fails for
+    # everybody: a mode is a permission check, and root does not take
+    # permission checks -- so the chmod version had to be skipped as root,
+    # which is exactly how CI runs. A skipped test in the one environment
+    # that matters is not a test, and the harness is right to fail on it.
+    # "not a directory" is a property of the filesystem, not of the caller.
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("this is a file, so nothing can be created under it\n")
+    a = args(tmp_path, stamp=str(blocker / "x" / "stamp"))
+    assert imp.run(a) == 0
+    assert "WARNING" in capsys.readouterr().out
+    assert not os.path.exists(a.stamp)
 
 
 # -- the boot screen cannot affect the migration ---------------------------
