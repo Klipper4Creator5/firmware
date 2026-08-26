@@ -25,10 +25,16 @@ cmd_mcu write_firmware /usr/prog/libmcu-bare.bin
 cmd_mcu bootup
 sleep 2
 
-export PATH=$PATH:/usr/prog/Python-3.8.2/bin
-export LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
+# PATH, LD_LIBRARY_PATH and FF_PYTHON, from the one file that defines them.
+# This script is on the firmware partition and the env file is on the data
+# partition, which is the right way round: the list describes /usr/prog and
+# the mod owns it. See anvil-env.sh.
+MODDIR=/usr/data/anvil
+if [ -f $MODDIR/anvil-env.sh ]; then
+    . $MODDIR/anvil-env.sh
+else
+    echo "start.sh: !! no $MODDIR/anvil-env.sh -- klippy will not find its libraries"
+fi
 
 # Idempotence guard: init.d/S70klipper runs this script, and so does its own
 # retry loop. Running it twice would start a second klippy against the same
@@ -49,13 +55,13 @@ fi
 # This runs on every klippy start, including the restarts S70klipper issues
 # when a board missed its window.
 #
-# Call the interpreter by absolute path. PATH is exported above and the base
-# rootfs ships no other python3, so a bare `python3` would resolve -- but this
-# is the one step Klipper cannot start without, so do not depend on a lookup.
-# LD_LIBRARY_PATH still matters: this interpreter does not start without it,
-# which is exactly how moonrakerDaemon used to fail.
-FF_PYTHON=/usr/prog/Python-3.8.2/bin/python3
-[ -x "$FF_PYTHON" ] || FF_PYTHON=python3
+# $FF_PYTHON is the absolute path anvil-env.sh sets, not a `python3` lookup:
+# this is the one step Klipper cannot start without. It used to fall back to a
+# bare `python3` when the absolute path was missing, which never helped -- the
+# base rootfs ships no other interpreter, so that either resolved to the same
+# binary or to something untested. LD_LIBRARY_PATH still matters: this
+# interpreter does not start without it, which is exactly how moonrakerDaemon
+# used to fail.
 #
 # Test -f, not -x. The script is handed to the interpreter by path, so its
 # execute bit is irrelevant -- and it is not always set: the payload carries

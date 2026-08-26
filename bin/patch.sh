@@ -235,7 +235,8 @@ fi
 # firmwareExe, ...). A moonraker/ directory dropped in beside them would be
 # unpacked to /usr/prog/PROGRAM/software/<ver>/ and then simply sat there.
 # So it travels with the rest of the payload and run-append.sh puts it in
-# place, which also lets that step swap the tree atomically and roll back.
+# place -- unconditionally, over whatever was there. See that script for why
+# the pre-flight check it used to be gated on no longer decides anything.
 if [ "${BUILD_MOONRAKER:-1}" = "1" ]; then
     [ -f "${MOONRAKER_TGZ:-}" ] || { echo "BUILD_MOONRAKER=1 but no Moonraker tarball at '${MOONRAKER_TGZ:-}' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
     say "Moonraker: staging $MOONRAKER_VERSION package tree"
@@ -248,10 +249,6 @@ if [ "${BUILD_MOONRAKER:-1}" = "1" ]; then
         echo "   !! no moonraker/moonraker.py in $(basename "$MOONRAKER_TGZ")" >&2; exit 1; }
     rm -rf "$MOD_PAYLOAD/moonraker"
     cp -a work/.moonraker/moonraker "$MOD_PAYLOAD/moonraker"
-    # The gate run-append.sh puts in front of the swap. It reads Moonraker's
-    # own component list out of the tree beside it, so it does not need
-    # updating when the pin moves.
-    cp -f payload/moonraker-preflight.py "$MOD_PAYLOAD/moonraker-preflight.py"
     # Tests never run on the printer and are a sizeable chunk of the tree.
     rm -rf "$MOD_PAYLOAD/moonraker/tests"
     find "$MOD_PAYLOAD/moonraker" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
@@ -337,6 +334,11 @@ chmod +x "$SOFTWARE_DIR/firmwareExe"
 
 # ----------------------------------------------------- 10. mod service dir
 mkdir -p "$MOD_PAYLOAD/init.d"
+# The shared environment. Sourced by run-append.sh, firmwareExe, start.sh and
+# every init.d script -- one library path and one interpreter for the whole
+# mod, because carrying a private copy in each of them is how the installer's
+# check and the boot script came to disagree. Not chmod +x: it is sourced.
+cp -f payload/anvil-env.sh "$MOD_PAYLOAD/anvil-env.sh"
 [ -d payload/bin ] && cp -f payload/bin/* "$MOD_PAYLOAD/bin/" && chmod +x "$MOD_PAYLOAD/bin"/*
 cp -f payload/init.d/S* "$MOD_PAYLOAD/init.d/"
 chmod +x "$MOD_PAYLOAD/init.d"/S*

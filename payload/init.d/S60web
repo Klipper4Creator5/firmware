@@ -11,22 +11,32 @@
 # to stock -- that is a stock FlashForge package.
 MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
+# The library path and the interpreter, from the one file that defines them.
+# See anvil-env.sh for why naming them here instead was a bug.
+if [ -f $MODDIR/anvil-env.sh ]; then
+    . $MODDIR/anvil-env.sh
+else
+    echo "web: !! no $MODDIR/anvil-env.sh -- the mod payload is not installed"
+fi
 NGINX=/usr/prog/nginx/sbin/nginx
 NGINX_PID=$MODDIR/nginx/logs/nginx.pid
 MOONRAKER_PID=/run/moonraker.pid
 MOONRAKER_LOG=/usr/data/logs/moonraker.log
 MOONRAKER_TMP=/usr/data/tmp
 MOONRAKER_DATA=/usr/data
-MOONRAKER_PYTHON=/usr/prog/Python-3.8.2/bin/python3
 
-# Which moonraker actually runs. The INSTALLED tree first: run-append.sh
-# already decided what belongs there -- the mod's build if it passed the
-# preflight on this printer, the stock one if it did not -- and overriding
-# that decision here would defeat the rollback it exists to provide. The copy
-# on the data partition is the fallback for a printer where /usr/prog has no
-# moonraker at all.
+# ONE moonraker, at one path. run-append.sh installs the mod's build here on
+# every flash and does not consult the tree it replaces, so there is nothing
+# for this script to choose between: whatever is here is ours.
+#
+# This used to fall back to $MODDIR/moonraker/moonraker.py when the installed
+# tree was missing, which paired with an installer that kept FlashForge's 2022
+# build whenever a pre-flight import check failed. Between them a printer
+# could be running any of three moonrakers, the boot log did not say which,
+# and a bug report could not be read without asking. The mod ships one
+# moonraker and installs it; if it is not here, that is a failed install to be
+# reported, not a condition to route around.
 MOONRAKER_MAIN=/usr/prog/moonraker/moonraker/moonraker/moonraker.py
-[ -f "$MOONRAKER_MAIN" ] || MOONRAKER_MAIN=$MODDIR/moonraker/moonraker.py
 
 start() {
     [ "${MOD_WEB:-1}" = "1" ] || { echo "web: disabled in anvil.conf"; return 0; }
@@ -37,52 +47,57 @@ start() {
     else
         echo "nginx: not available"
     fi
-    if [ -x "$MOONRAKER_PYTHON" ]; then
-        # This interpreter does not start without its own libraries on the
-        # path: without them python3 dies on "libpython3.8.so.1.0: cannot
-        # open shared object file", moonraker never listens on 7125, and
-        # every UI reports a connection timeout. That is how moonrakerDaemon
-        # shipped broken once -- on stock it is only ever called from
-        # klipper/start.sh, which exports these first.
-        #
-        # libsodium is the fourth for a reason: moonraker's `authorization`
-        # component is linked against it through PyNaCl, and without it
-        # moonraker does not fail to import -- it exits during component
-        # load, which from outside is indistinguishable from never having
-        # started. app_startup.sh does export it before running the wrapper,
-        # so on a normal boot it is inherited anyway; naming it here is what
-        # makes this script work when that environment is not there, which is
-        # every time somebody re-runs it over ssh.
-        export PATH=$PATH:/usr/prog/Python-3.8.2/bin
-        export LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:$LD_LIBRARY_PATH
-        export LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
-        export LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
-        export LD_LIBRARY_PATH=/usr/prog/libsodium/lib:$LD_LIBRARY_PATH
-        # Start moonraker ourselves rather than through
-        # /usr/prog/klipper/moonrakerDaemon. That script is FlashForge's, it
-        # is on the firmware partition a stock flash overwrites, and it
-        # hardcodes an interpreter and a tree we no longer necessarily want
-        # -- and every time we call it we have to reconstruct the environment
-        # it does not set anyway. Doing it here means one place decides which
-        # moonraker runs, with which libraries.
-        #
-        # The two things the daemon did for us are kept, because both matter:
-        #   * start-stop-daemon writes the pidfile that `stop` uses. Without
-        #     it there is no way to stop moonraker except by name.
-        #   * TMPDIR. Moonraker writes temporary files -- uploads among them
-        #     -- and /tmp here is a ramdisk, so a large upload without this
-        #     fills memory instead of the data partition.
-        rm -rf $MOONRAKER_TMP && mkdir -p $MOONRAKER_TMP
-        export TMPDIR=$MOONRAKER_TMP
-        if [ -f "$MOONRAKER_MAIN" ]; then
-            start-stop-daemon -S -b -m -p $MOONRAKER_PID \
-                --exec $MOONRAKER_PYTHON \
-                -- $MOONRAKER_MAIN -d $MOONRAKER_DATA \
-                && echo "moonraker: started ($MOONRAKER_MAIN)"
-            moonraker_check &
-        else
-            echo "moonraker: no moonraker.py found -- not started"
-        fi
+
+    # Every branch below says something. A web stack that is not running is a
+    # printer with no UI, and the boot log is the only place that can explain
+    # why -- there is no stock server left to quietly take over.
+    if ! anvil_python_ok; then
+        echo "moonraker: no interpreter at ${FF_PYTHON:-/usr/prog/Python-3.8.2/bin/python3} -- not started"
+        return 1
+    fi
+    if [ ! -f "$MOONRAKER_MAIN" ]; then
+        echo "moonraker: nothing at $MOONRAKER_MAIN -- the install did not complete"
+        return 1
+    fi
+
+    # Start moonraker ourselves rather than through
+    # /usr/prog/klipper/moonrakerDaemon. That script is FlashForge's, it is on
+    # the firmware partition a stock flash overwrites, and it hardcodes an
+    # interpreter and a tree we no longer want -- and every time we call it we
+    # have to reconstruct the environment it does not set anyway. Doing it
+    # here means one place decides which moonraker runs, with which libraries.
+    #
+    # The two things the daemon did for us are kept, because both matter:
+    #   * start-stop-daemon writes the pidfile that `stop` uses. Without it
+    #     there is no way to stop moonraker except by name.
+    #   * TMPDIR. Moonraker writes temporary files -- uploads among them --
+    #     and /tmp here is a ramdisk, so a large upload without this fills
+    #     memory instead of the data partition.
+    #
+    # The wipe is guarded on moonraker not already running: re-running this
+    # script over ssh against a live server would otherwise delete the
+    # directory it is streaming an upload into.
+    if ! moonraker_alive; then
+        rm -rf $MOONRAKER_TMP
+    fi
+    mkdir -p $MOONRAKER_TMP
+    export TMPDIR=$MOONRAKER_TMP
+    mkdir -p `dirname $MOONRAKER_LOG`
+
+    start-stop-daemon -S -b -m -p $MOONRAKER_PID \
+        --exec $FF_PYTHON \
+        -- $MOONRAKER_MAIN -d $MOONRAKER_DATA
+    rc=$?
+    if [ $rc = 0 ]; then
+        echo "moonraker: started ($MOONRAKER_MAIN)"
+        moonraker_check &
+    else
+        # start-stop-daemon exits non-zero when a process matching the pidfile
+        # is already running, which after `restart` means the old one outlived
+        # the wait in stop(). Either way nothing new was started, and that is
+        # the thing worth printing -- it used to print nothing at all.
+        echo "moonraker: FAILED to start -- start-stop-daemon returned $rc"
+        return 1
     fi
 }
 
@@ -95,9 +110,14 @@ moonraker_alive() {
     kill -0 `cat "$MOONRAKER_PID"` 2>/dev/null
 }
 
+# Component-load failures happen within seconds of exec, so a server still
+# alive at 10s is up. Confirming and returning beats holding the boot log open
+# for a minute: this runs in the background while S65camera, S70klipper and
+# S80ui are writing to the same file, and an interleaved log is what made one
+# user's boot unreadable at the point they were trying to read it.
 moonraker_check() {
     waited=0
-    while [ $waited -lt 30 ]; do
+    while [ $waited -lt 5 ]; do
         sleep 2
         waited=$((waited + 1))
         moonraker_alive && continue
@@ -108,15 +128,30 @@ moonraker_check() {
     echo "moonraker: up"
     return 0
 }
+
 stop() {
     [ -f "$NGINX_PID" ] && kill `cat $NGINX_PID` 2>/dev/null
-    [ -f "$MOONRAKER_PID" ] && start-stop-daemon -K -p $MOONRAKER_PID 2>/dev/null
+    if [ -f "$MOONRAKER_PID" ]; then
+        start-stop-daemon -K -p $MOONRAKER_PID 2>/dev/null
+        # busybox start-stop-daemon does not remove the pidfile, and it does
+        # not wait. Both matter: a stale pidfile makes `status` report a
+        # recycled PID as a running moonraker, and returning before the
+        # process is gone makes `restart` race its own start.
+        stopping=0
+        while moonraker_alive && [ $stopping -lt 15 ]; do
+            sleep 1
+            stopping=$((stopping + 1))
+        done
+        moonraker_alive && echo "moonraker: still running after ${stopping}s"
+        rm -f "$MOONRAKER_PID"
+    fi
     echo "web: stopped"
 }
+
 case "$1" in
     start|'') start ;;
     stop)     stop ;;
-    restart)  stop; sleep 2; start ;;
+    restart)  stop; start ;;
     status)   [ -f "$NGINX_PID" ] && echo "nginx: running" || echo "nginx: not running"
               moonraker_alive && echo "moonraker: running" || echo "moonraker: not running" ;;
     *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;

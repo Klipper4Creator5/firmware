@@ -29,6 +29,16 @@ mkdir -p /usr/data/logs
 exec >>/usr/data/logs/anvil-boot.log 2>&1
 echo "=== mod firmwareExe `date 2>/dev/null` ==="
 
+# The library path and the interpreter, for this script and everything it
+# starts. See anvil-env.sh: app_startup.sh exports these on the boot path, so
+# inheriting them looks like it works right up until somebody re-runs a
+# service by hand.
+if [ -f $MODDIR/anvil-env.sh ]; then
+    . $MODDIR/anvil-env.sh
+else
+    echo "!! no $MODDIR/anvil-env.sh -- the mod payload is not installed"
+fi
+
 # ---- something on the panel, immediately ---------------------------------
 # From here until HelixScreen paints, nothing owns the screen. That gap is
 # the whole boot on EVERY start, not just the first: the migration below
@@ -36,12 +46,10 @@ echo "=== mod firmwareExe `date 2>/dev/null` ==="
 # it -- /usr/prog/start.img exists, but the only two lines that would display
 # it (both in app_startup.sh) are commented out, so nothing has shown it for
 # a long time.
-FF_PYTHON=/usr/prog/Python-3.8.2/bin/python3
-[ -x "$FF_PYTHON" ] || FF_PYTHON=python3
-LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:$LD_LIBRARY_PATH
-LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
-LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH
+# FF_PYTHON and LD_LIBRARY_PATH come from anvil-env.sh, which is also what
+# every service this script goes on to run will source. Exporting them here
+# means they are inherited too, so the init.d scripts re-source a set that is
+# already correct; anvil-env.sh is written to make that a no-op.
 splash() {
     [ "${MOD_SPLASH:-1}" = 1 ] || return 0
     [ -f $MODDIR/bin/ffscreen.py ] || return 0

@@ -19,12 +19,18 @@
 # failure moonrakerDaemon has in S60web. The plugin names are resolved relative
 # to the working directory, hence the cd.
 #
+# That one directory is prepended here rather than in anvil-env.sh, which
+# carries the shared list: it is a plugin directory with its own libjpeg, and
+# putting it in front of every python process on the printer would risk a
+# version conflict to benefit one service.
+#
 # LIKE S50wifi, IT MUST NOT MAKE THE BOOT WAIT. The USB camera can take a few
 # seconds to enumerate, and a printer with no camera plugged in would otherwise
 # hold up Klipper and the UI for the full timeout. The wait and the respawn
 # loop live in a background subshell; start() returns at once.
 MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
+[ -f $MODDIR/anvil-env.sh ] && . $MODDIR/anvil-env.sh
 
 CAMDIR=/usr/prog/mjpg-streamer
 VIDEO=/dev/video0

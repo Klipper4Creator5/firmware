@@ -44,11 +44,17 @@ if [ ! -x "$PY" ]; then
 fi
 ok "interpreter present at $PY"
 
-# Exactly what start.sh exports, in the same order.
-export PATH=$PATH:/usr/prog/Python-3.8.2/bin
-export LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
+# The environment start.sh runs in -- sourced from the shipped file rather
+# than retyped here. A copy would agree with start.sh right up until one of
+# them changed, and testing the bring-up in an environment the printer never
+# actually uses is worse than not testing it.
+if [ -f /tmp/payload/anvil-env.sh ]; then
+    . /tmp/payload/anvil-env.sh
+    ok "sourced the shipped anvil-env.sh -- the same environment start.sh gets"
+else
+    bad "the payload ships no anvil-env.sh"
+    exit 1
+fi
 
 # 1. the interpreter starts and can import what the script imports
 if "$PY" -c 'import os, sys, termios' >/tmp/imp.out 2>&1; then
@@ -57,12 +63,14 @@ else
     bad "python3 cannot import termios: $(cat /tmp/imp.out)"
 fi
 
-# 2. a bare `python3` resolves to that same interpreter (start.sh's fallback)
-WHICH=`command -v python3 2>/dev/null`
-if [ "$WHICH" = "$PY" ]; then
-    ok "bare 'python3' resolves to $PY"
+# 2. the interpreter start.sh will actually invoke is this one. start.sh no
+#    longer falls back to a bare `python3` -- that never helped, since the base
+#    rootfs ships no other one -- so what matters now is that the shipped env
+#    resolves FF_PYTHON to the interpreter this gate just proved works.
+if [ "$FF_PYTHON" = "$PY" ]; then
+    ok "anvil-env.sh resolves FF_PYTHON to $PY"
 else
-    bad "bare 'python3' resolves to '$WHICH', not $PY"
+    bad "FF_PYTHON is '$FF_PYTHON', not $PY"
 fi
 
 # 3. the real command line from start.sh. No ttyS4/ttyS7 exist in the replica,

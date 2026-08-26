@@ -1,21 +1,21 @@
 #!/bin/sh
-# Does moonraker load with the library path S60web sets -- and does it really
-# need every directory in that list?
+# Does the web stack actually start on this printer?
 #
-# A printer reported moonraker never coming up. The cause was S60web naming
-# three /usr/prog/*/lib directories and inheriting the other nine from
-# app_startup.sh, which exports twelve before it runs the wrapper. That
-# inheritance holds on a normal boot and nowhere else.
+# This gate used to read S60web with grep -- for a library directory, for the
+# string "TMPDIR", for the order of two paths. That kind of check passes on a
+# script that cannot start anything and fails on a rename, and it could never
+# answer the only question worth asking: does the printer end up running the
+# moonraker we shipped, on the interpreter we meant, and does it come up?
 #
-# The one that mattered is libsodium: moonraker's `authorization` component is
-# linked against it, so its absence is not an ImportError on some module
-# nobody has heard of -- it is moonraker exiting during component load, which
-# from the outside looks exactly like "moonraker did not start".
+# So this installs the payload the way an update does and then drives the
+# shipped tools -- anvil-env.sh and init.d/S60web -- and then looks at what
+# happened. Only the printer can answer: these are its
+# libraries, its interpreter, its busybox start-stop-daemon and its moonraker.
 #
-# This is the negative control for that, in the same shape as the
-# LD_LIBRARY_PATH control in case-mcu-bringup.sh: prove the fix works, then
-# prove the thing it fixes is real by taking it away again. Only the printer
-# can answer either -- these are its libraries and its interpreter.
+# The negative controls matter as much as the positive ones. Proving moonraker
+# starts WITH the environment says nothing unless taking the environment away
+# stops it, or the whole library list is cargo and the comments in
+# anvil-env.sh are wrong.
 #
 # The payload under test is mounted at /tmp/payload.
 FAIL=0
@@ -23,94 +23,299 @@ ok()  { echo "  PASS  $*"; }
 bad() { echo "  FAIL  $*"; FAIL=1; }
 skip() { echo "  SKIP  $*"; }
 
+MODDIR=/usr/data/anvil
+PAYLOAD=/tmp/payload
 PY=/usr/prog/Python-3.8.2/bin/python3
 MR=/usr/prog/moonraker/moonraker
-MOONRAKER_MAIN=/usr/prog/moonraker/moonraker/moonraker/moonraker.py
-S60=/tmp/payload/init.d/S60web
+MOONRAKER_MAIN=$MR/moonraker/moonraker.py
+S60=$MODDIR/init.d/S60web
 
+[ -d "$PAYLOAD" ] || { bad "no payload mounted at $PAYLOAD"; exit 1; }
 [ -x "$PY" ] || { bad "no interpreter at $PY"; exit 1; }
-[ -f "$S60" ] || { bad "payload does not carry init.d/S60web"; exit 1; }
 
-if [ ! -d "$MR/moonraker" ]; then
-    skip "no moonraker tree at $MR -- nothing to load"
-    exit 0
+# ---- install the payload, as run-append.sh does ----------------------------
+mkdir -p $MODDIR/init.d
+cp -f $PAYLOAD/anvil-env.sh $MODDIR/ 2>/dev/null
+cp -f $PAYLOAD/anvil.conf $MODDIR/ 2>/dev/null
+cp -f $PAYLOAD/init.d/S* $MODDIR/init.d/ 2>/dev/null
+chmod +x $MODDIR/init.d/S* 2>/dev/null
+[ -f $MODDIR/anvil-env.sh ] || { bad "the payload ships no anvil-env.sh"; exit 1; }
+[ -x "$S60" ] || { bad "the payload ships no init.d/S60web"; exit 1; }
+ok "payload installed to $MODDIR"
+
+# ---- 1. the negative control: no environment, no interpreter ---------------
+# This is the failure a user reported as "moonraker never came up". If the
+# interpreter runs fine without any of this, then anvil-env.sh is decoration
+# and every test below is measuring nothing.
+if env -u LD_LIBRARY_PATH "$PY" -c 'pass' >/dev/null 2>&1; then
+    skip "the interpreter runs with no LD_LIBRARY_PATH -- anvil-env.sh is belt-and-braces here"
+    ENV_LOAD_BEARING=0
+else
+    ok "without LD_LIBRARY_PATH the interpreter does not start -- as documented"
+    ENV_LOAD_BEARING=1
 fi
-ok "moonraker tree present at $MR"
 
-# The list S60web really sets, taken from the script rather than retyped here:
-# a copy would pass while the shipped script had drifted.
-# grep -o, not sed: the list is written several directories to a line and a
-# sed capture would take one per line and silently test a truncated path.
-LIBS=`grep -o '/usr/prog/[A-Za-z0-9._-]*/lib' $S60 | sort -u`
-[ -n "$LIBS" ] && ok "S60web names `echo "$LIBS" | wc -l` library directories" \
-                || bad "could not read any library directories out of S60web"
+# ---- 2. sourcing the shipped env makes it run ------------------------------
+( . $MODDIR/anvil-env.sh && "$FF_PYTHON" -c 'print("interpreter ok")' ) \
+    > /tmp/env.out 2>&1
+if grep -q '^interpreter ok' /tmp/env.out; then
+    ok "anvil-env.sh makes the printer's interpreter run"
+else
+    bad "anvil-env.sh did not produce a working interpreter: `tail -2 /tmp/env.out`"
+fi
 
-echo "$LIBS" | grep -q '/usr/prog/libsodium/lib' \
-    && ok "libsodium is one of them" \
-    || bad "S60web does not put libsodium on the path"
+# Everything below wants that environment.
+. $MODDIR/anvil-env.sh
 
-FULL=""
-for d in $LIBS; do
-    [ -d "$d" ] && FULL="$d:$FULL"
+# ---- 3. it points at the printer's interpreter, not a bare python3 ---------
+if [ "$FF_PYTHON" = "$PY" ]; then
+    ok "FF_PYTHON is the printer's own interpreter"
+else
+    bad "FF_PYTHON is '$FF_PYTHON', expected $PY"
+fi
+
+# ---- 4. every library package present on this printer is on the path -------
+# Read out of the shipped file rather than retyped: a copy here would pass
+# while the shipped list had drifted, which is the bug this file replaced.
+MISSING=""
+for d in `sed -n 's|^\(/usr/prog/[A-Za-z0-9._-]*/lib\)$|\1|p' $MODDIR/anvil-env.sh`; do
+    [ -d "$d" ] || continue
+    case ":$LD_LIBRARY_PATH:" in
+        *":$d:"*) ;;
+        *) MISSING="$MISSING $d" ;;
+    esac
 done
-export PATH=$PATH:/usr/prog/Python-3.8.2/bin
+[ -z "$MISSING" ] && ok "every library directory that exists here is exported" \
+                  || bad "not exported:$MISSING"
 
-# 1. with the full path, the component that needs libsodium must import.
-#
-#    `authorization` is the subject on purpose: it is the one that failed on
-#    a user's printer, and it is present in every moonraker tree this has to
-#    work against. moonraker-preflight.py would be the fuller check, but it
-#    enters at moonraker.server and the STOCK tree here has no server.py --
-#    it is an older layout built around app.py. That check belongs where
-#    run-append.sh already runs it, against the tree being installed; this
-#    gate is about the library path, so it tests the library path.
-LD_LIBRARY_PATH="$FULL" "$PY" -c "
+# ---- 5. sourcing it twice does not grow the path ---------------------------
+# firmwareExe sources it and then runs the init.d scripts, which source it
+# again with the first copy already inherited.
+BEFORE="$LD_LIBRARY_PATH"
+. $MODDIR/anvil-env.sh
+[ "$LD_LIBRARY_PATH" = "$BEFORE" ] \
+    && ok "sourcing anvil-env.sh twice leaves the path unchanged" \
+    || bad "the path grew on a second source"
+
+# ---- 6. the component that broke once actually imports ---------------------
+if [ -d "$MR/moonraker" ]; then
+    "$FF_PYTHON" -c "
 import sys
 sys.path.insert(0, '$MR')
 import moonraker.components.authorization
 print('imported')
-" >/tmp/mr-full.out 2>&1
-if grep -q '^imported' /tmp/mr-full.out; then
-    ok "authorization imports with S60web's library path"
-else
-    bad "authorization failed with S60web's path: `tail -3 /tmp/mr-full.out`"
-fi
+" >/tmp/mr-auth.out 2>&1
+    grep -q '^imported' /tmp/mr-auth.out \
+        && ok "moonraker's authorization component imports" \
+        || bad "authorization failed: `tail -3 /tmp/mr-auth.out`"
 
-# 2. the negative control. Take libsodium away and the authorization
-#    component must fail -- if it does not, this whole list is cargo and the
-#    comments in S60web are wrong.
-NOSODIUM=`echo "$FULL" | sed 's|/usr/prog/libsodium/lib:||'`
-if [ "$NOSODIUM" = "$FULL" ]; then
-    skip "libsodium was not on the assembled path -- not installed here"
-else
-    LD_LIBRARY_PATH="$NOSODIUM" "$PY" -c "
+    # Negative control for the one library that caused the outage.
+    NOSODIUM=`echo "$LD_LIBRARY_PATH" | sed 's|/usr/prog/libsodium/lib:||'`
+    if [ "$NOSODIUM" = "$LD_LIBRARY_PATH" ]; then
+        skip "libsodium is not installed here -- cannot take it away"
+    else
+        LD_LIBRARY_PATH="$NOSODIUM" "$FF_PYTHON" -c "
 import sys
 sys.path.insert(0, '$MR')
 import moonraker.components.authorization
 print('imported')
 " >/tmp/mr-nosodium.out 2>&1
-    if grep -q '^imported' /tmp/mr-nosodium.out; then
-        bad "authorization imported WITHOUT libsodium -- the path entry is not load-bearing"
+        grep -q '^imported' /tmp/mr-nosodium.out \
+            && bad "authorization imported WITHOUT libsodium -- that path entry is cargo" \
+            || ok "without libsodium the authorization component fails, as documented"
+    fi
+else
+    skip "no moonraker package at $MR"
+fi
+
+# ---- 7. every component this printer is configured for imports -------------
+# This used to be moonraker-preflight.py, shipped to the printer and run by
+# the installer to decide whether to install our Moonraker at all. It is here
+# now, and it decides nothing: by the time a user is flashing a machine it is
+# much too late to find out the Moonraker in the package does not load, and
+# there is no second build to fall back to. The question belongs to the build,
+# and this is the build.
+#
+# The component list is NOT written down here. It comes from Moonraker's own
+# CORE_COMPONENTS plus every section in the printer's moonraker.conf and
+# anything it [include]s -- moonraker.conf ends by including
+# moonraker-custom.conf, which is where a user's own sections live, so
+# following it is what keeps the check honest when the pin moves or somebody
+# configures a component we never thought about. An earlier version listed
+# four modules by hand and missed `authorization`, which is the one that
+# actually broke.
+if [ -d "$MR/moonraker" ]; then
+    "$FF_PYTHON" - "$MR" /usr/data/config/moonraker.conf <<'PY' >/tmp/mr-pre.out 2>&1
+import glob, importlib, os, re, sys
+sys.path.insert(0, sys.argv[1])
+try:
+    import moonraker.server as server
+except Exception as exc:
+    print("moonraker.server does not import: %r" % (exc,))
+    raise SystemExit(2)
+
+names = list(getattr(server, "CORE_COMPONENTS", []))
+
+def scan(path, depth=0):
+    try:
+        lines = open(path).readlines()
+    except OSError:
+        return
+    for line in lines:
+        section = re.match(r"\s*\[\s*([A-Za-z0-9_]+)", line)
+        if not section:
+            continue
+        if section.group(1) == "include":
+            inc = re.match(r"\s*\[\s*include\s+([^\]]+?)\s*\]", line)
+            if inc and depth < 3:
+                base = os.path.dirname(os.path.abspath(path))
+                for f in sorted(glob.glob(os.path.join(base, inc.group(1)))):
+                    scan(f, depth + 1)
+            continue
+        names.append(section.group(1))
+
+scan(sys.argv[2])
+
+failures = []
+for name in dict.fromkeys(names):
+    target = "moonraker.components." + name
+    try:
+        importlib.import_module(target)
+    except ModuleNotFoundError as exc:
+        # The component not existing is fine -- that is a config section like
+        # [server], or one this Moonraker does not have. A missing DEPENDENCY
+        # of a component that does exist is the whole point of this check.
+        if getattr(exc, "name", None) == target:
+            continue
+        failures.append((name, repr(exc)))
+    except Exception as exc:
+        # libnacl raises OSError, not ImportError, when libsodium is missing.
+        failures.append((name, repr(exc)))
+
+for name, err in failures:
+    print("  %s: %s" % (name, err))
+print("components ok: %d" % len(dict.fromkeys(names)) if not failures
+      else "%d component(s) will not load" % len(failures))
+raise SystemExit(1 if failures else 0)
+PY
+    if grep -q '^components ok:' /tmp/mr-pre.out; then
+        ok "`grep '^components ok:' /tmp/mr-pre.out` on this printer"
+    elif grep -q 'moonraker.server does not import' /tmp/mr-pre.out; then
+        # The stock 2022 tree is an older layout built around app.py with no
+        # moonraker.server to enter at. A real answer about a real tree, not a
+        # harness problem -- and the mod's build is what this gate guards.
+        skip "the installed tree is the old layout: `tail -1 /tmp/mr-pre.out`"
     else
-        ok "without libsodium the authorization component fails, as documented"
-        sed 's/^/      /' /tmp/mr-nosodium.out | tail -2
+        bad "components will not load: `tail -4 /tmp/mr-pre.out`"
     fi
 fi
 
-# 3. S60web now starts moonraker itself, so the entry point it names has to
-#    be there and the tools it uses have to exist. A path that is wrong here
-#    means no web UI at all, and the failure would be a silent one.
-[ -f "$MOONRAKER_MAIN" ] \
-    && ok "the entry point S60web names is present ($MOONRAKER_MAIN)" \
-    || bad "no moonraker.py at $MOONRAKER_MAIN"
+# ---- 8. S60web starts moonraker, and it comes up ---------------------------
+moonraker_pid() { cat /run/moonraker.pid 2>/dev/null; }
+moonraker_alive() {
+    p=`moonraker_pid`
+    [ -n "$p" ] && kill -0 "$p" 2>/dev/null
+}
+answers() {
+    wget -q -O - -T 3 http://127.0.0.1:7125/server/info 2>/dev/null | grep -q klippy
+}
 
-command -v start-stop-daemon >/dev/null 2>&1 \
-    && ok "start-stop-daemon is available for the pidfile" \
-    || bad "no start-stop-daemon -- S60web could not manage moonraker"
+if [ ! -f "$MOONRAKER_MAIN" ]; then
+    bad "no moonraker.py at $MOONRAKER_MAIN -- S60web has nothing to start"
+else
+    ok "the entry point S60web names is present ($MOONRAKER_MAIN)"
+    $S60 stop >/dev/null 2>&1
+    $S60 start > /tmp/s60-start.out 2>&1
+    sed 's/^/      /' /tmp/s60-start.out
 
-grep -q 'TMPDIR' $S60 \
-    && ok "S60web sets TMPDIR off the /tmp ramdisk" \
-    || bad "S60web does not set TMPDIR -- uploads would fill memory"
+    # qemu is slow and moonraker loads a lot of components.
+    waited=0
+    while [ $waited -lt 45 ] && ! moonraker_alive; do
+        sleep 2
+        waited=$((waited + 2))
+    done
+    if moonraker_alive; then
+        ok "moonraker is running after ${waited}s (pid `moonraker_pid`)"
+    else
+        bad "moonraker did not start -- last words:"
+        tail -n 15 /usr/data/logs/moonraker.log 2>/dev/null | sed 's/^/      /'
+    fi
+
+    # It has to be OUR interpreter running OUR entry point, not something the
+    # stock daemon left behind. This is what the old grep could not see.
+    if moonraker_alive; then
+        CMD=`tr '\0' ' ' < /proc/\`moonraker_pid\`/cmdline 2>/dev/null`
+        case "$CMD" in
+            *"$PY"*) ok "it is the printer's own interpreter that is running" ;;
+            *) bad "moonraker is running under '$CMD', not $PY" ;;
+        esac
+        case "$CMD" in
+            *"$MOONRAKER_MAIN"*) ok "running the entry point S60web names" ;;
+            *) bad "running '$CMD', not $MOONRAKER_MAIN" ;;
+        esac
+        # The uploads fix: TMPDIR has to be off the /tmp ramdisk.
+        if [ -r /proc/`moonraker_pid`/environ ]; then
+            TD=`tr '\0' '\n' < /proc/\`moonraker_pid\`/environ | sed -n 's/^TMPDIR=//p'`
+            case "$TD" in
+                /usr/data/*) ok "TMPDIR is $TD -- off the ramdisk" ;;
+                "") bad "moonraker has no TMPDIR -- uploads would fill memory" ;;
+                *) bad "TMPDIR is $TD, which is not on the data partition" ;;
+            esac
+        fi
+    fi
+
+    # Does it actually serve the API? That is the thing a user notices.
+    waited=0
+    while [ $waited -lt 60 ] && ! answers; do
+        sleep 3
+        waited=$((waited + 3))
+    done
+    answers && ok "moonraker answers /server/info on :7125 after ${waited}s" \
+             || skip "moonraker is running but did not answer on :7125 (klippy is not up in the replica)"
+
+    # ---- 9. status, stop and restart tell the truth ------------------------
+    $S60 status 2>&1 | grep -q 'moonraker: running' \
+        && ok "status reports it running" \
+        || bad "status does not report a running moonraker"
+
+    $S60 stop >/dev/null 2>&1
+    if moonraker_alive; then
+        bad "moonraker is still alive after stop"
+    else
+        ok "stop actually stopped it"
+    fi
+    [ -f /run/moonraker.pid ] \
+        && bad "stop left a stale pidfile -- status would report a recycled PID" \
+        || ok "stop cleared the pidfile"
+
+    $S60 restart > /tmp/s60-restart.out 2>&1
+    waited=0
+    while [ $waited -lt 45 ] && ! moonraker_alive; do
+        sleep 2
+        waited=$((waited + 2))
+    done
+    moonraker_alive && ok "restart brought it back (pid `moonraker_pid`)" \
+                    || bad "restart left nothing running: `tail -2 /tmp/s60-restart.out`"
+    $S60 stop >/dev/null 2>&1
+fi
+
+# ---- 10. a missing tree is reported, not routed around ---------------------
+# There is no stock moonraker to fall back to any more, so the one thing this
+# must never do is fail silently.
+if [ -f "$MOONRAKER_MAIN" ]; then
+    mv "$MOONRAKER_MAIN" "$MOONRAKER_MAIN.hidden"
+    $S60 start > /tmp/s60-missing.out 2>&1
+    sleep 2
+    if moonraker_alive; then
+        bad "S60web started something with no moonraker.py present"
+    elif grep -qi 'moonraker' /tmp/s60-missing.out; then
+        ok "a missing moonraker.py is reported: `grep -i moonraker /tmp/s60-missing.out | head -1`"
+    else
+        bad "a missing moonraker.py produced no message at all"
+    fi
+    mv "$MOONRAKER_MAIN.hidden" "$MOONRAKER_MAIN"
+    $S60 stop >/dev/null 2>&1
+fi
 
 echo
 [ $FAIL = 0 ] && echo "moonraker: all checks passed" || echo "moonraker: FAILURES"

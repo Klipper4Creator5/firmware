@@ -43,6 +43,12 @@ if [ -n "$MODTAR" ]; then
         [ -f /tmp/anvil.conf.keep ] && mv -f /tmp/anvil.conf.keep $MODDIR/anvil.conf
         chmod a+x $MODDIR/bin/* 2>/dev/null
         echo "mod payload installed"
+        # From here on this script runs the printer's own interpreter, so it
+        # needs the same environment the boot path gets -- and it is a hand-run
+        # `sh run.sh` over ssh at least as often as it is a flash, which is
+        # exactly where that environment is not inherited. anvil-env.sh has
+        # just been extracted above.
+        [ -f $MODDIR/anvil-env.sh ] && . $MODDIR/anvil-env.sh
     fi
 else
     echo "!! no anvil.tar.xz found -- scripts only, no Mainsail/HelixScreen"
@@ -50,81 +56,60 @@ fi
 sync
 
 # ---- Moonraker -------------------------------------------------------------
-# Replace the stock 2022 Moonraker with the one bin/patch.sh staged. Only the
+# Install the Moonraker bin/patch.sh staged, over whatever is there. Only the
 # python package is swapped -- the interpreter, the moonraker-env beside it and
 # moonrakerDaemon are FlashForge's and keep working, because the version we
 # ship runs on the libraries already installed. See bin/patch.sh for why that
 # is true and why this is the only way the camera can appear in Mainsail.
 #
-# This is the one thing the mod writes to /usr/prog that is not part of the
-# software component, so it is done defensively: the old tree is moved aside
-# rather than deleted, and put back if the copy does not complete. A printer
-# whose Moonraker did not survive an update has no web UI at all, and the
-# screen would be the only way to notice.
+# UNCONDITIONAL, AND THERE IS NO ROLLBACK. This used to move the old tree
+# aside, run an import check first, and put FlashForge's 2022 build back
+# whenever that check failed or the copy did not complete. It read as caution
+# and behaved as a coin toss: the printer ended up running the mod's Moonraker
+# or a five-year-old one depending on a decision taken during a flash, nothing
+# on the screen said which, and the mod's own Mainsail config -- webcam flag
+# included -- assumes the new one. A package that ships a Moonraker installs
+# that Moonraker.
+#
+# The import check that used to gate this is gone from the printer entirely.
+# By the time a machine is being flashed it is far too late to discover that
+# the Moonraker in the package does not load -- there is no second build to
+# choose instead, and a log line saying so on the printer helps nobody. That
+# check belongs to the build, against the printer's own interpreter, before
+# anything ships: see test/integration/printer/case-moonraker.sh, which
+# imports every component this config asks for and is what `make
+# test-moonraker` runs.
 if [ -d $MODDIR/moonraker ]; then
     MOONRAKER_ROOT=/usr/prog/moonraker/moonraker
+    NEED_KB=`du -sk $MODDIR/moonraker | cut -f1`
+    FREE_KB=`df /usr/prog | tail -1 | tr -s ' ' | cut -d' ' -f4`
+    # The tree being replaced is removed before the copy, so its space counts
+    # as available. /usr/prog is the small firmware partition and this is the
+    # one physical limit left -- not a choice between builds, just whether the
+    # copy can happen at all.
     if [ -d $MOONRAKER_ROOT/moonraker ]; then
-        # Both trees exist at once during the swap; /usr/prog is the small
-        # firmware partition, so check there is room before starting.
-        NEED_KB=`du -sk $MODDIR/moonraker | cut -f1`
-        FREE_KB=`df /usr/prog | tail -1 | tr -s ' ' | cut -d' ' -f4`
-        # PRE-FLIGHT: ask THIS printer's python whether it can load the tree
-        # before anything is moved. moonraker-preflight.py explains what it
-        # imports and why; the short version is that it uses Moonraker's own
-        # component list rather than one we maintain here, because a
-        # hand-written list already missed the component that mattered once.
-        #
-        # The library path is set explicitly rather than inherited. At boot
-        # app_startup.sh exports a dozen /usr/prog/*/lib directories and
-        # everything inherits them, but this script also has to behave when it
-        # is re-run by hand from ssh, where none of that is set -- and a check
-        # that fails for a missing libsodium would condemn a perfectly good
-        # build. Same list app_startup.sh uses.
-        MOONRAKER_PYTHON=/usr/prog/Python-3.8.2/bin/python3
-        MOONRAKER_PREFLIGHT_FAILED=0
-        if [ -x $MOONRAKER_PYTHON ] && [ -f $MODDIR/moonraker-preflight.py ]; then
-            (
-                PATH=$PATH:/usr/prog/Python-3.8.2/bin
-                for libdir in /usr/prog/Python-3.8.2/lib \
-                         /usr/prog/openssl-1.0.2d/lib \
-                         /usr/prog/curl-7.55.1/lib /usr/prog/ffmpeg-402/lib \
-                         /usr/prog/x264/lib /usr/prog/libffi-3.4.4/lib \
-                         /usr/prog/libsodium/lib /usr/prog/opencv-4.2/lib \
-                         /usr/prog/nim/lib /usr/prog/libzip-1.10.1/lib; do
-                    [ -d "$libdir" ] \
-                        && LD_LIBRARY_PATH="$libdir:$LD_LIBRARY_PATH"
-                done
-                export PATH LD_LIBRARY_PATH
-                $MOONRAKER_PYTHON $MODDIR/moonraker-preflight.py $MODDIR /usr/data/config/moonraker.conf
-            ) > /tmp/mr-import.log 2>&1 || MOONRAKER_PREFLIGHT_FAILED=1
-            sed 's/^/   /' /tmp/mr-import.log 2>/dev/null | tail -12
-        fi
-        if [ "$MOONRAKER_PREFLIGHT_FAILED" != 0 ]; then
-            echo "!! moonraker: the shipped tree does not load on this printer -- keeping the stock one"
-            echo "   (nothing was moved; the web UI is unaffected)"
-        elif [ "${FREE_KB:-0}" -lt "$NEED_KB" ]; then
-            echo "!! moonraker: only ${FREE_KB}KB free on /usr/prog, need ${NEED_KB}KB -- keeping the stock tree"
-        else
-            rm -rf $MOONRAKER_ROOT/moonraker.modold
-            if mv $MOONRAKER_ROOT/moonraker $MOONRAKER_ROOT/moonraker.modold; then
-                if cp -a $MODDIR/moonraker $MOONRAKER_ROOT/moonraker; then
-                    sync
-                    # Bytecode from the FlashForge build would otherwise be
-                    # the first thing imported. Same trap as klippy below.
-                    find $MOONRAKER_ROOT/moonraker -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
-                    rm -rf $MOONRAKER_ROOT/moonraker.modold
-                    echo "moonraker: replaced with the mod's build"
-                else
-                    rm -rf $MOONRAKER_ROOT/moonraker
-                    mv $MOONRAKER_ROOT/moonraker.modold $MOONRAKER_ROOT/moonraker
-                    echo "!! moonraker: copy failed -- rolled back to the stock tree"
-                fi
-            else
-                echo "!! moonraker: could not move the stock tree aside -- left it alone"
-            fi
-        fi
+        OLD_KB=`du -sk $MOONRAKER_ROOT/moonraker | cut -f1`
+        FREE_KB=$((${FREE_KB:-0} + ${OLD_KB:-0}))
+    fi
+    if [ "${FREE_KB:-0}" -lt "$NEED_KB" ]; then
+        echo "!! moonraker: ${FREE_KB}KB available on /usr/prog, need ${NEED_KB}KB"
+        echo "!! nothing was installed -- this printer has no working web UI"
     else
-        echo "!! moonraker: no $MOONRAKER_ROOT/moonraker on this printer -- nothing replaced"
+        mkdir -p $MOONRAKER_ROOT
+        rm -rf $MOONRAKER_ROOT/moonraker $MOONRAKER_ROOT/moonraker.modold
+        if cp -a $MODDIR/moonraker $MOONRAKER_ROOT/moonraker; then
+            sync
+            # Bytecode from the FlashForge build would otherwise be the first
+            # thing imported. Same trap as klippy below.
+            find $MOONRAKER_ROOT/moonraker -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
+            echo "moonraker: replaced with the mod's build"
+        else
+            # Say it plainly. There is nothing to restore -- that is the point
+            # of the change -- so the only useful output is what happened and
+            # what fixes it.
+            echo "!! moonraker: copy failed -- $MOONRAKER_ROOT/moonraker is incomplete"
+            echo "!! re-flash the package; there is no web UI until you do"
+        fi
     fi
     sync
 fi

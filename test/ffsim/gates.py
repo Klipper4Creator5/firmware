@@ -107,10 +107,18 @@ def boot_screen(config, on_output=None):
 
 
 def moonraker(config, on_output=None):
-    """Does moonraker load with the library path S60web sets?
+    """Does the web stack actually start on the printer?
 
-    And is every directory in that list actually load-bearing? Only the
-    printer's own libraries and interpreter can answer either.
+    Installs the payload as an update does, then drives the shipped tools:
+    anvil-env.sh must produce a working interpreter, every component the
+    config asks for must import, and init.d/S60web must bring moonraker up on
+    the printer's own python, answer on :7125, and stop and restart cleanly.
+    With the pre-flight gone from the firmware, this is also the only place a
+    Moonraker pin that cannot load gets caught -- before it ships.
+
+    The negative controls carry as much weight as the rest: take the library
+    path away and the interpreter must fail, take libsodium away and the
+    authorization component must fail, or the list is cargo.
     """
     replica = Replica.start(config, want_output=on_output)
     replica.run_case(_case(config, "case-moonraker.sh"), on_output=on_output)
