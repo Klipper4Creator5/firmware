@@ -354,17 +354,24 @@ what makes Z0 the bed plane whenever a tool is mounted — not only after
 `TOOLCHANGE_SET_PRINT_OFFSET` at print start.
 
 Those go into a move transform **below** Klipper's own G-code offset, so
-three things stack without ever sharing a number:
+these stack without ever sharing a number:
 
-| Layer | Set by | Scope |
-|---|---|---|
-| `SET_GCODE_OFFSET` / `homing_origin` | you, and `TOOLCHANGE_SET_PRINT_OFFSET`'s thermal/bed/layer terms | every tool |
-| transform, XYZ | `TOOL_CALIBRATE_TOOL_OFFSET` | the mounted tool |
-| transform, Z | `TOOL_Z_ADJUST` | the mounted tool |
+| Layer | Set by | Scope | Read it as |
+|---|---|---|---|
+| `SET_GCODE_OFFSET` / `homing_origin` | you, and nothing else | every tool | `printer.gcode_move.homing_origin.z` |
+| transform, job Z | `TOOLCHANGE_SET_PRINT_OFFSET`'s thermal/bed/layer terms | this print | `printer.toolchanger.print_z_offset` |
+| transform, XYZ | `TOOL_CALIBRATE_TOOL_OFFSET` | the mounted tool | `printer["tool T<n>"].gcode_z_offset` |
+| transform, Z | `TOOL_Z_ADJUST` | the mounted tool | (folded into the line above) |
 
-Selecting a tool swaps the lower two and moves nothing. `SET_GCODE_OFFSET
-Z=0` clears the job terms and leaves the calibration alone — so the number a
-UI shows as "Z offset" or "baby stepping" really is just yours.
+Selecting a tool swaps the lower two and moves nothing. Ending a print calls
+`TOOLCHANGE_SET_PRINT_OFFSET CLEAR=1`, which drops the job term and leaves
+both the calibration and your babystep alone — so the number a UI shows as
+"Z offset" or "baby stepping" really is just yours.
+
+The flip side: `printer.gcode_move.position` is no longer the machine
+position, because it is read *above* the transform. `gcode_position` and
+`M114` are unchanged. A macro that wants the true machine Z of a G-code Z
+has to subtract all three columns above.
 
 See [`toolchange.md`](toolchange.md) for the toolchanger as a whole, and
 [`notes/45-tool-offset-calibration.md`](notes/45-tool-offset-calibration.md)

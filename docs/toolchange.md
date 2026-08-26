@@ -222,9 +222,12 @@ Before moving anything:
 
   ```gcode
   G1 Z10 F1200
-  TOOLCHANGE_PARK          ; parking drops the per-tool frame
-  SET_GCODE_OFFSET Z=0 MOVE=1   ; and this clears the job terms
+  TOOLCHANGE_PARK                       ; drops the per-tool frame
+  TOOLCHANGE_SET_PRINT_OFFSET CLEAR=1   ; and this the job term
   ```
+
+  `SET_GCODE_OFFSET Z=0` is *not* the way to clear the job term any more:
+  it cannot tell that term from your babystep, so it would take both.
 
 A touchscreen recalibration no longer affects this module. Recalibrate from
 Klipper instead (next section), or repeat the import step if you really

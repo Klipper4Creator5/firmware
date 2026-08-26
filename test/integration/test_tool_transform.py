@@ -18,6 +18,7 @@ _ToolTransform touches exactly two things on each: move()/get_position()
 below it and reset_last_position() above.
 """
 import importlib.util
+import inspect
 import os
 
 import pytest
@@ -68,13 +69,48 @@ class FakePrinter:
         return self.objects.get(name, default)
 
 
-def make(offsets, mounted=None):
+class FakeGcode:
+    def __init__(self):
+        self.messages = []
+
+    def respond_info(self, message):
+        self.messages.append(message)
+
+
+class FakeGcmd:
+    """Only get_int/respond_info -- the clear path needs nothing else."""
+
+    def __init__(self, params):
+        self.params = params
+        self.messages = []
+
+    def get_int(self, name, default=None, minval=None, maxval=None):
+        return int(self.params.get(name, default))
+
+    def respond_info(self, message):
+        self.messages.append(message)
+
+
+class FakeTool:
+    """Only what _set_tool_frame's calibration warning asks about."""
+
+    def __init__(self, calibrated=True):
+        self._calibrated = calibrated
+
+    def calibrated(self):
+        return self._calibrated
+
+
+def make(offsets, mounted=None, calibrated=True):
     """A toolchanger with only the parts the frame API touches. __init__
     wants a whole klippy config; none of this needs one."""
     tc = ff_toolchange.FFToolchange.__new__(ff_toolchange.FFToolchange)
     tc.offset_x = [o[0] for o in offsets]
     tc.offset_y = [o[1] for o in offsets]
     tc.offset_z = [o[2] for o in offsets]
+    tc.job_z = 0.0
+    tc.tools = [FakeTool(calibrated) for _ in offsets]
+    tc.gcode = FakeGcode()
     tc.gcode_move = FakeGcodeMove()
     tc.printer = FakePrinter(tc.gcode_move)
     tc.gcode_transform = ff_toolchange._ToolTransform(tc)
@@ -231,3 +267,101 @@ def test_a_saved_z_adjust_is_still_live_immediately():
     tool.set_z_adjust(0.25, save=True)
     assert tool.z_adjust == pytest.approx(0.25)
     assert len(configfile.staged) == 1
+
+
+# ------------------------------------------- the transform exists in time
+
+def test_the_transform_is_built_before_the_first_refresh():
+    """refresh_offsets() reads gcode_transform to decide whether
+    gcode_move's cache needs invalidating, and __init__ calls it. On a
+    calibrated machine the derived offsets differ from the [0.0] seed, so
+    the read happens -- and a transform created further down __init__ meant
+    AttributeError at config parse on every printer that had ever been
+    calibrated. The uncalibrated case, where nothing differs and the read
+    is short-circuited, is exactly the one the replica boots in."""
+    source = inspect.getsource(ff_toolchange.FFToolchange.__init__)
+    built = source.index("self.gcode_transform = _ToolTransform(self)")
+    refreshed = source.index("self.refresh_offsets()")
+    assert built < refreshed
+
+
+def test_the_three_offset_series_are_three_lists():
+    """self.offset_x = self.offset_y = self.offset_z = [0.] * N binds ONE
+    list to three names, so a later write to any of them writes all three."""
+    source = inspect.getsource(ff_toolchange.FFToolchange.__init__)
+    assert "self.offset_x = self.offset_y" not in source
+
+
+def test_refreshing_before_the_transform_is_installed_does_not_reset():
+    tc = make(OFFSETS)
+    tc.gcode_transform.next_transform = None
+    tc.offset_base = 0
+    tc.tools = [FakeTool() for _ in OFFSETS]
+    tc._station_z = lambda: None
+    tc._derive_offsets = lambda base: ([9.] * 4, [9.] * 4, [9.] * 4)
+    assert tc.refresh_offsets() is True
+    assert tc.gcode_move.resets == 0
+
+
+# ------------------------------------------------------ the job Z is its own
+
+def test_the_job_term_rides_on_the_tool_frame():
+    tc = make(OFFSETS)
+    tc.gcode_transform.tool = 1
+    tc.job_z = 0.04
+    tc.gcode_transform.move([10., 20., 5., 1.], 60.)
+    sent = tc.gcode_transform.next_transform.moves[0][0]
+    assert sent[2] == pytest.approx(5. + 3.19 + 0.04)
+
+
+def test_the_job_term_is_off_in_raw_machine_coordinates():
+    """Dock moves and the offset calibration address the machine. Both
+    suspend the frame, and the job term has to go with it."""
+    tc = make(OFFSETS)
+    tc.job_z = 0.04
+    tc.gcode_transform.move([10., 20., 5., 1.], 60.)
+    assert tc.gcode_transform.next_transform.moves[0][0] == [10., 20., 5., 1.]
+
+
+def test_clearing_the_print_offset_leaves_the_tool_frame_alone():
+    tc = make(OFFSETS)
+    tc.gcode_transform.tool = 2
+    tc.job_z = 0.04
+    gcmd = FakeGcmd({"CLEAR": 1})
+    tc.cmd_TOOLCHANGE_SET_PRINT_OFFSET(gcmd)
+    assert tc.job_z == 0.0
+    assert tc.gcode_transform.tool == 2
+    assert tc.gcode_transform._offsets()[2] == pytest.approx(3.11)
+    assert "0.040" in gcmd.messages[0]
+
+
+def test_the_print_offset_is_absolute_not_cumulative():
+    """END_PRINT used to clear this with SET_GCODE_OFFSET Z=0, which took
+    the operator's babystep with it. A per-layer caller must also not be
+    able to stack the term on itself."""
+    tc = make(OFFSETS)
+    tc.job_z = 0.04
+    source = inspect.getsource(
+        ff_toolchange.FFToolchange.cmd_TOOLCHANGE_SET_PRINT_OFFSET)
+    assert "self.job_z = z" in source
+    assert "self.job_z +=" not in source
+
+
+# ------------------------------------------------- an uncalibrated tool warns
+
+def test_applying_an_uncalibrated_frame_says_z_zero_is_below_the_bed():
+    tc = make(OFFSETS, calibrated=False)
+    tc._set_tool_frame(2)
+    assert any("no nozzle calibration" in m for m in tc.gcode.messages)
+
+
+def test_applying_a_calibrated_frame_is_quiet():
+    tc = make(OFFSETS)
+    tc._set_tool_frame(2)
+    assert tc.gcode.messages == []
+
+
+def test_dropping_the_frame_never_warns():
+    tc = make(OFFSETS, calibrated=False)
+    tc._set_tool_frame(None)
+    assert tc.gcode.messages == []

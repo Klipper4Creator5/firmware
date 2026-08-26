@@ -70,7 +70,8 @@ bed, chamber), fans off; `ACCEL=5000`, `G92 E0`, `G1 E-1 F300`, `G92 E0`, `M400`
 bed presentation drop `G1 Z150/200/256.8 F1800` by current-Z thresholds 100/150;
 `SET_FAN_M106[P2]` reset, `SET_PA_ADVANCE .. ENABLE=0`, `MUTE_MODE_DISABLE`,
 `M220 S100`, `SET_VELOCITY_LIMIT VELOCITY=500 ACCEL=20000`, `BED_MESH_CLEAR`,
-`CLEAR_PAUSE`; **dock the mounted tool**; `SET_GCODE_OFFSET Z=0 MOVE=1`; `M18`;
+`CLEAR_PAUSE`; **dock the mounted tool**; `TOOLCHANGE_SET_PRINT_OFFSET CLEAR=1`
+(the app's `SET_GCODE_OFFSET Z=0 MOVE=1`, which cleared the babystep too); `M18`;
 `SET_IDLE_TIMEOUT TIMEOUT=600`.
 
 ## Divergences in ff-print-macros.cfg (deliberate)
