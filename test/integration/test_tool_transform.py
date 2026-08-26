@@ -25,16 +25,16 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def _load():
-    path = os.path.join(ROOT, "payload", "klipper", "extras",
-                        "ff_toolchange.py")
-    spec = importlib.util.spec_from_file_location("ff_toolchange", path)
+def _load(name):
+    path = os.path.join(ROOT, "payload", "klipper", "extras", name + ".py")
+    spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
-ff_toolchange = _load()
+ff_toolchange = _load("ff_toolchange")
+ff_tool = _load("ff_tool")
 
 
 class FakeToolhead:
@@ -186,3 +186,48 @@ def test_restoring_when_the_sensors_cannot_say_leaves_no_frame():
     tc._set_tool_frame(2)
     assert tc.restore_tool_frame() is False
     assert tc.gcode_transform.tool is None
+
+
+# ------------------------------------------------- the third layer, z_adjust
+
+class FakeConfigfile:
+    def __init__(self):
+        self.staged = []
+
+    def set(self, section, option, value):
+        self.staged.append((section, option, value))
+
+
+def make_tool(z_adjust=0.0):
+    tool = ff_tool.FFTool.__new__(ff_tool.FFTool)
+    tool.name = "ff_tool 2"
+    tool.index = 2
+    tool.z_adjust = z_adjust
+    configfile = FakeConfigfile()
+    tool.printer = FakePrinter(None)
+    tool.printer.objects["configfile"] = configfile
+    return tool, configfile
+
+
+def test_a_z_adjust_takes_effect_without_being_saved():
+    # The whole point: a first layer is going down and SAVE_CONFIG is a
+    # restart. Applying and persisting are separate acts.
+    tool, configfile = make_tool()
+    tool.set_z_adjust(-0.02)
+    assert tool.z_adjust == pytest.approx(-0.02)
+    assert configfile.staged == []
+
+
+def test_saving_a_z_adjust_stages_it_for_save_config():
+    tool, configfile = make_tool()
+    tool.set_z_adjust(-0.02, save=True)
+    assert tool.z_adjust == pytest.approx(-0.02)
+    assert configfile.staged == [("ff_tool 2", "z_adjust", "-0.020000")]
+
+
+def test_a_saved_z_adjust_is_still_live_immediately():
+    # SAVE=1 must not mean "on the next restart".
+    tool, configfile = make_tool(z_adjust=0.1)
+    tool.set_z_adjust(0.25, save=True)
+    assert tool.z_adjust == pytest.approx(0.25)
+    assert len(configfile.staged) == 1

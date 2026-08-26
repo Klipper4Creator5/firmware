@@ -97,8 +97,18 @@ class FFTool:
         configfile.set(self.name, 'nozzle_z', "%.6f" % z)
         logging.info("%s: nozzle = (%.6f, %.6f, %.6f)", self.name, x, y, z)
 
-    def set_z_adjust(self, z):
+    def set_z_adjust(self, z, save=False):
+        """Live always; staged for SAVE_CONFIG only when asked.
+
+        Applying and persisting are separate acts here. The value reaches
+        the per-tool frame the moment it is set -- that is what makes a
+        first-layer tweak possible mid-print -- while SAVE_CONFIG is a
+        restart, which mid-print is not possible at all. Staging on every
+        tweak also left the config permanently dirty for anyone dialling a
+        number in by feel."""
         self.z_adjust = float(z)
+        if not save:
+            return
         configfile = self.printer.lookup_object('configfile')
         configfile.set(self.name, 'z_adjust', "%.6f" % z)
 

@@ -46,7 +46,7 @@ Everything per-unit lands in printer.cfg's `SAVE_CONFIG` block. The shipped
   *included* file already sets — so `nozzle_*`/`station_*` must never be written into the
   `.cfg` includes. Autosaving new options into a section that an include defines is fine.
 - Values are applied live at once; `SAVE_CONFIG` persists and restarts.
-- Klipper's babystep is global; `TOOL_Z_ADJUST TOOL=n ADJUST=±mm|VALUE=mm` edits the per-tool
+- Klipper's babystep is global; `TOOL_Z_ADJUST TOOL=n ADJUST=±mm|VALUE=mm [SAVE=1]` edits the per-tool
   `z_adjust`, re-applies immediately if that tool is mounted, and stages it for `SAVE_CONFIG`.
 - `[save_variables]` is not used (Klipper core never uses it for calibration).
 
@@ -87,7 +87,8 @@ since 2026-08-25 the first-boot import is driven from outside klippy by
 - Guards on by default: `max_residual 0.05` (4 symmetric points dilute one bad point's error to
   ~1/4 in the residual while moving the centre by half), `gap_min/gap_max 1.5..5 mm` for
   `nozzle_z − station_z` (3.19 here). A failed guard saves nothing.
-- `TOOL_Z_ADJUST TOOL=n ADJUST=±mm|VALUE=mm` is the per-tool babystep (Klipper's is global).
+- `TOOL_Z_ADJUST TOOL=n ADJUST=±mm|VALUE=mm [SAVE=1]` is the per-tool babystep (Klipper's is
+  global). Live at once; staged for SAVE_CONFIG only on SAVE=1.
 
 ## Fidelity of the probe sequence
 
@@ -108,7 +109,7 @@ points use the 3-decimal-rounded centre actually commanded; `fit_circle` is the 
 Emitted G-code order matches the recovered list; fitted centre = virtual centre; autosave
 receives exactly `nozzle_x/y/z` for the calibrated tool and `station_x/y/z`; live offsets
 update without restart; `TOOLCHANGE_SET_PRINT_OFFSET` gives 3.240 for T0/220 °C/80 °C/0.25 mm
-(the value in docs/notes/40-offsets.md) and refuses without `station_z`; `TOOL_Z_ADJUST` applies live and stages;
+(the value in docs/notes/40-offsets.md) and refuses without `station_z`; `TOOL_Z_ADJUST` applies live and stages only on SAVE=1;
 plate check, bounded Z target, gap and residual guards all fire; `FF_IMPORT_FIRMWARE_CONFIG` against
 `live/firmwareRes-config` stages 15 values and reproduces the offset table in docs/notes/40-offsets.md.
 **Not yet run on the printer.**

@@ -202,13 +202,22 @@ station start (cylinder_x/y): 28.500, 214.500
 put the plate back and print a first layer; tune per tool with:
 
 ```gcode
-TOOL_Z_ADJUST TOOL=2 ADJUST=-0.02   ; relative, or VALUE=<mm> absolute
-SAVE_CONFIG
+TOOL_Z_ADJUST TOOL=2 ADJUST=-0.02          ; live, nothing saved
+TOOL_Z_ADJUST TOOL=2 ADJUST=-0.02 SAVE=1   ; and stage it for SAVE_CONFIG
 ```
 
-Klipper's own babystep is one global number. `TOOL_Z_ADJUST` edits
-`[ff_tool 2] z_adjust`, applies immediately if that tool is mounted, and is
-re-added on every later grab of that tool alone.
+Klipper's own babystep is one global number and moves every tool together.
+`TOOL_Z_ADJUST` edits `[ff_tool 2] z_adjust`, which only that tool's frame
+carries.
+
+**It takes effect immediately and saves nothing.** That is what lets you
+dial a first layer in *during* a print — `SAVE_CONFIG` is a restart, so a
+change that needed one could never be made while printing. Add `SAVE=1`
+when you are happy with the number and want it to survive a reboot, then
+`SAVE_CONFIG` at a convenient moment.
+
+Nothing moves when you run it: the frame shifts and the next move lands in
+it, the same as `SET_GCODE_OFFSET Z_ADJUST` without `MOVE=1`.
 
 ---
 
@@ -343,6 +352,19 @@ Z = nozzle_z[tool] - station_z + z_adjust[tool]  absolute
 X and Y are differences, so the base tool's are zero. Z is absolute, which is
 what makes Z0 the bed plane whenever a tool is mounted — not only after
 `TOOLCHANGE_SET_PRINT_OFFSET` at print start.
+
+Those go into a move transform **below** Klipper's own G-code offset, so
+three things stack without ever sharing a number:
+
+| Layer | Set by | Scope |
+|---|---|---|
+| `SET_GCODE_OFFSET` / `homing_origin` | you, and `TOOLCHANGE_SET_PRINT_OFFSET`'s thermal/bed/layer terms | every tool |
+| transform, XYZ | `TOOL_CALIBRATE_TOOL_OFFSET` | the mounted tool |
+| transform, Z | `TOOL_Z_ADJUST` | the mounted tool |
+
+Selecting a tool swaps the lower two and moves nothing. `SET_GCODE_OFFSET
+Z=0` clears the job terms and leaves the calibration alone — so the number a
+UI shows as "Z offset" or "baby stepping" really is just yours.
 
 See [`toolchange.md`](toolchange.md) for the toolchanger as a whole, and
 [`notes/45-tool-offset-calibration.md`](notes/45-tool-offset-calibration.md)

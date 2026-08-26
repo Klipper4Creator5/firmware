@@ -1259,8 +1259,8 @@ class FFToolchange:
         self._run('SET_GCODE_OFFSET Z=%.3f MOVE=1 MOVE_SPEED=40' % z)
 
     cmd_TOOL_Z_ADJUST_help = (
-        "Per-tool persistent Z correction: TOOL_Z_ADJUST TOOL=<0..3> "
-        "(ADJUST=<+/-mm> | VALUE=<mm>); SAVE_CONFIG to persist")
+        "Per-tool Z correction, applied live: TOOL_Z_ADJUST TOOL=<0..3> "
+        "(ADJUST=<+/-mm> | VALUE=<mm>) [SAVE=1 to also persist]")
 
     def cmd_TOOL_Z_ADJUST(self, gcmd):
         """The per-tool counterpart of SET_GCODE_OFFSET Z_ADJUST.
@@ -1273,24 +1273,33 @@ class FFToolchange:
         is in force on the next grab. Either way the global offset -- the
         operator's babystep, the job terms -- is untouched.
 
-        The change is staged for SAVE_CONFIG."""
+        Live by default, persisted only on SAVE=1. The two are different
+        acts: taking effect is what you want while a first layer is going
+        down, and SAVE_CONFIG is a restart, which mid-print is not on offer.
+        Staging every tweak also meant a config left permanently dirty by
+        anyone dialling a number in by feel. Nothing moves -- as with
+        SET_GCODE_OFFSET Z_ADJUST without MOVE=1, the frame shifts and the
+        next move lands in it, which is what babystepping into a live print
+        has to do."""
         tool = gcmd.get_int('TOOL', minval=0, maxval=EXTRUDER_COUNT - 1)
         adjust = gcmd.get_float('ADJUST', None)
         value = gcmd.get_float('VALUE', None)
+        save = gcmd.get_int('SAVE', 0, minval=0, maxval=1)
         if (adjust is None) == (value is None):
             raise gcmd.error("TOOL_Z_ADJUST: give exactly one of ADJUST= or"
                              " VALUE=")
         tool_object = self.tools[tool]
         previous = tool_object.z_adjust
         updated = value if value is not None else previous + adjust
-        tool_object.set_z_adjust(updated)
+        tool_object.set_z_adjust(updated, save=bool(save))
         self.refresh_offsets()
-        live = ", in force now" if self.gcode_transform.tool == tool \
-            else ", applies on the next grab of T%d" % tool
-        gcmd.respond_info(
-            "T%d z_adjust %.3f -> %.3f%s. The SAVE_CONFIG command will update"
-            " the printer config file and restart the printer."
-            % (tool, previous, updated, live))
+        live = ("in force now" if self.gcode_transform.tool == tool
+                else "applies on the next grab of T%d" % tool)
+        persisted = ("SAVE_CONFIG will persist it (and restart)" if save
+                     else "not saved -- add SAVE=1, or repeat with SAVE=1"
+                          " once you like it")
+        gcmd.respond_info("T%d z_adjust %.3f -> %.3f, %s; %s"
+                          % (tool, previous, updated, live, persisted))
 
     # ---------------- klipper-toolchanger command aliases ----------------
 

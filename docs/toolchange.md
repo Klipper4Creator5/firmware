@@ -22,7 +22,7 @@ documented in the file headers.
 
 | File | Goes to (on the printer) | What it does |
 |---|---|---|
-| [`payload/klipper/extras/ff_toolchange.py`](../payload/klipper/extras/ff_toolchange.py) | `/usr/prog/klipper/klippy/extras/` | The toolchanger: `T0..T3`, dock/grab state machine with sensor polling and retries, per-tool G-code offsets (the absolute ~3.2 mm bed-frame Z is applied at every grab), `TOOLCHANGE_SET_PRINT_OFFSET` (the print-start thermal/bed/layer Z terms), `TOOL_Z_ADJUST` (per-tool persistent babystep), `TOOLCHANGE_STATUS`, `TOOLCHANGE_PARK` |
+| [`payload/klipper/extras/ff_toolchange.py`](../payload/klipper/extras/ff_toolchange.py) | `/usr/prog/klipper/klippy/extras/` | The toolchanger: `T0..T3`, dock/grab state machine with sensor polling and retries, per-tool G-code offsets (the absolute ~3.2 mm bed-frame Z is applied at every grab), `TOOLCHANGE_SET_PRINT_OFFSET` (the print-start thermal/bed/layer Z terms), `TOOL_Z_ADJUST` (per-tool babystep, live, saved on request), `TOOLCHANGE_STATUS`, `TOOLCHANGE_PARK` |
 | [`payload/helixscreen/printer_database.d/flashforge_creator5.json`](../payload/helixscreen/printer_database.d/flashforge_creator5.json) | HelixScreen `config/printer_database.d/` | Printer-database entry so HelixScreen auto-detects both Creator 5 models as tool changers (the Pro and the non-Pro differ only by the chamber heater) |
 | [`payload/klipper/extras/ff_print.py`](../payload/klipper/extras/ff_print.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_print]` — takes over `SDCARD_PRINT_FILE` and `M23`, reads bed/nozzle/initial tool/first-layer height out of the file itself, and calls `FF_BEFORE_PRINT_START` before the file's first line and `FF_AFTER_PRINT_END` once the job leaves the printing state. Declared in `ff-print-macros.cfg`; holds no policy of its own |
 | [`payload/klipper/extras/ff_tool.py`](../payload/klipper/extras/ff_tool.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_tool n]` — one section per tool; `dock_x/dock_y`, `nozzle_x/y/z` and `z_adjust` are all autosaved (import or calibration + `SAVE_CONFIG`) |
@@ -294,8 +294,9 @@ Per-tool first-layer tuning: Klipper's `SET_GCODE_OFFSET Z_ADJUST=` babystep
 is one global number. Use
 
 ```gcode
-TOOL_Z_ADJUST TOOL=2 ADJUST=-0.02   ; relative, or VALUE=<mm> absolute
-SAVE_CONFIG                         ; when you are happy with it
+TOOL_Z_ADJUST TOOL=2 ADJUST=-0.02          ; live, saves nothing
+TOOL_Z_ADJUST TOOL=2 ADJUST=-0.02 SAVE=1   ; and stage it
+SAVE_CONFIG                                ; when you are happy with it
 ```
 
 instead: it edits `[ff_tool 2] z_adjust`, re-applies immediately if that
