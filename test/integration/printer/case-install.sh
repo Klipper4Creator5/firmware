@@ -157,8 +157,8 @@ done
 [ "$BADPARSE" = 0 ] && ok "every installed script parses under the printer's busybox ash"
 
 if [ -d /usr/data/anvil/init.d ]; then
-    # Must be an actual invocation, not a mention. S70klipper and S60web both
-    # name start.sh in their header comments, so a bare grep for the string
+    # Must be an actual invocation, not a mention. S70klipper and S60nginx
+    # both name start.sh in their header comments, so a bare grep for the string
     # passed even with the line that runs it deleted -- the lint-danger
     # failure mode this suite exists to avoid.
     grep -rq '^[^#]*start\.sh' /usr/data/anvil/init.d/ 2>/dev/null \
@@ -264,11 +264,30 @@ if [ -f /usr/data/config/moonraker-custom.conf ]; then
     md5sum < /usr/data/config/moonraker-custom.conf > /tmp/custom.before2
 fi
 
+# Stand in for a printer coming from an OLDER mod release. S60web was split
+# into S60nginx and S62moonraker, and firmwareExe runs every executable
+# $MODDIR/init.d/S* in filename order -- so an S60web left behind by the
+# previous install would start a second nginx and a second moonraker, from the
+# paths that release believed in, beside the ones this release just installed.
+# run-append.sh clears $MODDIR/init.d before extracting for exactly this
+# reason; planting the file is how that gets tested, because a package built
+# from this tree ships no S60web for the upgrade to leave behind.
+if [ -d /usr/data/anvil/init.d ]; then
+    printf '#!/bin/sh\nexit 0\n' > /usr/data/anvil/init.d/S60web
+    chmod +x /usr/data/anvil/init.d/S60web
+    STALE_PLANTED=1
+fi
+
 boot /tmp/boot2.log 900 || bad "boot 2 never settled"
 case "$BOOT_RESULT" in
     installed) ok "the second install also exited 0" ;;
     *) bad "re-install did not succeed"; tail -25 /tmp/boot2.log | sed 's/^/        /' ;;
 esac
+if [ "${STALE_PLANTED:-0}" = 1 ]; then
+    [ -e /usr/data/anvil/init.d/S60web ] \
+        && bad "the update left a stale S60web in init.d -- an upgraded printer would run two web stacks" \
+        || ok "the update removed the stale S60web -- the installed set is exactly the shipped set"
+fi
 cmp -s /tmp/app_startup.after1 $APP && ok "re-install is idempotent (app_startup.sh unchanged)" \
                                     || bad "re-install changed app_startup.sh again"
 if [ -f /tmp/custom.before2 ]; then
@@ -356,7 +375,7 @@ if [ "$WRAPPER" = 1 ]; then
         || ok "the UI survived app_startup.sh's 5-second watchdog"
     if [ -f /usr/data/logs/anvil-boot.log ]; then
         ok "the mod wrote its boot log"
-        for s in S60web S70klipper S80ui; do
+        for s in S60nginx S62moonraker S70klipper S80ui; do
             grep -q "$s" /usr/data/logs/anvil-boot.log \
                 && ok "$s ran at boot" || bad "$s never ran at boot"
         done
@@ -373,85 +392,101 @@ else
 fi
 killall sleep 2>/dev/null
 
-# ---- Moonraker was actually replaced ---------------------------------------
+# ---- Moonraker: the mod's tree, and where it is ----------------------------
 # The stock Moonraker is a 2022 build that predates the webcam "enabled" flag,
 # and Mainsail drops every webcam that lacks it -- so a silently skipped swap
-# looks like a healthy printer with no camera. run-append.sh reports into the
-# install log, which is why the log line is checked and not just the files.
-MRPKG=/usr/prog/moonraker/moonraker/moonraker
-if [ -d $MRPKG ]; then
-    # Only assert the swap for a package that actually carries Moonraker --
-    # BUILD_MOONRAKER=0 is a supported way to build one that does not, and it
-    # should leave the stock server alone rather than fail the run.
-    if [ -d /usr/data/anvil/moonraker ]; then
-        grep -q "moonraker: replaced with the mod's build" /usr/data/anvil-install.log 2>/dev/null \
-            && ok "moonraker: the install replaced the stock tree" \
-            || bad "moonraker: run-append.sh did not report a replacement"
-        # And it must have been unconditional. There is no gate in front of the
-        # swap any more and no rollback behind it: a printer that comes out of
-        # an update still running FlashForge's 2022 Moonraker is the failure
-        # this replaced, so the install must never report keeping it.
-        grep -q "keeping the stock" /usr/data/anvil-install.log 2>/dev/null \
-            && bad "moonraker: the install kept the stock tree -- the swap is still conditional" \
-            || ok "moonraker: the swap was unconditional"
-        [ -e $MRPKG.modold ] \
-            && bad "moonraker: a .modold rollback tree was left behind" \
-            || ok "moonraker: no rollback tree left on the firmware partition"
-        # The field the whole exercise is about. Its absence means an old tree.
-        grep -q '"enabled"' $MRPKG/components/webcam.py 2>/dev/null \
-            && ok "moonraker: the installed webcam component has the enabled field" \
-            || bad "moonraker: webcam.py has no enabled field -- Mainsail will hide the camera"
-    else
-        echo "  (skip) moonraker: this package ships none (BUILD_MOONRAKER=0)"
+# looks like a healthy printer with no camera. That is what this block is for.
+#
+# WHERE IT HAS TO BE, AND WHERE IT MUST NOT BE. The mod's tree rides in the
+# payload and is installed by being EXTRACTED, so the entry point lands at
+# /usr/data/anvil/moonraker/moonraker.py and nothing is written to /usr/prog.
+# These checks used to assert the opposite: that run-append.sh had copied our
+# build over /usr/prog/moonraker/moonraker/moonraker, that the install log said
+# so, and that no .modold rollback tree was left beside it. That copy is gone.
+# It was a second full tree on the one partition with no room to spare -- the
+# only step of the install that could fail on disk space, failing as "no
+# working web UI" -- and because a stock FlashForge flash overwrites /usr/prog
+# while /usr/data/anvil survives one, it made "which Moonraker is this printer
+# running?" depend on what was flashed last. So the assertions are inverted:
+# ours must be on the data partition, and FlashForge's must be exactly as
+# untouched as we found it.
+MRMOD=/usr/data/anvil/moonraker
+MRSTOCK=/usr/prog/moonraker/moonraker/moonraker
+if [ -d $MRMOD ]; then
+    # Only assert the tree for a package that actually carries Moonraker --
+    # BUILD_MOONRAKER=0 is a supported way to build one that does not.
+    [ -f $MRMOD/moonraker.py ] \
+        && ok "moonraker: the entry point is at $MRMOD/moonraker.py" \
+        || bad "BRICK: no $MRMOD/moonraker.py -- S62moonraker has nothing to start"
+    # The field the whole exercise is about. Its absence means an old tree.
+    grep -q '"enabled"' $MRMOD/components/webcam.py 2>/dev/null \
+        && ok "moonraker: the installed webcam component has the enabled field" \
+        || bad "moonraker: webcam.py has no enabled field -- Mainsail will hide the camera"
+    # And the firmware partition was left alone. FlashForge's tree is the 2022
+    # build, so it is exactly the one that does NOT have the enabled field:
+    # finding the field there means our build was written over it.
+    if [ -d $MRSTOCK ]; then
+        if grep -q '"enabled"' $MRSTOCK/components/webcam.py 2>/dev/null; then
+            bad "moonraker: the install wrote its build over $MRSTOCK -- /usr/prog must be left alone"
+        else
+            ok "moonraker: FlashForge's own tree on /usr/prog is untouched"
+        fi
     fi
-    # moonrakerDaemon execs this by absolute path; nothing else starts it.
-    [ -f $MRPKG/moonraker.py ] \
-        && ok "moonraker: moonraker.py is where moonrakerDaemon looks for it" \
-        || bad "BRICK: no $MRPKG/moonraker.py -- Moonraker cannot start"
-    # The rollback copy must never be left behind: it is a second full tree on
-    # the small firmware partition.
-    [ -d $MRPKG.modold ] \
-        && bad "moonraker: the swap left its rollback copy on /usr/prog" \
-        || ok "moonraker: no rollback copy left behind"
+    # No rollback tree either -- there is nothing to roll back from any more,
+    # and a leftover .modold is a second full tree on the small partition.
+    if [ -e $MRSTOCK.modold ] || [ -e /usr/prog/moonraker/moonraker.modold ]; then
+        bad "moonraker: a .modold rollback tree was left on the firmware partition"
+    else
+        ok "moonraker: no rollback tree on the firmware partition"
+    fi
+else
+    echo "  (skip) moonraker: this package ships none (BUILD_MOONRAKER=0)"
+fi
 
-    # The config has to actually LAND. /usr/data/config/moonraker.conf is on
-    # the factory image, so the compare-and-.mod-new rule used to leave the
-    # factory file in place forever and write ours beside it -- Mainsail then
-    # shows no camera, which is the entire reason the Moonraker swap exists.
-    # Assert the live file is ours, not that a .mod-new appeared next to it.
-    if grep -q '^\[webcam' /usr/data/config/moonraker.conf 2>/dev/null; then
-        ok "moonraker.conf: the shipped config is live (has a [webcam] block)"
-    else
-        bad "moonraker.conf: live file has no [webcam] block -- Mainsail will show no camera"
-        [ -f /usr/data/config/moonraker.conf.mod-new ] \
-            && echo "        (ours was parked as moonraker.conf.mod-new)"
-    fi
+# The config has to actually LAND. /usr/data/config/moonraker.conf is on
+# the factory image, so the compare-and-.mod-new rule used to leave the
+# factory file in place forever and write ours beside it -- Mainsail then
+# shows no camera, which is the entire reason the Moonraker swap exists.
+# Assert the live file is ours, not that a .mod-new appeared next to it.
+if grep -q '^\[webcam' /usr/data/config/moonraker.conf 2>/dev/null; then
+    ok "moonraker.conf: the shipped config is live (has a [webcam] block)"
+else
+    bad "moonraker.conf: live file has no [webcam] block -- Mainsail will show no camera"
+    [ -f /usr/data/config/moonraker.conf.mod-new ] \
+        && echo "        (ours was parked as moonraker.conf.mod-new)"
+fi
 
-    # The user seam. moonraker.conf is mod-owned and overwritten every update,
-    # so moonraker-custom.conf is where a user's settings have to survive --
-    # and moonraker.conf [include]s it by name, which Moonraker treats as
-    # fatal if it matches nothing. So it must exist, and must NOT be replaced.
-    if [ -f /usr/data/config/moonraker-custom.conf ]; then
-        ok "moonraker-custom.conf: created for the user's own settings"
-    else
-        bad "BRICK: moonraker-custom.conf missing -- moonraker.conf includes it, Moonraker will refuse to start"
-    fi
-    grep -q '^\[include moonraker-custom.conf\]' /usr/data/config/moonraker.conf 2>/dev/null \
-        && ok "moonraker.conf includes the user seam" \
-        || bad "moonraker.conf does not include moonraker-custom.conf -- user settings have nowhere to live"
-    # THE ONE THAT MATTERS. Everything above only says the right files are on
-    # disk; this says the printer's own python3.8 can actually run them. We
-    # ship a Moonraker newer than the machine's, on libraries FlashForge
-    # installed and we do not control, so an ImportError here is the failure
-    # mode to be afraid of -- and it is real mipsel under qemu, not a mock.
-    # S60web starts it during boot 3, so it has had time by now.
-    #
-    # IT MUST STILL BE UP AFTER A SETTLE. An earlier version of this check
-    # asked only "did a moonraker.py process ever appear", and passed a build
-    # that died on a missing _sqlite3 module seconds into startup -- the
-    # process is alive for a moment before the failing import is reached. The
-    # false green is the whole reason that shipped. Liveness twice, and the
-    # log has to be clean too.
+# The user seam. moonraker.conf is mod-owned and overwritten every update,
+# so moonraker-custom.conf is where a user's settings have to survive --
+# and moonraker.conf [include]s it by name, which Moonraker treats as
+# fatal if it matches nothing. So it must exist, and must NOT be replaced.
+if [ -f /usr/data/config/moonraker-custom.conf ]; then
+    ok "moonraker-custom.conf: created for the user's own settings"
+else
+    bad "BRICK: moonraker-custom.conf missing -- moonraker.conf includes it, Moonraker will refuse to start"
+fi
+grep -q '^\[include moonraker-custom.conf\]' /usr/data/config/moonraker.conf 2>/dev/null \
+    && ok "moonraker.conf includes the user seam" \
+    || bad "moonraker.conf does not include moonraker-custom.conf -- user settings have nowhere to live"
+# THE ONE THAT MATTERS. Everything above only says the right files are on
+# disk; this says the printer's own python3.8 can actually run them. We
+# ship a Moonraker newer than the machine's, on libraries FlashForge
+# installed and we do not control, so an ImportError here is the failure
+# mode to be afraid of -- and it is real mipsel under qemu, not a mock.
+# S62moonraker starts it during boot 3, so it has had time by now.
+#
+# IT MUST STILL BE UP AFTER A SETTLE. An earlier version of this check
+# asked only "did a moonraker.py process ever appear", and passed a build
+# that died on a missing _sqlite3 module seconds into startup -- the
+# process is alive for a moment before the failing import is reached. The
+# false green is the whole reason that shipped. Liveness twice, and the
+# log has to be clean too.
+#
+# Gated on the package having shipped a Moonraker at all: with
+# BUILD_MOONRAKER=0 there is nothing on /usr/data for S62moonraker to start
+# and nothing on /usr/prog it will fall back to, so "not running" is the
+# documented outcome rather than a failure.
+if [ -d $MRMOD ]; then
     if wait_for 90 running 'moonraker/moonraker.py' && sleep 15 && running 'moonraker/moonraker.py'; then
         ok "moonraker: the shipped tree runs on the printer's python3.8, and stays up"
     else
@@ -466,8 +501,6 @@ if [ -d $MRPKG ]; then
     else
         ok "moonraker: no import errors in its log"
     fi
-else
-    bad "moonraker: no $MRPKG -- this prog partition has no Moonraker to replace"
 fi
 
 # Informational only -- this block asserts nothing and never sets FAIL. The

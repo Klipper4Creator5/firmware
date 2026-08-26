@@ -114,7 +114,8 @@ cd /usr/prog/mjpg-streamer
 ```
 
 Two details that bite: `libjpeg.so.9` lives in that directory, so without the LD_LIBRARY_PATH the
-binary dies on a missing shared object (the same failure moonrakerDaemon has in S60web); and the
+binary dies on a missing shared object (the same failure moonrakerDaemon had, which is why
+`anvil-env.sh` is the one place the library path is written down); and the
 plugin `.so` names resolve against the working directory, hence the `cd`. nginx proxies it at
 `/webcam/` and `assets/moonraker.conf` carries the matching `[webcam]` entry with relative URLs,
 so one forwarded port is enough.

@@ -24,9 +24,9 @@
 # gets the full environment cannot be broken by a config change.
 #
 # Sourcing twice is safe: each directory is added only if it is not already
-# there, so firmwareExe sourcing this and then running init.d/S60web -- which
-# sources it again with the first copy already inherited -- does not grow the
-# variable on every boot.
+# there, so firmwareExe sourcing this and then running init.d/S62moonraker --
+# which sources it again with the first copy already inherited -- does not grow
+# the variable on every boot.
 
 # The /usr/prog library packages, in app_startup.sh's own order.
 #

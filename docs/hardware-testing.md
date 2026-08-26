@@ -102,8 +102,10 @@ Understand the safety net first, because FlashForge's UI is gone from the
 screen and there is nothing to fall back to:
 
 - ssh and Mainsail do not depend on the screen. `/etc/init.d/S50dropbear` is
-  stock and runs long before the UI, and `init.d/S60web` starts nginx and
-  moonraker independently. They are your way in when the screen is dark.
+  stock and runs long before the UI, and `init.d/S60nginx` and
+  `init.d/S62moonraker` start the web stack independently of it — and of each
+  other, so `S62moonraker restart` over ssh leaves Mainsail served. They are
+  your way in when the screen is dark.
 - `init.d/S70klipper` owns Klipper startup, because on stock firmware it was
   `firmwareExe` — not any init script — that ran `/usr/prog/klipper/start.sh`.
   Without this the printer would boot to a working screen and be unable to

@@ -43,11 +43,44 @@ filename order and individually restartable over ssh:
 
 ```
 S50wifi      wlan0 + wpa_supplicant + udhcpc
-S60web       nginx (Mainsail) + moonraker
+S60nginx     nginx (Mainsail) on :80
+S62moonraker moonraker on :7125
 S65camera    mjpg-streamer on :8080 (nginx proxies it at /webcam/)
 S70klipper   Klipper
 S80ui        decides whether the UI runs (MOD_UI, HelixScreen installed?)
 ```
+
+nginx and moonraker were one script, `S60web`, until they were split. They fail
+separately and are debugged separately — nginx not starting is a missing config
+or a port already bound, and you know within a second; moonraker not starting
+is a component that failed to import, and it takes a background check and a log
+tail to even notice. One script had to say `web: stopped` for both, and
+`status` reported on two unrelated things at once. Now `S62moonraker restart`
+over ssh — the one you run over and over while chasing a moonraker config — no
+longer takes the web UI down with it. The numbering keeps the order: nginx
+first, because it proxies the other two, so a browser gets a page saying the
+backend is not up yet rather than a refused connection.
+
+Two sourced libraries sit beside them, both installed to `/usr/data/anvil` and
+neither executable:
+
+* **`anvil-env.sh`** — `PATH`, `LD_LIBRARY_PATH` and `FF_PYTHON`, in the one
+  place that defines them. `run-append.sh`, `firmwareExe`, `start.sh` and every
+  service script source it. A private copy per script is how the installer's
+  check and the boot script came to disagree about the library list, with
+  moonraker dying on `libpython3.8.so.1.0: cannot open shared object file`.
+* **`anvil-service.sh`** — the shape every service script has: `svc_say` /
+  `svc_warn` for the boot log, `svc_pid_alive` and `svc_proc_alive` for
+  liveness, `svc_start_daemon` / `svc_stop_daemon` around busybox
+  `start-stop-daemon`, `svc_detach` for a wait that must not hold the boot up,
+  and `svc_dispatch` for the `start|stop|restart|status` block. The scripts
+  were written months apart and had arrived at four different answers to "is it
+  still running?" and two to `restart`; none of those differences were
+  decisions. The library also carries the two corrections busybox needs —
+  `start-stop-daemon -K` returns before the process is dead, and does not
+  remove the pidfile, which is how `restart` raced its own start and how
+  `status` came to report a recycled pid as a running service. A script that
+  cannot find this file says so and exits rather than half-starting.
 
 Everything the mod installs lives under `/usr/data/anvil` on the **data**
 partition, which a FlashForge OTA cannot delete. The software component itself
@@ -58,17 +91,36 @@ the outer package instead.
 
 ## Moonraker
 
-The mod ships its own Moonraker (pinned in `versions.env`) and installs it over
-the stock one. FlashForge's is a 2022 build that reports API 1.0.5, old enough
+The mod ships its own Moonraker (pinned in `versions.env`) and runs it from
+`/usr/data/anvil/moonraker/moonraker.py`. FlashForge's is a 2022 build that reports API 1.0.5, old enough
 that the current Mainsail hides features it cannot see. The visible one is the
 camera: Moonraker only grew the webcam `enabled` flag in April 2023, Mainsail
 filters its webcam list on exactly that field, and so every `[webcam]` entry is
 discarded and the panel disappears — while the stream itself is perfectly
 healthy behind nginx. No config change can fix that from either side.
 
-Only the python package tree is replaced. The interpreter, the `moonraker-env`
-beside it and `moonrakerDaemon` are FlashForge's and keep working, because the
-pinned build runs on the libraries already installed — nothing has to be
+**It is installed by being extracted.** The tree rides in the mod payload, the
+payload unpacks to `/usr/data/anvil`, and that is the whole installation —
+there is no separate Moonraker step that can fail on its own. Nothing is
+written to `/usr/prog`: FlashForge's tree at `/usr/prog/moonraker/moonraker/`
+is left exactly where it is and simply never used again, and
+`S62moonraker` starts ours by absolute path with no fallback.
+
+An earlier release copied the same tree over `/usr/prog/moonraker` as well.
+That is gone. It put a second, byte-identical Moonraker on the one partition
+with no room to spare — the only step of the install that could fail on disk
+space, failing as "no working web UI" — and because `/usr/prog` is what a stock
+FlashForge flash overwrites while `/usr/data/anvil` survives one, it made
+"which Moonraker is this printer running?" depend on what was flashed last.
+Both things thought to require that location turned out not to: the
+`moonraker-env` virtualenv beside it is not on `sys.path` at all (imports
+resolve from `/usr/prog/Python-3.8.2/lib/python3.8/site-packages`, checked by
+running the printer's own interpreter on the real image), and
+`moonrakerDaemon`, the one thing that did exec that tree by absolute path, is
+never invoked — `S62moonraker` starts the server itself.
+
+What IS reused is FlashForge's python 3.8.2 and the site-packages next to it:
+the pinned build runs on the libraries already installed, so nothing has to be
 cross-compiled for mipsel.
 
 **The pin is a commit, not a release, and that is not a matter of taste.**
@@ -149,16 +201,22 @@ inside the replica and compares `firmwareExe`, `app_startup.sh` and
 `klipper/start.sh` byte for byte, and checks that nothing stock still
 references the leftovers.
 
-Two caveats it does not cover, both worth knowing before you rely on it:
+One thing it does not cover, worth knowing before you rely on it:
 
-* **Moonraker is not restored.** It is not in the update package — only on the
-  factory image — so once the mod has swapped it, a stock reflash leaves the
-  mod's build in place. `run-append.sh` moves the stock tree aside as
-  `moonraker.modold` and deletes it once the copy succeeds, so there is no
-  local copy either. `BUILD_MOONRAKER=0` avoids the swap entirely.
-* **An interrupted swap needs a hand.** If power is lost between the `mv` and
-  the copy, `/usr/prog/moonraker/moonraker/moonraker` is missing and every
-  later install logs "nothing replaced" rather than repairing it. Moonraker
-  will not start and Mainsail will not load. Over ssh:
-  `mv /usr/prog/moonraker/moonraker/moonraker.modold \
-      /usr/prog/moonraker/moonraker/moonraker` and reboot.
+* **Moonraker.** The mod's Moonraker lives on the data partition at
+  `/usr/data/anvil/moonraker`, and it is started by
+  `/usr/data/anvil/init.d/S62moonraker` — which a stock flash removes along
+  with the rest of the mod's boot path. So a stock reflash goes back to
+  FlashForge's own 2022 tree at `/usr/prog/moonraker/moonraker/`, which was
+  never touched and is still exactly what the factory image shipped. The mod's
+  copy is left behind on `/usr/data` and is inert: nothing stock knows the path.
+
+  This used to be a caveat in the other direction. An earlier release installed
+  its Moonraker over `/usr/prog/moonraker`, keeping the stock tree beside it as
+  `moonraker.modold` and deleting that once the copy succeeded — so a stock
+  reflash silently kept running the mod's build, and losing power mid-swap left
+  the printer with no Moonraker at all and needed a hand-run `mv` over ssh to
+  put the `.modold` tree back. Neither the `.modold` path nor the recovery
+  instruction exists any more. If Moonraker is missing or broken now, the fix
+  is to reflash the mod package: it carries the whole tree, and extracting the
+  payload is the entire installation.

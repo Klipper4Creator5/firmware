@@ -28,7 +28,18 @@ if [ -n "$MODTAR" ]; then
     else
         # Keep user-editable state; replace everything we own.
         [ -f $MODDIR/anvil.conf ] && cp -f $MODDIR/anvil.conf /tmp/anvil.conf.keep
-        rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen $MODDIR/config $MODDIR/moonraker
+        # init.d is in this list for a reason that only shows up on UPDATES.
+        # Scripts here used to be overwritten in place and never removed, which
+        # was harmless only while the set of filenames never changed. It does
+        # change: S60web was split into S60nginx and S62moonraker, and on a
+        # printer that already had the mod the old S60web would have survived
+        # the update and sat next to both new scripts. firmwareExe runs every
+        # executable $MODDIR/init.d/S* in filename order, so nginx and moonraker
+        # would each have been started twice, by two scripts that disagree about
+        # where moonraker even lives. Clearing the directory first makes the
+        # installed set exactly the shipped set. rm -rf is happy when it is not
+        # there yet (first install), and the tarball recreates it below.
+        rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen $MODDIR/config $MODDIR/moonraker $MODDIR/init.d
         mkdir -p $MODDIR
         # Try xz first (FlashForge's own factory installer uses `xz -dc`, so
         # it exists), then fall back to plain tar in case a build shipped it
@@ -56,63 +67,43 @@ fi
 sync
 
 # ---- Moonraker -------------------------------------------------------------
-# Install the Moonraker bin/patch.sh staged, over whatever is there. Only the
-# python package is swapped -- the interpreter, the moonraker-env beside it and
-# moonrakerDaemon are FlashForge's and keep working, because the version we
-# ship runs on the libraries already installed. See bin/patch.sh for why that
-# is true and why this is the only way the camera can appear in Mainsail.
+# Nothing to do here any more. The payload extracted above already IS the
+# installation: bin/patch.sh stages Moonraker's python package into the
+# payload, so once the tarball lands the entry point exists at
+# $MODDIR/moonraker/moonraker.py, and the init script starts the server from
+# exactly there.
 #
-# UNCONDITIONAL, AND THERE IS NO ROLLBACK. This used to move the old tree
-# aside, run an import check first, and put FlashForge's 2022 build back
-# whenever that check failed or the copy did not complete. It read as caution
-# and behaved as a coin toss: the printer ended up running the mod's Moonraker
-# or a five-year-old one depending on a decision taken during a flash, nothing
-# on the screen said which, and the mod's own Mainsail config -- webcam flag
-# included -- assumes the new one. A package that ships a Moonraker installs
-# that Moonraker.
+# What used to sit here was a SECOND copy of that identical tree, into
+# /usr/prog/moonraker/moonraker/, and every reason for it turned out to be
+# wrong:
 #
-# The import check that used to gate this is gone from the printer entirely.
-# By the time a machine is being flashed it is far too late to discover that
-# the Moonraker in the package does not load -- there is no second build to
-# choose instead, and a log line saying so on the printer helps nobody. That
-# check belongs to the build, against the printer's own interpreter, before
-# anything ships: see test/integration/printer/case-moonraker.sh, which
-# imports every component this config asks for and is what `make
-# test-moonraker` runs.
-if [ -d $MODDIR/moonraker ]; then
-    MOONRAKER_ROOT=/usr/prog/moonraker/moonraker
-    NEED_KB=`du -sk $MODDIR/moonraker | cut -f1`
-    FREE_KB=`df /usr/prog | tail -1 | tr -s ' ' | cut -d' ' -f4`
-    # The tree being replaced is removed before the copy, so its space counts
-    # as available. /usr/prog is the small firmware partition and this is the
-    # one physical limit left -- not a choice between builds, just whether the
-    # copy can happen at all.
-    if [ -d $MOONRAKER_ROOT/moonraker ]; then
-        OLD_KB=`du -sk $MOONRAKER_ROOT/moonraker | cut -f1`
-        FREE_KB=$((${FREE_KB:-0} + ${OLD_KB:-0}))
-    fi
-    if [ "${FREE_KB:-0}" -lt "$NEED_KB" ]; then
-        echo "!! moonraker: ${FREE_KB}KB available on /usr/prog, need ${NEED_KB}KB"
-        echo "!! nothing was installed -- this printer has no working web UI"
-    else
-        mkdir -p $MOONRAKER_ROOT
-        rm -rf $MOONRAKER_ROOT/moonraker $MOONRAKER_ROOT/moonraker.modold
-        if cp -a $MODDIR/moonraker $MOONRAKER_ROOT/moonraker; then
-            sync
-            # Bytecode from the FlashForge build would otherwise be the first
-            # thing imported. Same trap as klippy below.
-            find $MOONRAKER_ROOT/moonraker -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
-            echo "moonraker: replaced with the mod's build"
-        else
-            # Say it plainly. There is nothing to restore -- that is the point
-            # of the change -- so the only useful output is what happened and
-            # what fixes it.
-            echo "!! moonraker: copy failed -- $MOONRAKER_ROOT/moonraker is incomplete"
-            echo "!! re-flash the package; there is no web UI until you do"
-        fi
-    fi
-    sync
-fi
+#   * /usr/prog is the FIRMWARE partition. The header of this very script says
+#     the payload is "Never unpacked into /usr/prog: the firmware partition has
+#     no room for ~100MB of web UI" -- and then this block copied a Moonraker
+#     tree there anyway. It was the only step of the install that could fail on
+#     disk space, and the way it failed was "this printer has no working web
+#     UI".
+#   * It bought nothing: the staged $MODDIR/moonraker was never deleted
+#     afterwards, so the printer carried two byte-identical trees -- one on the
+#     partition that has room, one on the partition that does not.
+#   * /usr/prog is what a stock FlashForge flash overwrites, while
+#     /usr/data/anvil survives one. So the copy meant that flashing stock
+#     firmware silently reverted Moonraker to FlashForge's 2022 build while the
+#     rest of the mod stayed exactly where it was -- reintroducing the "which
+#     Moonraker is this printer actually running?" ambiguity that the previous
+#     commit existed to end.
+#
+# The two things that supposedly pinned Moonraker to /usr/prog do not hold.
+# The moonraker-env virtualenv sitting beside it is unused: imports resolve
+# from /usr/prog/Python-3.8.2/lib/python3.8/site-packages -- verified by
+# running the printer's own interpreter on the real image, where moonraker-env
+# is not on sys.path at all. And moonrakerDaemon, which did exec the tree by
+# absolute path, is never invoked any more; the mod's init script starts
+# moonraker itself.
+#
+# FlashForge's tree is deliberately left where it is. Deleting it would be a
+# migration that buys nothing on a partition that is not ours; simply not
+# writing to it is the whole fix.
 
 # ---- klipper + moonraker configs -------------------------------------------
 # Every file here is one the mod ships (ff-*.cfg, moonraker.conf); printer.cfg

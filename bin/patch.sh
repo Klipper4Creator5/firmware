@@ -194,17 +194,37 @@ fi
 # perfectly healthy behind nginx. No amount of config fixes that; the server
 # has to be newer.
 #
-# WHAT IS AND IS NOT REPLACED. Only the python package tree
-# (moonraker/moonraker/moonraker/) is swapped. The interpreter, the
-# moonraker-env virtualenv beside it and moonrakerDaemon are all left alone,
-# because the pinned build runs on what the printer already has:
+# WHERE IT LIVES, AND WHAT IS LEFT ALONE. The tree staged below rides in the
+# mod payload and is installed BY BEING EXTRACTED: the payload unpacks to
+# /usr/data/anvil, so the entry point ends up at
+# /usr/data/anvil/moonraker/moonraker.py and the mod's init script starts it
+# straight from there. Nothing is written to /usr/prog. FlashForge's own tree
+# at /usr/prog/moonraker/moonraker/ is left exactly where it is; it is simply
+# never used again.
+#
+# run-append.sh used to copy this same tree over /usr/prog/moonraker as well,
+# and that copy is gone. It put a second, byte-identical Moonraker on the one
+# partition with no room to spare -- the only step of the install that could
+# fail on disk space, failing as "no working web UI" -- and because /usr/prog
+# is what a stock FlashForge flash overwrites while /usr/data/anvil survives
+# one, it made "which Moonraker is this printer running?" depend on what was
+# flashed last. The two things thought to require that location turned out not
+# to: the moonraker-env virtualenv beside it is not on sys.path at all
+# (imports resolve from /usr/prog/Python-3.8.2/lib/python3.8/site-packages --
+# checked by running the printer's own interpreter on the real image), and
+# moonrakerDaemon, the thing that did exec the tree by absolute path, is never
+# invoked.
+#
+# What IS reused is FlashForge's python 3.8.2 and the site-packages next to
+# it. No virtualenv is built and no wheel is compiled, because the pinned
+# build runs on what the printer already has:
 #
 #   tornado 6.1, jinja2 3.1.2, distro 1.5.0, libnacl 1.7.2,
 #   streaming-form-data 1.8.1, inotify-simple 1.3.5, importlib_metadata 5.1.0,
 #   dbus-next 0.2.3, lmdb 1.3.0
 #
 # -- verified by booting it against exactly those versions on python 3.8,
-# started the way moonrakerDaemon starts it (moonraker/moonraker.py -d), with
+# started the way the init script starts it (moonraker/moonraker.py -d), with
 # _sqlite3 removed from the interpreter to match the printer. Nothing needs a
 # MIPS wheel built: the only native module it imports is
 # streaming_form_data._parser, and the installed 1.8.1 already exports every
@@ -234,9 +254,10 @@ fi
 # hand-written list of paths out of it (app_startup.sh, klipper/klippy/*,
 # firmwareExe, ...). A moonraker/ directory dropped in beside them would be
 # unpacked to /usr/prog/PROGRAM/software/<ver>/ and then simply sat there.
-# So it travels with the rest of the payload and run-append.sh puts it in
-# place -- unconditionally, over whatever was there. See that script for why
-# the pre-flight check it used to be gated on no longer decides anything.
+# So it travels with the rest of the payload instead, and unpacking the
+# payload IS the installation: run-append.sh has no Moonraker step left at
+# all, and nothing about getting Moonraker onto the printer can fail
+# separately from the extraction itself.
 if [ "${BUILD_MOONRAKER:-1}" = "1" ]; then
     [ -f "${MOONRAKER_TGZ:-}" ] || { echo "BUILD_MOONRAKER=1 but no Moonraker tarball at '${MOONRAKER_TGZ:-}' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
     say "Moonraker: staging $MOONRAKER_VERSION package tree"
@@ -339,6 +360,13 @@ mkdir -p "$MOD_PAYLOAD/init.d"
 # mod, because carrying a private copy in each of them is how the installer's
 # check and the boot script came to disagree. Not chmod +x: it is sourced.
 cp -f payload/anvil-env.sh "$MOD_PAYLOAD/anvil-env.sh"
+# The shared service shape. Sourced by every init.d script for svc_say,
+# svc_start_daemon, svc_stop_daemon and the start|stop|restart|status block --
+# one answer to "is it alive?" and one busybox correction for
+# start-stop-daemon, instead of a different one per script. Every converted
+# script exits at once if this file is missing, so leaving it out of the
+# payload is a printer with no services at all. Not chmod +x: it is sourced.
+cp -f payload/anvil-service.sh "$MOD_PAYLOAD/anvil-service.sh"
 [ -d payload/bin ] && cp -f payload/bin/* "$MOD_PAYLOAD/bin/" && chmod +x "$MOD_PAYLOAD/bin"/*
 cp -f payload/init.d/S* "$MOD_PAYLOAD/init.d/"
 chmod +x "$MOD_PAYLOAD/init.d"/S*

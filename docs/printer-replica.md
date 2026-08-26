@@ -151,8 +151,13 @@ the update package on top:
 * **Genuine, from the factory image**: everything else on the prog partition —
   `klipperDaemon`, `moonrakerDaemon`, `checkEboard`, `nginx`, `python3`,
   `moonraker`, the stock `nginx.conf`, and the printer's OpenSSL 1.0.2d.
-  (A mod install then REPLACES the moonraker python package with the pinned
-  build — see how-it-works. The interpreter and moonrakerDaemon stay stock.)
+  (A mod install leaves all of this alone. Its own Moonraker is extracted to
+  `/usr/data/anvil/moonraker` on the DATA partition and started from there —
+  see how-it-works — so the factory tree here, the interpreter and
+  `moonrakerDaemon` all stay stock, and `moonrakerDaemon` is simply never
+  invoked. Nothing the mod installs is written to the prog partition's
+  `moonraker/`, which is what makes it a useful baseline: `case-install.sh`
+  asserts this tree is untouched after an install.)
 * **Not present at all**: stubs. Without a real prog partition the replica
   refuses to start rather than substitute one.
 * **Neutered, always**: `insmod`, `rmmod`, `modprobe`, `reboot`, `poweroff`,

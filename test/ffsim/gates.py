@@ -111,8 +111,11 @@ def moonraker(config, on_output=None):
 
     Installs the payload as an update does, then drives the shipped tools:
     anvil-env.sh must produce a working interpreter, every component the
-    config asks for must import, and init.d/S60web must bring moonraker up on
-    the printer's own python, answer on :7125, and stop and restart cleanly.
+    config asks for must import, and init.d/S62moonraker must bring moonraker
+    up on the printer's own python -- from /usr/data/anvil/moonraker, not
+    FlashForge's tree on /usr/prog -- answer on :7125, and stop and restart
+    cleanly. Since nginx and moonraker are separate scripts now, it also
+    checks the thing that split was for: stopping moonraker leaves nginx up.
     With the pre-flight gone from the firmware, this is also the only place a
     Moonraker pin that cannot load gets caught -- before it ships.
 
@@ -122,6 +125,21 @@ def moonraker(config, on_output=None):
     """
     replica = Replica.start(config, want_output=on_output)
     replica.run_case(_case(config, "case-moonraker.sh"), on_output=on_output)
+
+
+def services(config, on_output=None):
+    """Do all five init.d services behave like the same kind of thing?
+
+    They used to be five one-off scripts with four different ways of asking
+    "is it running" and four different `case "$1"` blocks. anvil-service.sh
+    made those one decision each; this is what stops them drifting apart
+    again. It runs every service on the printer's own busybox and checks the
+    contract they share -- the library loads, `status` answers, the output
+    names the service, an unknown verb gets a usage line and exit 1 -- rather
+    than grepping the scripts for how they are spelled.
+    """
+    replica = Replica.start(config, want_output=on_output)
+    replica.run_case(_case(config, "case-services.sh"), on_output=on_output)
 
 
 def install(config, package, on_output=None):

@@ -16,8 +16,8 @@
 #
 # LD_LIBRARY_PATH matters: libjpeg.so.9 lives in the mjpg-streamer directory
 # itself, so without it the binary dies on a missing shared object -- the same
-# failure moonrakerDaemon has in S60web. The plugin names are resolved relative
-# to the working directory, hence the cd.
+# failure moonrakerDaemon has in S62moonraker. The plugin names are resolved
+# relative to the working directory, hence the cd.
 #
 # That one directory is prepended here rather than in anvil-env.sh, which
 # carries the shared list: it is a plugin directory with its own libjpeg, and
@@ -27,10 +27,20 @@
 # LIKE S50wifi, IT MUST NOT MAKE THE BOOT WAIT. The USB camera can take a few
 # seconds to enumerate, and a printer with no camera plugged in would otherwise
 # hold up Klipper and the UI for the full timeout. The wait and the respawn
-# loop live in a background subshell; start() returns at once.
+# loop live in a background subshell; start() returns at once. That is
+# svc_detach -- see anvil-service.sh.
 MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 [ -f $MODDIR/anvil-env.sh ] && . $MODDIR/anvil-env.sh
+# start/stop/status/liveness, shared with the other services. See
+# anvil-service.sh for the whole API.
+if [ -f $MODDIR/anvil-service.sh ]; then
+    . $MODDIR/anvil-service.sh
+else
+    echo "camera: !! no $MODDIR/anvil-service.sh -- the mod payload is not installed"
+    exit 1
+fi
+SVC_NAME=camera
 
 CAMDIR=/usr/prog/mjpg-streamer
 VIDEO=/dev/video0
@@ -40,8 +50,11 @@ RES="${MOD_CAM_RES:-1280x720}"
 FPS="${MOD_CAM_FPS:-30}"
 PORT="${MOD_CAM_PORT:-8080}"
 
+# The streamer is started by the supervisor below, not by start-stop-daemon,
+# and it is replaced by a new pid on every respawn -- so the pidfile holds the
+# SUPERVISOR and the streamer itself can only be asked after by name.
 streamer_running() {
-    ps 2>/dev/null | grep mjpg_streamer | grep -v grep >/dev/null 2>&1
+    svc_proc_alive mjpg_streamer
 }
 
 # The part that waits. Detached from the boot sequence, so nothing reads its
@@ -53,7 +66,7 @@ supervise() {
         waited=$((waited + 1))
     done
     if [ ! -e "$VIDEO" ]; then
-        echo "camera: $VIDEO never appeared -- no camera plugged in?"
+        svc_warn "$VIDEO never appeared -- no camera plugged in?"
         return 1
     fi
 
@@ -74,37 +87,48 @@ supervise() {
 
 start() {
     if [ "${MOD_CAM:-1}" != "1" ]; then
-        echo "camera: disabled by MOD_CAM"
+        svc_say "disabled by MOD_CAM"
         return 0
     fi
-    [ -x "$CAMDIR/mjpg_streamer" ] || { echo "camera: no $CAMDIR/mjpg_streamer"; return 1; }
+    [ -x "$CAMDIR/mjpg_streamer" ] || { svc_warn "no $CAMDIR/mjpg_streamer"; return 1; }
     if streamer_running; then
-        echo "camera: mjpg_streamer already running"
+        svc_say "mjpg_streamer already running"
         return 0
     fi
 
-    supervise &
-    echo $! > "$PIDFILE"
-    echo "camera: waiting for $VIDEO in the background (:$PORT, $RES @ ${FPS}fps)"
+    # svc_detach leaves the supervisor's pid in SVC_BG_PID, and it is written
+    # to the pidfile because the supervisor is the half of this that has to be
+    # killable: see stop().
+    svc_detach supervise
+    echo "$SVC_BG_PID" > "$PIDFILE"
+    svc_say "waiting for $VIDEO in the background (:$PORT, $RES @ ${FPS}fps)"
     return 0
 }
 
 stop() {
     # The supervisor first: kill only the streamer and it is restarted in 3s.
-    [ -f "$PIDFILE" ] && kill `cat "$PIDFILE"` 2>/dev/null
-    rm -f "$PIDFILE"
+    # svc_stop_daemon signals the pid in the pidfile, waits for it to actually
+    # be gone, and removes the file -- so by the time the killall below runs,
+    # nothing is left that would respawn what it kills.
+    svc_stop_daemon "$PIDFILE"
     killall mjpg_streamer 2>/dev/null
-    echo "camera: stopped"
+    # And wait for the streamer itself, for the same reason `restart` no longer
+    # has a `sleep 2` in front of it: killall returns as soon as the signal is
+    # sent, and a start() that ran a moment later would see the dying process,
+    # say "already running", and leave the camera dark.
+    waited=0
+    while streamer_running && [ $waited -lt 15 ]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    streamer_running && svc_warn "mjpg_streamer still running after ${waited}s"
+    svc_say "stopped"
 }
 
-case "$1" in
-    start|'') start ;;
-    stop)     stop ;;
-    restart)  stop; sleep 2; start ;;
-    status)
-        streamer_running && echo "camera: mjpg_streamer running on :$PORT" \
-                         || echo "camera: not running"
-        [ -e "$VIDEO" ] && echo "camera: $VIDEO present" || echo "camera: no $VIDEO"
-        ;;
-    *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
-esac
+status() {
+    streamer_running && svc_say "mjpg_streamer running on :$PORT" \
+                     || svc_say "not running"
+    [ -e "$VIDEO" ] && svc_say "$VIDEO present" || svc_say "no $VIDEO"
+}
+
+svc_dispatch "$@"

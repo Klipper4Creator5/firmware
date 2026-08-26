@@ -72,8 +72,14 @@ if [ -f /tmp/ref/sw/start.sh ] && cmp -s /tmp/ref/sw/start.sh /usr/prog/klipper/
 else
     bad "klipper/start.sh not restored"
 fi
+# Stock ships this line commented out and starts its web stack from
+# firmwareExe instead. The mod does not uncomment it either -- moonraker is
+# started by /usr/data/anvil/init.d/S62moonraker, from the tree on the data
+# partition, and moonrakerDaemon is never invoked. So this is purely a check on
+# the restored file: an uncommented line here would mean the stock start.sh was
+# not the one that came back, whoever wrote it.
 grep -q '^/usr/prog/klipper/moonrakerDaemon start' /usr/prog/klipper/start.sh 2>/dev/null \
-    && bad "start.sh still has the mod's uncommented moonraker line" \
+    && bad "start.sh has an uncommented moonrakerDaemon line -- this is not the stock file" \
     || ok "start.sh web-stack lines are commented out again (stock state)"
 
 # The payload is deliberately left behind. Prove it cannot do anything.

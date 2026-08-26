@@ -52,21 +52,35 @@
 # screen. Neither runs on a normal boot.
 MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
+# start/stop/status/liveness, shared with the other services. See
+# anvil-service.sh for the whole API.
+if [ -f $MODDIR/anvil-service.sh ]; then
+    . $MODDIR/anvil-service.sh
+else
+    echo "klipper: !! no $MODDIR/anvil-service.sh -- the mod payload is not installed"
+    exit 1
+fi
+SVC_NAME=klipper
+# `force-start` is this script's own verb; naming it here keeps the usage line
+# svc_dispatch prints true. See the case block at the bottom.
+SVC_EXTRA_VERBS="|force-start"
 
 KLIPPER_TRIES=${MOD_KLIPPER_TRIES:-6}
 PRINTER_LOG=/usr/data/logs/printer.log
 
-klippy_proc() {
-    if command -v pgrep >/dev/null 2>&1; then
-        pgrep -f 'klippy\.py' >/dev/null 2>&1
-    else
-        ps 2>/dev/null | grep 'klippy.py' | grep -v grep >/dev/null
-    fi
-}
-
+# klippy is started by FlashForge's start.sh, not by us, so there is no pidfile
+# and the only handle on it is the name: svc_proc_alive 'klippy\.py', which is
+# the pgrep-with-a-ps-fallback this script used to carry itself.
+#
+# klippy_running is deliberately MORE than that. /tmp/uds is the socket klippy
+# serves its API on, and it is what start.sh itself looks at before deciding
+# whether to start anything -- so a printer with the socket present is one
+# start.sh will refuse to touch, whatever `ps` says. Both questions matter and
+# they are not the same question, which is why this one stays here rather than
+# moving into anvil-service.sh: no other service has a socket to ask about.
 klippy_running() {
     [ -S /tmp/uds ] && return 0
-    klippy_proc && return 0
+    svc_proc_alive 'klippy\.py' && return 0
     return 1
 }
 
@@ -103,31 +117,51 @@ supervise() {
         done
         case "$verdict" in
             ready)
-                echo "klipper: ready (attempt $attempt)"
+                svc_say "ready (attempt $attempt)"
                 return 0
                 ;;
             "")
                 # Neither marker showed up. Something other than an MCU
                 # connect is going on; restarting would only hide it.
-                echo "klipper: no verdict after attempt $attempt -- leaving it alone"
+                svc_say "no verdict after attempt $attempt -- leaving it alone"
                 return 0
                 ;;
         esac
-        echo "klipper: MCU connect failed (attempt $attempt/$KLIPPER_TRIES) -- restarting"
-        [ -x /usr/prog/klipper/klipperDaemon ] && /usr/prog/klipper/klipperDaemon stop
-        stopping=0
-        while klippy_proc && [ $stopping -lt 15 ]; do
-            sleep 1
-            stopping=$((stopping + 1))
-        done
-        # start.sh bails out if the socket is still there, so clear a stale
-        # one -- but only once klippy is definitely gone.
-        klippy_proc || rm -f /tmp/uds
+        svc_warn "MCU connect failed (attempt $attempt/$KLIPPER_TRIES) -- restarting"
+        klippy_down
         /usr/prog/klipper/start.sh
         attempt=$((attempt + 1))
     done
-    echo "klipper: still no MCU after $KLIPPER_TRIES attempts -- giving up"
+    svc_warn "still no MCU after $KLIPPER_TRIES attempts -- giving up"
     return 1
+}
+
+# Take klippy down and leave nothing behind that would stop the next start.
+#
+# The wait is not optional. klipperDaemon stop signals and returns; klippy is
+# still holding /dev/ttyS4 for a moment after that, and start.sh reopening the
+# port while the old process still has it is exactly the MCU failure this
+# script exists to retry out of. Bounded at 15s for the reason svc_stop_daemon
+# is: a stuck klippy should be said out loud, not waited on forever.
+#
+# And then the socket. start.sh bails out if /tmp/uds is still there, and
+# klippy does not unlink it on exit -- so a stale socket is a pidfile that
+# lies, in precisely the sense svc_stop_daemon removes pidfiles. It is only
+# removed once klippy is definitely gone: removing it out from under a live
+# klippy would leave a running printer nothing could talk to.
+klippy_down() {
+    [ -x /usr/prog/klipper/klipperDaemon ] && /usr/prog/klipper/klipperDaemon stop
+    stopping=0
+    while svc_proc_alive 'klippy\.py' && [ $stopping -lt 15 ]; do
+        sleep 1
+        stopping=$((stopping + 1))
+    done
+    if svc_proc_alive 'klippy\.py'; then
+        svc_warn "klippy still running after ${stopping}s"
+        return 1
+    fi
+    rm -f /tmp/uds
+    return 0
 }
 
 # Is bin/ff-startup.py actually going to run and do this? Every condition the
@@ -142,30 +176,41 @@ startup_owns_klipper() {
 
 start() {
     if klippy_running; then
-        echo "klipper: already running"
+        svc_say "already running"
         return 0
     fi
     if [ "$1" != force ] && startup_owns_klipper; then
-        echo "klipper: left to ff-startup.py (it does the MCU bring-up first)"
+        svc_say "left to ff-startup.py (it does the MCU bring-up first)"
         return 0
     fi
-    [ -x /usr/prog/klipper/start.sh ] || { echo "klipper: start.sh missing"; return 1; }
+    [ -x /usr/prog/klipper/start.sh ] || { svc_warn "start.sh missing"; return 1; }
     # start.sh does the MCU bring-up itself, and that costs a few seconds per
     # unresponsive board -- so it goes to the background; boot must not stall.
-    /usr/prog/klipper/start.sh &
-    echo "klipper: start.sh launched"
+    svc_detach /usr/prog/klipper/start.sh
+    svc_say "start.sh launched"
     # In the background: boot must not wait minutes for the heater board.
-    supervise &
+    svc_detach supervise
 }
+
 stop() {
-    [ -x /usr/prog/klipper/klipperDaemon ] && /usr/prog/klipper/klipperDaemon stop
-    echo "klipper: stopped"
+    klippy_down
+    svc_say "stopped"
 }
+
+status() {
+    klippy_running && svc_say "running" || svc_say "not running"
+}
+
+# force-start and restart are handled here, before svc_dispatch, because both
+# need the argument svc_dispatch does not pass: `start force`. This script's
+# start() normally STANDS ASIDE for ff-startup.py, so a plain `stop; start` --
+# which is what svc_dispatch's restart is -- would stop klippy and then decline
+# to start it, leaving the printer with no motion and no heaters. A restart
+# asked for by hand means restart it, so it forces. There is no `sleep 2` in
+# front of the start any more: stop() now waits for klippy to actually be gone
+# and clears the stale socket, which is what the sleep was approximating.
 case "$1" in
-    start|'')   start ;;
     force-start) start force ;;
-    stop)       stop ;;
-    restart)    stop; sleep 2; start force ;;
-    status)     klippy_running && echo "klipper: running" || echo "klipper: not running" ;;
-    *) echo "usage: $0 {start|force-start|stop|restart|status}"; exit 1 ;;
+    restart)     stop; start force ;;
+    *)           svc_dispatch "$@" ;;
 esac

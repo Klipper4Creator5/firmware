@@ -411,6 +411,9 @@ def main():
         with reporter.gate("moonraker"):
             gates.moonraker(config, on_output=emit)
 
+        with reporter.gate("init.d services"):
+            gates.services(config, on_output=emit)
+
         reporter.hdr("end-to-end update on the printer replica")
         with reporter.gate("boot -> install -> re-install -> boot"):
             for step in ("unpack", "patch", "pack"):

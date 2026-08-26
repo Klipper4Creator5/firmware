@@ -1,0 +1,155 @@
+#!/bin/sh
+# moonraker -- the API on :7125 that Mainsail and HelixScreen both talk to.
+#
+# It already ships on stock firmware -- FlashForge simply comments it out of
+# /usr/prog/klipper/start.sh and serves its own HTTP API from firmwareExe
+# instead. The mod replaces firmwareExe, so that API is gone: this is the only
+# thing on the printer that can answer a UI, and a printer whose moonraker is
+# not running is a printer with no UI at all, however healthy klippy is.
+#
+# THIS AND S60nginx WERE ONE SCRIPT, S60web -- see the header there for why
+# they are two now, and why the numbering has to keep this one after S60nginx
+# and before S65camera.
+#
+# MOD_WEB=0 gates both scripts. It does not fall back to anything; it is a
+# debugging switch, not a way back to stock.
+MODDIR=/usr/data/anvil
+[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
+# The library path and the interpreter, from the one file that defines them.
+# See anvil-env.sh for why naming them here instead was a bug: this is the
+# script that had its own four-directory copy of the list while the installer
+# checked with ten, and moonraker is the process that dies on
+# "libpython3.8.so.1.0: cannot open shared object file" when it is wrong.
+if [ -f $MODDIR/anvil-env.sh ]; then
+    . $MODDIR/anvil-env.sh
+else
+    echo "moonraker: !! no $MODDIR/anvil-env.sh -- the mod payload is not installed"
+fi
+# start/stop/status/liveness, shared with the other services. See
+# anvil-service.sh for the whole API.
+if [ -f $MODDIR/anvil-service.sh ]; then
+    . $MODDIR/anvil-service.sh
+else
+    echo "moonraker: !! no $MODDIR/anvil-service.sh -- the mod payload is not installed"
+    exit 1
+fi
+SVC_NAME=moonraker
+
+MOONRAKER_PID=/run/moonraker.pid
+MOONRAKER_LOG=/usr/data/logs/moonraker.log
+MOONRAKER_TMP=/usr/data/tmp
+MOONRAKER_DATA=/usr/data
+
+# ONE moonraker, at one path, and that path is on the DATA partition.
+#
+# bin/patch.sh stages Moonraker's python package straight into the payload
+# (`cp -a work/.moonraker/moonraker "$MOD_PAYLOAD/moonraker"`), so the tarball
+# the installer extracts already puts the entry point here. Nothing else has to
+# happen for this to exist, and if it does not exist the install did not
+# complete.
+#
+# It used to run from /usr/prog/moonraker/moonraker/moonraker/moonraker.py --
+# a byte-identical SECOND copy of this same tree that run-append.sh made after
+# extracting the first one. That copy is gone, and the reasons it seemed
+# necessary did not survive being checked:
+#
+#   * /usr/prog is the small firmware partition, and it is what a stock
+#     FlashForge flash overwrites. Running from there meant that flashing stock
+#     firmware silently reverted Moonraker to FlashForge's 2022 build while the
+#     rest of the mod -- which lives on /usr/data and survives -- carried on
+#     assuming the new one. That is the "which moonraker is this printer
+#     actually running?" ambiguity we spent a release removing, reintroduced by
+#     the one file nobody looked at.
+#   * The moonraker-env virtualenv sitting beside it is unused. Imports resolve
+#     from /usr/prog/Python-3.8.2/lib/python3.8/site-packages instead --
+#     verified by running the printer's own interpreter on the real image,
+#     where moonraker-env is not on sys.path at all.
+#   * moonrakerDaemon, the one thing that did name the /usr/prog tree by
+#     absolute path, is never invoked: this script starts moonraker itself.
+#
+# There is no fallback here and there must not be one. The mod ships exactly
+# one moonraker and installs it; if it is not at this path, that is a failed
+# install to be reported, not a condition to route around.
+MOONRAKER_MAIN=$MODDIR/moonraker/moonraker.py
+
+start() {
+    [ "${MOD_WEB:-1}" = "1" ] || { svc_say "disabled in anvil.conf (MOD_WEB=0)"; return 0; }
+
+    # Every branch below says something. There is no stock server left to
+    # quietly take over, so the boot log is the only place that can explain a
+    # printer with no UI.
+    if ! anvil_python_ok; then
+        svc_warn "no interpreter at ${FF_PYTHON:-/usr/prog/Python-3.8.2/bin/python3} -- not started"
+        return 1
+    fi
+    if [ ! -f "$MOONRAKER_MAIN" ]; then
+        svc_warn "nothing at $MOONRAKER_MAIN -- the install did not complete"
+        return 1
+    fi
+
+    # Started here rather than through /usr/prog/klipper/moonrakerDaemon. That
+    # script is FlashForge's, it is on the firmware partition a stock flash
+    # overwrites, and it hardcodes an interpreter and a tree we no longer want
+    # -- and every time we call it we have to reconstruct the environment it
+    # does not set anyway. Doing it here means one place decides which
+    # moonraker runs, with which libraries.
+    #
+    # The two things the daemon did for us are kept, because both matter:
+    #   * a pidfile, which is what stop() has to work with. Without one there
+    #     is no way to stop moonraker except by name. svc_start_daemon writes
+    #     it.
+    #   * TMPDIR. Moonraker writes temporary files -- uploads among them -- and
+    #     /tmp here is a ramdisk, so a large upload without this fills memory
+    #     instead of the data partition.
+    #
+    # The wipe is guarded on moonraker not already running: re-running this
+    # script over ssh against a live server would otherwise delete the
+    # directory it is streaming an upload into.
+    if ! svc_pid_alive "$MOONRAKER_PID"; then
+        rm -rf $MOONRAKER_TMP
+    fi
+    mkdir -p $MOONRAKER_TMP
+    export TMPDIR=$MOONRAKER_TMP
+    mkdir -p `dirname $MOONRAKER_LOG`
+
+    svc_start_daemon "$MOONRAKER_PID" "$FF_PYTHON" \
+        "$MOONRAKER_MAIN" -d "$MOONRAKER_DATA" || return 1
+    svc_say "started ($MOONRAKER_MAIN)"
+    # Did it actually come up? Moonraker failing to load a component exits
+    # quietly, minutes before anyone opens a browser and finds out. The check
+    # is detached because the boot must not wait on it -- see svc_detach.
+    svc_detach moonraker_check
+}
+
+# Component-load failures happen within seconds of exec, so a server still
+# alive at 10s is up. Confirming and returning beats holding the boot log open
+# for a minute: this runs in the background while S65camera, S70klipper and
+# S80ui are writing to the same file, and an interleaved log is what made one
+# user's boot unreadable at the point they were trying to read it.
+moonraker_check() {
+    waited=0
+    while [ $waited -lt 5 ]; do
+        sleep 2
+        waited=$((waited + 1))
+        svc_pid_alive "$MOONRAKER_PID" && continue
+        svc_warn "NOT running after $((waited * 2))s -- last words:"
+        tail -n 15 "$MOONRAKER_LOG" 2>/dev/null | sed 's/^/    /'
+        return 1
+    done
+    svc_say "up"
+    return 0
+}
+
+stop() {
+    # svc_stop_daemon carries the two corrections busybox needs -- it waits for
+    # the process to actually be gone, and it removes the pidfile -- which is
+    # what makes `restart` safe without a sleep in front of it.
+    svc_stop_daemon "$MOONRAKER_PID"
+    svc_say "stopped"
+}
+
+status() {
+    svc_pid_alive "$MOONRAKER_PID" && svc_say "running" || svc_say "not running"
+}
+
+svc_dispatch "$@"

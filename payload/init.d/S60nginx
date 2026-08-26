@@ -1,0 +1,96 @@
+#!/bin/sh
+# nginx -- the Mainsail web UI on :80.
+#
+# The binary already ships on stock firmware -- FlashForge simply comments it
+# out of /usr/prog/klipper/start.sh and serves its own HTTP API from firmwareExe
+# instead. The mod replaces firmwareExe, so that API is gone and this is the
+# only web server on the printer. Nothing is built or shipped for it beyond the
+# config and the Mainsail files under $MODDIR: we start the binary FlashForge
+# already put there, pointed at our own prefix so nothing writes to /usr/prog.
+#
+# THIS AND S62moonraker WERE ONE SCRIPT, S60web. They are separated because
+# they fail separately and are debugged separately: nginx not starting is a
+# missing config or a port already bound, and is instant; moonraker not
+# starting is a component that failed to import, and takes a background check
+# and a log tail to even notice. One script had to say "web: stopped" for both,
+# and `status` reported on two unrelated things at once. Splitting them means
+# `S62moonraker restart` over ssh -- which is the one you actually want, over
+# and over, while chasing a moonraker config -- no longer takes the UI down
+# with it.
+#
+# THE NUMBERING IS LOAD-BEARING. firmwareExe runs $MODDIR/init.d/S* in filename
+# order, so this runs before S62moonraker, which runs before S65camera. nginx
+# first is the useful order: it proxies both of the others (moonraker on 7125
+# and the camera's :8080 stream through /webcam/), and when it is up first the
+# browser gets a page that says the backend is not answering yet, rather than a
+# refused connection that says nothing at all.
+#
+# MOD_WEB=0 gates BOTH scripts, and does NOT fall back to anything: it leaves
+# the printer with ssh and the touchscreen only. It is a debugging switch, not
+# a way back to stock -- that is a stock FlashForge package. It stays one
+# switch across the two scripts because "no web stack" is one intention; there
+# is no useful printer with Mainsail and no moonraker behind it.
+MODDIR=/usr/data/anvil
+[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
+# The library path and the interpreter, from the one file that defines them.
+# See anvil-env.sh for why naming them here instead was a bug. nginx itself
+# needs nothing from it -- it links against the base rootfs -- but a script
+# that is re-run over ssh should get the same environment on every path, and
+# sourcing it twice is a no-op.
+if [ -f $MODDIR/anvil-env.sh ]; then
+    . $MODDIR/anvil-env.sh
+else
+    echo "nginx: !! no $MODDIR/anvil-env.sh -- the mod payload is not installed"
+fi
+# start/stop/status/liveness, shared with the other services. See
+# anvil-service.sh for the whole API.
+if [ -f $MODDIR/anvil-service.sh ]; then
+    . $MODDIR/anvil-service.sh
+else
+    echo "nginx: !! no $MODDIR/anvil-service.sh -- the mod payload is not installed"
+    exit 1
+fi
+SVC_NAME=nginx
+
+NGINX=/usr/prog/nginx/sbin/nginx
+NGINX_PID=$MODDIR/nginx/logs/nginx.pid
+
+start() {
+    [ "${MOD_WEB:-1}" = "1" ] || { svc_say "disabled in anvil.conf (MOD_WEB=0)"; return 0; }
+    if [ ! -x "$NGINX" ]; then
+        svc_warn "no $NGINX -- this printer's firmware did not ship one"
+        return 1
+    fi
+    if [ ! -f $MODDIR/nginx/nginx.conf ]; then
+        svc_warn "no $MODDIR/nginx/nginx.conf -- the install did not complete"
+        return 1
+    fi
+    # -p sets the prefix: logs, the pidfile and the temp directories all land
+    # under $MODDIR on the data partition, never on /usr/prog. nginx will not
+    # start if it cannot create them, and it does not create them itself.
+    mkdir -p $MODDIR/nginx/logs $MODDIR/nginx/tmp
+    if $NGINX -p $MODDIR/nginx -c $MODDIR/nginx/nginx.conf; then
+        svc_say "started"
+    else
+        # nginx has already printed its own reason on stderr, which is in the
+        # boot log right above this line. Do not paraphrase it.
+        svc_warn "FAILED to start -- see the error above"
+        return 1
+    fi
+}
+
+stop() {
+    # nginx writes this pidfile itself, so start-stop-daemon -K is only being
+    # used to signal the pid in it -- which is all svc_stop_daemon wants. The
+    # wait matters here too: the master process takes a moment to reap its
+    # workers, and returning before it has is how `restart` came back to a port
+    # that was still bound.
+    svc_stop_daemon "$NGINX_PID"
+    svc_say "stopped"
+}
+
+status() {
+    svc_pid_alive "$NGINX_PID" && svc_say "running" || svc_say "not running"
+}
+
+svc_dispatch "$@"

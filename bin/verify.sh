@@ -145,9 +145,16 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
     grep -q 'bin/dropbear' <<<"$LIST" \
         && warn "dropbear in the payload -- we ship none; stock S50dropbear provides ssh" \
         || ok "no dropbear in the payload (stock S50dropbear provides ssh)"
-    # moonraker.py is the file moonrakerDaemon execs by absolute path; a
-    # payload with the directory but not that file installs a Moonraker that
+    # This reads the PACKAGE, not a printer: it asks whether the tarball we
+    # just built carries moonraker/moonraker.py. That is now the whole
+    # installation -- the payload extracts to /usr/data/anvil and the init
+    # script starts $MODDIR/moonraker/moonraker.py from where it landed, so a
+    # payload carrying the directory but not that file ships a Moonraker that
     # cannot start, which looks identical to a dead printer from the outside.
+    # (It used to be phrased as "the file moonrakerDaemon execs by absolute
+    # path" from /usr/prog; moonrakerDaemon is never invoked any more and
+    # nothing is copied to /usr/prog, but the file the check looks for is the
+    # same one, so the assertion itself is unchanged.)
     grep -q 'moonraker/moonraker.py' <<<"$LIST" && ok "Moonraker present" \
                                           || warn "no Moonraker in payload -- the stock 2022 build stays, and Mainsail will hide the webcam"
 else

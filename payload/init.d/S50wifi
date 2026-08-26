@@ -10,7 +10,7 @@
 #
 # So the moment HelixScreen replaces firmwareExe the printer boots with NO
 # network at all: no ssh, no Mainsail, no moonraker. Which also means no way
-# to diagnose it. Hence this runs before S60web and S70klipper.
+# to diagnose it. Hence this runs before S60nginx/S62moonraker and S70klipper.
 #
 # BUT IT MUST NOT MAKE THEM WAIT. firmwareExe runs the S* scripts one at a
 # time in the foreground. Everything interesting here is a wait on hardware:
@@ -23,7 +23,8 @@
 # in a background subshell and start() returns at once: the rule firmwareExe
 # already states for a service that fails, applied to one that is merely slow.
 # The trade is that "wifi:" lines land in the boot log after the later
-# services' lines, out of order.
+# services' lines, out of order. That rule is svc_detach now -- see
+# anvil-service.sh, where it is stated once for all five scripts.
 #
 # The saved networks live in /usr/prog/wifi/wpa_supplicant.conf on the
 # firmware partition -- we never ship or touch that file, so whatever
@@ -33,13 +34,26 @@
 # networks back).
 MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
+# start/stop/status/liveness, shared with the other services. See
+# anvil-service.sh for the whole API.
+if [ -f $MODDIR/anvil-service.sh ]; then
+    . $MODDIR/anvil-service.sh
+else
+    echo "wifi: !! no $MODDIR/anvil-service.sh -- the mod payload is not installed"
+    exit 1
+fi
+SVC_NAME=wifi
 
 IFACE=wlan0
 WIFI_CONF=/usr/prog/wifi/wpa_supplicant.conf
 CTRL_DIR=/var/run/wpa_supplicant
 
+# wpa_supplicant backgrounds itself with -B, so there is no pid we own and no
+# pidfile to keep it in: by name is the only answer available. svc_proc_alive
+# is the same `ps | grep | grep -v grep` this script always did, with pgrep
+# preferred where the rootfs ships it.
 supplicant_running() {
-    ps 2>/dev/null | grep wpa_supplicant | grep -v grep >/dev/null 2>&1
+    svc_proc_alive wpa_supplicant
 }
 
 # The part that waits. Detached from the boot sequence, so nothing reads its
@@ -54,7 +68,7 @@ connect() {
         waited=$((waited + 1))
     done
     if [ ! -d /sys/class/net/$IFACE ]; then
-        echo "wifi: $IFACE never appeared -- is 8821cu.ko loaded?"
+        svc_warn "$IFACE never appeared -- is 8821cu.ko loaded?"
         return 1
     fi
 
@@ -64,9 +78,9 @@ connect() {
     # -B backgrounds it. Try nl80211 first and fall back to wext: the 8821cu
     # is a Realtek USB part and which one it registers varies by build.
     if /usr/sbin/wpa_supplicant -B -i $IFACE -c "$WIFI_CONF" -D nl80211,wext; then
-        echo "wifi: wpa_supplicant started"
+        svc_say "wpa_supplicant started"
     else
-        echo "wifi: wpa_supplicant failed to start"
+        svc_warn "wpa_supplicant failed to start"
         return 1
     fi
 
@@ -78,41 +92,56 @@ connect() {
         waited=$((waited + 1))
     done
     /sbin/udhcpc -i $IFACE -b -t 5 >/dev/null 2>&1 &
-    echo "wifi: udhcpc requesting a lease on $IFACE"
+    svc_say "udhcpc requesting a lease on $IFACE"
 }
 
 start() {
     if [ "${MOD_WIFI:-1}" != "1" ]; then
-        echo "wifi: disabled by MOD_WIFI"
+        svc_say "disabled by MOD_WIFI"
         return 0
     fi
     if supplicant_running; then
-        echo "wifi: wpa_supplicant already running"
+        svc_say "wpa_supplicant already running"
         return 0
     fi
-    [ -f "$WIFI_CONF" ] || { echo "wifi: no $WIFI_CONF -- nothing to connect to"; return 1; }
+    [ -f "$WIFI_CONF" ] || { svc_warn "no $WIFI_CONF -- nothing to connect to"; return 1; }
 
     # Everything above was instant. Everything below waits on hardware, so it
-    # goes to the background and the boot carries on to S60web/S70klipper.
-    connect &
-    echo "wifi: bringing up $IFACE in the background"
+    # goes to the background and the boot carries on to S60nginx, S62moonraker
+    # and S70klipper.
+    svc_detach connect
+    svc_say "bringing up $IFACE in the background"
     return 0
 }
 
 stop() {
+    # By name, not by pidfile: nothing here was started with one, and inventing
+    # one for a daemon that backgrounds itself would only be a second thing
+    # that can be wrong. wpa_cli first, then the lease, then the daemon that
+    # owns the association.
     killall wpa_cli 2>/dev/null
     killall udhcpc 2>/dev/null
     killall wpa_supplicant 2>/dev/null
-    echo "wifi: stopped"
+    # Then WAIT for the supplicant to actually be gone. This is the thing the
+    # `sleep 2` in front of the old `restart` was standing in for: killall
+    # returns as soon as the signal is sent, so a start() running a moment
+    # later finds the dying supplicant still in the process table, says
+    # "already running", and does nothing -- leaving the printer stopped
+    # rather than restarted. Same bound and same reasoning as svc_stop_daemon.
+    waited=0
+    while supplicant_running && [ $waited -lt 15 ]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    supplicant_running && svc_warn "wpa_supplicant still running after ${waited}s"
+    svc_say "stopped"
 }
 
-case "$1" in
-    start|'') start ;;
-    stop)     stop ;;
-    restart)  stop; sleep 2; start ;;
-    status)
-        supplicant_running && echo "wifi: wpa_supplicant running" || echo "wifi: not running"
-        /sbin/ifconfig $IFACE 2>/dev/null | grep -E 'inet |UP'
-        ;;
-    *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
-esac
+status() {
+    supplicant_running && svc_say "wpa_supplicant running" || svc_say "not running"
+    # Raw ifconfig output, deliberately unprefixed: it is the address you came
+    # here to read, in the shape you would have typed the command to get.
+    /sbin/ifconfig $IFACE 2>/dev/null | grep -E 'inet |UP'
+}
+
+svc_dispatch "$@"

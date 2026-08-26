@@ -8,9 +8,14 @@
 # moonraker we shipped, on the interpreter we meant, and does it come up?
 #
 # So this installs the payload the way an update does and then drives the
-# shipped tools -- anvil-env.sh and init.d/S60web -- and then looks at what
-# happened. Only the printer can answer: these are its
+# shipped tools -- anvil-env.sh, anvil-service.sh and init.d/S62moonraker --
+# and then looks at what happened. Only the printer can answer: these are its
 # libraries, its interpreter, its busybox start-stop-daemon and its moonraker.
+#
+# S60web is gone: nginx and moonraker are two scripts now, because they fail
+# separately and are debugged separately. That split is itself a claim about
+# behaviour -- stopping one must leave the other alone -- so it is checked
+# here too, at step 10.
 #
 # The negative controls matter as much as the positive ones. Proving moonraker
 # starts WITH the environment says nothing unless taking the environment away
@@ -26,9 +31,18 @@ skip() { echo "  SKIP  $*"; }
 MODDIR=/usr/data/anvil
 PAYLOAD=/tmp/payload
 PY=/usr/prog/Python-3.8.2/bin/python3
-MR=/usr/prog/moonraker/moonraker
-MOONRAKER_MAIN=$MR/moonraker/moonraker.py
-S60=$MODDIR/init.d/S60web
+# WHERE MOONRAKER LIVES NOW. The mod's Moonraker rides in the payload and is
+# installed by being extracted, so the entry point is on the DATA partition at
+# /usr/data/anvil/moonraker/moonraker.py and nothing is written to /usr/prog.
+# MRROOT is the directory that goes on sys.path -- the parent of the package,
+# not the package itself.
+MRROOT=$MODDIR
+MOONRAKER_MAIN=$MRROOT/moonraker/moonraker.py
+# FlashForge's own 2022 tree, which the mod no longer uses or touches. It is
+# named here only as the stand-in described at the staging step below.
+STOCK_MR=/usr/prog/moonraker/moonraker/moonraker
+S62=$MODDIR/init.d/S62moonraker
+S60N=$MODDIR/init.d/S60nginx
 
 [ -d "$PAYLOAD" ] || { bad "no payload mounted at $PAYLOAD"; exit 1; }
 [ -x "$PY" ] || { bad "no interpreter at $PY"; exit 1; }
@@ -36,12 +50,47 @@ S60=$MODDIR/init.d/S60web
 # ---- install the payload, as run-append.sh does ----------------------------
 mkdir -p $MODDIR/init.d
 cp -f $PAYLOAD/anvil-env.sh $MODDIR/ 2>/dev/null
+# anvil-service.sh is not optional and not decoration: every init.d script
+# sources it for svc_start_daemon/svc_stop_daemon and exits immediately if it
+# is not there. Leaving it out of the installer is a printer that boots with
+# no services at all, which is exactly why it is copied -- and asserted --
+# here.
+cp -f $PAYLOAD/anvil-service.sh $MODDIR/ 2>/dev/null
 cp -f $PAYLOAD/anvil.conf $MODDIR/ 2>/dev/null
 cp -f $PAYLOAD/init.d/S* $MODDIR/init.d/ 2>/dev/null
 chmod +x $MODDIR/init.d/S* 2>/dev/null
 [ -f $MODDIR/anvil-env.sh ] || { bad "the payload ships no anvil-env.sh"; exit 1; }
-[ -x "$S60" ] || { bad "the payload ships no init.d/S60web"; exit 1; }
+[ -f $MODDIR/anvil-service.sh ] \
+    || { bad "the payload ships no anvil-service.sh -- every service script exits at once without it"; exit 1; }
+[ -x "$S62" ] || { bad "the payload ships no init.d/S62moonraker"; exit 1; }
 ok "payload installed to $MODDIR"
+
+# ---- the Moonraker tree, at the path the mod now runs it from --------------
+# /tmp/payload is the SOURCE payload directory, not the built one: the
+# Moonraker tree is staged into work/modpayload by bin/patch.sh out of a
+# tarball fetch-assets.sh downloads, so it is not on this mount unless the
+# caller put it there. When it is absent the printer's own 2022 tree stands in
+# at the new path.
+#
+# The stand-in is honest about what it can and cannot answer. What is tested
+# from step 8 down is the MECHANISM -- start-stop-daemon writes a pidfile, the
+# environment reaches the process, stop waits and clears the pidfile, restart
+# yields a new pid -- and that is the same mechanism whichever tree is under
+# it. Whether the SHIPPED Moonraker imports and stays up is a question about
+# the build, and it is answered by the install gate, which puts a real package
+# on a real stick. Steps 6 and 7 already skip themselves on the old layout
+# rather than pretend.
+if [ -d $PAYLOAD/moonraker ]; then
+    rm -rf $MODDIR/moonraker
+    cp -a $PAYLOAD/moonraker $MODDIR/moonraker
+    ok "the payload's own Moonraker staged at $MODDIR/moonraker"
+elif [ -d "$STOCK_MR" ]; then
+    rm -rf $MODDIR/moonraker
+    cp -a "$STOCK_MR" $MODDIR/moonraker
+    skip "the payload mount carries no moonraker/ -- the printer's own tree stands in at $MODDIR/moonraker"
+else
+    skip "no Moonraker tree available at all -- the start/stop checks below will report it"
+fi
 
 # ---- 1. the negative control: no environment, no interpreter ---------------
 # This is the failure a user reported as "moonraker never came up". If the
@@ -98,10 +147,10 @@ BEFORE="$LD_LIBRARY_PATH"
     || bad "the path grew on a second source"
 
 # ---- 6. the component that broke once actually imports ---------------------
-if [ -d "$MR/moonraker" ]; then
+if [ -d "$MRROOT/moonraker" ]; then
     "$FF_PYTHON" -c "
 import sys
-sys.path.insert(0, '$MR')
+sys.path.insert(0, '$MRROOT')
 import moonraker.components.authorization
 print('imported')
 " >/tmp/mr-auth.out 2>&1
@@ -116,7 +165,7 @@ print('imported')
     else
         LD_LIBRARY_PATH="$NOSODIUM" "$FF_PYTHON" -c "
 import sys
-sys.path.insert(0, '$MR')
+sys.path.insert(0, '$MRROOT')
 import moonraker.components.authorization
 print('imported')
 " >/tmp/mr-nosodium.out 2>&1
@@ -125,7 +174,7 @@ print('imported')
             || ok "without libsodium the authorization component fails, as documented"
     fi
 else
-    skip "no moonraker package at $MR"
+    skip "no moonraker package at $MRROOT/moonraker"
 fi
 
 # ---- 7. every component this printer is configured for imports -------------
@@ -144,8 +193,8 @@ fi
 # configures a component we never thought about. An earlier version listed
 # four modules by hand and missed `authorization`, which is the one that
 # actually broke.
-if [ -d "$MR/moonraker" ]; then
-    "$FF_PYTHON" - "$MR" /usr/data/config/moonraker.conf <<'PY' >/tmp/mr-pre.out 2>&1
+if [ -d "$MRROOT/moonraker" ]; then
+    "$FF_PYTHON" - "$MRROOT" /usr/data/config/moonraker.conf <<'PY' >/tmp/mr-pre.out 2>&1
 import glob, importlib, os, re, sys
 sys.path.insert(0, sys.argv[1])
 try:
@@ -210,7 +259,7 @@ PY
     fi
 fi
 
-# ---- 8. S60web starts moonraker, and it comes up ---------------------------
+# ---- 8. S62moonraker starts moonraker, and it comes up ---------------------
 moonraker_pid() { cat /run/moonraker.pid 2>/dev/null; }
 moonraker_alive() {
     p=`moonraker_pid`
@@ -221,12 +270,12 @@ answers() {
 }
 
 if [ ! -f "$MOONRAKER_MAIN" ]; then
-    bad "no moonraker.py at $MOONRAKER_MAIN -- S60web has nothing to start"
+    bad "no moonraker.py at $MOONRAKER_MAIN -- S62moonraker has nothing to start"
 else
-    ok "the entry point S60web names is present ($MOONRAKER_MAIN)"
-    $S60 stop >/dev/null 2>&1
-    $S60 start > /tmp/s60-start.out 2>&1
-    sed 's/^/      /' /tmp/s60-start.out
+    ok "the entry point S62moonraker names is present ($MOONRAKER_MAIN)"
+    $S62 stop >/dev/null 2>&1
+    $S62 start > /tmp/s62-start.out 2>&1
+    sed 's/^/      /' /tmp/s62-start.out
 
     # qemu is slow and moonraker loads a lot of components.
     waited=0
@@ -235,14 +284,17 @@ else
         waited=$((waited + 2))
     done
     if moonraker_alive; then
-        ok "moonraker is running after ${waited}s (pid `moonraker_pid`)"
+        FIRST_PID=`moonraker_pid`
+        ok "moonraker is running after ${waited}s (pid $FIRST_PID)"
     else
+        FIRST_PID=""
         bad "moonraker did not start -- last words:"
         tail -n 15 /usr/data/logs/moonraker.log 2>/dev/null | sed 's/^/      /'
     fi
 
-    # It has to be OUR interpreter running OUR entry point, not something the
-    # stock daemon left behind. This is what the old grep could not see.
+    # It has to be OUR interpreter running OUR entry point, on the data
+    # partition -- not the stock tree on /usr/prog and not something the stock
+    # daemon left behind. This is what the old grep could not see.
     if moonraker_alive; then
         CMD=`tr '\0' ' ' < /proc/\`moonraker_pid\`/cmdline 2>/dev/null`
         case "$CMD" in
@@ -250,8 +302,15 @@ else
             *) bad "moonraker is running under '$CMD', not $PY" ;;
         esac
         case "$CMD" in
-            *"$MOONRAKER_MAIN"*) ok "running the entry point S60web names" ;;
+            *"$MOONRAKER_MAIN"*) ok "running the entry point S62moonraker names" ;;
             *) bad "running '$CMD', not $MOONRAKER_MAIN" ;;
+        esac
+        # And NOT the copy on the firmware partition. That second tree is the
+        # thing this release removed: while it existed, "which moonraker is
+        # this printer running?" depended on what was flashed last.
+        case "$CMD" in
+            *"$STOCK_MR"*) bad "moonraker is running FlashForge's /usr/prog tree, not the mod's" ;;
+            *) ok "nothing under $STOCK_MR is being run" ;;
         esac
         # The uploads fix: TMPDIR has to be off the /tmp ramdisk.
         if [ -r /proc/`moonraker_pid`/environ ]; then
@@ -274,47 +333,123 @@ else
              || skip "moonraker is running but did not answer on :7125 (klippy is not up in the replica)"
 
     # ---- 9. status, stop and restart tell the truth ------------------------
-    $S60 status 2>&1 | grep -q 'moonraker: running' \
+    $S62 status 2>&1 | grep -q 'moonraker: running' \
         && ok "status reports it running" \
         || bad "status does not report a running moonraker"
 
-    $S60 stop >/dev/null 2>&1
+    $S62 stop >/dev/null 2>&1
     if moonraker_alive; then
         bad "moonraker is still alive after stop"
     else
         ok "stop actually stopped it"
     fi
+    # svc_stop_daemon removes the pidfile because busybox start-stop-daemon
+    # does not. A stale one is how `status` came to report a recycled pid as a
+    # running server.
     [ -f /run/moonraker.pid ] \
         && bad "stop left a stale pidfile -- status would report a recycled PID" \
         || ok "stop cleared the pidfile"
 
-    $S60 restart > /tmp/s60-restart.out 2>&1
+    $S62 restart > /tmp/s62-restart.out 2>&1
     waited=0
     while [ $waited -lt 45 ] && ! moonraker_alive; do
         sleep 2
         waited=$((waited + 2))
     done
-    moonraker_alive && ok "restart brought it back (pid `moonraker_pid`)" \
-                    || bad "restart left nothing running: `tail -2 /tmp/s60-restart.out`"
-    $S60 stop >/dev/null 2>&1
+    if moonraker_alive; then
+        ok "restart brought it back (pid `moonraker_pid`)"
+        # It must be a NEW process. `restart` used to race its own start --
+        # busybox start-stop-daemon -K returns before the process is dead, so
+        # the -S that followed refused and the old pid simply carried on,
+        # which looks identical to a successful restart from the outside.
+        if [ -n "$FIRST_PID" ] && [ "`moonraker_pid`" = "$FIRST_PID" ]; then
+            bad "restart left the ORIGINAL pid $FIRST_PID running -- nothing was restarted"
+        else
+            ok "restart produced a new process, not the old one"
+        fi
+    else
+        bad "restart left nothing running: `tail -2 /tmp/s62-restart.out`"
+    fi
+    $S62 stop >/dev/null 2>&1
 fi
 
-# ---- 10. a missing tree is reported, not routed around ---------------------
+# ---- 10. nginx and moonraker are independent -------------------------------
+# WHY THIS IS HERE. These were one script, S60web, and the whole point of
+# splitting them is that `S62moonraker restart` -- the one you run over and
+# over while chasing a moonraker config -- must not take the web UI down with
+# it. That is a claim about behaviour, not about file layout, so it is checked
+# by taking moonraker down with nginx running and then looking at nginx.
+#
+# The config is a STAND-IN: assets/nginx.conf is staged into the built payload
+# by bin/patch.sh and is not on this mount, so the printer's own stock
+# nginx.conf is borrowed purely to get a live nginx to point at. What is
+# measured here is which process survives, not what nginx serves. Everything
+# below skips rather than fails when this printer cannot run nginx at all: a
+# failure there would be a statement about FlashForge's nginx build, which is
+# not what this gate is for.
+NGINX_BIN=/usr/prog/nginx/sbin/nginx
+NGINX_PID=$MODDIR/nginx/logs/nginx.pid
+nginx_alive() { [ -f "$NGINX_PID" ] && kill -0 "`cat $NGINX_PID 2>/dev/null`" 2>/dev/null; }
+
+if [ ! -x "$NGINX_BIN" ]; then
+    skip "no nginx on this printer -- cannot check that the two services are independent"
+elif [ ! -x "$S60N" ]; then
+    bad "the payload ships no init.d/S60nginx"
+elif [ ! -f "$MOONRAKER_MAIN" ]; then
+    skip "no moonraker to take away -- cannot check the split"
+else
+    mkdir -p $MODDIR/nginx/logs $MODDIR/nginx/tmp
+    [ -f $MODDIR/nginx/nginx.conf ] \
+        || cp -f /usr/prog/nginx/conf/nginx.conf $MODDIR/nginx/nginx.conf 2>/dev/null
+    $S60N start > /tmp/s60nginx.out 2>&1
+    sed 's/^/      /' /tmp/s60nginx.out
+    if ! nginx_alive; then
+        skip "nginx did not come up here -- cannot check the split"
+    else
+        ok "nginx is running (pid `cat $NGINX_PID`)"
+        $S62 start >/dev/null 2>&1
+        waited=0
+        while [ $waited -lt 45 ] && ! moonraker_alive; do
+            sleep 2
+            waited=$((waited + 2))
+        done
+        if ! moonraker_alive; then
+            skip "moonraker would not start alongside nginx -- nothing to take away"
+        else
+            $S62 stop >/dev/null 2>&1
+            moonraker_alive \
+                && bad "stopping moonraker did not stop moonraker" \
+                || ok "stopping moonraker stopped moonraker"
+            if nginx_alive; then
+                ok "nginx survived it -- the two services really are independent"
+            else
+                bad "stopping moonraker took nginx down with it -- the split is not real"
+            fi
+            $S60N status 2>&1 | grep -q 'nginx: running' \
+                && ok "S60nginx still reports itself running" \
+                || bad "S60nginx does not report itself running after moonraker stopped"
+        fi
+        $S60N stop >/dev/null 2>&1
+        $S62 stop >/dev/null 2>&1
+    fi
+fi
+
+# ---- 11. a missing tree is reported, not routed around ---------------------
 # There is no stock moonraker to fall back to any more, so the one thing this
 # must never do is fail silently.
 if [ -f "$MOONRAKER_MAIN" ]; then
     mv "$MOONRAKER_MAIN" "$MOONRAKER_MAIN.hidden"
-    $S60 start > /tmp/s60-missing.out 2>&1
+    $S62 start > /tmp/s62-missing.out 2>&1
     sleep 2
     if moonraker_alive; then
-        bad "S60web started something with no moonraker.py present"
-    elif grep -qi 'moonraker' /tmp/s60-missing.out; then
-        ok "a missing moonraker.py is reported: `grep -i moonraker /tmp/s60-missing.out | head -1`"
+        bad "S62moonraker started something with no moonraker.py present"
+    elif grep -qi 'moonraker' /tmp/s62-missing.out; then
+        ok "a missing moonraker.py is reported: `grep -i moonraker /tmp/s62-missing.out | head -1`"
     else
         bad "a missing moonraker.py produced no message at all"
     fi
     mv "$MOONRAKER_MAIN.hidden" "$MOONRAKER_MAIN"
-    $S60 stop >/dev/null 2>&1
+    $S62 stop >/dev/null 2>&1
 fi
 
 echo
