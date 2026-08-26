@@ -144,6 +144,17 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
     # build bug, not a warning.
     grep -q '\.install-manifest' <<<"$LIST" && ok "install manifest present (next update deletes by list, not by rm -rf)" \
                                           || bad "mod payload has no .install-manifest -- updates fall back to wiping whole directories"
+    # s6. Two checks and not one, because the second is the one that catches
+    # the failure nobody sees coming: s6-ftrigrd is not on anyone's PATH and
+    # nothing calls it by name -- s6-svlisten spawns it out of the libexecdir
+    # compiled into the binaries. A payload with bin/ and no libexec/ supervises
+    # perfectly well and then every WAITING verb (s6-svc -w, s6-svwait) fails,
+    # which is exactly the half of s6 we are adopting it for. Build bugs both:
+    # a package that ships neither cannot be fixed on the printer.
+    grep -q 'bin/s6-svscan' <<<"$LIST" && ok "s6 supervision binaries present" \
+                                          || bad "no s6 in the payload -- bin/patch.sh did not stage the cross-build"
+    grep -q 'libexec/s6-ftrigrd' <<<"$LIST" && ok "s6-ftrigrd present in libexec (the waiting verbs can spawn it)" \
+                                          || bad "no libexec/s6-ftrigrd -- s6-svwait and s6-svc -w will fail on the printer"
     grep -q 'mainsail/index.html' <<<"$LIST" && ok "Mainsail present" || warn "no Mainsail in payload"
     grep -q 'helixscreen/bin/helix-screen' <<<"$LIST" && ok "HelixScreen present" || warn "no HelixScreen in payload"
     # We deliberately ship no dropbear: the stock rootfs already has one, with

@@ -78,3 +78,26 @@ if [ "$ALL" = 1 ] || [ "${BUILD_MOONRAKER:-0}" = "1" ]; then
     get "https://github.com/Arksine/moonraker/archive/$MOONRAKER_VERSION.tar.gz" \
         "$MOONRAKER_TGZ" "$MOONRAKER_SHA256"
 fi
+
+# s6 and skalibs, and the musl cross-toolchain that builds them. Every package
+# ships s6, so there is no BUILD_ flag here -- these are fetched on every
+# build, not on request.
+#
+# The two source tarballs are a few hundred KB each and always come down. The
+# toolchain is ~100MB, so it is fetched only when bin/patch.sh would actually
+# have to compile: work/.s6 caches the cross-built tree between builds and
+# names the versions it was built from, so a checkout that already has a
+# current one never pulls the compiler at all. (Same shape as the Ingenic
+# toolchain above, which is skipped when there is nothing to compile.)
+get "https://skarnet.org/software/skalibs/skalibs-$SKALIBS_VERSION.tar.gz" \
+    "$SKALIBS_TGZ" "$SKALIBS_SHA256"
+get "https://skarnet.org/software/s6/s6-$S6_VERSION.tar.gz" \
+    "$S6_TGZ" "$S6_SHA256"
+if [ "$ALL" = 1 ] \
+   || [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$SKALIBS_VERSION $S6_VERSION" ]; then
+    # No version in the URL: musl.cc rebuilds this tarball in place, so the
+    # sha256 in versions.env is the entire pin. A rebuild upstream stops the
+    # build here rather than silently changing the compiler.
+    get "https://musl.cc/$MUSL_TOOLCHAIN_FILE" \
+        "$MUSL_TOOLCHAIN_TGZ" "$MUSL_TOOLCHAIN_SHA256"
+fi

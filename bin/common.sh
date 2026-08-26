@@ -62,7 +62,21 @@ MOONRAKER_TGZ="${MOONRAKER_TGZ:-$ROOT/vendor/moonraker-${MOONRAKER_VERSION:-unpi
 # versions.env for why the pin exists.
 KLIPPER_TGZ="${KLIPPER_TGZ:-$ROOT/vendor/klipper-${KLIPPER_VERSION:-unpinned}.tar.gz}"
 MIPS_TOOLCHAIN_TGZ="${MIPS_TOOLCHAIN_TGZ:-$ROOT/vendor/${MIPS_TOOLCHAIN_FILE:-mips-toolchain.tar.gz}}"
+# s6 and its build dependency skalibs, plus the musl cross-toolchain that
+# compiles them. Every package ships s6, so unlike the Klipper pieces there is
+# no flag that switches these off -- see versions.env for why the build is the
+# way it is.
+#
+# S6_BUILD is patch.sh's cache of the CROSS-BUILT tree (bin/ + libexec/,
+# stripped, exactly what ships) and is named here rather than in patch.sh
+# because fetch-assets.sh reads it too: the ~100MB toolchain is only worth
+# downloading when that cache is missing or stale.
+SKALIBS_TGZ="${SKALIBS_TGZ:-$ROOT/vendor/skalibs-${SKALIBS_VERSION:-unpinned}.tar.gz}"
+S6_TGZ="${S6_TGZ:-$ROOT/vendor/s6-${S6_VERSION:-unpinned}.tar.gz}"
+MUSL_TOOLCHAIN_TGZ="${MUSL_TOOLCHAIN_TGZ:-$ROOT/vendor/${MUSL_TOOLCHAIN_FILE:-mipsel-linux-musl-cross.tgz}}"
+S6_BUILD="${S6_BUILD:-$ROOT/work/.s6}"
 export MAINSAIL_ZIP HELIX_TGZ MOONRAKER_TGZ KLIPPER_TGZ MIPS_TOOLCHAIN_TGZ
+export SKALIBS_TGZ S6_TGZ MUSL_TOOLCHAIN_TGZ S6_BUILD
 
 # Replica-only settings: the factory image and the partition sizes. They exist
 # for the tests and never reach a printer, so they live in their own file --

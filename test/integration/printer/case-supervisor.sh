@@ -1,26 +1,56 @@
 #!/bin/sh
-# s6 vs runit, on the printer's own kernel/qemu. Behaviour only -- no greps.
+# Does the s6 the BUILD produced actually supervise on the printer's own
+# kernel? Behaviour only -- no greps.
+#
+# WHAT THIS USED TO BE. It was a comparison: s6 and runit, side by side, on
+# the replica. That question is answered -- the measurements and the reasons
+# are written down in tools/supervisor/README.md, and s6 won on readiness
+# notification, the one thing runit has no concept of. Nothing builds runit
+# any more, so a gate that still expected runit/ in the tarball could only
+# ever be fed a hand-made one; this one is fed `bin/` and `libexec/` straight
+# out of work/.s6, which is what bin/patch.sh stages into the payload. The
+# contrast note in section 3 is left in because it is why we are here.
+#
+# s6 has its own prefix baked in at compile time, so it can only be unpacked
+# where it was configured to live: /usr/data/anvil, the mod's prefix root.
 FAIL=0
 ok()  { echo "  PASS  $*"; }
 bad() { echo "  FAIL  $*"; FAIL=1; }
 note(){ echo "  ..    $*"; }
 
-# s6 has its own prefix baked in at compile time, so it can only be unpacked
-# where it was configured to live: /usr/data/anvil, the mod's prefix root.
-mkdir -p /usr/data/anvil /usr/data/sup
+mkdir -p /usr/data/anvil
 gzip -dc /mnt/sup.tgz | tar -x -C /usr/data/anvil || { bad "cannot unpack sup.tgz"; exit 1; }
-chmod +x /usr/data/anvil/bin/* /usr/data/anvil/libexec/* /usr/data/anvil/runit/* 2>/dev/null
+chmod +x /usr/data/anvil/bin/* /usr/data/anvil/libexec/* 2>/dev/null
 S6=/usr/data/anvil/bin
-RUNIT=/usr/data/anvil/runit
-export PATH=$S6:$RUNIT:$PATH
+export PATH=$S6:$PATH
 
 echo "=== 0. do the binaries execute on this box at all? ==="
-$RUNIT/sv 2>&1 | head -1 | grep -qi usage \
-    && ok "runit sv runs (static mipsel is loadable here)" \
-    || bad "runit sv did not run: `$RUNIT/sv 2>&1 | head -1`"
 $S6/s6-svstat 2>&1 | head -1 | grep -qi usage \
     && ok "s6-svstat runs (static mipsel is loadable here)" \
     || bad "s6-svstat did not run: `$S6/s6-svstat 2>&1 | head -1`"
+# Every binary the payload promises, not just the one above: a cross-build can
+# emit an object this kernel refuses (wrong endianness, wrong ABI) for one
+# tool and not another, and the ones that only matter at stop/wait time are
+# exactly the ones nobody would notice until a service had to be stopped.
+MISSING=
+for b in s6-svscan s6-svscanctl s6-supervise s6-svc s6-svstat s6-svwait \
+         s6-svok s6-svlisten s6-svlisten1 s6-ftrig-listen1 s6-mkfifodir \
+         s6-cleanfifodir s6-notifyoncheck; do
+    [ -x "$S6/$b" ] || { MISSING="$MISSING $b"; continue; }
+    # No argument and no service: every one of these exits non-zero with a
+    # usage line. What is being asked is only "did the kernel load it", so
+    # ENOEXEC ("cannot execute binary file") is the failure being looked for.
+    out=`$S6/$b 2>&1 | head -1`
+    case "$out" in
+        *"cannot execute"*|*"not executable"*|*"Exec format error"*)
+            MISSING="$MISSING $b(ENOEXEC)" ;;
+    esac
+done
+[ -z "$MISSING" ] && ok "all 13 supervision binaries load and run" \
+                  || bad "binaries the kernel would not run:$MISSING"
+[ -x /usr/data/anvil/libexec/s6-ftrigrd ] \
+    && ok "libexec/s6-ftrigrd is present (section 3 proves it is reachable)" \
+    || bad "no libexec/s6-ftrigrd -- every waiting verb will fail"
 
 # A fake daemon that logs its pid and stays in the foreground -- exactly the
 # shape every one of our real services already has.
@@ -33,62 +63,7 @@ EOD
 chmod +x /usr/data/anvil/fake/daemon.sh
 
 echo
-echo "=== 1. runit: supervise, status, restart-on-death, blocking stop ==="
-rm -f /tmp/daemon.log
-mkdir -p /usr/data/anvil/rsv/cam
-cat > /usr/data/anvil/rsv/cam/run <<'EOR'
-#!/bin/sh
-exec /usr/data/anvil/fake/daemon.sh
-EOR
-chmod +x /usr/data/anvil/rsv/cam/run
-
-$RUNIT/runsvdir /usr/data/anvil/rsv >/tmp/runsvdir.log 2>&1 &
-RUNSVDIR_PID=$!
-sleep 8
-
-note "runsvdir alive? `kill -0 $RUNSVDIR_PID 2>&1 && echo yes || echo NO`"
-note "runsvdir log: `cat /tmp/runsvdir.log 2>&1 | head -5`"
-note "service dir: `ls -a /usr/data/anvil/rsv/cam 2>&1 | tr '\n' ' '`"
-note "ps: `ps 2>/dev/null | grep -c runsv`"
-st=`$RUNIT/sv status /usr/data/anvil/rsv/cam 2>&1`
-case "$st" in
-    run:*) ok "runit sv status -> $st" ;;
-    *)     bad "runit sv status -> $st" ;;
-esac
-
-# Kill the daemon; runsv must bring it back without anyone asking.
-before=`grep -c started /tmp/daemon.log 2>/dev/null`
-pid=`$RUNIT/sv status /usr/data/anvil/rsv/cam 2>&1 | sed -n 's/.*(pid \([0-9]*\)).*/\1/p'`
-if [ -n "$pid" ]; then
-    kill -9 "$pid" 2>/dev/null
-    sleep 8
-    after=`grep -c started /tmp/daemon.log 2>/dev/null`
-    if [ "${after:-0}" -gt "${before:-0}" ]; then
-        ok "runit respawned the daemon after kill -9 ($before -> $after starts)"
-    else
-        bad "runit did NOT respawn (starts $before -> $after)"
-    fi
-else
-    bad "runit: could not read a pid out of sv status"
-fi
-
-# The thing svc_stop_daemon hand-rolls: a stop that does not return early.
-$RUNIT/sv -w 20 stop /usr/data/anvil/rsv/cam >/dev/null 2>&1
-st=`$RUNIT/sv status /usr/data/anvil/rsv/cam 2>&1`
-case "$st" in
-    down:*) ok "runit 'sv -w 20 stop' returned with the service already down" ;;
-    *)      bad "runit stop returned but status is: $st" ;;
-esac
-
-kill $RUNSVDIR_PID 2>/dev/null
-sleep 2
-$RUNIT/sv status /usr/data/anvil/rsv/cam >/dev/null 2>&1
-pkill -f runsvdir 2>/dev/null
-pkill -f "runsv cam" 2>/dev/null
-sleep 2
-
-echo
-echo "=== 2. s6: supervise, status, restart-on-death, blocking stop ==="
+echo "=== 1. supervise, status, restart-on-death, blocking stop ==="
 rm -f /tmp/daemon.log
 mkdir -p /usr/data/anvil/s6sv/cam
 cat > /usr/data/anvil/s6sv/cam/run <<'EOR'
@@ -97,7 +72,7 @@ exec /usr/data/anvil/fake/daemon.sh
 EOR
 chmod +x /usr/data/anvil/s6sv/cam/run
 
-# The readiness service is created BEFORE the scanner starts, so section 3 does
+# The readiness service is created BEFORE the scanner starts, so section 2 does
 # not have to rescan a live scandir. Its run script tells s6 it is ready only
 # after a deliberate 5s delay -- standing in for a device that takes a while to
 # appear, which is exactly the camera's situation.
@@ -141,7 +116,10 @@ else
 fi
 
 # -wD means "do not return until the service is actually down"; -d is the
-# request to bring it down and keep it down.
+# request to bring it down and keep it down. This is the thing
+# svc_stop_daemon hand-rolls, and the first place a wrongly-prefixed s6 would
+# fail: -w execs s6-svlisten, which spawns s6-ftrigrd out of the libexecdir
+# compiled into the binary.
 stopout=`$S6/s6-svc -wD -T 20000 -d /usr/data/anvil/s6sv/cam 2>&1`
 [ -n "$stopout" ] && note "s6-svc said: $stopout"
 st=`$S6/s6-svstat /usr/data/anvil/s6sv/cam 2>&1`
@@ -151,7 +129,7 @@ case "$st" in
 esac
 
 echo
-echo "=== 3. s6 readiness notification (what runit cannot do) ==="
+echo "=== 2. readiness notification (the reason s6 and not runit) ==="
 # This is the whole reason to prefer s6: the service tells the supervisor when
 # it is READY, so a dependent can wait on readiness instead of polling. Our
 # camera service currently polls /dev/video0 for up to 30 seconds.
@@ -173,18 +151,19 @@ else
     bad "s6-svwait -U did not see a readiness notification: $waitout"
 fi
 note "for contrast, runit has no readiness concept: 'sv start' returns when the"
-note "process has been forked, not when the service is usable."
+note "process has been forked, not when the service is usable. That is what"
+note "decided this; see tools/supervisor/README.md."
 
 echo
-echo "=== 4. footprint per supervised service ==="
+echo "=== 3. footprint per supervised service ==="
 note "supervisor RSS (kB):"
-ps -o rss,comm 2>/dev/null | grep -E "s6-supervise|runsv|s6-svscan|runsvdir" | head
+ps -o rss,comm 2>/dev/null | grep -E "s6-supervise|s6-svscan" | head
 note "on-disk, stripped, static:"
-du -sh /usr/data/anvil/bin /usr/data/anvil/libexec /usr/data/anvil/runit 2>/dev/null
+du -sh /usr/data/anvil/bin /usr/data/anvil/libexec 2>/dev/null
 
 pkill -f s6-svscan 2>/dev/null
 pkill -f s6-supervise 2>/dev/null
 
 echo
-[ $FAIL -eq 0 ] && echo "  comparison: all checks passed"
+[ $FAIL -eq 0 ] && echo "  supervisor: all checks passed"
 exit $FAIL

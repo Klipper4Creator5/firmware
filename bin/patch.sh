@@ -21,7 +21,13 @@ MODDIR=/usr/data/anvil
 # /usr/data/anvil from there.
 MOD_PAYLOAD=work/modpayload
 rm -rf "$MOD_PAYLOAD" "$SOFTWARE_DIR/mod"   # $SOFTWARE_DIR/mod: leftover from an older layout
-mkdir -p "$MOD_PAYLOAD/bin" "$MOD_PAYLOAD/nginx" "$MOD_PAYLOAD/www" "$MOD_PAYLOAD/config"
+# libexec/ is here because $MODDIR is a --prefix root, not a junk drawer: it
+# holds helper programs that other programs exec and users do not, which for
+# now means s6-ftrigrd. It has to be a sibling of bin/ and spelled exactly
+# this way -- s6 resolves it from the --prefix baked into its binaries at
+# compile time, so the directory name is part of the ABI, not a preference.
+mkdir -p "$MOD_PAYLOAD/bin" "$MOD_PAYLOAD/libexec" "$MOD_PAYLOAD/nginx" \
+         "$MOD_PAYLOAD/www" "$MOD_PAYLOAD/config"
 
 # ---------------------------------------------------------------- 1. Klipper
 # BUILD_KLIPPER=fork (the default) ships the creator5 Klipper tree; =stock
@@ -297,6 +303,170 @@ if [ "${BUILD_HELIX:-1}" = "1" ]; then
 else
     skip "HelixScreen"
 fi
+
+# ------------------------------------------------------- 5b. s6 supervision
+# The process supervisor, cross-compiled here from the sources pinned in
+# versions.env with the musl toolchain pinned beside them -- the same shape as
+# c_helper.so above, and for the same reason: nothing binary is vendored in
+# this repo, so anything the printer executes is built from a hash we pinned.
+#
+# NOTHING STARTS s6 YET. This step only puts it in the payload. The init
+# scripts still hand-roll their supervision in payload/anvil-service.sh and
+# will keep doing so until the scanner lands (docs/notes/80-s6-migration.md,
+# phase 3). Shipping it first is what makes that a one-file change instead of
+# a build change and a boot change at once.
+#
+# WHY NOT IN A CONTAINER OF ITS OWN. tools/supervisor/Dockerfile builds this
+# in a debian:bookworm of its own -- that was the measurement harness, and it
+# also had to build runit and execline for the comparison. The real build
+# cannot work that way: bin/patch.sh already runs inside the pinned build
+# image, and the Makefile's build lane deliberately gives that container no
+# docker socket (only the test lane gets one), so there is no daemon to ask
+# for a second container. It unpacks a toolchain into work/ and compiles in
+# place instead, exactly as the chelper step does.
+#
+# WHY IT IS CACHED AND c_helper.so IS NOT. c_helper.so is rebuilt whenever any
+# chelper source is newer than it, because its sources are a checkout someone
+# may be editing and a stale .so under a fresh klippy is a bug that reached a
+# printer. s6's sources are a pinned tarball that cannot change without its
+# sha256 changing, so the two version strings ARE the whole cache key: build
+# once, stamp work/.s6/.version, and every later build just copies. That also
+# lets bin/fetch-assets.sh skip the ~100MB toolchain download entirely. Staging
+# into the payload is NOT cached -- patch.sh rm -rf's work/modpayload on every
+# run -- so a stale payload is not a thing that can happen.
+S6_HOST=mipsel-linux-musl
+S6_TOOLCHAIN_DIR=work/.musl-toolchain/$S6_HOST-cross
+# The supervision subset, and only it. s6 installs ~40 binaries; the rest are
+# the s6-log/fdholder/ipc machinery we have no use for. Every name below is
+# reachable from something an init script will call:
+#   svscan/svscanctl  the scanner and its control channel
+#   supervise/svc     one supervisor per service, and the verb that talks to it
+#   svstat/svok       "is it up", for the `status` verb the S* scripts expose
+#   svwait            the readiness wait that is the whole reason for s6
+#   svlisten/svlisten1/ftrig-listen1  the waiting verbs EXEC these; s6-svc -w
+#                     and s6-svwait are unusable without them
+#   mkfifodir/cleanfifodir  create and tidy the fifodirs those listen on
+#   notifyoncheck     readiness for a service that cannot notify for itself
+S6_BINS="s6-svscan s6-svscanctl s6-supervise s6-svc s6-svstat s6-svwait s6-svok
+         s6-svlisten s6-svlisten1 s6-ftrig-listen1 s6-mkfifodir s6-cleanfifodir
+         s6-notifyoncheck"
+# Not in bin/ and not optional: s6-svlisten spawns this by absolute path out of
+# the compiled-in libexecdir, and without it every waiting verb dies with
+# "unable to ftrigr_startf: No such file or directory".
+S6_LIBEXEC="s6-ftrigrd"
+S6_STAMP="$SKALIBS_VERSION $S6_VERSION"
+
+if [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
+    if [ ! -x "$S6_TOOLCHAIN_DIR/bin/$S6_HOST-gcc" ]; then
+        [ -f "${MUSL_TOOLCHAIN_TGZ:-}" ] || {
+            echo "   !! s6 needs (re)building and there is no musl toolchain:" >&2
+            echo "      $MUSL_TOOLCHAIN_TGZ is missing. Run ./bin/fetch-assets.sh." >&2
+            exit 1; }
+        say "s6: unpacking the musl mipsel toolchain"
+        rm -rf work/.musl-toolchain
+        mkdir -p work/.musl-toolchain
+        tar -xzf "$MUSL_TOOLCHAIN_TGZ" -C work/.musl-toolchain
+    fi
+    for t in "${SKALIBS_TGZ:-}" "${S6_TGZ:-}"; do
+        [ -f "$t" ] || { echo "   !! no s6 sources at '$t' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
+    done
+    say "s6: cross-compiling skalibs $SKALIBS_VERSION + s6 $S6_VERSION for $MODDIR"
+    rm -rf work/.s6-src work/.s6-sysroot work/.s6-stage "$S6_BUILD"
+    mkdir -p work/.s6-src
+    tar -xzf "$SKALIBS_TGZ" -C work/.s6-src
+    tar -xzf "$S6_TGZ" -C work/.s6-src
+    (
+        # A subshell so the cross-compiler's CC/CFLAGS/PATH cannot leak into
+        # anything patch.sh does afterwards.
+        export PATH="$PWD/$S6_TOOLCHAIN_DIR/bin:$PATH"
+        export CC="$S6_HOST-gcc"
+        # -D_FILE_OFFSET_BITS=64 is not a size optimisation, it is the
+        # difference between a supervisor that works and one that starts
+        # cleanly and then cannot readdir() its own scandir (EOVERFLOW: a
+        # 32-bit build meeting 64-bit inodes). See versions.env.
+        export CFLAGS="-Os -D_FILE_OFFSET_BITS=64"
+        SK="$PWD/work/.s6-sysroot"
+        STAGE="$PWD/work/.s6-stage"
+        JOBS=$(nproc 2>/dev/null || echo 4)
+
+        # skalibs is a BUILD DEPENDENCY. It goes to a throwaway sysroot, never
+        # to the payload: s6 is linked statically against it, so the .a and the
+        # headers have no reason to exist on a printer.
+        #
+        # The four --with-sysdep flags are answers to questions ./configure
+        # normally settles by COMPILING AND RUNNING a probe, which it cannot do
+        # when the target is a mipsel box and the builder is x86. Left
+        # unanswered, configure stops. The answers are the printer's:
+        # /dev/urandom exists, posix_spawn does not return early, /proc/self/exe
+        # is readable, and select() accepts an infinite timeout.
+        cd "$PWD/work/.s6-src/skalibs-$SKALIBS_VERSION"
+        ./configure --host="$S6_HOST" --prefix="$SK" \
+            --disable-shared --enable-static --enable-static-libc \
+            --with-sysdep-devurandom=yes \
+            --with-sysdep-posixspawnearlyreturn=no \
+            --with-sysdep-procselfexe=/proc/self/exe \
+            --with-sysdep-selectinfinite=yes >/dev/null
+        make -j"$JOBS" >/dev/null
+        make install >/dev/null
+
+        # --prefix is $MODDIR and NOT the staging directory, because s6 bakes
+        # the prefix into the binaries: this is the path they will look for
+        # s6-ftrigrd under at runtime on the printer. DESTDIR is how the tree
+        # lands somewhere we can read it here without needing /usr/data/anvil to
+        # exist on the build machine.
+        #
+        # --disable-execline is not an optimisation either. s6 links against
+        # execline by DEFAULT -- src/libs6 and the ftrig tools #include
+        # <execline/execline.h> and the build simply stops without it -- and
+        # execline is 53 more binaries and 2.1MB we would have to ship and
+        # nothing would run: our `run` scripts are plain #!/bin/sh. Turning it
+        # off here is what makes "we do not ship execline" true rather than
+        # aspirational.
+        cd "$OLDPWD/work/.s6-src/s6-$S6_VERSION"
+        ./configure --host="$S6_HOST" --prefix="$MODDIR" \
+            --with-sysdeps="$SK/lib/skalibs/sysdeps" \
+            --with-include="$SK/include" --with-lib="$SK/lib" \
+            --disable-execline \
+            --disable-shared --enable-static --enable-static-libc >/dev/null
+        make -j"$JOBS" >/dev/null
+        make install DESTDIR="$STAGE" >/dev/null
+    )
+    # Take only what we ship, out of the DESTDIR tree at its real prefix.
+    mkdir -p "$S6_BUILD/bin" "$S6_BUILD/libexec"
+    for b in $S6_BINS; do
+        cp -f "work/.s6-stage$MODDIR/bin/$b" "$S6_BUILD/bin/$b"
+    done
+    for b in $S6_LIBEXEC; do
+        cp -f "work/.s6-stage$MODDIR/libexec/$b" "$S6_BUILD/libexec/$b"
+    done
+    "$PWD/$S6_TOOLCHAIN_DIR/bin/$S6_HOST-strip" "$S6_BUILD/bin"/* "$S6_BUILD/libexec"/*
+    rm -rf work/.s6-src work/.s6-sysroot work/.s6-stage
+    echo "$S6_STAMP" > "$S6_BUILD/.version"
+else
+    skip "s6: work/.s6 already holds $S6_STAMP"
+fi
+
+# The gates, asked of the built tree rather than of the build. A cross-build
+# that silently produced host binaries, or produced a big-endian or 64-bit
+# object, looks like a clean build here and like a printer that cannot exec
+# its own supervisor there -- the kernel says ENOEXEC and nothing explains
+# why. So: every name we promised exists, is not empty, and is an ELF the
+# printer's kernel will load.
+for b in $S6_BINS $S6_LIBEXEC; do
+    case " $S6_LIBEXEC " in *" $b "*) f="$S6_BUILD/libexec/$b" ;; *) f="$S6_BUILD/bin/$b" ;; esac
+    [ -s "$f" ] || { echo "   !! s6: $b is missing or empty in $S6_BUILD" >&2; exit 1; }
+    hdr=$(readelf -h "$f" 2>/dev/null || true)
+    grep -q 'Class:.*ELF32' <<<"$hdr" && grep -q "Machine:.*MIPS" <<<"$hdr" \
+        && grep -q "Data:.*little endian" <<<"$hdr" \
+        || { echo "   !! s6: $b is not a 32-bit little-endian MIPS ELF" >&2
+             readelf -h "$f" 2>&1 | sed 's/^/      /' >&2; exit 1; }
+done
+say "s6: $(echo $S6_BINS | wc -w) binaries + $S6_LIBEXEC are 32-bit MIPS (LE) -- good"
+cp -f "$S6_BUILD/bin"/* "$MOD_PAYLOAD/bin/"
+cp -f "$S6_BUILD/libexec"/* "$MOD_PAYLOAD/libexec/"
+chmod +x "$MOD_PAYLOAD/bin"/s6-* "$MOD_PAYLOAD/libexec"/*
+du -sh "$S6_BUILD/bin"     | awk '{print "   "$1"\tbin/"}'
+du -sh "$S6_BUILD/libexec" | awk '{print "   "$1"\tlibexec/"}'
 
 # ------------------------------------------------------------------- 6. SSH
 # Nothing to install. The stock rootfs (kernel-*.tar.xz -> rootfs.squashfs)

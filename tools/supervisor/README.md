@@ -97,8 +97,17 @@ adopting s6 -- not the supervisor itself.
     docker run --rm -v "$PWD/tools/supervisor:/build/in" -v "$PWD/work/sup:/out" \
         svcbuild-musl sh /build/in/build.sh
 
-then pack `bin/`, `libexec/` and `runit/` into a tarball and run the gate:
+then pack `bin/`, `libexec/` and `runit/` into a tarball and run the gate.
 
+That is how the COMPARISON above was measured, and it is kept here for the
+record. It is no longer how s6 is built: the answer is s6, so `bin/patch.sh`
+now cross-compiles skalibs and s6 from the tarballs pinned in `versions.env`,
+inside the repo's own build image, caches the result in `work/.s6` and stages
+it into the payload. Nothing builds runit or execline any more, and
+`case-supervisor.sh` accordingly expects only `bin/` and `libexec/` -- the
+two directories that cache holds:
+
+    tar -czf work/sup.tgz -C work/.s6 bin libexec
     PRINTER_IMAGE=monstrofil/creator5-printer:latest \
         ./test/integration/printer-exec.py \
-        test/integration/printer/case-supervisor.sh sup.tgz=<tarball>
+        test/integration/printer/case-supervisor.sh sup.tgz=work/sup.tgz
