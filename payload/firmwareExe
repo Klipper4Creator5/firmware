@@ -103,7 +103,12 @@ if [ "$UI_CHOICE" = helix ]; then
     HELIX_DATA_DIR=$MODDIR/helixscreen
     HELIX_LOG_DEST=file
     HELIX_LOG_FILE=/usr/data/logs/helixscreen.log
-    export HELIX_DATA_DIR HELIX_LOG_DEST HELIX_LOG_FILE
+    # This repo pins and patches the HelixScreen build it ships; an in-app
+    # update would replace it behind the package's back. HelixScreen documents
+    # this variable as the vendor opt-out: it suppresses the update check, the
+    # notify modal and the settings-panel update UI.
+    HELIX_DISABLE_AUTO_UPDATES=1
+    export HELIX_DATA_DIR HELIX_LOG_DEST HELIX_LOG_FILE HELIX_DISABLE_AUTO_UPDATES
     if [ -x $MODDIR/helixscreen/bin/helix-launcher.sh ]; then
         $MODDIR/helixscreen/bin/helix-launcher.sh
     else
