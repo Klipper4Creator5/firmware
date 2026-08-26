@@ -35,7 +35,7 @@ Reuses `_FF_FILAMENT_PREP` (new `ALLOW_PRINTING=1`, since `print_stats.state` is
 `ACTIVATE_EXTRUDER` when already mounted), `G1 Z purge_z` if below, the chute approach with the
 per-tool nudge, `TEMPERATURE_WAIT ±3`, chamber fans off. Then, verbatim from the app:
 `M83 G92 E0 G1 E50 F<speed> M400 M106 P1 S153 G1 E-5 M400`, `G1 X250 F6000`,
-`G1 Y13.8 F24000`, `G1 X266.5 F6000`, `G1 Z<clean_wipe_z - homing_origin.z> F600`,
+`G1 Y13.8 F24000`, `G1 X266.5 F6000`, `G1 Z<clean_wipe_z, raw-framed> F600`,
 `M104 S<temp-100>`,
 `TEMPERATURE_WAIT MAXIMUM=<temp-97>`, `M106 P1 S0`, `G1 Z10 F1200`, and
 `_FF_FILAMENT_FINISH RELEASE=1 HEAT_OFF=0` (chamber fans back, `UNSELECT_TOOL`). The hotend
@@ -54,9 +54,13 @@ sets to NOZZLE). So with the shipped `tool_material: ['PLA','PLA','PLA','PLA']`,
   grab, after the bed is already heating); we refuse up front for all of TOOLS.
 - **Purge / wipe heights** are `purge_z` (8.0) and `clean_wipe_z` (1.0) in the RAW eddy
   frame, i.e. the app's `probeZ + 8` / `probeZ + 1` with probeZ taken as 0 — no fresh eddy
-  `PROBE_ACCURACY` at (265, 4.8). `_FF_NOZZLE_WIPE` commands
-  `clean_wipe_z - gcode_move.homing_origin.z`, so the `G1 Z...` it emits is not literally
-  1.0. Same assumption as LOAD_FILAMENT; unmeasured.
+  `PROBE_ACCURACY` at (265, 4.8). `_FF_NOZZLE_WIPE` subtracts every layer between a
+  G-code Z and the machine — `gcode_move.homing_origin.z`, the mounted tool's
+  `gcode_z_offset` and `toolchanger.print_z_offset` — so the `G1 Z...` it emits is not
+  literally 1.0. It used to subtract only the first, which was the whole offset while
+  everything shared `homing_origin`; once the per-tool frame moved into its own transform
+  that left the nozzle ~3.2 mm high and the wipe silently stopped touching the spot. Same
+  assumption as LOAD_FILAMENT; unmeasured.
 - **Cool-down wait** has no timeout (`TEMPERATURE_WAIT`); the app gives up after 180 s with
   E003x. `clean_cool_delta: 0` skips it (much faster, less clean).
 - The PA-test variant (`paTest` flag → `SET_KINEMATIC_POSITION` + `paTestMgr`) and the
