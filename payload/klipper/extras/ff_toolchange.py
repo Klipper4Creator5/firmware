@@ -1184,6 +1184,16 @@ class FFToolchange:
             return
         self.printer.lookup_object('gcode_move').reset_last_position()
 
+    def uncalibrated_tools(self):
+        return [tool.index for tool in self.tools if not tool.calibrated()]
+
+    def _station_z(self):
+        """station_z from [ff_tool_offset] (TOOL_LOCATE_SENSOR), or None."""
+        offsets = self.printer.lookup_object('ff_tool_offset', None)
+        if offsets is None or offsets.station is None:
+            return None
+        return offsets.station[2]
+
     def _set_tool_frame(self, tool):
         """Make `tool` (or None for a bare carriage) the per-tool frame.
 
