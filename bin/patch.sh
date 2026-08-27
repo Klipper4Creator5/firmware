@@ -357,7 +357,7 @@ fi
 # lets bin/fetch-assets.sh skip the ~100MB toolchain download entirely. Staging
 # into the payload is NOT cached -- patch.sh rm -rf's work/modpayload on every
 # run -- so a stale payload is not a thing that can happen.
-S6_HOST=mipsel-linux-musl
+S6_HOST=mipsel-buildroot-linux-musl
 S6_TOOLCHAIN_DIR=work/.musl-toolchain/$S6_HOST-cross
 # The supervision subset, and only it. s6 installs ~40 binaries; the rest are
 # the s6-log/fdholder/ipc machinery we have no use for. Every name below is
@@ -388,7 +388,18 @@ if [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
         say "s6: unpacking the musl mipsel toolchain"
         rm -rf work/.musl-toolchain
         mkdir -p work/.musl-toolchain
-        tar -xzf "$MUSL_TOOLCHAIN_TGZ" -C work/.musl-toolchain
+        # -xf, not -xzf: Bootlin ships this .tar.xz, not musl.cc's .tar.gz --
+        # tar picks the decompressor off the file itself either way.
+        tar -xf "$MUSL_TOOLCHAIN_TGZ" -C work/.musl-toolchain
+        # Bootlin's archive extracts into a directory named after the
+        # release ("mips32el--musl--stable-2025.08-1"), not the fixed
+        # "$S6_HOST-cross" musl.cc used. It is the only thing the archive
+        # unpacks at top level, so renaming whatever that turns out to be is
+        # what decouples S6_TOOLCHAIN_DIR from a version string that moves on
+        # every release.
+        set -- work/.musl-toolchain/*/
+        [ -d "$1" ] || { echo "   !! musl toolchain archive unpacked no directory" >&2; exit 1; }
+        mv "$1" "$S6_TOOLCHAIN_DIR"
     fi
     for t in "${SKALIBS_TGZ:-}" "${S6_TGZ:-}"; do
         [ -f "$t" ] || { echo "   !! no s6 sources at '$t' -- run ./bin/fetch-assets.sh" >&2; exit 1; }

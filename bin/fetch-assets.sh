@@ -30,9 +30,12 @@ get() {
         say "stale   $(basename "$dest") -- re-downloading"
     fi
     say "fetch   $url"
-    # --retry: musl.cc in particular has a habit of dying mid-connect on CI
-    # runners; a plain -f here turned that into a hard build failure every
-    # few runs for a host that would have answered on the next try.
+    # --retry: this fetches from several hosts and a plain -f turns any one
+    # of them having a bad minute into a hard build failure. Written after
+    # musl.cc -- the previous source for the s6 toolchain, replaced below
+    # over exactly this -- died mid-connect on CI runners often enough to be
+    # the norm rather than the exception; kept general because the next flaky
+    # host will not announce itself in advance.
     #
     # --connect-timeout: without it, a host that is not answering at all --
     # not refusing, just silent -- makes curl wait on its own default (well
@@ -122,10 +125,10 @@ get "https://skarnet.org/software/s6/s6-$S6_VERSION.tar.gz" \
     "$S6_TGZ" "$S6_SHA256"
 if [ "$ALL" = 1 ] \
    || [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$SKALIBS_VERSION $S6_VERSION" ]; then
-    # No version in the URL: musl.cc rebuilds this tarball in place, so the
-    # sha256 in versions.env is the entire pin. A rebuild upstream stops the
-    # build here rather than silently changing the compiler.
-    get "https://musl.cc/$MUSL_TOOLCHAIN_FILE" \
+    # Bootlin's own release layout: one directory per target architecture,
+    # one versioned tarball per release inside it. See versions.env for why
+    # this is Bootlin and not musl.cc.
+    get "https://toolchains.bootlin.com/downloads/releases/toolchains/mips32el/tarballs/$MUSL_TOOLCHAIN_FILE" \
         "$MUSL_TOOLCHAIN_TGZ" "$MUSL_TOOLCHAIN_SHA256"
 fi
 
