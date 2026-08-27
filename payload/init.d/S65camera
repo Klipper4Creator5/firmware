@@ -76,8 +76,13 @@ supervise() {
 
     # Respawn: a USB camera that is unplugged and replugged takes the streamer
     # down with it, and there is no other supervisor on this box.
+    # NICE_CAM (anvil.conf) yields the streamer to klippy. Not svc_start_daemon's
+    # -N here: this one is started by the supervisor above, not by
+    # start-stop-daemon, so it takes the `nice` applet instead. Re-applied on
+    # every respawn because each iteration is a fresh process. `nice` execs in
+    # place, so the pid the supervisor waits on is still the streamer's.
     while true; do
-        ./mjpg_streamer \
+        nice -n "${NICE_CAM:-0}" ./mjpg_streamer \
             -i "input_uvc.so -d $VIDEO -r $RES -f $FPS" \
             -o "output_http.so -p $PORT -w www" \
             >>"$LOG" 2>&1

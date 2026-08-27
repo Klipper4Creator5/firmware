@@ -112,8 +112,12 @@ start() {
     export TMPDIR=$MOONRAKER_TMP
     mkdir -p `dirname $MOONRAKER_LOG`
 
+    # Yield to klippy on a two-core SoC: see NICE_MOONRAKER in anvil.conf for
+    # why this is insurance rather than a fix. Unset or 0 = normal priority.
+    SVC_NICE="${NICE_MOONRAKER:-0}"
     svc_start_daemon "$MOONRAKER_PID" "$FF_PYTHON" \
         "$MOONRAKER_MAIN" -d "$MOONRAKER_DATA" || return 1
+    unset SVC_NICE
     svc_say "started ($MOONRAKER_MAIN)"
     # Did it actually come up? Moonraker failing to load a component exits
     # quietly, minutes before anyone opens a browser and finds out. The check

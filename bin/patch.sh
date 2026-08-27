@@ -375,6 +375,8 @@ sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
     -e "s/^MOD_UI=.*/MOD_UI=${MOD_UI:-1}/" \
     -e "s/^MOD_SSH=.*/MOD_SSH=${MOD_SSH:-1}/" \
     -e "s/^MOD_WIFI=.*/MOD_WIFI=${MOD_WIFI:-1}/" \
+    -e "s/^NICE_MOONRAKER=.*/NICE_MOONRAKER=${NICE_MOONRAKER:-5}/" \
+    -e "s/^NICE_CAM=.*/NICE_CAM=${NICE_CAM:-10}/" \
     payload/anvil.conf > "$MOD_PAYLOAD/anvil.conf"
 
 # --------------------------------------------------- 11. run.sh install step

@@ -117,12 +117,33 @@ svc_proc_alive() {
 # process matching the pidfile is ALREADY running, which after a `restart`
 # means the old one outlived the wait in stop(). Either way nothing new was
 # started, and a script that prints nothing at that moment looks like it worked.
+#
+# SVC_NICE, when the caller sets it to a non-empty non-zero number, becomes
+# start-stop-daemon's -N: the daemon starts at that nice value. It exists
+# because klippy shares two cores with everything else the mod added, and
+# Klipper reports a host that misses its step deadlines as an MCU "Timer too
+# close" shutdown -- so the services around it should yield to it rather than
+# compete on equal terms. Only CPU: busybox 1.31.1 on this printer has no
+# ionice applet (checked in the replica, not assumed), so eMMC contention has
+# no equivalent knob and is not addressed here.
+#
+# Why -N and not a `nice -n` wrapper: --exec is what start-stop-daemon matches
+# and records, and wrapping would make that the nice binary rather than the
+# program itself. -N keeps the exec path real. Both were verified to produce
+# the wanted nice value on the printer's own busybox; -N is the one that keeps
+# the pidfile honest.
 svc_start_daemon() {
     _svc_pidfile=$1
     shift
     _svc_exec=$1
     shift
-    start-stop-daemon -S -b -m -p "$_svc_pidfile" --exec "$_svc_exec" -- "$@"
+    # An empty or 0 SVC_NICE means "as before": no -N, normal priority.
+    if [ -n "${SVC_NICE:-}" ] && [ "${SVC_NICE:-0}" != 0 ]; then
+        start-stop-daemon -S -b -m -N "$SVC_NICE" \
+            -p "$_svc_pidfile" --exec "$_svc_exec" -- "$@"
+    else
+        start-stop-daemon -S -b -m -p "$_svc_pidfile" --exec "$_svc_exec" -- "$@"
+    fi
     _svc_rc=$?
     [ $_svc_rc = 0 ] || svc_warn "FAILED to start -- start-stop-daemon returned $_svc_rc"
     unset _svc_pidfile _svc_exec

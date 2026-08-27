@@ -137,9 +137,17 @@ def services(config, on_output=None):
     contract they share -- the library loads, `status` answers, the output
     names the service, an unknown verb gets a usage line and exit 1 -- rather
     than grepping the scripts for how they are spelled.
+
+    case-priority.sh rides along here because it is the same subject from the
+    other side: not "do they all answer the same verbs" but "do they start at
+    the priority anvil.conf asks for". Both run the real scripts on the
+    printer's own busybox, and both would pass a grep that means nothing --
+    whether `start-stop-daemon -N` is honoured is a property of THIS busybox
+    (1.31.1, and it has no ionice applet at all), so it has to be measured.
     """
     replica = Replica.start(config, want_output=on_output)
     replica.run_case(_case(config, "case-services.sh"), on_output=on_output)
+    replica.run_case(_case(config, "case-priority.sh"), on_output=on_output)
 
 
 def install(config, package, on_output=None):
