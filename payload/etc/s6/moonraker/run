@@ -243,4 +243,16 @@ MOONRAKER_PORT=`awk '
 # boot. Moonraker's own structured log stays exactly where it has always been,
 # at $MOONRAKER_DATA/logs/moonraker.log, because moonraker opens that itself
 # from -d.
-exec "$FF_PYTHON" "$MOONRAKER_MAIN" -d "$MOONRAKER_DATA" 3>&-
+#
+# nice -n "${NICE_MOONRAKER:-0}", not a plain exec of the interpreter: this
+# service is supervised now, which init.d/S62moonraker's start_unsupervised()
+# fallback is not, and NICE_MOONRAKER (anvil.conf) exists to protect klippy
+# from exactly the process this script starts -- reaching only the fallback
+# would leave the feature dead for every printer that has s6, which by
+# default is all of them. `nice` sets its own priority and then execs the
+# given command in its own place (verified: the pid s6 ends up holding is the
+# interpreter's, not nice's, exactly as required above), so this is still one
+# process and $FF_PYTHON is still what --exec would have matched had this
+# been start-stop-daemon. 0 or unset = normal priority, unchanged from before
+# this existed.
+exec nice -n "${NICE_MOONRAKER:-0}" "$FF_PYTHON" "$MOONRAKER_MAIN" -d "$MOONRAKER_DATA" 3>&-

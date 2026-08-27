@@ -70,7 +70,7 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
         test-recovery test-mcu test-boot-screen test-moonraker test-services \
         test-libpath \
         test-upgrade test-supervisor test-nginx test-camera test-python \
-        test-moonraker313 \
+        test-moonraker313 test-priority \
         boot-screen boot-screen-sim \
         release clean distclean
 
@@ -104,6 +104,7 @@ help:
 	@echo '  make test-camera      readiness gates: ready means serving, not forked'
 	@echo '  make test-python      the cross-built CPython 3.13 runs, with a real sqlite3'
 	@echo '  make test-moonraker313 the real moonraker on that 3.13, supervised by s6'
+	@echo '  make test-priority    services start at the nice value anvil.conf sets'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo
 	@echo 'Look at things:'
@@ -286,6 +287,12 @@ test-moonraker313: image
 # goes, what nobody shipped stays.
 test-upgrade: image
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-upgrade.sh
+
+# Every service's nice value, read back out of /proc/<pid>/stat on the
+# printer's own busybox -- see anvil-service.sh's svc_start_daemon for why
+# this cannot be a grep for "-N".
+test-priority: image
+	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-priority.sh
 
 boot-screen:
 	@./bin/preview-boot-screen.py

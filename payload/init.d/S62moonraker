@@ -221,8 +221,13 @@ start_unsupervised() {
     mkdir -p $MOONRAKER_TMP
     export TMPDIR=$MOONRAKER_TMP
     mkdir -p `dirname $MOONRAKER_LOG`
+
+    # Yield to klippy on a two-core SoC: see NICE_MOONRAKER in anvil.conf for
+    # why this is insurance rather than a fix. Unset or 0 = normal priority.
+    SVC_NICE="${NICE_MOONRAKER:-0}"
     svc_start_daemon "$MOONRAKER_PID" "$FF_PYTHON" \
         "$MOONRAKER_MAIN" -d "$MOONRAKER_DATA" || return 1
+    unset SVC_NICE
     svc_say "started (unsupervised, $MOONRAKER_MAIN)"
     # The pre-s6 liveness check, kept whole for the path that still needs it.
     # It is a guess -- a pid that is still there is not an API that answers --

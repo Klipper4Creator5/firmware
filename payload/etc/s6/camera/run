@@ -158,6 +158,14 @@ PORTHEX=`printf '%04X' "$PORT"`
 # The exact invocation the hand-rolled loop used, argument for argument. Do not
 # "tidy" the quoting: mjpg_streamer takes a plugin and all of its options as
 # ONE argv entry and splits it itself, so those quotes are load-bearing.
-exec ./mjpg_streamer \
+#
+# nice -n "${NICE_CAM:-0}" in front: the pre-s6 respawn loop this replaced
+# used the same applet for the same reason (NICE_CAM in anvil.conf -- the
+# streamer is pure background work and the most deserving of the two
+# services that yield to klippy), and `nice` execs the target in its own
+# place, so s6 still ends up holding the streamer's own pid, re-niced on
+# every respawn because s6-supervise re-execs this whole script each time.
+# 0 or unset = normal priority.
+exec nice -n "${NICE_CAM:-0}" ./mjpg_streamer \
     -i "input_uvc.so -d $VIDEO -r $RES -f $FPS" \
     -o "output_http.so -p $PORT -w www" 3>&-

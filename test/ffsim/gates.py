@@ -468,6 +468,13 @@ def services(config, on_output=None):
     ships. The case falls back to its stand-in on its own when no tarball
     arrives -- which keeps this useful in a checkout that has not built yet --
     and says out loud which of the two it used.
+
+    case-priority.sh rides along here because it is the same subject from the
+    other side: not "do they all answer the same verbs" but "do they start at
+    the priority anvil.conf asks for". Both run the real scripts on the
+    printer's own busybox, and both would pass a grep that means nothing --
+    whether `start-stop-daemon -N` is honoured is a property of THIS busybox
+    (1.31.1, and it has no ionice applet at all), so it has to be measured.
     """
     packages = {}
     s6 = _s6_tarball(config)
@@ -476,6 +483,7 @@ def services(config, on_output=None):
     replica = Replica.start(config, want_output=on_output)
     replica.run_case(_case(config, "case-services.sh"),
                      packages=packages, on_output=on_output)
+    replica.run_case(_case(config, "case-priority.sh"), on_output=on_output)
 
 
 def upgrade(config, on_output=None):
