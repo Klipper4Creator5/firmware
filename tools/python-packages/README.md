@@ -106,26 +106,84 @@ and all 16 components still import. The phase-6 trap was the lmdb *egg*'s cffi
 fallback, and installing lmdb as a wheel removes it. Dropping them is a size
 decision, not a correctness one.
 
-## The one unsolved dependency: libsodium
+## Moonraker SERVES on 3.13 -- settled, not assumed
 
-`libnacl` is pure Python and ctypes-loads libsodium, which exists on this box
-**only at `/usr/prog/libsodium/lib`**. Measured both ways: it fails with an
-empty path and works with that directory on it. So Moonraker's
-`authorization` component keeps one `/usr/prog` dependency, and it is the last
-one in the picture. Either cross-build libsodium into the prefix, or accept
-`anvil-env.sh` keeping that single entry.
+Importing is not serving, so it was run. `test/integration/printer/case-moonraker313.sh`
+starts Moonraker on the exact command line `payload/etc/s6/moonraker/run`
+execs, only with our interpreter, against the mod's own `assets/moonraker.conf`:
+
+* bound :7125 in 3s, `/proc/PID/cmdline` confirming our interpreter and our
+  entry point
+* `GET /server/info` 200 with **23 components loaded and 0 failed**;
+  `/machine/system_info` (a different component, reading this box's /proc)
+  reports `cpu: mips`, `python 3.13.7 [GCC 7.2.0]`
+* the **database really works**: POST wrote a namespace, GET read it back, the
+  namespace appears beside Moonraker's own, and `data.mdb` is 147456 bytes on
+  disk -- through `lmdb/cpython.cpython-313-mipsel-linux-gnu.so`, not the
+  compile-at-import cffi fallback
+* alive and still answering **120 seconds later**, zero tracebacks in its log,
+  and SIGTERM released the port in 2s
+* **the running process maps 0 libraries under `/usr/prog`**, with
+  `LD_LIBRARY_PATH` completely unset -- not merely purged of `/usr/prog`
+* negative controls: nothing on :7125 beforehand, and with `site-packages`
+  moved aside it never binds
+
+What is still unproven is endurance and integration, not capability: no real
+hardware, no live klippy attached (`klippy_connected=False` throughout, so the
+klippy_apis paths loaded but were never exercised), no upload through
+streaming_form_data, no websocket client, and it has not been run through
+`S62moonraker` under s6 on 3.13 -- the entry point was driven directly, on
+purpose, so that a failure would be the interpreter and not an init script.
+
+## libsodium: built into the prefix, and it costs anvil-env.sh nothing
+
+`build-libsodium.sh` cross-builds libsodium 1.0.20 with the Ingenic toolchain
+(24s), gated at `0x70001407` nan2008/o32/mips32r2, SONAME `libsodium.so.26`,
+needing only libpthread, libc and the loader. 406KB stripped, into
+`$MODDIR/lib`.
+
+It does not need a new `LD_LIBRARY_PATH` entry, which is the pleasant part.
+libnacl's third fallback is `__file__[0:__file__.find("lib")+3] +
+"/libsodium.so"`, and `__file__` is
+`$MODDIR/lib/python3.13/site-packages/libnacl/__init__.py`, so it resolves
+`$MODDIR/lib/libsodium.so` **by absolute path** -- measured working with
+`LD_LIBRARY_PATH` unset entirely. Worth writing down that this works because
+the prefix happens to contain the string `lib`; a prefix without it would
+break silently. Adding `$MODDIR/lib` to the path also works and is the
+belt-and-braces option, but it would put our libraries in front of everything
+for every mod process, which is the kind of entry this file's own history
+argues against.
+
+It computes as well as loads: `sodium_version_string()` is 1.0.20, its
+BLAKE2b-256 matches CPython's own `_blake2` on the same kernel, and
+`libnacl.sign.Signer/Verifier` -- the exact ed25519 pair `authorization.py`
+imports -- signs, verifies and rejects a tampered message. With it,
+`/usr/prog/libsodium/lib` can come off `ANVIL_LIBS`, though only as part of the
+same one-line `FF_PYTHON` switch, since 3.8's libnacl still needs it.
 
 ## What is left before FF_PYTHON can switch
 
-1. **Boot Moonraker on 3.13 and hit the HTTP API.** Every component imports
-   and the entry point loads, but importing is not serving: nothing has bound
-   :7125 on 3.13. `case-moonraker.sh` already does this against 3.8; pointing
-   it at 3.13 is the next gate and the honest remaining unknown.
-2. Decide libsodium, above.
-3. Wire into `bin/patch.sh`. Note the build needs the **untrimmed** interpreter
-   stage -- `include/` and `config-3.13-*`, which section 5c's trim currently
-   deletes -- and the pins want moving into `versions.env` with sha256s.
-4. klippy is **not** blocked by packages: cffi, greenlet, jinja2, markupsafe
+Capability is settled -- Moonraker serves, the database works, libsodium is
+ours. What is left is packaging and integration:
+
+1. **Wire into `bin/patch.sh`.** The blocker is that section 5c's trim deletes
+   `include/` and `lib/python3.13/config-3.13-*` and then removes the staging
+   tree, and the package build needs both. Cleanest fix is to run the package
+   build inside 5c against the untrimmed stage BEFORE the trim, rather than
+   caching a second tree. Add a step for libsodium, a step to stage the 19
+   packages into `lib/python3.13/site-packages/`, and move every pin into
+   `versions.env` with sha256s.
+2. **Extend the ABI gate's reach.** It walks `$PY_BUILD/bin` and
+   `$PY_BUILD/lib` -- the build cache, not the payload -- so libsodium and the
+   twelve extension `.so` files staged straight into `$MOD_PAYLOAD` would
+   bypass it. No logic change needed, the two-word `DYN -> 0x70001407` rule
+   already covers them; only coverage.
+3. **Run it through `S62moonraker` under s6 on 3.13.** The entry point was
+   driven directly on purpose, so the s6 readiness and restart machinery is
+   still gated only against 3.8.
+4. Then the switch itself: `FF_PYTHON` in `anvil-env.sh`, and
+   `/usr/prog/libsodium/lib` off `ANVIL_LIBS` in the same commit.
+5. klippy is **not** blocked by packages: cffi, greenlet, jinja2, markupsafe
    and pyserial all build, and `c_helper.so` binds. `numpy` is the only gap,
    wanted solely by `extras/stepper_resonance_tester.py`, which Klipper loads
    on demand. numpy on 3.13 means numpy >= 2.1 and a Meson cross-file, and
