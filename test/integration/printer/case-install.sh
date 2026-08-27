@@ -278,6 +278,31 @@ if [ -d /usr/data/anvil/init.d ]; then
     STALE_PLANTED=1
 fi
 
+# Stand in for a user who has actually used the screen. Every HelixScreen
+# setting lives inside the install tree the update replaces wholesale
+# (HELIX_DATA_DIR=/usr/data/anvil/helixscreen, settings at config/settings.json
+# under it), and the tarball ships a seeded settings.json of its own -- so
+# before this was handled, a re-install reset brightness, theme and touch
+# calibration and re-armed the first-run wizard.
+#
+# Three shapes are planted, because they exercise three different paths:
+#   settings.json    ships in the tarball -- the user's copy must win
+#   tool_spools.json does NOT ship -- the file must simply still be there
+#   helixscreen.env  ships AND the launcher sources it -- the user's copy must
+#                    win, with the shipped one left beside it as .mod-new
+HELIXCFG=/usr/data/anvil/helixscreen/config
+HELIX_PLANTED=0
+if [ -f $HELIXCFG/settings.json ]; then
+    HELIX_PLANTED=1
+    sed -i '1a\  "anvil_marker": "HELIX-SETTINGS-MUST-SURVIVE",' $HELIXCFG/settings.json
+    md5sum < $HELIXCFG/settings.json > /tmp/helix-settings.before2
+    printf '{"tool0":"PLA-BLACK"}\n' > $HELIXCFG/tool_spools.json
+    if [ -f $HELIXCFG/helixscreen.env ]; then
+        printf '\nHELIX_DPI=240\n' >> $HELIXCFG/helixscreen.env
+        md5sum < $HELIXCFG/helixscreen.env > /tmp/helix-env.before2
+    fi
+fi
+
 boot /tmp/boot2.log 900 || bad "boot 2 never settled"
 case "$BOOT_RESULT" in
     installed) ok "the second install also exited 0" ;;
@@ -299,6 +324,36 @@ if [ -f /tmp/custom.before2 ]; then
     grep -q '10.9.8.0/24' /usr/data/config/moonraker-custom.conf \
         && ok "the user's own Moonraker setting is still there" \
         || bad "the user's Moonraker setting was lost on update"
+fi
+if [ "$HELIX_PLANTED" = 1 ]; then
+    if [ "`md5sum < $HELIXCFG/settings.json 2>/dev/null`" = "`cat /tmp/helix-settings.before2`" ]; then
+        ok "helixscreen settings.json survived the update byte for byte"
+    else
+        bad "the update reset HelixScreen's settings.json -- every setting on the screen is lost"
+        grep -q '"anvil_marker"' $HELIXCFG/settings.json 2>/dev/null \
+            || echo "        the user's edit is gone; the tarball's seeded copy is back"
+    fi
+    grep -q 'HELIX-SETTINGS-MUST-SURVIVE' $HELIXCFG/settings.json 2>/dev/null \
+        && ok "the user's own HelixScreen setting is still there" \
+        || bad "the user's HelixScreen setting was lost on update"
+    # The wizard flag is the visible half of this bug: a reset settings.json
+    # sends a working printer back to first-run setup.
+    grep -q '"wizard_completed": *false' $HELIXCFG/settings.json 2>/dev/null \
+        && bad "the update re-armed the first-run wizard on a configured printer" \
+        || ok "the first-run wizard stayed done"
+    grep -q 'PLA-BLACK' $HELIXCFG/tool_spools.json 2>/dev/null \
+        && ok "helixscreen state the tarball does not ship (tool_spools.json) survived" \
+        || bad "tool_spools.json was deleted by the update"
+    if [ -f /tmp/helix-env.before2 ]; then
+        [ "`md5sum < $HELIXCFG/helixscreen.env`" = "`cat /tmp/helix-env.before2`" ] \
+            && ok "the user's helixscreen.env survived the update" \
+            || bad "the update overwrote helixscreen.env -- a tuned display or log setting is lost"
+        [ -f $HELIXCFG/helixscreen.env.mod-new ] \
+            && ok "the shipped helixscreen.env was left as .mod-new, not thrown away" \
+            || bad "the shipped helixscreen.env vanished -- a new upstream option would be invisible"
+    fi
+else
+    echo "  SKIP  helixscreen settings: this package ships no HelixScreen payload"
 fi
 if [ "$PWRAND" = 1 ]; then
     PWHASH2=$(awk 'BEGIN{FS=":"} $1=="root"{print $2}' /usr/prog/etc/shadow 2>/dev/null)

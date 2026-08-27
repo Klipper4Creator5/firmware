@@ -28,6 +28,37 @@ if [ -n "$MODTAR" ]; then
     else
         # Keep user-editable state; replace everything we own.
         [ -f $MODDIR/anvil.conf ] && cp -f $MODDIR/anvil.conf /tmp/anvil.conf.keep
+        # HelixScreen keeps every user setting INSIDE its own install tree.
+        # firmwareExe exports HELIX_DATA_DIR=$MODDIR/helixscreen and the binary
+        # resolves its settings as config/settings.json relative to that root,
+        # so the tree below is not ours alone to replace -- the user's screen
+        # brightness, theme, log level, touch calibration and spool assignments
+        # all live in it.
+        #
+        # Two separate things used to destroy them on every update, which is
+        # why fixing only one would not have helped: the rm -rf on the next
+        # line takes the whole directory, and the tarball ships a seeded
+        # config/settings.json of its own that would land on top anyway --
+        # complete with "wizard_completed": false, so the printer came back
+        # asking to be set up from scratch.
+        #
+        # The list is HelixScreen's own (HELIX_USER_CONFIG_FILES in its
+        # install.sh, which backs these up and restores them around an
+        # upgrade). The mod never runs that installer -- it extracts the
+        # release tarball directly -- so the same job has to happen here.
+        # settings.json.backup rides along because Config::init falls back to
+        # it when the live file is missing or has no config_version; carrying
+        # the settings forward but not their backup would leave a rollback
+        # pointing at factory defaults.
+        HELIX_USER_FILES="settings.json settings.json.backup helixscreen.env
+                          .disabled_services tool_spools.json crash_history.json"
+        HELIX_KEEP=/tmp/anvil-helix-keep
+        rm -rf $HELIX_KEEP
+        for f in $HELIX_USER_FILES; do
+            [ -f $MODDIR/helixscreen/config/$f ] || continue
+            mkdir -p $HELIX_KEEP
+            cp -f $MODDIR/helixscreen/config/$f $HELIX_KEEP/$f
+        done
         # init.d is in this list for a reason that only shows up on UPDATES.
         # Scripts here used to be overwritten in place and never removed, which
         # was harmless only while the set of filenames never changed. It does
@@ -52,6 +83,30 @@ if [ -n "$MODTAR" ]; then
             echo "!! could not extract $MODTAR"
         fi
         [ -f /tmp/anvil.conf.keep ] && mv -f /tmp/anvil.conf.keep $MODDIR/anvil.conf
+        # Put HelixScreen's settings back over the tarball's defaults. The
+        # user's copy wins outright: these are settings, not a config file the
+        # mod owns, and there is no include-and-override seam to move an edit
+        # to the way ff-*.cfg has one.
+        #
+        # helixscreen.env is the one file where the shipped version can carry
+        # something new -- the launcher sources it, and a release can add an
+        # option to it -- so when it has actually changed the new one is left
+        # beside the user's as .mod-new rather than thrown away silently.
+        if [ -d $HELIX_KEEP ]; then
+            mkdir -p $MODDIR/helixscreen/config
+            for f in $HELIX_USER_FILES; do
+                [ -f $HELIX_KEEP/$f ] || continue
+                live=$MODDIR/helixscreen/config/$f
+                if [ "$f" = helixscreen.env ] && [ -f "$live" ] \
+                   && [ "`md5sum < "$live"`" != "`md5sum < "$HELIX_KEEP/$f"`" ]; then
+                    cp -f "$live" "$live.mod-new"
+                    echo "helixscreen: $f kept -- new version left as $f.mod-new"
+                fi
+                cp -f $HELIX_KEEP/$f "$live"
+                echo "helixscreen: $f preserved across the update"
+            done
+            rm -rf $HELIX_KEEP
+        fi
         chmod a+x $MODDIR/bin/* 2>/dev/null
         echo "mod payload installed"
         # From here on this script runs the printer's own interpreter, so it
