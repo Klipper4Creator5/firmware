@@ -186,12 +186,15 @@ target or drop the file into Mainsail. Details:
 | `/usr/data/config/printer.cfg` | **Yours** — never overwritten. Overrides go here, after the includes: restate only what you change, the last value wins. |
 | `moonraker-custom.conf` | **Yours** — created once, never rewritten, included last so your settings win. Do not delete it. |
 | `ff-*.cfg`, `printer.base.cfg`, `moonraker.conf` | **The mod's** — overwritten on every update; do not edit. |
+| `anvil/helixscreen/config/settings.json` | **Yours** — everything you set on the screen. Written by HelixScreen itself; carried across updates along with `helixscreen.env` and its spool map. |
 
 ### Upgrading
 
 A newer release installs exactly like the first flash: stick in, power on.
-Your `printer.cfg` with its saved calibration, `moonraker-custom.conf` **and
-your root password** survive; the `ff-*.cfg` family is replaced.
+Your `printer.cfg` with its saved calibration, `moonraker-custom.conf`, **your
+root password** and everything you set on the screen survive; the `ff-*.cfg`
+family is replaced. If a release changes `helixscreen.env`, yours is kept and
+the new one is left beside it as `helixscreen.env.mod-new`.
 
 ---
 
