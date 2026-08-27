@@ -1,16 +1,16 @@
 """ffscreen.py -- the few lines of text the first boot puts on /dev/fb0.
 
-The contract under test is mostly about restraint. It must read its geometry
-from sysfs rather than assume a panel size, refuse to draw at all rather than
-guess at a pixel format it does not know, write pixels that land inside the
-buffer, and treat every failure as "no screen" instead of an exception. The
-migration it decorates has to survive all of that untouched.
+The contract under test is mostly about restraint. It must refuse to draw at
+all rather than guess at a pixel format it does not know, write pixels that
+land inside the buffer, and treat every failure as "no screen" instead of an
+exception. The migration it decorates has to survive all of that untouched.
 
-A framebuffer is a flat file of pixels, so the fake here is exactly that: a
-real file plus a sysfs directory of the three values the module reads. What
-gets asserted is what a person would see -- the frame is the right size, the
-background is painted, text and bar leave marks where they should, and an
-unfamiliar panel leaves the file untouched.
+Geometry no longer comes from sysfs BY DEFAULT: sysfs reports the wrong
+panel size on real hardware, so every real caller now passes a hardcoded or
+explicit geometry, and the sysfs probe only runs when geometry=None is
+passed in. That path is not dead code -- it is still what backs the probe
+tests below -- it is just not what any caller reaches for any more, so those
+tests ask for it explicitly instead of relying on it being the default.
 """
 import importlib.util
 import os
@@ -32,7 +32,13 @@ ffscreen = _load()
 
 
 def panel(tmp_path, width=1024, height=600, bpp=32, stride=None):
-    """A fake framebuffer: the sysfs a driver exposes, and the device file."""
+    """A fake framebuffer: the sysfs a driver exposes, and the device file.
+
+    geometry=None makes the Screen probe that fake sysfs instead of taking
+    the hardcoded default -- see the module docstring for why that is not
+    what a real caller does any more, and why these tests ask for it
+    explicitly anyway.
+    """
     sysfs = tmp_path / "fb0sys"
     sysfs.mkdir(exist_ok=True)
     (sysfs / "virtual_size").write_text("%d,%d\n" % (width, height))
@@ -41,7 +47,7 @@ def panel(tmp_path, width=1024, height=600, bpp=32, stride=None):
         (sysfs / "stride").write_text("%d\n" % stride)
     dev = tmp_path / "fb0"
     dev.write_bytes(b"")
-    return ffscreen.Screen(str(dev), str(sysfs)), dev
+    return ffscreen.Screen(str(dev), str(sysfs), geometry=None), dev
 
 
 # -- geometry --------------------------------------------------------------
@@ -73,7 +79,7 @@ def test_an_unfamiliar_pixel_format_draws_nothing(tmp_path, bpp):
 def test_no_sysfs_at_all_draws_nothing(tmp_path):
     dev = tmp_path / "fb0"
     dev.write_bytes(b"")
-    screen = ffscreen.Screen(str(dev), str(tmp_path / "absent"))
+    screen = ffscreen.Screen(str(dev), str(tmp_path / "absent"), geometry=None)
     assert not screen.ok
     screen.show("TITLE", "STATUS", "", 0.5)
     assert dev.read_bytes() == b""

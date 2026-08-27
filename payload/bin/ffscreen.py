@@ -12,9 +12,15 @@
 #
 # So: no toolkit, no fonts on disk, no dependencies. The panel is a plain
 # framebuffer -- the stock installer draws its own splash with
-# `cat start.img > /dev/fb0` -- and the geometry comes from sysfs at runtime
-# rather than being hardcoded, because the two models do not have to agree on
-# it and a wrong guess would scribble diagonally across the screen.
+# `cat start.img > /dev/fb0`.
+#
+# THE GEOMETRY IS HARDCODED, NOT READ FROM SYSFS, and that used to be the
+# other way round: sysfs is the "right" source in principle, but measured on
+# real hardware it reports a geometry that does not match this panel, so
+# trusting it drew a sheared or wrong-sized frame instead of drawing nothing.
+# The default below is the known Creator5Pro panel; a printer whose geometry
+# genuinely differs needs --fb-geometry (see main()) until sysfs is trusted
+# again, which needs its own measurement before it happens.
 #
 # EVERY failure here is swallowed and turns the screen off, never into an
 # error: this is decoration on top of a migration that must finish regardless.
@@ -41,12 +47,10 @@
 # this machine and is what makes the default work with no configuration.
 # rotate=0 forces the raw orientation.
 #
-# GEOMETRY CAN ALSO BE GIVEN. sysfs is the right source on the machine, but it
-# is not always the truth elsewhere: the printer replica mounts the HOST's
-# /sys read-only and makes /dev/fb0 a plain file, so probing there would
-# describe the developer's monitor rather than the panel. An explicit
-# (width, height, bpp) skips the probe entirely -- that is what the replica
-# case passes, and what a printer whose driver exposes no sysfs would use.
+# GEOMETRY CAN ALSO BE GIVEN EXPLICITLY, overriding the hardcoded default --
+# that is what the replica case passes, since the replica mounts the HOST's
+# /sys read-only and makes /dev/fb0 a plain file, so even a trusted sysfs
+# probe there would describe the developer's monitor rather than the panel.
 import os
 
 # 5x7 glyphs, one byte per column, bit 0 = top row. Only the characters the
