@@ -19,12 +19,20 @@
 #
 # EVERYTHING BELOW THE WAIT IS COPIED FROM THE OLD supervise(), DELIBERATELY.
 # LD_LIBRARY_PATH matters: libjpeg.so.9 lives in the mjpg-streamer directory
-# itself, so without it the binary dies on a missing shared object. The plugin
-# names (input_uvc.so, output_http.so) and the www/ path are resolved relative
-# to the working directory, hence the cd. That one directory is prepended here
-# rather than in anvil-env.sh, which carries the shared list: it is a plugin
-# directory with its own libjpeg, and putting it in front of every python
-# process on the printer would risk a version conflict to benefit one service.
+# itself, so without it the binary dies on a missing shared object. That one
+# directory is prepended here rather than in anvil-env.sh, which carries the
+# shared list: it is a plugin directory with its own libjpeg, and putting it
+# in front of every python process on the printer would risk a version
+# conflict to benefit one service.
+#
+# THE BINARY, THE PLUGINS AND -w ARE ALL ABSOLUTE PATHS BELOW, deliberately,
+# even though `cd "$CAMDIR"` still happens: relative plugin names worked in
+# the replica (glibc's dlopen falls back to LD_LIBRARY_PATH for a bare name)
+# but not on real hardware, reported and confirmed fixed by users running the
+# equivalent invocation by hand with every path spelled out. Whatever this
+# printer's dlopen actually does with a bare "input_uvc.so", it is not worth
+# relying on again -- the cwd is kept only because some future flag may still
+# want it, not because anything below reads it.
 MODDIR=/usr/data/anvil
 # anvil.conf is read HERE, not inherited. s6-supervise starts this script from
 # the SCANNER's environment, which is whatever firmwareExe had at boot -- and
@@ -166,6 +174,6 @@ PORTHEX=`printf '%04X' "$PORT"`
 # place, so s6 still ends up holding the streamer's own pid, re-niced on
 # every respawn because s6-supervise re-execs this whole script each time.
 # 0 or unset = normal priority.
-exec nice -n "${NICE_CAM:-0}" ./mjpg_streamer \
-    -i "input_uvc.so -d $VIDEO -r $RES -f $FPS" \
-    -o "output_http.so -p $PORT -w www" 3>&-
+exec nice -n "${NICE_CAM:-0}" "$CAMDIR/mjpg_streamer" \
+    -i "$CAMDIR/input_uvc.so -d $VIDEO -r $RES -f $FPS" \
+    -o "$CAMDIR/output_http.so -p $PORT -w $CAMDIR/www" 3>&-
