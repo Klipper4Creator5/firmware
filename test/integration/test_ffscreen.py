@@ -5,15 +5,12 @@ all rather than guess at a pixel format it does not know, write pixels that
 land inside the buffer, and treat every failure as "no screen" instead of an
 exception. The migration it decorates has to survive all of that untouched.
 
-Geometry USED to be read from sysfs; the tests for that are skipped now (see
-SYSFS_LIES below) because sysfs reports the wrong panel size on real
-hardware, so the default is the known Creator5Pro geometry instead of a
-probe. What is still asserted is what a person would see once a Screen
-exists -- the frame is the right size, the background is painted, text and
-bar leave marks where they should, and an unfamiliar panel leaves the file
-untouched -- so the fake framebuffer setup (a real file plus a sysfs
-directory nothing reads by default any more) stays, for the tests that pass
-geometry explicitly.
+Geometry no longer comes from sysfs BY DEFAULT: sysfs reports the wrong
+panel size on real hardware, so every real caller now passes a hardcoded or
+explicit geometry, and the sysfs probe only runs when geometry=None is
+passed in. That path is not dead code -- it is still what backs the probe
+tests below -- it is just not what any caller reaches for any more, so those
+tests ask for it explicitly instead of relying on it being the default.
 """
 import importlib.util
 import os
@@ -35,7 +32,13 @@ ffscreen = _load()
 
 
 def panel(tmp_path, width=1024, height=600, bpp=32, stride=None):
-    """A fake framebuffer: the sysfs a driver exposes, and the device file."""
+    """A fake framebuffer: the sysfs a driver exposes, and the device file.
+
+    geometry=None makes the Screen probe that fake sysfs instead of taking
+    the hardcoded default -- see the module docstring for why that is not
+    what a real caller does any more, and why these tests ask for it
+    explicitly anyway.
+    """
     sysfs = tmp_path / "fb0sys"
     sysfs.mkdir(exist_ok=True)
     (sysfs / "virtual_size").write_text("%d,%d\n" % (width, height))
@@ -44,22 +47,12 @@ def panel(tmp_path, width=1024, height=600, bpp=32, stride=None):
         (sysfs / "stride").write_text("%d\n" % stride)
     dev = tmp_path / "fb0"
     dev.write_bytes(b"")
-    return ffscreen.Screen(str(dev), str(sysfs)), dev
+    return ffscreen.Screen(str(dev), str(sysfs), geometry=None), dev
 
 
 # -- geometry --------------------------------------------------------------
-#
-# sysfs on this printer reports geometry that does not match the panel --
-# measured on real hardware, not a test artefact -- so ffscreen.py no longer
-# trusts it: geometry defaults to the known Creator5Pro panel (480x800@32)
-# instead of probing sysfs. The tests below assert the sysfs-driven contract
-# this file's own docstring still describes in its first paragraph, which is
-# no longer how the code behaves; skipped rather than deleted; a real reason
-# to bring sysfs back should update this file too.
-SYSFS_LIES = "sysfs reports the wrong geometry on real hardware -- ffscreen.py no longer trusts it"
 
 
-@pytest.mark.skip(reason=SYSFS_LIES)
 def test_it_reads_the_panel_rather_than_assuming_one(tmp_path):
     screen, _ = panel(tmp_path, width=800, height=480, bpp=16)
     assert screen.ok
@@ -68,13 +61,11 @@ def test_it_reads_the_panel_rather_than_assuming_one(tmp_path):
     assert screen.stride == 800 * 2
 
 
-@pytest.mark.skip(reason=SYSFS_LIES)
 def test_a_declared_stride_wins_over_the_packed_width(tmp_path):
     screen, _ = panel(tmp_path, width=800, height=480, stride=4096)
     assert screen.stride == 4096
 
 
-@pytest.mark.skip(reason=SYSFS_LIES)
 @pytest.mark.parametrize("bpp", [8, 24, 0])
 def test_an_unfamiliar_pixel_format_draws_nothing(tmp_path, bpp):
     # Guessing at a packing we do not know would scribble diagonal garbage
@@ -85,11 +76,10 @@ def test_an_unfamiliar_pixel_format_draws_nothing(tmp_path, bpp):
     assert dev.read_bytes() == b""
 
 
-@pytest.mark.skip(reason=SYSFS_LIES)
 def test_no_sysfs_at_all_draws_nothing(tmp_path):
     dev = tmp_path / "fb0"
     dev.write_bytes(b"")
-    screen = ffscreen.Screen(str(dev), str(tmp_path / "absent"))
+    screen = ffscreen.Screen(str(dev), str(tmp_path / "absent"), geometry=None)
     assert not screen.ok
     screen.show("TITLE", "STATUS", "", 0.5)
     assert dev.read_bytes() == b""
@@ -106,7 +96,6 @@ def test_a_missing_device_draws_nothing(tmp_path):
 # -- what lands in the buffer ----------------------------------------------
 
 
-@pytest.mark.skip(reason=SYSFS_LIES)
 def test_a_frame_is_exactly_one_screen_and_is_painted(tmp_path):
     screen, dev = panel(tmp_path)
     screen.show("SETTING UP YOUR PRINTER", "WAITING FOR THE PRINTER", "", None)
@@ -117,7 +106,6 @@ def test_a_frame_is_exactly_one_screen_and_is_painted(tmp_path):
     assert buf.count(screen._pixel(ffscreen.TITLE)) > 0
 
 
-@pytest.mark.skip(reason=SYSFS_LIES)
 def test_every_pixel_stays_inside_the_buffer(tmp_path):
     # A tiny panel with a long line: the clip in _rect is what keeps this from
     # running off the end of a row and shearing the image.
@@ -137,7 +125,6 @@ def test_the_progress_bar_grows_with_the_number(tmp_path):
     assert marks[0] < marks[1] < marks[2]
 
 
-@pytest.mark.skip(reason=SYSFS_LIES)
 def test_16bpp_writes_two_bytes_a_pixel(tmp_path):
     screen, dev = panel(tmp_path, width=320, height=240, bpp=16)
     screen.show("SETUP", "", "", None)
@@ -147,7 +134,6 @@ def test_16bpp_writes_two_bytes_a_pixel(tmp_path):
 # -- repainting ------------------------------------------------------------
 
 
-@pytest.mark.skip(reason=SYSFS_LIES)
 def test_an_identical_frame_is_not_redrawn(tmp_path):
     # The wait loop calls this every couple of seconds; repainting an
     # unchanged 2.4MB frame each time would be pure waste.
@@ -163,7 +149,6 @@ def test_an_identical_frame_is_not_redrawn(tmp_path):
     assert len(dev.read_bytes()) == screen.stride * screen.height
 
 
-@pytest.mark.skip(reason=SYSFS_LIES)
 def test_clear_leaves_the_panel_black_and_forgets_the_frame(tmp_path):
     screen, dev = panel(tmp_path)
     screen.show("SETTING UP YOUR PRINTER", "WAITING", "", 0.2)
@@ -186,7 +171,6 @@ def test_a_device_that_stops_accepting_writes_retires_itself(tmp_path):
 # -- text ------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason=SYSFS_LIES)
 def test_unknown_characters_are_blanks_not_crashes(tmp_path):
     screen, dev = panel(tmp_path)
     screen.show("SETUP (100%) — wait", "", "", None)
@@ -263,7 +247,6 @@ def test_a_portrait_framebuffer_is_treated_as_a_turned_panel(tmp_path):
     assert screen.stride == 480 * 4
 
 
-@pytest.mark.skip(reason=SYSFS_LIES)
 def test_a_landscape_framebuffer_is_left_alone(tmp_path):
     screen, _ = panel(tmp_path, width=1024, height=600)
     assert screen.rotate == 0
