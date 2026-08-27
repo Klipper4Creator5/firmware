@@ -3,10 +3,10 @@
 # base64 PNG on stdout.
 #
 # This is the answer to "I want to SEE it, not read assertions about it". The
-# frames are drawn by /usr/prog/Python-3.8.2/bin/python3 -- FlashForge's own
-# 3.8, running MIPS under qemu, against the printer's real rootfs -- so what
-# comes out is what the panel would show, not what a developer's interpreter
-# thinks it would.
+# frames are drawn by $MODDIR/bin/python3.13 -- our own cross-built CPython,
+# the interpreter FF_PYTHON names, running MIPS under qemu against the
+# printer's real rootfs -- so what comes out is what the panel would show, not
+# what a developer's interpreter thinks it would.
 #
 # stdout is the only way out: every mount the replica gets is read-only. The
 # frames are PNG-compressed in here (zlib is stdlib) rather than shipped raw,
@@ -14,10 +14,10 @@
 #
 # test/integration/sim-boot-screen.py drives this and writes the PNGs out.
 MOD=/usr/data/anvil
-PY=/usr/prog/Python-3.8.2/bin/python3
+PY=$MOD/bin/python3.13
 mkdir -p $MOD/bin
+gzip -dc /mnt/py.tgz | tar -x -C $MOD
 cp /tmp/payload/bin/ffscreen.py $MOD/bin/ffscreen.py
-export LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:/usr/prog/openssl-1.0.2d/lib:/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
 "$PY" - <<'PYEOF'
 import base64, struct, sys, zlib
 sys.path.insert(0, '/usr/data/anvil/bin')

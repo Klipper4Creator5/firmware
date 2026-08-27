@@ -90,20 +90,37 @@ def extract_rootfs(config, on_output=None):
 # ------------------------------------------------------------- replica gates
 
 def mcu_bringup(config, on_output=None):
-    """Does start.sh's ff_mcu_bringup.py actually run on the printer's Python?"""
+    """Does start.sh's ff_mcu_bringup.py actually run on FF_PYTHON?
+
+    FF_PYTHON is our own cross-built CPython 3.13 now (payload/anvil-env.sh),
+    not FlashForge's 3.8.2, so the interpreter under test is a build output --
+    work/.py313 -- handed over as py.tgz exactly as case-python.sh receives
+    one. Skips rather than degrading: there is no fallback interpreter worth
+    testing this against, since nothing on the printer still launches
+    ff_mcu_bringup.py on FlashForge's 3.8.2.
+    """
+    tree = _python_tarball(config)
+    if not tree:
+        raise Skip("nothing in work/.py313 -- run ./bin/patch.sh first")
     replica = Replica.start(config, want_output=on_output)
-    replica.run_case(_case(config, "case-mcu-bringup.sh"), on_output=on_output)
+    replica.run_case(_case(config, "case-mcu-bringup.sh"),
+                     packages={"py.tgz": tree}, on_output=on_output)
 
 
 def boot_screen(config, on_output=None):
-    """Does the first-boot screen draw, on the printer's Python and its fb0?
+    """Does the first-boot screen draw, on FF_PYTHON and its fb0?
 
-    Hand-packed pixels and an interpreter FlashForge built themselves: the two
-    things that cannot be established by reading the code or by running it on
-    a developer's machine.
+    Hand-packed pixels and an interpreter FF_PYTHON resolves to -- since the
+    switch, our own cross-built CPython 3.13 (work/.py313), handed over as
+    py.tgz. Skips rather than degrading, for the same reason as mcu_bringup
+    above: FlashForge's 3.8.2 is not what draws this screen any more.
     """
+    tree = _python_tarball(config)
+    if not tree:
+        raise Skip("nothing in work/.py313 -- run ./bin/patch.sh first")
     replica = Replica.start(config, want_output=on_output)
-    replica.run_case(_case(config, "case-boot-screen.sh"), on_output=on_output)
+    replica.run_case(_case(config, "case-boot-screen.sh"),
+                     packages={"py.tgz": tree}, on_output=on_output)
 
 
 def moonraker(config, on_output=None):
@@ -134,12 +151,23 @@ def moonraker(config, on_output=None):
     S62moonraker's no-supervisor fallback -- which is real shipped code, the
     path a printer with MOD_S6=0 takes -- and says so in its output.
 
+    THE INTERPRETER TARBALL IS NOT OPTIONAL THE SAME WAY. FF_PYTHON names our
+    own $MODDIR/bin/python3.13 now, and there is no fallback interpreter the
+    way there is a no-supervisor fallback for s6 -- without it nothing from
+    section 1 on has anything to run, so this is a Skip rather than a
+    degrade, exactly like moonraker313_s6 below.
+
     The negative controls carry as much weight as the rest: take the library
-    path away and the interpreter must fail, take libsodium away and the
-    authorization component must fail, supervise a daemonising service and it
-    must churn, or the list is cargo and the supervision is decoration.
+    path away and the interpreter must fail, take libsodium away (when it is
+    on the path at all -- see case-libpath.sh for why it usually is not any
+    more) and the authorization component must fail, supervise a daemonising
+    service and it must churn, or the list is cargo and the supervision is
+    decoration.
     """
-    packages = {}
+    prefix = _prefix_tarball(config)
+    if not prefix:
+        raise Skip("nothing in work/.py313 or work/.sodium -- run ./bin/patch.sh first")
+    packages = {"pref.tgz": prefix}
     s6 = _s6_tarball(config)
     if s6:
         packages["sup.tgz"] = s6

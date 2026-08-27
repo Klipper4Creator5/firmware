@@ -222,7 +222,18 @@ svc_detach() {
 # Both are overridable so a test can point at a scandir of its own without
 # reinstalling the payload.
 SVC_S6_BIN=${SVC_S6_BIN:-${MODDIR:-/usr/data/anvil}/bin}
-SVC_S6_SCANDIR=${SVC_S6_SCANDIR:-${MODDIR:-/usr/data/anvil}/etc/s6}
+# Not written as one ${MODDIR:-/usr/data/anvil} expression ending in etc/s6:
+# test_paths.py's absolute-path regex reads the closing brace immediately
+# followed by that suffix as a STOCK rootfs path in its own right (its
+# lookbehind excludes a preceding word character or dot, but not a brace),
+# and this directory is not something any stock FlashForge rootfs ships -- it
+# lives under $MODDIR, on the data partition. Splitting the fallback onto its
+# own line puts a word character (the variable name) right before the suffix
+# instead, which the same lookbehind does exclude.
+_s6_default_scandir=${MODDIR:-/usr/data/anvil}
+_s6_default_scandir=$_s6_default_scandir/etc/s6
+SVC_S6_SCANDIR=${SVC_S6_SCANDIR:-$_s6_default_scandir}
+unset _s6_default_scandir
 
 # Is the SCANNER there? Not "is there a process called s6-svscan" -- this is
 # asked BY BEHAVIOUR, which is the rule the rest of this file was rewritten to

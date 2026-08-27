@@ -113,26 +113,34 @@ space, failing as "no working web UI" — and because `/usr/prog` is what a stoc
 FlashForge flash overwrites while `/usr/data/anvil` survives one, it made
 "which Moonraker is this printer running?" depend on what was flashed last.
 Both things thought to require that location turned out not to: the
-`moonraker-env` virtualenv beside it is not on `sys.path` at all (imports
-resolve from `/usr/prog/Python-3.8.2/lib/python3.8/site-packages`, checked by
-running the printer's own interpreter on the real image), and
+`moonraker-env` virtualenv beside it was never on `sys.path` (checked by
+running the printer's own interpreter against the real image), and
 `moonrakerDaemon`, the one thing that did exec that tree by absolute path, is
 never invoked — `S62moonraker` starts the server itself.
 
-What IS reused is FlashForge's python 3.8.2 and the site-packages next to it:
-the pinned build runs on the libraries already installed, so nothing has to be
-cross-compiled for mipsel.
+**FlashForge's python 3.8.2 is not what this runs on any more.** `FF_PYTHON`
+in `anvil-env.sh` names a CPython 3.13 of our own, cross-built for mipsel
+(`bin/patch.sh` section 5c) with every third-party C extension Moonraker
+needs beside it in `$MODDIR/lib/python3.13/site-packages` and libsodium in
+`$MODDIR/lib` — none of it borrowed from `/usr/prog`. Measured through the
+real boot path (S40s6's scandir, `S62moonraker`, readiness gating on `:7125`
+actually listening, a `kill -9` respawn, a stop that stays stopped) in
+`test/integration/printer/case-moonraker313-s6.sh`. klippy is not part of
+this: it stays on FlashForge's 3.8.2, started independently by
+`/usr/prog/klipper/start.sh`.
 
-**The pin is a commit, not a release, and that is not a matter of taste.**
-FlashForge built python 3.8.2 without the `_sqlite3` module — there is no
-`_sqlite3*.so` in `lib-dynload` and no `libsqlite3` anywhere on the image, just
-the pure-python `sqlite3/` wrapper that cannot work without it. Moonraker moved
-its database from lmdb to sqlite in v0.9.0, so every release from there on gets
-as far as loading the database component and dies with `ModuleNotFoundError: No
-module named '_sqlite3'`. The last release still on lmdb is v0.8.0, which
-predates the webcam flag. No release has both, so the pin is the newest commit
-that does. The printer's lmdb store is used in place — nothing is converted,
-and reverting to stock is a clean round trip.
+**The Moonraker commit pin is still a 2023 one, though the reason it exists
+has changed.** FlashForge built python 3.8.2 without the `_sqlite3` module,
+and Moonraker moved its database from lmdb to sqlite in v0.9.0, so on 3.8.2
+every release from there on got as far as loading the database component and
+died with `ModuleNotFoundError: No module named '_sqlite3'`. Our 3.13 has a
+working `_sqlite3` (measured in `case-python.sh`: create, insert, select,
+reopen), which is what unpins this -- but the pin has not moved yet: nobody
+has taken a newer Moonraker through this build and its replica gates, and a
+version bump is exactly the kind of change that wants its own measurement,
+not a side effect of an interpreter switch. Until it does, the printer's lmdb
+store is used in place -- nothing is converted, and reverting to stock is a
+clean round trip.
 
 This was not worked out in advance; v0.9.3 was built, shipped and tried on the
 printer first, and that is what it said. Two things came out of it. The

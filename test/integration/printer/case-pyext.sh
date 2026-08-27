@@ -2,11 +2,15 @@
 # Do the cross-built third-party packages actually WORK on the CPython 3.13
 # this repo builds, on the printer's own kernel?
 #
-# SPIKE GATE for phase 6. bin/patch.sh section 5c already ships an interpreter
-# nothing runs; this asks the question that stands between that interpreter
-# and FF_PYTHON pointing at it: Moonraker and klippy import third-party C
-# extensions, those exist on this printer only as mipsel .so files built
-# against 3.8, and none had been built for 3.13.
+# SPIKE GATE that answered the question standing between bin/patch.sh section
+# 5c's interpreter and FF_PYTHON pointing at it: Moonraker imports third-party
+# C extensions that existed on this printer only as mipsel .so files built
+# against 3.8, and none had been built for 3.13 at the time this was written.
+# FF_PYTHON has since moved (payload/anvil-env.sh) on the strength of what
+# this gate and case-moonraker313-s6.sh measured. klippy is not part of that
+# switch -- it stays on FlashForge's 3.8.2, started independently by
+# /usr/prog/klipper/start.sh -- but this gate still stands on its own: it is
+# what cffi's dlopen-of-c_helper.so claim rests on for the day klippy moves.
 #
 # IMPORTS ARE NOT THE MEASUREMENT. A cross-built .so that is the wrong ABI
 # fails at import, so an import does prove something -- but a cffi that
@@ -18,9 +22,9 @@
 # proves the ORDER, lmdb writes a database and a SECOND PROCESS reads it.
 #
 # THE REAL PRIZE is section 5: Moonraker's own component list, taken from its
-# CORE_COMPONENTS plus the printer's moonraker.conf, imported on 3.13. That is
-# the same check case-moonraker.sh section 7 runs against FlashForge's 3.8.2,
-# pointed at the new interpreter.
+# CORE_COMPONENTS plus the printer's moonraker.conf, imported on 3.13 --
+# section 7's check in case-moonraker.sh now runs that same import against
+# this same interpreter, since that is what FF_PYTHON resolves to.
 FAIL=0
 ok()  { echo "  PASS  $*"; }
 bad() { echo "  FAIL  $*"; FAIL=1; }

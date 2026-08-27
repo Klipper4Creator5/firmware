@@ -155,13 +155,11 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
                                           || bad "no s6 in the payload -- bin/patch.sh did not stage the cross-build"
     grep -q 'libexec/s6-ftrigrd' <<<"$LIST" && ok "s6-ftrigrd present in libexec (the waiting verbs can spawn it)" \
                                           || bad "no libexec/s6-ftrigrd -- s6-svwait and s6-svc -w will fail on the printer"
-    # CPython 3.13, which the payload SHIPS AND DOES NOT RUN -- anvil-env.sh
-    # still points FF_PYTHON at FlashForge's 3.8.2, deliberately, until the
-    # third-party C extensions klippy and Moonraker need have been cross-built
-    # (bin/patch.sh section 5c). A package missing it therefore breaks nothing
-    # today, which is exactly why it needs a check: without one the whole tree
-    # could silently stop being staged and the first symptom would be the
-    # release AFTER the switch.
+    # CPython 3.13. anvil-env.sh points FF_PYTHON here -- Moonraker,
+    # ff-startup.py, ffscreen.py and ff_mcu_bringup.py all run on it -- so a
+    # package missing it breaks the boot, not just a future release. klippy is
+    # not among FF_PYTHON's callers: it stays on FlashForge's 3.8.2, started by
+    # /usr/prog/klipper/start.sh independently (see init.d/S70klipper).
     #
     # Two checks, not one, and the second is the one worth having. The
     # interpreter can be present and perfectly runnable while _sqlite3 is
@@ -172,7 +170,7 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
     # without it is a 30MB payload that bought nothing. Build bugs both: a
     # package that ships neither cannot be fixed on the printer.
     grep -q 'bin/python3\.13$' <<<"$LIST" \
-        && ok "CPython 3.13 present (shipped, not yet used -- FF_PYTHON is still 3.8.2)" \
+        && ok "CPython 3.13 present (FF_PYTHON -- Moonraker and the ff-startup scripts run on it)" \
         || bad "no bin/python3.13 in the payload -- bin/patch.sh did not stage the cross-build"
     grep -q 'lib-dynload/_sqlite3' <<<"$LIST" \
         && ok "python3.13 carries _sqlite3 (the module FlashForge's 3.8.2 has not got)" \
@@ -182,16 +180,18 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
     # symlink CPython installs beside it. $MODDIR/bin is prepended to PATH by
     # anvil-env.sh (s6 needs that), so shipping one would silently put our
     # interpreter ahead of FlashForge's for every process that says `python3`
-    # -- an accidental switch, on a printer whose Moonraker and klippy still
-    # need 3.8's C extensions. Reads the way round it does for the same reason
-    # the dropbear check below does: its presence is the bug.
+    # -- an accidental switch, on a printer whose klippy still needs 3.8's
+    # site-packages (it is started separately, by FlashForge's own
+    # start.sh, and never goes through FF_PYTHON). Reads the way round it
+    # does for the same reason the dropbear check below does: its presence is
+    # the bug.
     grep -qE '(^|/)bin/python3$' <<<"$LIST" \
         && bad "payload ships bin/python3 -- it would shadow FlashForge's interpreter on PATH" \
         || ok "no bin/python3 symlink (nothing shadows FlashForge's python3 on PATH)"
     # The half of the 3.13 story that is not the interpreter: what runs ON it.
-    # Same shape of check and the same reason -- nothing on the printer uses
-    # any of this yet, so nothing on the printer would notice it going missing,
-    # and the first symptom would be the release AFTER the FF_PYTHON switch.
+    # Same shape of check and the same reason -- Moonraker is live on this
+    # interpreter now, so a missing extension here is a Moonraker that will
+    # not start on the very next boot, not a future release's problem.
     #
     # Two of the twelve extension modules by name rather than a count, and
     # these two: lmdb is Moonraker's DATABASE at the pinned commit (no lmdb,

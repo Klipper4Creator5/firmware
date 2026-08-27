@@ -122,6 +122,20 @@ if [ -n "$MODTAR" ]; then
             rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen $MODDIR/config $MODDIR/moonraker $MODDIR/init.d
             echo "previous install removed (no manifest -- pre-manifest layout)"
         fi
+        # init.d GETS THIS EVEN IN THE MANIFEST BRANCH, and unconditionally --
+        # a diff against the last manifest only knows about files THAT
+        # manifest tracked, so a script from further back than the last
+        # install (planted by hand, restored from a backup, or left over from
+        # the one pre-manifest jump every printer takes exactly once) is
+        # invisible to it and survives forever. That is an acceptable gap for
+        # $MODDIR/bin or $MODDIR/config, where something that is not ours
+        # might legitimately live -- it is not acceptable here: firmwareExe
+        # runs every executable $MODDIR/init.d/S* in filename order, so an
+        # orphan does not just sit unused, it starts a second copy of
+        # whatever it launches. Nothing outside the payload has any business
+        # writing to this directory, so clearing it outright costs nothing a
+        # real install would miss.
+        rm -rf $MODDIR/init.d
         mkdir -p $MODDIR
         # Try xz first (FlashForge's own factory installer uses `xz -dc`, so
         # it exists), then fall back to plain tar in case a build shipped it

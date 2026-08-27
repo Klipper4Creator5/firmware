@@ -30,7 +30,11 @@ get() {
         say "stale   $(basename "$dest") -- re-downloading"
     fi
     say "fetch   $url"
-    curl -fL --progress-bar -o "$dest.part" "$url"
+    # --retry: musl.cc in particular has a habit of dying mid-connect on CI
+    # runners; a plain -f here turned that into a hard build failure every
+    # few runs for a host that would have answered on the next try.
+    curl -fL --progress-bar --retry 3 --retry-connrefused --retry-delay 5 \
+        -o "$dest.part" "$url"
     have=$(sha256sum "$dest.part" | cut -d' ' -f1)
     if [ "$want" = "SKIP" ]; then
         mv "$dest.part" "$dest"
@@ -60,12 +64,27 @@ if [ "$ALL" = 1 ] || [ "${BUILD_HELIX:-0}" = "1" ]; then
         "$HELIX_TGZ" "$HELIX_SHA256"
 fi
 
-# The Klipper fork sources and the toolchain that compiles chelper for the
-# printer. Skipped when config.env points KLIPPER_FORK at a local checkout:
-# that path brings its own tree, and the toolchain tarball is ~203MB.
+# The Klipper fork sources. Skipped when config.env points KLIPPER_FORK at a
+# local checkout: that path brings its own tree.
 if [ "$ALL" = 1 ] || { [ "${BUILD_KLIPPER:-0}" = "fork" ] && [ ! -d "${KLIPPER_FORK:-}/klippy" ]; }; then
     get "https://github.com/Klipper4FlashForge/klipper/archive/$KLIPPER_VERSION.tar.gz" \
         "$KLIPPER_TGZ" "$KLIPPER_SHA256"
+fi
+
+# The Ingenic glibc toolchain -- ~203MB, and shared by two consumers that used
+# to be one: chelper (Klipper fork only) and, since CPython 3.13 landed in
+# patch.sh section 5c, the interpreter itself, which has no BUILD_ flag and is
+# cross-built on every checkout. Gating this fetch on BUILD_KLIPPER=fork alone
+# -- the shape it had before 5c existed -- means a BUILD_KLIPPER=stock build
+# from a clean vendor/ reaches patch.sh's Python step with sources but no
+# compiler and dies there instead of here. Checked against patch.sh's own
+# work/.py313 stamp, so a checkout with a current cross-built interpreter
+# never pulls this compiler either.
+PY_STAMP="$PY_VERSION $OPENSSL_VERSION $SQLITE_VERSION $ZLIB_VERSION $LIBFFI_VERSION $XZ_VERSION $BZIP2_VERSION $EXPAT_VERSION"
+if [ "$ALL" = 1 ] \
+   || { [ "${BUILD_KLIPPER:-0}" = "fork" ] && [ ! -d "${KLIPPER_FORK:-}/klippy" ]; } \
+   || [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ] \
+   || [ "$(cat "$PY_BUILD/.pkg-version" 2>/dev/null || true)" != "$(pypkg_stamp)" ]; then
     get "https://github.com/ballaswag/k1-discovery/releases/download/$MIPS_TOOLCHAIN_VERSION/$MIPS_TOOLCHAIN_FILE" \
         "$MIPS_TOOLCHAIN_TGZ" "$MIPS_TOOLCHAIN_SHA256"
 fi

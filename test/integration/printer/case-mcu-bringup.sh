@@ -8,7 +8,12 @@
 # and on stock it was only ever launched from a script that exported it.
 #
 # So this runs the command line start.sh really uses, in the environment
-# start.sh really sets, against the printer's real /usr/prog.
+# start.sh really sets, against the printer's real /usr/prog. FF_PYTHON now
+# names our own $MODDIR/bin/python3.13 (see payload/anvil-env.sh), so that is
+# the interpreter under test here too -- ff_mcu_bringup.py's own imports
+# (os, sys, termios, time) are stdlib-only, checked against CPython's
+# removed-in-3.13 list before the switch, so nothing here is expected to need
+# FlashForge's 3.8.2 any more.
 #
 # The payload under test is mounted at /tmp/payload.
 FAIL=0
@@ -17,10 +22,23 @@ bad() { echo "  FAIL  $*"; FAIL=1; }
 skip() { echo "  SKIP  $*"; }
 
 MOD=/usr/data/anvil
+# anvil-env.sh's own FF_PYTHON line reads $MODDIR, not $MOD -- this file's own
+# variable name predates that and nothing here renames it, so without this
+# alias FF_PYTHON resolves to the empty-prefix "/bin/python3.13" instead of
+# $MOD/bin/python3.13. Caught by section 2 below.
+MODDIR=$MOD
 SCRIPT=$MOD/bin/ff_mcu_bringup.py
-PY=/usr/prog/Python-3.8.2/bin/python3
+PY=$MOD/bin/python3.13
 
 mkdir -p $MOD/bin
+# The interpreter FF_PYTHON resolves to. Not part of /tmp/payload -- it is a
+# BUILD OUTPUT (bin/patch.sh section 5c, cached in work/.py313), so gates.py
+# hands it over as py.tgz the same way case-python.sh receives one, and this
+# is a hard failure rather than a Skip if it is missing: gates.py's
+# mcu_bringup() already Skips the whole case when nothing has built it, so
+# reaching here without one is a harness bug, not an absent feature.
+[ -f /mnt/py.tgz ] || { bad "no py.tgz mounted -- gates.py should have Skipped this case instead"; exit 1; }
+gzip -dc /mnt/py.tgz | tar -x -C $MOD || { bad "cannot unpack py.tgz"; exit 1; }
 cp /tmp/payload/bin/ff_mcu_bringup.py $SCRIPT 2>/dev/null
 chmod +x $SCRIPT 2>/dev/null
 
@@ -31,15 +49,7 @@ fi
 ok "payload ships bin/ff_mcu_bringup.py"
 
 if [ ! -x "$PY" ]; then
-    # `exit 0` here reported a PASSING gate: Replica.run_case only reads the
-    # exit code, so everything below -- the import test, the resolution check,
-    # the actual bring-up run, the ttyS7 coverage and the LD_LIBRARY_PATH
-    # negative control -- was skipped and scored as clean. That is the
-    # "SKIP printed, exit 0, counted as ok" protocol ffsim was written to end.
-    # seed-prog.sh already hard-fails when the interpreter is MISSING, so
-    # reaching here means it is present but not executable, which is a broken
-    # replica rather than an absent feature.
-    bad "$PY is not executable -- the replica has no usable interpreter"
+    bad "$PY is not executable after unpacking py.tgz -- the replica has no usable interpreter"
     exit 1
 fi
 ok "interpreter present at $PY"

@@ -6,8 +6,8 @@
 ffscreen.py packs pixels by hand, and the only honest way to review that is to
 look at the result -- rendered by the interpreter that will really run it.
 This drives case-boot-screen-dump.sh, which draws every phase inside the
-replica using FlashForge's own python3 on MIPS, and decodes the base64 PNGs it
-prints back into files.
+replica using our own cross-built CPython 3.13 (FF_PYTHON) on MIPS, and
+decodes the base64 PNGs it prints back into files.
 
 `make boot-screen` renders the same list on the host in a fraction of the time
 and needs no docker; the two are expected to agree byte for byte, and this is
@@ -28,6 +28,7 @@ for _p in Path(__file__).resolve().parents:
 from ffsim import cli                            # noqa: E402
 from ffsim.config import Config                  # noqa: E402
 from ffsim.replica import Replica                # noqa: E402
+from ffsim.gates import _python_tarball          # noqa: E402
 
 CASE = ("test", "integration", "printer", "case-boot-screen-dump.sh")
 FRAME = re.compile(r"PNGSTART (\S+)\n(.*?)\nPNGEND", re.S)
@@ -39,10 +40,13 @@ def run():
     args = ap.parse_args()
 
     config = Config.load()
+    tree = _python_tarball(config)
+    if not tree:
+        raise SystemExit("nothing in work/.py313 -- run ./bin/patch.sh first")
     replica = Replica.start(config, want_output=_echo)
     # The frames come back on stdout as base64, so this body is the payload --
     # not just a log. It is deliberately not echoed.
-    body = replica.run_case(str(ROOT.joinpath(*CASE)))
+    body = replica.run_case(str(ROOT.joinpath(*CASE)), packages={"py.tgz": tree})
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

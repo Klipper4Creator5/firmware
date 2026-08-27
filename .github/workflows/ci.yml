@@ -44,11 +44,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # gcc/pkg-config/perl/zlib1g-dev/patch/make are for the SAME reason
+      # docker/Dockerfile.build carries them: cross-building CPython 3.13
+      # needs a HOST build-python of its own to freeze modules and
+      # byte-compile the stdlib, and that one needs a host C compiler,
+      # pkg-config (CPython's configure probes libffi through it), perl
+      # (OpenSSL's Configure is a perl program), zlib1g-dev (the build-python
+      # needs a working zlib module or ensurepip cannot even unpack pip's
+      # bundled wheel) and patch (lmdb's setup.py shells out to
+      # /usr/bin/patch by absolute path). See that file's own comment for the
+      # long version.
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            openssl xz-utils unzip binutils file squashfs-tools python3-pytest python3-jinja2
+            openssl xz-utils unzip binutils file squashfs-tools python3-pytest python3-jinja2 \
+            gcc pkg-config perl zlib1g-dev patch make
 
       # Syntax and the brick lint are the first thing run-tests.py does, so
       # they are not repeated here.
@@ -62,6 +73,46 @@ jobs:
           shellcheck -s bash -S error bin/*.sh test/integration/*.sh
           # Warnings are advisory: printed, not enforced.
           shellcheck -s sh -S warning payload/*.sh payload/init.d/S* payload/firmwareExe || true
+
+      # s6 and CPython 3.13 have no BUILD_ flag -- every package ships them
+      # (see bin/fetch-assets.sh) -- so this job builds them for real rather
+      # than stubbing around them the way it stubs Mainsail, HelixScreen and
+      # the Klipper fork. Cached on versions.env: an unchanged pin never
+      # re-fetches the ~100MB musl toolchain or the ~203MB Ingenic one, and
+      # never recompiles either tree, which is the whole point of work/.s6 and
+      # work/.py313 carrying their own version stamps.
+      - name: Cache the s6 + CPython 3.13 build inputs and outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor
+            work/.s6
+            work/.py313
+            work/.sodium
+          key: fixture-py-${{ hashFiles('versions.env') }}
+
+      - name: Fetch the s6 + CPython 3.13 build inputs
+        run: |
+          set -euo pipefail
+          # BUILD_KLIPPER=stock only -- this config.env exists purely to let
+          # fetch-assets.sh see a config at all; it skips Mainsail, HelixScreen
+          # and the Klipper fork (all still gated on their own BUILD_ flags,
+          # unset here) and fetches only what s6 and CPython need, since
+          # neither has a BUILD_ flag of its own. run-tests.py's own fixture
+          # harness writes its own throwaway config.env for the actual suite
+          # run below, with synthetic Mainsail/HelixScreen/Moonraker
+          # stand-ins -- this one never reaches patch.sh, only fetch-assets.sh.
+          # The actual cross-build of s6 and CPython happens inside the suite,
+          # in bin/patch.sh sections 5b/5c, the first time it runs against a
+          # vendor/ that now has what those sections need.
+          cat > config.env <<'CFG'
+          BUILD_KLIPPER=stock
+          BUILD_MAINSAIL=0
+          BUILD_HELIX=0
+          BUILD_MOONRAKER=0
+          CFG
+          ./bin/fetch-assets.sh
+          rm -f config.env
 
       # This job has no stock package on purpose, so exactly two gates cannot
       # run: the tests that read the real rootfs, and the replica itself. The

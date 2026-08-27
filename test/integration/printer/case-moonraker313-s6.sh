@@ -307,13 +307,20 @@ echo "=== 5. S62moonraker start -- and READINESS THAT ACTUALLY GATES ==="
 # that it does not have to wait for it.
 rm -f /tmp/ready.at /tmp/bound.at
 T0=`date +%s`
-# The bind sampler. 1-second resolution is enough: what is being compared is
-# two events that are tens of seconds apart, and both are stamped by the same
-# clock in the same shell.
+# The bind sampler. NOT 1-second polling any more -- section (b) below
+# compares this timestamp against s6-svwait -U, which is event-driven and
+# returns within a fraction of a second of the run script's own internal
+# check confirming the port is bound. A 1-second poll here can lag the TRUE
+# bind moment by up to a second, and `date +%s` truncates both readings to
+# whole seconds -- so a bind at 5.05s sampled at 6.0s reads as "6", while a
+# readiness signal at 5.10s reads as "5", and (b) sees ready before bound
+# though the real events were in the right order microseconds apart. Measured
+# exactly that flake once. 0.2s polling shrinks the lag fivefold; the 300s
+# timeout budget is kept by scaling the iteration count with it.
 ( _n=0
-  while [ $_n -lt 300 ]; do
+  while [ $_n -lt 1500 ]; do
       if port_listening; then date +%s > /tmp/bound.at; exit 0; fi
-      sleep 1
+      sleep 0.2
       _n=$((_n + 1))
   done ) &
 BINDER=$!

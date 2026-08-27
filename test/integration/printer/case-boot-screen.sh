@@ -5,9 +5,13 @@
 # provable by reading it, and the two things most likely to be wrong are
 # exactly the two a Debian container would never catch:
 #
-#   * whether /usr/prog/Python-3.8.2/bin/python3 -- a 3.8 built by FlashForge,
-#     running here under qemu-mipsel -- executes this code at all. That is the
-#     moonrakerDaemon lesson: reasoning about compatibility was not enough.
+#   * whether $MODDIR/bin/python3.13 -- our own cross-built interpreter,
+#     running here under qemu-mipsel -- executes this code at all. FF_PYTHON
+#     named FlashForge's 3.8.2 for this file's whole earlier life, so this
+#     used to test THAT interpreter; the moonrakerDaemon lesson (reasoning
+#     about compatibility was not enough) is why it still runs the real
+#     interpreter rather than trusting that ffscreen.py's stdlib-only imports
+#     are obviously fine on the new one.
 #   * whether the bytes land where the arithmetic says. A stride or bpp error
 #     produces a diagonally sheared screen, not an exception, so the check has
 #     to be on the buffer itself.
@@ -27,13 +31,24 @@ ok()  { echo "  PASS  $*"; }
 bad() { echo "  FAIL  $*"; FAIL=1; }
 
 MOD=/usr/data/anvil
-PY=/usr/prog/Python-3.8.2/bin/python3
+# anvil-env.sh's own FF_PYTHON line reads $MODDIR, not $MOD -- this file's own
+# variable name predates that and nothing here renames it, so without this
+# alias FF_PYTHON resolves to the empty-prefix "/bin/python3.13" instead of
+# $MOD/bin/python3.13.
+MODDIR=$MOD
+PY=$MOD/bin/python3.13
 FB=/dev/fb0
 W=480
 H=800
 BPP=32
 
 mkdir -p $MOD/bin
+# The interpreter FF_PYTHON resolves to -- a BUILD OUTPUT (work/.py313), not
+# part of /tmp/payload, handed over as py.tgz. gates.py's boot_screen() Skips
+# the whole case when nothing has built it, so reaching here without one is a
+# harness bug, not an absent feature.
+[ -f /mnt/py.tgz ] || { bad "no py.tgz mounted -- gates.py should have Skipped this case instead"; exit 1; }
+gzip -dc /mnt/py.tgz | tar -x -C $MOD || { bad "cannot unpack py.tgz"; exit 1; }
 for f in ffscreen.py ff-startup.py ff_mcu_bringup.py; do
     cp /tmp/payload/bin/$f $MOD/bin/$f 2>/dev/null
     if [ -f "$MOD/bin/$f" ]; then
@@ -46,15 +61,21 @@ done
 chmod +x $MOD/bin/ff-startup.py 2>/dev/null
 
 if [ ! -x "$PY" ]; then
-    bad "$PY is not executable -- the replica has no usable interpreter"
+    bad "$PY is not executable after unpacking py.tgz -- the replica has no usable interpreter"
     exit 1
 fi
 
-# Exactly what start.sh and the firmwareExe wrapper export, in the same order.
-export PATH=$PATH:/usr/prog/Python-3.8.2/bin
-export LD_LIBRARY_PATH=/usr/prog/Python-3.8.2/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/prog/openssl-1.0.2d/lib:$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=/usr/prog/libffi-3.4.4/lib:$LD_LIBRARY_PATH
+# Exactly what start.sh and the firmwareExe wrapper get, by sourcing the same
+# shipped file -- not retyped here, which is what let this drift from the real
+# exports before. $MODDIR/bin/python3.13 needs no LD_LIBRARY_PATH entry at all
+# (measured in case-python.sh and case-moonraker313-s6.sh), so an empty result
+# here is the expected one, not a sign the file failed to source.
+cp -f /tmp/payload/anvil-env.sh $MOD/ 2>/dev/null
+[ -f $MOD/anvil-env.sh ] || { bad "the payload ships no anvil-env.sh"; exit 1; }
+. $MOD/anvil-env.sh
+[ "$FF_PYTHON" = "$PY" ] \
+    && ok "anvil-env.sh resolves FF_PYTHON to $PY" \
+    || bad "FF_PYTHON is '$FF_PYTHON', expected $PY"
 
 # 1. the interpreter runs the importer at all. --help exits before any I/O,
 #    so this is purely "does this 3.8 accept the syntax and the imports".

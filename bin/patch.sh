@@ -500,24 +500,24 @@ du -sh "$S6_BUILD/libexec" | awk '{print "   "$1"\tlibexec/"}'
 # hash we pinned.
 #
 # ############################################################################
-# # NOTHING USES THIS INTERPRETER YET, AND THAT IS DELIBERATE.               #
+# # FF_PYTHON POINTS HERE NOW. payload/anvil-env.sh names this interpreter    #
+# # for Moonraker, ff-startup.py, ffscreen.py and ff_mcu_bringup.py. Every    #
+# # third-party C extension those need -- tornado, lmdb, cffi, greenlet,     #
+# # libnacl -- is cross-built into $MODDIR/lib/python3.13/site-packages by    #
+# # step 4 below, and Moonraker has been measured SERVING on this            #
+# # interpreter through the real boot path on the replica                    #
+# # (test/integration/printer/case-moonraker313-s6.sh): S40s6's scandir,     #
+# # S62moonraker, readiness gating on :7125 actually listening, a kill -9    #
+# # respawn, and a stop that stays stopped.                                  #
 # #                                                                          #
-# # payload/anvil-env.sh points FF_PYTHON at /usr/prog/Python-3.8.2/bin/     #
-# # python3 and MUST KEEP DOING SO. Moonraker, klippy and bin/ff-startup.py  #
-# # need third-party C extensions -- tornado, lmdb, cffi, greenlet, pillow,  #
-# # libnacl -- that live in FlashForge's site-packages as mipsel .so files    #
-# # built against 3.8. None of them has been cross-built for 3.13. Point     #
-# # FF_PYTHON here and the printer loses klippy AND its web UI on the next   #
-# # boot, with an ImportError nobody sees because the screen is already dark. #
-# #                                                                          #
-# # This is exactly how s6 shipped in phase 2: in the payload, started by     #
-# # nothing, for one release, so that the switch is later a one-file change   #
-# # rather than a build change and a boot change at once. The extensions are  #
-# # the next piece of work; until they exist this is 30MB of dead weight that #
-# # can be measured on a real printer, which is worth more than 30MB saved.   #
+# # klippy is NOT among FF_PYTHON's callers and does not run on this         #
+# # interpreter -- it is started separately, by FlashForge's own             #
+# # /usr/prog/klipper/start.sh, hardcoded to 3.8.2 (see init.d/S70klipper).  #
+# # klippy's numpy gap is therefore a separate, smaller item, not a          #
+# # precondition of this switch.                                            #
 # ############################################################################
 #
-# WHY IT IS WORTH SHIPPING DEAD. FlashForge built 3.8.2 without _sqlite3, and
+# WHY IT IS WORTH SHIPPING. FlashForge built 3.8.2 without _sqlite3, and
 # that single omission is what pins MOONRAKER_VERSION to a 2023 commit: every
 # Moonraker from v0.9.0 on keeps its database in sqlite. This interpreter has
 # a working sqlite3 (measured on the replica, create/insert/select/reopen --

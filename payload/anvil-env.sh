@@ -69,28 +69,23 @@
 #                   only. `import ctypes` is the visible failure; the cost in
 #                   moonraker is four components -- file_manager,
 #                   authorization, machine, proc_stats.
-#   libsodium       libnacl maps libsodium.so.18.1.1, and raises OSError
-#                   rather than ImportError when it cannot, which is what made
-#                   the authorization outage read as a component crash rather
-#                   than a missing library.
-#                   THIS ONE IS ON BORROWED TIME, and stays only because
-#                   FF_PYTHON below still points at 3.8.2. The payload now
-#                   ships a libsodium 1.0.20 of our own at $MODDIR/lib
-#                   (bin/patch.sh section 5d), which our 3.13's libnacl finds
-#                   by absolute path with no library path entry at all. It
-#                   cannot come off this list yet: 3.8's libnacl, in
-#                   FlashForge's site-packages, still asks the loader for
-#                   libsodium.so.18 and the rootfs has none. The two lines move
-#                   together -- see FF_PYTHON.
 #
 # NOT /usr/prog/mjpg-streamer: that one is a plugin directory rather than a
 # library package, it carries its own libjpeg.so.9, and putting it in front of
 # every python process invites a version conflict for the sake of one service.
 # init.d/S65camera prepends it for itself.
+#
+# libsodium is NOT here any more. It existed only for 3.8's libnacl, in
+# FlashForge's site-packages, which asks the loader for libsodium.so.18 --
+# the rootfs has none, hence the entry. FF_PYTHON below no longer runs
+# anything that imports libnacl: Moonraker is the only FF_PYTHON process that
+# does, and it moved to our 3.13, whose libnacl resolves $MODDIR/lib/libsodium.so
+# by absolute path (bin/patch.sh section 5d) with no library path entry at
+# all. klippy still runs on 3.8 -- see FF_PYTHON below for why that is a
+# different interpreter entirely -- but klippy has no libnacl import.
 ANVIL_LIBS="/usr/prog/Python-3.8.2/lib
 /usr/prog/openssl-1.0.2d/lib
-/usr/prog/libffi-3.4.4/lib
-/usr/prog/libsodium/lib"
+/usr/prog/libffi-3.4.4/lib"
 
 for _anvil_lib in $ANVIL_LIBS; do
     [ -d "$_anvil_lib" ] || continue
@@ -113,35 +108,33 @@ export LD_LIBRARY_PATH
 # harder to read. A missing interpreter is a broken printer and should say so
 # at the point it is missing.
 #
-# IT IS STILL FLASHFORGE'S 3.8.2, AND THAT IS A STATEMENT ABOUT TIMING, NOT A
-# PREFERENCE. The payload carries a complete CPython 3.13 of our own, installed
-# into this same prefix root -- $MODDIR/bin/python3.13, with its stdlib in
-# $MODDIR/lib/python3.13 -- cross-built by bin/patch.sh section 5c, with the
-# working sqlite3 this firmware's 3.8.2 has not got.
+# THE SWITCH. This used to be FlashForge's 3.8.2, on purpose, until three
+# things were true at once: the payload carries a complete CPython 3.13 of our
+# own ($MODDIR/bin/python3.13, cross-built by bin/patch.sh section 5c) with a
+# working sqlite3 3.8.2 has not got; every third-party C extension FF_PYTHON's
+# callers need -- tornado, lmdb, cffi, greenlet, libnacl -- is cross-built
+# beside it in $MODDIR/lib/python3.13/site-packages; and Moonraker has been
+# measured SERVING on that interpreter THROUGH THE REAL BOOT PATH on the
+# replica (test/integration/printer/case-moonraker313-s6.sh): S40s6's scandir,
+# S62moonraker, s6-svwait -U gating on :7125 actually listening rather than on
+# the process forking, a kill -9 respawning onto 3.13 again, stop staying
+# stopped, and a churn loop when site-packages is moved away -- not just an
+# interpreter that imports cleanly.
 #
-# WHAT CHANGED, AND WHY THIS LINE STILL HAS NOT. The reason written here used
-# to be that klippy, Moonraker and bin/ff-startup.py import third-party C
-# extensions -- tornado, lmdb, cffi, greenlet, pillow, libnacl -- which existed
-# on this printer only as mipsel .so files built against 3.8, in FlashForge's
-# site-packages, and that none had been cross-built for 3.13. That is no longer
-# true: all of them now ship beside the interpreter in
-# $MODDIR/lib/python3.13/site-packages, cross-built by the same section, and
-# libsodium with them in $MODDIR/lib. Moonraker has been measured SERVING on
-# that interpreter in the replica -- :7125 bound, 23 components loaded and 0
-# failed, its lmdb database written and read back, nothing under /usr/prog
-# mapped by the running process.
+# WHO ELSE THIS MOVES. grep FF_PYTHON payload/ bin/ before touching this line
+# again -- the answer changes as callers are added. Today it is Moonraker,
+# ff-startup.py, ffscreen.py and ff_mcu_bringup.py (the MCU bootloader
+# handshake start.sh runs before Klipper). The last three are stdlib-only
+# (os/sys/termios/time/argparse/json/subprocess/urllib -- checked against
+# CPython's own removed-in-3.13 list), so the only one with any C-extension
+# surface is Moonraker, and that is the one measured above.
 #
-# What is left is not capability, it is the boot path. Nothing has yet run
-# through init.d/S62moonraker and s6 on 3.13: the readiness handshake, the
-# restart machinery and the shutdown ordering are all still gated only against
-# 3.8, and those are exactly the parts that fail at 3am on a printer rather
-# than in a case script. klippy's numpy gap is separate and smaller (it costs
-# input-shaper calibration, not printing). So the switch is deferred one more
-# commit ON PURPOSE, exactly as s6 was shipped-but-unstarted for a release:
-# this line and the /usr/prog/libsodium entry above move TOGETHER, in a commit
-# that changes nothing else, with `make test-python`, `make test-moonraker` and
-# `make test-services` green on the replica first. Flipping it early costs a
-# dark screen and an ImportError in a log nobody is reading.
+# WHO THIS DOES NOT MOVE. Klipper is not on this list. It is started by
+# FlashForge's own /usr/prog/klipper/start.sh, hardcoded to
+# /usr/prog/Python-3.8.2/bin/python3, independently of FF_PYTHON -- see
+# init.d/S70klipper's own header. klippy's numpy gap
+# (extras/stepper_resonance_tester.py) is therefore not this switch's problem;
+# it stays open as a separate, smaller item.
 #
 # FlashForge's tree is not touched either way: nothing here writes to
 # /usr/prog, and everything of ours lives under /usr/data/anvil like every
@@ -152,7 +145,7 @@ export LD_LIBRARY_PATH
 # bin/patch.sh deliberately drops the `python3` symlink CPython installs, so
 # that adding our bin/ to PATH cannot quietly change what `python3` means for
 # every process that sources this file.
-FF_PYTHON=/usr/prog/Python-3.8.2/bin/python3
+FF_PYTHON=$MODDIR/bin/python3.13
 export FF_PYTHON
 
 case ":$PATH:" in

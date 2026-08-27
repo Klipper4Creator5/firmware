@@ -60,7 +60,12 @@ note() { echo "  ..    $*"; }
 
 MODDIR=/usr/data/anvil
 PAYLOAD=/tmp/payload
-PY=/usr/prog/Python-3.8.2/bin/python3
+# FF_PYTHON's target: $MODDIR/bin/python3.13, cross-built by bin/patch.sh
+# section 5c. Named directly rather than read out of anvil-env.sh, because
+# section 3 below exists specifically to prove that sourcing the shipped file
+# resolves FF_PYTHON to exactly this path -- an independent expectation is
+# what makes that a real check instead of a tautology.
+PY=$MODDIR/bin/python3.13
 # WHERE MOONRAKER LIVES NOW. The mod's Moonraker rides in the payload and is
 # installed by being extracted, so the entry point is on the DATA partition at
 # /usr/data/anvil/moonraker/moonraker.py and nothing is written to /usr/prog.
@@ -84,10 +89,17 @@ S6_REAL=0
 PORT=7125
 
 [ -d "$PAYLOAD" ] || { bad "no payload mounted at $PAYLOAD"; exit 1; }
-[ -x "$PY" ] || { bad "no interpreter at $PY"; exit 1; }
 
 # ---- install the payload, as run-append.sh does ----------------------------
 mkdir -p $MODDIR/init.d
+# The interpreter FF_PYTHON is going to resolve to. Unlike sup.tgz (s6) this
+# is not optional: there is no fallback interpreter the way there is a
+# no-supervisor fallback for s6, so gates.py's moonraker() Skips the whole
+# case rather than staging one, and reaching here with none is a harness bug,
+# not an absent feature.
+[ -f /mnt/pref.tgz ] || { bad "no pref.tgz mounted -- gates.py should have Skipped this case instead"; exit 1; }
+gzip -dc /mnt/pref.tgz | tar -x -C $MODDIR || { bad "cannot unpack pref.tgz"; exit 1; }
+[ -x "$PY" ] || { bad "no interpreter at $PY after unpacking pref.tgz"; exit 1; }
 cp -f $PAYLOAD/anvil-env.sh $MODDIR/ 2>/dev/null
 # anvil-service.sh is not optional and not decoration: every init.d script
 # sources it for svc_start_daemon/svc_stop_daemon and exits immediately if it

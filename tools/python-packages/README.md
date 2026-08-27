@@ -167,10 +167,11 @@ imports -- signs, verifies and rejects a tampered message. With it,
 `/usr/prog/libsodium/lib` can come off `ANVIL_LIBS`, though only as part of the
 same one-line `FF_PYTHON` switch, since 3.8's libnacl still needs it.
 
-## What is left before FF_PYTHON can switch
+## What was left before FF_PYTHON could switch
 
-Capability is settled -- Moonraker serves, the database works, libsodium is
-ours. What is left is packaging and integration:
+**Done as of the commit that flips `FF_PYTHON` in `payload/anvil-env.sh`.**
+Capability was settled first -- Moonraker serves, the database works,
+libsodium is ours -- and packaging and integration followed:
 
 1. ~~**Wire into `bin/patch.sh`.**~~ **Done.** The package build runs inside
    5c against the untrimmed stage, BEFORE the trim, which was the
@@ -194,12 +195,18 @@ ours. What is left is packaging and integration:
    interpreter, `lib/python3.13` (stdlib *and* site-packages) and libsodium's
    resolved `.so`. Not all of `$MOD_PAYLOAD`, because s6 is built by the musl
    toolchain and correctly reads `e_flags=0x1007`; it has its own gate in 5b.
-3. **Run it through `S62moonraker` under s6 on 3.13.** The entry point was
-   driven directly on purpose, so the s6 readiness and restart machinery is
-   still gated only against 3.8.
-4. Then the switch itself: `FF_PYTHON` in `anvil-env.sh`, and
-   `/usr/prog/libsodium/lib` off `ANVIL_LIBS` in the same commit.
-5. klippy is **not** blocked by packages: cffi, greenlet, jinja2, markupsafe
+3. ~~**Run it through `S62moonraker` under s6 on 3.13.**~~ **Done.**
+   `test/integration/printer/case-moonraker313-s6.sh` drives the real boot
+   path -- S40s6's scandir, S62moonraker, readiness gating on `:7125`
+   actually listening rather than the process forking, a `kill -9` respawn
+   back onto 3.13, and a stop that stays stopped -- and all of it passed on
+   the replica.
+4. ~~Then the switch itself.~~ **Done**: `FF_PYTHON` in `anvil-env.sh` and
+   `/usr/prog/libsodium/lib` off `ANVIL_LIBS`, in the same commit.
+5. klippy is **not** blocked by packages, and was never part of this switch:
+   it keeps running on FlashForge's 3.8.2, started independently by
+   `/usr/prog/klipper/start.sh` (see `init.d/S70klipper`), not by
+   `FF_PYTHON`. cffi, greenlet, jinja2, markupsafe
    and pyserial all build, and `c_helper.so` binds. `numpy` is the only gap,
    wanted solely by `extras/stepper_resonance_tester.py`, which Klipper loads
    on demand. numpy on 3.13 means numpy >= 2.1 and a Meson cross-file, and
