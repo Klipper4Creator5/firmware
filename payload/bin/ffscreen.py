@@ -139,7 +139,7 @@ class Screen:
     no-op, which is exactly what the caller wants when there is no panel, no
     permission, or an unfamiliar pixel format."""
 
-    def __init__(self, device='/dev/fb0', sysfs=SYSFS, geometry=None,
+    def __init__(self, device='/dev/fb0', sysfs=SYSFS, geometry=(480, 800, 32),
                  rotate=None):
         self.device = device
         self.ok = False
