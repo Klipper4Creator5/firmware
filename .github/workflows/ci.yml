@@ -58,7 +58,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            openssl xz-utils unzip binutils file squashfs-tools python3-pytest python3-jinja2 \
+            openssl xz-utils unzip binutils file squashfs-tools \
+            python3-pytest python3-jinja2 python3-pyflakes \
             gcc pkg-config perl zlib1g-dev patch make
 
       # Syntax and the brick lint are the first thing run-tests.py does, so
