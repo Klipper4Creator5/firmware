@@ -33,7 +33,15 @@ get() {
     # --retry: musl.cc in particular has a habit of dying mid-connect on CI
     # runners; a plain -f here turned that into a hard build failure every
     # few runs for a host that would have answered on the next try.
-    curl -fL --progress-bar --retry 3 --retry-connrefused --retry-delay 5 \
+    #
+    # --connect-timeout: without it, a host that is not answering at all --
+    # not refusing, just silent -- makes curl wait on its own default (well
+    # over a minute) before it even counts as a failed attempt, so 3 retries
+    # can take the better part of ten minutes to give up. 20s is generous for
+    # a TCP handshake to a reachable host and turns the same three retries
+    # into about a minute and a half of real waiting.
+    curl -fL --progress-bar --connect-timeout 20 \
+        --retry 5 --retry-connrefused --retry-all-errors --retry-delay 5 \
         -o "$dest.part" "$url"
     have=$(sha256sum "$dest.part" | cut -d' ' -f1)
     if [ "$want" = "SKIP" ]; then
