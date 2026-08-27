@@ -295,6 +295,12 @@ HELIX_PLANTED=0
 if [ -f $HELIXCFG/settings.json ]; then
     HELIX_PLANTED=1
     sed -i '1a\  "anvil_marker": "HELIX-SETTINGS-MUST-SURVIVE",' $HELIXCFG/settings.json
+    # The seeded settings.json ships with wizard_completed:false -- that is
+    # what "first run" means. "A user who has actually used the screen" has
+    # to mean a printer that got past that, or the section below is checking
+    # that a false stayed false, which would pass whether or not the update
+    # preserves anything.
+    sed -i 's/"wizard_completed": *false/"wizard_completed": true/' $HELIXCFG/settings.json
     md5sum < $HELIXCFG/settings.json > /tmp/helix-settings.before2
     printf '{"tool0":"PLA-BLACK"}\n' > $HELIXCFG/tool_spools.json
     if [ -f $HELIXCFG/helixscreen.env ]; then
