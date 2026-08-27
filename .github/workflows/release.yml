@@ -60,13 +60,14 @@ jobs:
 
       - name: Write test.env (the replica's /usr/prog)
         env:
-          # Optional repository variable: a prebuilt replica image, e.g.
-          # monstrofil/creator5-printer:latest. It carries the factory
-          # partitions AND the stock package already installed, which is about
-          # a minute of setup saved on every replica case. The end-to-end test
-          # reinstalls the baseline itself when the package under test is for
-          # the other model, so this only ever changes how long it takes.
-          PRINTER_IMAGE: ${{ vars.PRINTER_IMAGE }}
+          # A prebuilt replica image: it carries the factory partitions AND
+          # the stock package already installed, about a minute of setup
+          # saved on every replica case. The end-to-end test reinstalls the
+          # baseline itself when the package under test is for the other
+          # model, so this only ever changes how long it takes, never what it
+          # proves. Defaults to the public one; vars.PRINTER_IMAGE overrides
+          # it for a fork building its own.
+          PRINTER_IMAGE: ${{ vars.PRINTER_IMAGE || 'monstrofil/creator5-printer:latest' }}
         run: |
           set -euo pipefail
           echo "PROG_DUMP=\"$PWD/stock/factory.tar.xz\"" > test.env

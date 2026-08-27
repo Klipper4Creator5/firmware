@@ -206,11 +206,15 @@ jobs:
         env:
           SECRET_FACTORY:     ${{ secrets.FACTORY_URL }}
           SECRET_FACTORY_SHA: ${{ secrets.FACTORY_SHA256 }}
-          # Optional repository variable: a prebuilt replica image, e.g.
-          # monstrofil/creator5-printer:latest. It carries the factory
-          # partitions AND the stock package already installed, which is about
-          # a minute of setup saved on every replica case.
-          PRINTER_IMAGE: ${{ vars.PRINTER_IMAGE }}
+          # A prebuilt replica image: it carries the factory partitions AND
+          # the stock package already installed, which is about a minute of
+          # setup saved on EVERY replica case -- with a full suite's worth of
+          # them, that is the difference between this job and a coffee break.
+          # Defaults to the public one; vars.PRINTER_IMAGE overrides it for a
+          # fork building its own. Left unset for a long time, silently, which
+          # is what made every run here pay the local-build cost on every
+          # case without anyone deciding that on purpose.
+          PRINTER_IMAGE: ${{ vars.PRINTER_IMAGE || 'monstrofil/creator5-printer:latest' }}
         run: |
           set -euo pipefail
           : > test.env
