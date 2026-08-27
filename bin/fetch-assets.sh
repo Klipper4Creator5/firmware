@@ -144,8 +144,54 @@ get "https://sourceware.org/pub/bzip2/bzip2-$BZIP2_VERSION.tar.gz" \
 # file expat-2.6.4, so both spellings appear in the one URL.
 get "https://github.com/libexpat/libexpat/releases/download/$EXPAT_TAG/expat-$EXPAT_VERSION.tar.gz" \
     "$EXPAT_TGZ" "$EXPAT_SHA256"
+
+# The third-party packages that become the interpreter's site-packages, and
+# libsodium. Same rule as the eight tarballs above and for the same reason:
+# every package ships them, so there is no BUILD_ flag and no condition --
+# they come down once and the sha256 cache means never again. 53MB, of which
+# 46MB is pillow's sdist alone (it carries its own test images; there is no
+# smaller sdist to have).
+#
+# pypi <project> <file> <sha256>
+#
+# files.pythonhosted.org publishes every sdist at TWO urls: the hashed
+# /packages/<a>/<b>/<64 hex>/<file> one that a browser copies, and this
+# /packages/source/<initial>/<project>/<file> one. Only the second can be
+# composed from a pin, because the first embeds a digest of the file itself --
+# so bumping a version there means pasting a URL nobody can check by reading.
+# The project name is the one thing not in versions.env, because it is a
+# property of the URL and not of the version: `smart-open` publishes
+# smart_open-6.4.0.tar.gz, `markupsafe` publishes MarkupSafe-2.1.5.tar.gz.
+# Same division of labour as EXPAT_TAG above.
+pypi() {
+    proj="$1"; file="$2"; sha="$3"
+    get "https://files.pythonhosted.org/packages/source/$(printf '%.1s' "$proj")/$proj/$file" \
+        "$ROOT/vendor/$file" "$sha"
+}
+# PYPKG_HOST_LIST too: the PEP 517 backends never reach a printer, but they
+# are what RUNS on the build machine to produce the objects that do, so they
+# are fetched and checked exactly like the rest.
+for p in $PYPKG_LIST $PYPKG_HOST_LIST; do
+    pypi "$p" "$(pypkg_var "$p" FILE)" "$(pypkg_var "$p" SHA256)"
+done
+get "https://github.com/jedisct1/libsodium/releases/download/$SODIUM_VERSION-RELEASE/libsodium-$SODIUM_VERSION.tar.gz" \
+    "$SODIUM_TGZ" "$SODIUM_SHA256"
+
+# The Ingenic toolchain, on the condition that decides whether patch.sh has to
+# compile at all. THREE stamps and not one, because three separate things are
+# built with this one compiler and any of them going stale means the download
+# is needed: the interpreter (work/.py313/.version), the packages that go into
+# its site-packages (work/.py313/.pkg-version -- same cache directory, its own
+# key, because a package bump forces a full interpreter rebuild; see the
+# comment in bin/patch.sh) and libsodium (work/.sodium/.version).
+#
+# Getting this wrong is not a slow build, it is a stopped one: patch.sh would
+# get 53MB of sdists and then halt for want of a compiler, halfway through,
+# rather than here where the fix is one command.
 if [ "$ALL" = 1 ] \
-   || [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ]; then
+   || [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ] \
+   || [ "$(cat "$PY_BUILD/.pkg-version" 2>/dev/null || true)" != "$(pypkg_stamp)" ] \
+   || [ "$(cat "$SODIUM_BUILD/.version" 2>/dev/null || true)" != "$SODIUM_VERSION" ]; then
     get "https://github.com/ballaswag/k1-discovery/releases/download/$MIPS_TOOLCHAIN_VERSION/$MIPS_TOOLCHAIN_FILE" \
         "$MIPS_TOOLCHAIN_TGZ" "$MIPS_TOOLCHAIN_SHA256"
 fi

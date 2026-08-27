@@ -1,10 +1,14 @@
 # The Python packages Moonraker and klippy need, cross-built for mipsel
 
 The second half of phase 6. `tools/python/` builds the interpreter;
-this builds what runs on it. **Not yet wired into `bin/patch.sh`** -- see
-"What is left" at the bottom. `build.sh` is the measurement harness, preserved
-here because it is where the findings live, exactly as `tools/supervisor/`
-is for s6.
+this builds what runs on it. **Now wired into `bin/patch.sh` section 5c,
+step 4** -- see "What is left" at the bottom for what that did and did not
+settle. `build.sh` is the measurement harness, preserved here because it is
+where the findings live, exactly as `tools/supervisor/` is for s6; it is not
+what a release runs any more, and the two have drifted on purpose (patch.sh
+builds offline from `vendor/` and needs no docker, because the build lane has
+no docker socket). `fill-designators.py` is the exception: it is a real build
+input, called by `patch.sh` for greenlet.
 
 Everything below was run in the printer replica on the real
 `rootfs.squashfs`, not read off a project page.
@@ -12,8 +16,10 @@ Everything below was run in the printer replica on the real
 
 ## What builds
 
-19 packages, 12 mipsel extension modules, from a 56-second clean build in one
-throwaway `debian:bookworm`. Every `.so` is gated at `e_flags=0x70001407`,
+18 sdists, 12 mipsel extension modules, from a 56-second clean build in one
+throwaway `debian:bookworm`. (This said 19 for a while; the list below is 18,
+and `versions.env` -- which is now the list that matters -- pins 18.) Every
+`.so` is gated at `e_flags=0x70001407`,
 `nan2008/o32/mips32r2` -- shared objects carry `EF_MIPS_PIC`, so they read
 `…07` where an executable reads `…05`.
 
@@ -166,18 +172,28 @@ same one-line `FF_PYTHON` switch, since 3.8's libnacl still needs it.
 Capability is settled -- Moonraker serves, the database works, libsodium is
 ours. What is left is packaging and integration:
 
-1. **Wire into `bin/patch.sh`.** The blocker is that section 5c's trim deletes
-   `include/` and `lib/python3.13/config-3.13-*` and then removes the staging
-   tree, and the package build needs both. Cleanest fix is to run the package
-   build inside 5c against the untrimmed stage BEFORE the trim, rather than
-   caching a second tree. Add a step for libsodium, a step to stage the 19
-   packages into `lib/python3.13/site-packages/`, and move every pin into
-   `versions.env` with sha256s.
-2. **Extend the ABI gate's reach.** It walks `$PY_BUILD/bin` and
-   `$PY_BUILD/lib` -- the build cache, not the payload -- so libsodium and the
-   twelve extension `.so` files staged straight into `$MOD_PAYLOAD` would
-   bypass it. No logic change needed, the two-word `DYN -> 0x70001407` rule
-   already covers them; only coverage.
+1. ~~**Wire into `bin/patch.sh`.**~~ **Done.** The package build runs inside
+   5c against the untrimmed stage, BEFORE the trim, which was the
+   recommendation here and is still the only place all three things it needs
+   exist at once: the headers `INCLUDEPY` points at, the static C libraries in
+   `work/.py-dep` (pillow's zlib, cffi's libffi) and the x86-64 build-python.
+   The consequence is that `work/.py313` has **two stamps** -- `.version` for
+   the interpreter and `.pkg-version` for the packages -- and a package bump
+   rebuilds CPython too, which is the price of not caching a second untrimmed
+   tree. libsodium is its own section, 5d, cached separately in
+   `work/.sodium`. Every pin is in `versions.env` with a sha256 and
+   `bin/fetch-assets.sh` fetches them, so **patch.sh no longer talks to a
+   network**: no `get-pip.py`, no PyPI, `pip --no-index` against hashed
+   sdists. The build-python gets its pip from `--with-ensurepip=install` out
+   of the same pinned CPython tarball. Two build-image packages were needed
+   and are in `docker/Dockerfile.build` with the reason beside them:
+   `zlib1g-dev` (a build-python without zlib cannot unpack a wheel, or pip
+   itself) and `patch` (lmdb's `setup.py` shells out to `/usr/bin/patch`).
+2. ~~**Extend the ABI gate's reach.**~~ **Done**, as described: same rule,
+   pointed at the staged payload instead of the build cache -- the
+   interpreter, `lib/python3.13` (stdlib *and* site-packages) and libsodium's
+   resolved `.so`. Not all of `$MOD_PAYLOAD`, because s6 is built by the musl
+   toolchain and correctly reads `e_flags=0x1007`; it has its own gate in 5b.
 3. **Run it through `S62moonraker` under s6 on 3.13.** The entry point was
    driven directly on purpose, so the s6 readiness and restart machinery is
    still gated only against 3.8.

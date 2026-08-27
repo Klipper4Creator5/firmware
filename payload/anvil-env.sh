@@ -73,6 +73,15 @@
 #                   rather than ImportError when it cannot, which is what made
 #                   the authorization outage read as a component crash rather
 #                   than a missing library.
+#                   THIS ONE IS ON BORROWED TIME, and stays only because
+#                   FF_PYTHON below still points at 3.8.2. The payload now
+#                   ships a libsodium 1.0.20 of our own at $MODDIR/lib
+#                   (bin/patch.sh section 5d), which our 3.13's libnacl finds
+#                   by absolute path with no library path entry at all. It
+#                   cannot come off this list yet: 3.8's libnacl, in
+#                   FlashForge's site-packages, still asks the loader for
+#                   libsodium.so.18 and the rootfs has none. The two lines move
+#                   together -- see FF_PYTHON.
 #
 # NOT /usr/prog/mjpg-streamer: that one is a plugin directory rather than a
 # library package, it carries its own libjpeg.so.9, and putting it in front of
@@ -105,22 +114,38 @@ export LD_LIBRARY_PATH
 # at the point it is missing.
 #
 # IT IS STILL FLASHFORGE'S 3.8.2, AND THAT IS A STATEMENT ABOUT TIMING, NOT A
-# PREFERENCE. Since phase 6 the payload carries a complete CPython 3.13 of our
-# own, installed into this same prefix root -- $MODDIR/bin/python3.13, with its
-# stdlib in $MODDIR/lib/python3.13 -- cross-built by bin/patch.sh section 5c,
-# with the working sqlite3 this firmware's 3.8.2 has not got. Nothing runs on
-# it yet, because klippy, Moonraker and bin/ff-startup.py import third-party C
-# extensions -- tornado, lmdb, cffi, greenlet, pillow, libnacl -- that exist on
-# this printer only as mipsel .so files built against 3.8, in FlashForge's
-# site-packages. None has been cross-built for 3.13. Point FF_PYTHON at ours
-# before they exist and the printer boots to a dark screen with an ImportError
-# in a log nobody is reading.
+# PREFERENCE. The payload carries a complete CPython 3.13 of our own, installed
+# into this same prefix root -- $MODDIR/bin/python3.13, with its stdlib in
+# $MODDIR/lib/python3.13 -- cross-built by bin/patch.sh section 5c, with the
+# working sqlite3 this firmware's 3.8.2 has not got.
+#
+# WHAT CHANGED, AND WHY THIS LINE STILL HAS NOT. The reason written here used
+# to be that klippy, Moonraker and bin/ff-startup.py import third-party C
+# extensions -- tornado, lmdb, cffi, greenlet, pillow, libnacl -- which existed
+# on this printer only as mipsel .so files built against 3.8, in FlashForge's
+# site-packages, and that none had been cross-built for 3.13. That is no longer
+# true: all of them now ship beside the interpreter in
+# $MODDIR/lib/python3.13/site-packages, cross-built by the same section, and
+# libsodium with them in $MODDIR/lib. Moonraker has been measured SERVING on
+# that interpreter in the replica -- :7125 bound, 23 components loaded and 0
+# failed, its lmdb database written and read back, nothing under /usr/prog
+# mapped by the running process.
+#
+# What is left is not capability, it is the boot path. Nothing has yet run
+# through init.d/S62moonraker and s6 on 3.13: the readiness handshake, the
+# restart machinery and the shutdown ordering are all still gated only against
+# 3.8, and those are exactly the parts that fail at 3am on a printer rather
+# than in a case script. klippy's numpy gap is separate and smaller (it costs
+# input-shaper calibration, not printing). So the switch is deferred one more
+# commit ON PURPOSE, exactly as s6 was shipped-but-unstarted for a release:
+# this line and the /usr/prog/libsodium entry above move TOGETHER, in a commit
+# that changes nothing else, with `make test-python`, `make test-moonraker` and
+# `make test-services` green on the replica first. Flipping it early costs a
+# dark screen and an ImportError in a log nobody is reading.
 #
 # FlashForge's tree is not touched either way: nothing here writes to
-# /usr/prog, and the 3.13 interpreter lives entirely under /usr/data/anvil like
-# every other thing this mod installs. The switch, when the extensions are
-# built, is this one line -- and `make test-python` and `make test-moonraker`
-# are what have to be green first.
+# /usr/prog, and everything of ours lives under /usr/data/anvil like every
+# other thing this mod installs.
 #
 # Note what is NOT on PATH below: $MODDIR/bin is prepended (s6 needs it), and
 # the interpreter is in there, but it is called python3.13 and only that.

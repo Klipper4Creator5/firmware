@@ -13,6 +13,23 @@
 # pkg-config and perl are for the same section -- CPython's configure probes
 # libffi through pkg-config, and OpenSSL's Configure is a perl program.
 #
+# zlib1g-dev is for THE HOST HALF of that build and nothing else, which is why
+# it looks out of place beside two cross-toolchains: the build-python needs a
+# working zlib module. Every wheel the package step produces is a zip, and so
+# is the pip that produces them -- ensurepip installs pip out of a bundled
+# .whl, and a build-python without zlib cannot even unpack it ("can't
+# decompress data; zlib not available"). CPython records the module as missing
+# and carries on, so the symptom lands three steps later as "No module named
+# pip". The TARGET's zlib is nothing to do with this: that one is the static
+# -fPIC libz.a bin/patch.sh cross-builds from the pinned tarball.
+#
+# `patch` is in the list above for one package: lmdb's setup.py shells out to
+# /usr/bin/patch BY ABSOLUTE PATH to apply its own env-copy-txn.patch to the
+# bundled liblmdb before compiling it, and raises "Applying patch failed" when
+# that is not there -- which is a build failure with nothing in it to say that
+# a two-hundred-kilobyte utility is what is missing. lmdb is Moonraker's
+# database at the pinned commit, so this is not an optional package.
+#
 # The alternative was a container of its own, the way tools/supervisor and
 # tools/python build for measurement. The build lane deliberately gets no
 # docker socket (only the test lane does), so there is no daemon to ask.
@@ -23,9 +40,9 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
  && apt-get update && apt-get install -y --no-install-recommends \
       bash coreutils tar xz-utils gzip openssl unzip curl ca-certificates \
       python3 python3-jinja2 python3-pytest python3-pyflakes \
-      binutils file findutils grep sed gawk make git diffutils procps \
+      binutils file findutils grep sed gawk make git diffutils patch procps \
       squashfs-tools qemu-user-static docker.io shellcheck \
-      gcc g++ libc6-dev pkg-config perl \
+      gcc g++ libc6-dev zlib1g-dev pkg-config perl \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

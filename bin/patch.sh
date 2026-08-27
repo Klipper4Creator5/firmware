@@ -561,8 +561,26 @@ PY_TOOLCHAIN_DIR=work/.mips-toolchain/mips-gcc720-glibc229
 # a bumped OpenSSL with an unchanged PY_VERSION has to rebuild, and the failure
 # if it does not is an interpreter linked against a library nobody can name.
 PY_STAMP="$PY_VERSION $OPENSSL_VERSION $SQLITE_VERSION $ZLIB_VERSION $LIBFFI_VERSION $XZ_VERSION $BZIP2_VERSION $EXPAT_VERSION"
+# The SECOND cache key, for the third-party packages that go into this
+# interpreter's site-packages (step 4 below): every sdist file name and hash
+# from versions.env, as bin/common.sh assembles it.
+#
+# TWO STAMPS, ONE CACHE DIRECTORY, AND A REBUILD OF EVERYTHING IF EITHER
+# MOVES. That is not sloppiness, it is the shape of the dependency. Building a
+# package for this target needs three things that exist ONLY while this
+# section is mid-flight: the untrimmed staged tree (the trim below deletes
+# include/ and lib/python3.13/config-3.13-*, and INCLUDEPY points at the
+# first), the static C libraries in work/.py-dep (pillow links zlib, cffi
+# links libffi), and the x86-64 build-python that answers every sysconfig
+# question for mipsel. Caching those separately means caching a second
+# ~200MB tree and a second interpreter for the sake of a package bump, which
+# buys a faster rare path by making the common path bigger. So a package pin
+# that moves rebuilds CPython too: minutes, on a bump that happens rarely and
+# deliberately, against a cache that is otherwise never touched.
+PYPKG_STAMP="$(pypkg_stamp)"
 
-if [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ]; then
+if [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ] \
+   || [ "$(cat "$PY_BUILD/.pkg-version" 2>/dev/null || true)" != "$PYPKG_STAMP" ]; then
     if [ ! -x "$PY_TOOLCHAIN_DIR/bin/$PY_HOST-gcc" ]; then
         [ -f "${MIPS_TOOLCHAIN_TGZ:-}" ] || {
             echo "   !! python needs (re)building and there is no toolchain:" >&2
@@ -575,6 +593,13 @@ if [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ]; then
     for t in "${PY_TGZ:-}" "${OPENSSL_TGZ:-}" "${SQLITE_TGZ:-}" "${ZLIB_TGZ:-}" \
              "${LIBFFI_TGZ:-}" "${XZ_TGZ:-}" "${BZIP2_TGZ:-}" "${EXPAT_TGZ:-}"; do
         [ -f "$t" ] || { echo "   !! no python sources at '$t' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
+    done
+    # And the package sdists, checked here rather than in step 4 -- twenty
+    # minutes into a CPython build is the wrong place to discover that
+    # vendor/ is one tarball short, and the fix is the same one command.
+    for p in $PYPKG_LIST $PYPKG_HOST_LIST; do
+        t="$(pypkg_tgz "$p")"
+        [ -f "$t" ] || { echo "   !! no sdist for $p at '$t' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
     done
     command -v gcc >/dev/null || {
         echo "   !! no host gcc. Cross-building CPython needs a build-python of" >&2
@@ -654,10 +679,47 @@ if [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ]; then
         # sources and byte-compile the stdlib, and configure hard-errors when
         # the version does not match. The image's python3.11 cannot stand in.
         # x86-64, thrown away at the end of this section, never shipped.
+        #
+        # --with-ensurepip=install, where the CROSS build below has
+        # --without-ensurepip and must keep it. The two are not in tension:
+        # they are opposite answers to opposite questions. On the printer a
+        # pip would need a network and a compiler and has neither. HERE, pip
+        # is what builds the third-party packages in step 4 -- and it comes
+        # out of THIS tarball, whose sha256 is pinned, rather than off
+        # bootstrap.pypa.io the way the spike got it. That is the difference
+        # between a build machine that downloads and runs an unpinned
+        # get-pip.py and one that does not talk to anybody: everything below
+        # this line runs with --no-index against files bin/fetch-assets.sh
+        # already checked.
         ( cd "$SRC/Python-$PY_VERSION"
-          ./configure --prefix="$HOSTPY" --without-ensurepip >"$LOG/.py-hostpy.log" 2>&1
+          ./configure --prefix="$HOSTPY" --with-ensurepip=install >"$LOG/.py-hostpy.log" 2>&1
           make -j"$JOBS" >>"$LOG/.py-hostpy.log" 2>&1
           make install >>"$LOG/.py-hostpy.log" 2>&1 )
+        # zlib, asserted rather than assumed, because CPython's answer to a
+        # missing library is to record the module as absent and CARRY ON --
+        # the same silence that hides a missing _sqlite3 in the cross build
+        # below, here on the host side. Every wheel is a zip and so is pip:
+        # ensurepip installs it out of a bundled .whl, and without zlib that
+        # fails with "can't decompress data" INSIDE a make install that
+        # reports success. The symptom then arrives three steps later as "No
+        # module named pip", nowhere near the cause. zlib1g-dev in
+        # docker/Dockerfile.build is the fix, and this is the sentence that
+        # says so.
+        "$HOSTPY/bin/python$PY_MM" -c 'import zlib' 2>/dev/null || {
+            echo "   !! the build-python has no zlib module, so it cannot unpack" >&2
+            echo "      a single wheel. Install zlib1g-dev in the build image" >&2
+            echo "      (docker/Dockerfile.build has it) and delete work/.py313." >&2
+            exit 1; }
+        # And pip itself, which --with-ensurepip=install above was for. Asked
+        # here and not in step 4 because `make install` runs ensurepip in a
+        # shell fragment that does not stop the install when it fails: without
+        # this line a broken bootstrap is reported by the FIRST PACKAGE to try
+        # to build, twenty lines of C library later.
+        "$HOSTPY/bin/python$PY_MM" -m pip --version >>"$LOG/.py-hostpy.log" 2>&1 || {
+            echo "   !! the build-python has no pip, so nothing in step 4 can" >&2
+            echo "      be built. ensurepip failed inside 'make install' --" >&2
+            echo "      its traceback is in work/.py-hostpy.log." >&2
+            exit 1; }
 
         # ------------------------------------------- 2. the C libraries, STATIC
         # All seven go into $DEP as .a with -fPIC, and NONE of them ships. The
@@ -805,6 +867,307 @@ EOF
            echo "      there, config.log included." >&2
            exit 1; }
 
+    # ------------------------------------------- 4. the third-party packages
+    # What runs ON the interpreter: the 18 sdists pinned in versions.env,
+    # cross-built into the staged tree's own lib/python3.13/site-packages.
+    #
+    # WHY IT IS HERE, INSIDE 5c, RATHER THAN IN A SECTION OF ITS OWN. Because
+    # of what it needs, all of which exists only at this exact moment:
+    #
+    #   * the UNTRIMMED stage. INCLUDEPY is $PY_PREFIX/include/python3.13 and
+    #     every C extension compiles against it -- and the trim thirty lines
+    #     below deletes include/ and lib/python3.13/config-3.13-* precisely
+    #     because nothing on a PRINTER builds extension modules.
+    #   * work/.py-dep, the static -fPIC C libraries. pillow links zlib out of
+    #     it and cffi links libffi, and it is deleted with the rest of the
+    #     scratch trees at the end of this section.
+    #   * work/.py-host, the x86-64 build-python of the SAME 3.13.7. It is the
+    #     thing that makes the cross work at all (see below), and it is also
+    #     thrown away here.
+    #
+    # The alternative -- cache a second, untrimmed tree so the packages can be
+    # built later and separately -- was considered and declined: it means
+    # keeping ~200MB and a second interpreter warm to make a rare path faster,
+    # and it means two caches that can disagree about which interpreter the
+    # extension modules were compiled against. That disagreement is not
+    # theoretical: an .so built against 3.13 headers and loaded by a 3.14
+    # interpreter is an import-time crash on the printer and nowhere else.
+    # One cache, two stamps, everything rebuilt together (see PYPKG_STAMP).
+    #
+    # THE CROSS TRICK, and there is no crossenv in it. The staged interpreter
+    # carries _sysconfigdata__linux_mipsel-linux-gnu.py, which records the
+    # cross CC, LDSHARED, EXT_SUFFIX (.cpython-313-mipsel-linux-gnu.so) and
+    # INCLUDEPY for the TARGET. Point _PYTHON_SYSCONFIGDATA_NAME at it from an
+    # x86-64 CPython of the same version and sysconfig -- and therefore
+    # setuptools' build_ext -- answers every question about mipsel while
+    # running on x86-64. The one thing the spike needed a container for was
+    # making INCLUDEPY resolve: it bind-mounted the stage at /usr/data/anvil.
+    # There is no daemon to ask for that here (the build lane deliberately has
+    # no docker socket), so instead a COPY of that module is written with
+    # every $PY_PREFIX path rewritten to where the stage actually is. It goes
+    # first on PYTHONPATH, is read only by the build, and never ships.
+    #
+    # NOTHING HERE TALKS TO A NETWORK. pip runs with --no-index against the
+    # sdists bin/fetch-assets.sh already checked the sha256 of, which is the
+    # strong form of the rule that --no-binary :all: below is the weak form
+    # of: pip cannot download a wheel it cannot reach. Both are kept, because
+    # the day someone adds an index URL for one awkward package the second one
+    # is what stops three x86-64 .so files from sailing into the tree -- which
+    # is not a hypothetical, it is what happened on the spike's first run.
+    say "python: cross-building $(echo $PYPKG_LIST | wc -w) third-party packages"
+    (
+        set -e
+        DEP="$PWD/work/.py-dep"
+        STAGE="$PWD/work/.py-stage"
+        XW="$PWD/work/.py-xw"
+        LOG="$PWD/work"
+        HOSTPY="$PWD/work/.py-host/bin/python$PY_MM"
+        PKGSRC="$PWD/work/.py-pkgsrc"      # unpacked sdists
+        WHEELS="$PWD/work/.py-wheels"      # the wheels they produce
+        XSYS="$PWD/work/.py-xsysconfig"    # the rewritten sysconfigdata
+        TREE="$STAGE$PY_PREFIX"            # the untrimmed staged interpreter
+        SP="$TREE/lib/python$PY_MM/site-packages"
+        SYSCFG=_sysconfigdata__linux_mipsel-linux-gnu
+        rm -rf "$PKGSRC" "$WHEELS" "$XSYS"
+        mkdir -p "$PKGSRC" "$WHEELS" "$XSYS" "$SP"
+        # The same gcc wrappers step 3 built, still on disk: -EL -mnan=2008
+        # baked into the driver so that setuptools -- which does NOT forward
+        # CFLAGS to its link lines -- cannot lose them on the way to ld.
+        export PATH="$XW/bin:$PATH"
+
+        # -------------------------------------------------- the PEP 517 side
+        # Three backends into the build-python: setuptools (most of the list),
+        # flit_core (jinja2) and poetry_core (libnacl). All three sdists
+        # bootstrap themselves through backend-path, so this needs nothing
+        # that is not already in vendor/, and --no-index proves it.
+        #
+        # Every failure in this subshell is caught BY HAND, with an explicit
+        # `|| { ...; exit 1; }`, and the `set -e` at the top is not what is
+        # doing the work: a compound command on the left of `||` -- which is
+        # what this whole subshell is -- runs with errexit suppressed
+        # THROUGHOUT, so a bare failing command in here would be shrugged off
+        # and the build would carry on to produce a tree with one package
+        # quietly missing from it.
+        for p in setuptools $PYPKG_HOST_LIST; do
+            "$HOSTPY" -m pip install --quiet --no-index --no-cache-dir \
+                --no-build-isolation --no-deps "$PWD/vendor/$(pypkg_var "$p" FILE)" \
+                >>"$LOG/.py-pkg-backends.log" 2>&1 \
+                || { echo "   !! could not install the build backend $p --" \
+                          "work/.py-pkg-backends.log" >&2
+                     tail -15 "$LOG/.py-pkg-backends.log" | sed 's/^/      /' >&2
+                     exit 1; }
+        done
+
+        # ------------------------------------------- sysconfig, for the TARGET
+        # The rewrite described above. It is a blanket substitution of
+        # $PY_PREFIX for the staging path over every string value rather than
+        # a list of the variables that matter, because the list of variables
+        # that matter is exactly the thing nobody gets right by hand:
+        # INCLUDEPY is the one that fails loudly, LIBDIR and LIBPL fail
+        # quietly, and a future setuptools is free to ask for another.
+        "$HOSTPY" - "$TREE/lib/python$PY_MM/$SYSCFG.py" "$XSYS/$SYSCFG.py" \
+                    "$PY_PREFIX" "$TREE" <<'PYEOF' || exit 1
+import sys
+src, dst, prefix, stage = sys.argv[1:5]
+ns = {}
+exec(compile(open(src).read(), src, "exec"), ns)
+out = {k: (v.replace(prefix, stage) if isinstance(v, str) else v)
+       for k, v in ns["build_time_vars"].items()}
+with open(dst, "w") as fh:
+    fh.write("# Generated by bin/patch.sh: %s with the build-time prefix\n"
+             "# rewritten to the staging tree. Build-time only; never ships.\n"
+             "build_time_vars = %r\n" % (src, out))
+PYEOF
+        [ -s "$XSYS/$SYSCFG.py" ] || {
+            echo "   !! could not rewrite $SYSCFG for the staging tree" >&2; exit 1; }
+        export _PYTHON_SYSCONFIGDATA_NAME="$SYSCFG"
+        # ONLY the rewritten module -- deliberately NOT the target's stdlib as
+        # well, which is what the spike put here. They are the same 3.13.7, so
+        # it did no harm, but it also means the host interpreter importing
+        # the TARGET's os.py and sysconfig.py by accident is one path-ordering
+        # mistake away, and the only thing that has to be importable is this.
+        export PYTHONPATH="$XSYS"
+        export PYTHONDONTWRITEBYTECODE=1
+        export PIP_DISABLE_PIP_VERSION_CHECK=1
+        export CC="$PY_HOST-gcc" CXX="$PY_HOST-g++"
+        export AR="$PY_HOST-ar" RANLIB="$PY_HOST-ranlib" STRIP="$PY_HOST-strip"
+        export LDSHARED="$PY_HOST-gcc -shared -L$DEP/lib"
+        export CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64 -I$DEP/include -I$TREE/include/python$PY_MM"
+        export CXXFLAGS="$CFLAGS"
+        export LDFLAGS="-L$DEP/lib"
+        # pkg-config must see ONLY our sysroot, for the same reason as step 2:
+        # left alone it answers out of the build image's /usr/lib/pkgconfig and
+        # a package links an x86-64 library into a mipsel extension module.
+        export PKG_CONFIG_LIBDIR="$DEP/lib/pkgconfig"
+        export PKG_CONFIG_PATH="$DEP/lib/pkgconfig"
+
+        # Gate the trick before building 18 packages on top of it. If
+        # _PYTHON_SYSCONFIGDATA_NAME has not taken, every question sysconfig
+        # is asked below is answered for x86-64 -- and the answer is a tree of
+        # host objects that builds perfectly and imports nowhere.
+        "$HOSTPY" - "$TREE/include/python$PY_MM" <<'PYEOF' || exit 1
+import sys, sysconfig
+suffix = sysconfig.get_config_var("EXT_SUFFIX")
+inc = sysconfig.get_config_var("INCLUDEPY")
+print("   sysconfig answers for %s, headers %s"
+      % (suffix, "found" if __import__("os").path.isdir(inc) else "MISSING"))
+if suffix != ".cpython-313-mipsel-linux-gnu.so":
+    raise SystemExit("   !! sysconfig is answering for the HOST (EXT_SUFFIX=%s)"
+                     " -- _PYTHON_SYSCONFIGDATA_NAME did not take" % suffix)
+if inc != sys.argv[1]:
+    raise SystemExit("   !! INCLUDEPY is %s, expected the staged %s"
+                     % (inc, sys.argv[1]))
+PYEOF
+
+        # ------------------------------------------------------- the helpers
+        # pywheel <sdist-path> [env=val ...] -- build one wheel into $WHEELS.
+        #
+        # --no-binary :all: is not caution and not decoration; see the top of
+        # this step and versions.env. --no-build-isolation is what keeps
+        # _PYTHON_SYSCONFIGDATA_NAME reaching setup.py: with isolation ON pip
+        # rewrites PYTHONPATH for the build subprocess and the module above
+        # stops being importable.
+        pywheel() {
+            local what=$1; shift
+            env "$@" "$HOSTPY" -m pip wheel --no-deps --no-build-isolation \
+                --no-index --no-binary :all: --no-cache-dir \
+                -w "$WHEELS" "$what" >"$LOG/.py-pkg-$(basename "$what").log" 2>&1 \
+                || { echo "   !! $(basename "$what") failed to build --" \
+                          "work/.py-pkg-$(basename "$what").log" >&2
+                     tail -25 "$LOG/.py-pkg-$(basename "$what").log" | sed 's/^/      /' >&2
+                     exit 1; }
+        }
+        # unpack <list-entry> -- untar its sdist and echo the source directory.
+        # Every one of these tarballs unpacks to its own basename; a release
+        # that did not would fail on the [ -d ] rather than build the wrong
+        # tree.
+        unpack() {
+            local f d
+            f="$(pypkg_var "$1" FILE)"
+            d="$PKGSRC/${f%.tar.gz}"
+            tar -xzf "$PWD/vendor/$f" -C "$PKGSRC"
+            [ -d "$d" ] || { echo "   !! $f does not unpack to $(basename "$d")" >&2; exit 1; }
+            printf '%s' "$d"
+        }
+
+        # ------------------------------------------------------- the packages
+        # PYPKG_LIST is the order, so the order lives in versions.env beside
+        # the pins. Four entries need more than "wheel the sdist", and each
+        # `case` arm says why.
+        for p in $PYPKG_LIST; do
+            SDIST="$PWD/vendor/$(pypkg_var "$p" FILE)"
+            case "$p" in
+            preprocess-cancellation)
+                # NOT BUILT: copied. This sdist declares no [build-system] and
+                # ships no setup.py, so there is no backend to call -- pip's
+                # legacy fallback would auto-discover a flat layout and emit a
+                # wheel named UNKNOWN-0.0.0 containing the one module, which
+                # is the right file arrived at by an accident that a future
+                # setuptools is free to change. The package IS one module, so
+                # the honest operation is a copy. Moonraker imports it in the
+                # metadata SUBPROCESS (gcode object cancellation), lazily, so
+                # a printer without it loses that feature and nothing else.
+                d=$(unpack "$p")
+                cp -f "$d/preprocess_cancellation.py" "$SP/"
+                ;;
+            greenlet)
+                # gcc 7.2 refuses greenlet 3.x's C++ designated initializers
+                # ("sorry, unimplemented: non-trivial designated initializers
+                # not supported") wherever they skip a field. The rule was
+                # probed, not assumed: in-order contiguous is fine, a TRAILING
+                # gap is fine, an interior or leading gap is refused.
+                # fill-designators.py writes the skipped fields back as
+                # explicit zeros, taking field order from the target's own
+                # headers and refusing to guess about a designator that is not
+                # in them. These are objects of static storage duration, so
+                # every field it inserts was already zero: it changes the
+                # spelling, not the program. 55 fields across two files.
+                d=$(unpack "$p")
+                # Deliberately unquoted: the find is a LIST of sources to
+                # patch, one argument each, and none of greenlet's file names
+                # has ever contained a space.
+                # shellcheck disable=SC2046
+                "$HOSTPY" tools/python-packages/fill-designators.py \
+                    "$TREE/include/python$PY_MM" \
+                    $(find "$d/src/greenlet" -name '*.cpp' -o -name '*.hpp' | sort) \
+                    >"$LOG/.py-pkg-greenlet-designators.log" 2>&1 \
+                    || { echo "   !! fill-designators.py failed --" \
+                              "work/.py-pkg-greenlet-designators.log" >&2
+                         tail -20 "$LOG/.py-pkg-greenlet-designators.log" | sed 's/^/      /' >&2
+                         exit 1; }
+                pywheel "$d"
+                ;;
+            lmdb)
+                # LMDB_FORCE_CPYTHON=1 is load-bearing. lmdb's setup.py has two
+                # backends: a real CPython extension and a cffi one that ships
+                # mdb.c and COMPILES IT AT IMPORT TIME. Left to itself here it
+                # picks cffi and produces a py3-none-any wheel with mdb.c
+                # inside -- i.e. a Moonraker that tries to invoke a compiler on
+                # a printer that has none. (Do not "fix" this with
+                # LMDB_FORCE_CFFI=0: setup.py tests the variable for PRESENCE,
+                # so the string "0" selects cffi.)
+                pywheel "$SDIST" LMDB_FORCE_CPYTHON=1
+                ;;
+            pillow)
+                # ZLIB ONLY, and pip cannot drive it: the --disable-* flags are
+                # build_ext options and PEP 517 offers no way to pass them, so
+                # setup.py is called directly. Gcode thumbnails are base64 PNG,
+                # so zlib is the only codec on that path; jpeg, tiff, webp,
+                # jpeg2000, lcms, freetype and imagequant are libraries nobody
+                # has cross-built here, and pillow probes for them by trying to
+                # LINK against the HOST's copies unless told not to -- which is
+                # what --disable-platform-guessing is for.
+                d=$(unpack "$p")
+                ( cd "$d" && "$HOSTPY" setup.py build_ext \
+                    --disable-jpeg --disable-tiff --disable-webp --disable-jpeg2000 \
+                    --disable-imagequant --disable-lcms --disable-freetype \
+                    --disable-xcb --disable-platform-guessing --enable-zlib \
+                    -I"$DEP/include" -L"$DEP/lib" bdist_wheel ) \
+                    >"$LOG/.py-pkg-pillow.log" 2>&1 \
+                    || { echo "   !! pillow failed to build -- work/.py-pkg-pillow.log" >&2
+                         tail -25 "$LOG/.py-pkg-pillow.log" | sed 's/^/      /' >&2
+                         exit 1; }
+                cp -a "$d"/dist/*.whl "$WHEELS/" \
+                    || { echo "   !! pillow built no wheel -- work/.py-pkg-pillow.log" >&2
+                         exit 1; }
+                ;;
+            *)
+                pywheel "$SDIST"
+                ;;
+            esac
+            printf '   %-24s %s\n' "$p" "$(pypkg_var "$p" FILE)"
+        done
+
+        # ----------------------------------------------------- into the tree
+        # Unzipped rather than pip-installed, because `pip install` insists on
+        # installing FOR the interpreter running it -- and that one is x86-64.
+        # A wheel is a zip whose layout is already the layout of
+        # site-packages, so unzipping it is the whole of what an install does
+        # here.
+        #
+        # .dist-info goes: nothing on the printer resolves a dependency, asks
+        # for a version or runs an entry point, and it is 200KB of metadata
+        # describing a build machine to nobody. The .data directories and the
+        # scripts in them go for a stronger reason -- their console-script
+        # shebangs name the BUILD-PYTHON's path, so shipping them would put
+        # files on the printer that reference /home/somebody/work/.py-host.
+        for w in "$WHEELS"/*.whl; do
+            "$HOSTPY" -m zipfile -e "$w" "$SP" \
+                || { echo "   !! could not unpack $(basename "$w") into site-packages" >&2
+                     exit 1; }
+        done
+        find "$SP" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
+        find "$SP" -maxdepth 1 -name '*.dist-info' -prune -exec rm -rf {} + 2>/dev/null || true
+        rm -rf "${SP:?}"/bin "${SP:?}"/*.data
+        # Stripped here rather than in the trim below, because the trim's
+        # find only knows about lib-dynload -- and these are the .so files
+        # that are NOT stdlib. 12 of them, ~1.5MB of symbols.
+        find "$SP" -name '*.so' -exec "$PY_HOST-strip" {} + 2>/dev/null || true
+    ) || { echo "   !! the third-party package build failed. Its logs are" >&2
+           echo "      work/.py-pkg-*.log, one per package, and the unpacked" >&2
+           echo "      sources are still in work/.py-pkgsrc." >&2
+           exit 1; }
+
     # --------------------------------------------------------------- trim
     # 183MB staged, 30MB shipped. What goes: the test package and idlelib
     # (nothing on a printer runs either), tkinter (there is no X11), the
@@ -849,12 +1212,23 @@ EOF
     # and for the same reason: unpacking it at $MODDIR puts every file back
     # where it was compiled to live. The .version stamp sits BESIDE them rather
     # than inside, so it can never be mistaken for something that ships.
+    #
+    # site-packages rides along inside lib/python$PY_MM/ and needs no line of
+    # its own here, which is the whole reason step 4 installs into the staged
+    # tree rather than somewhere beside it: one copy, one cache, one tarball
+    # for the replica gates (test/ffsim/gates.py packs bin/ + lib/ out of this
+    # directory), and the ABI gate below already walks all of it.
     mkdir -p "$PY_BUILD"
     cp -a "$PY_TRIM/bin" "$PY_TRIM/lib" "$PY_BUILD/"
-    rm -rf work/.py-src work/.py-dep work/.py-host work/.py-stage work/.py-xw
+    rm -rf work/.py-src work/.py-dep work/.py-host work/.py-stage work/.py-xw \
+           work/.py-pkgsrc work/.py-wheels work/.py-xsysconfig
     echo "$PY_STAMP" > "$PY_BUILD/.version"
+    # Written LAST and separately, so that an interrupted build leaves a cache
+    # that is stale rather than one that lies: both files have to be right
+    # before the next run is allowed to skip this section.
+    printf '%s\n' "$PYPKG_STAMP" > "$PY_BUILD/.pkg-version"
 else
-    skip "python: work/.py313 already holds CPython $PY_VERSION"
+    skip "python: work/.py313 already holds CPython $PY_VERSION and its packages"
 fi
 
 # The gates, asked of the TREE THAT SHIPS rather than of the build -- so a
@@ -879,33 +1253,82 @@ PY_SQLITE=$(ls "$PY_BUILD/lib/python$PY_MM/lib-dynload/"_sqlite3*.so 2>/dev/null
     || { echo "   !! python: NO _sqlite3 MODULE. configure's link probe failed" >&2
          echo "      silently -- check LIBS/LIBSQLITE3_LIBS and work/.py-configure.log" >&2
          exit 1; }
-# ABI, over every ELF in the tree: interpreter, 56 extension modules and
-# whatever else `make install` put there. The printer's kernel wants
-# nan2008/o32/mips32r2 and says ENOEXEC to anything else, and a cross-build
-# that quietly emitted one host object -- or one legacy-NaN object, because a
-# flag did not reach one link line -- looks like a clean build here.
+# And the packages, asked of the cache for the same reason: this runs whether
+# step 4 built them a minute ago or a previous build did. Two claims, because
+# they fail differently. A site-packages with no EXTENSION MODULES in it is a
+# build where every native package quietly fell back to something pure or was
+# skipped -- it imports on the build host and loses lmdb, cffi and greenlet on
+# the printer. A site-packages missing a NAMED package is a list that changed
+# without anyone noticing; the three named here are the three whose absence
+# takes Moonraker or klippy down completely rather than costing a feature.
+PY_SP="$PY_BUILD/lib/python$PY_MM/site-packages"
+for m in lmdb tornado cffi; do
+    [ -e "$PY_SP/$m" ] || [ -e "$PY_SP/$m.py" ] \
+        || { echo "   !! python: no '$m' in site-packages -- the package build" >&2
+             echo "      did not produce it. Delete work/.py313 and rebuild." >&2
+             exit 1; }
+done
+PY_EXT=$(find "$PY_SP" -name '*.so' | wc -l)
+[ "$PY_EXT" -ge 12 ] \
+    || { echo "   !! python: only $PY_EXT extension modules in site-packages," >&2
+         echo "      expected at least 12. A native package fell back to a" >&2
+         echo "      pure-python or py3-none-any build; check work/.py-pkg-*.log." >&2
+         exit 1; }
+
+# ABI, over every ELF the Ingenic toolchain produced: the interpreter, 56
+# stdlib extension modules, the 12 in site-packages and libsodium in 5d below.
+# The printer's kernel wants nan2008/o32/mips32r2 and says ENOEXEC to anything
+# else, and a cross-build that quietly emitted one host object -- or one
+# legacy-NaN object, because a flag did not reach one link line -- looks like a
+# clean build here.
 #
 # TWO expected words, not one. 0x70001405 is the measured value for an
 # EXECUTABLE; a shared object additionally carries EF_MIPS_PIC (0x2) and so
 # reads 0x70001407. That is correct and unavoidable for a DYN -- klippy's own
 # c_helper.so has it too -- so a gate that pinned one word would fail on every
 # extension module in the tree.
-PY_ELF=0
-while IFS= read -r f; do
-    [ "$(head -c 4 "$f" 2>/dev/null)" = "$(printf '\177ELF')" ] || continue
-    hdr=$(readelf -h "$f" 2>/dev/null || true)
-    case "$hdr" in
-        *nan2008*o32*mips32r2*) ;;
-        *) echo "   !! python: $f is not nan2008/o32/mips32r2" >&2
-           readelf -h "$f" 2>&1 | sed 's/^/      /' >&2; exit 1 ;;
-    esac
-    flags=$(awk '/Flags:/{print $2}' <<<"$hdr" | tr -d ,)
-    want=0x70001405; grep -q '^  Type:.*DYN' <<<"$hdr" && want=0x70001407
-    [ "$flags" = "$want" ] || {
-        echo "   !! python: $f has e_flags=$flags, want $want" >&2; exit 1; }
-    PY_ELF=$((PY_ELF + 1))
-done < <(find "$PY_BUILD/bin" "$PY_BUILD/lib" -type f)
-say "python: $PY_ELF ELF objects, all nan2008/o32/mips32r2; $(basename "$PY_SQLITE") present"
+#
+# A FUNCTION, AND POINTED AT THE PAYLOAD. It used to walk $PY_BUILD/bin and
+# $PY_BUILD/lib -- the build cache. That was the whole tree while the
+# interpreter was the only thing this toolchain produced, and it stopped being
+# so the moment site-packages and libsodium arrived: a .so staged into
+# $MOD_PAYLOAD by a path the gate did not know about ships ungated, and the
+# first machine to notice is a printer. So the rule did not change (it already
+# covers a DYN correctly) -- the REACH did, to the staged payload, which is
+# the only tree that is by definition everything that ships.
+#
+# It is NOT pointed at all of $MOD_PAYLOAD, and that is deliberate rather than
+# lazy: s6 in 5b is built by the musl toolchain and reads e_flags=0x1007
+# (mips1, legacy NaN, PIE) -- correct for it, measured working on the printer,
+# and it has its own gate up there. HelixScreen and the stock rootfs binaries
+# are somebody else's builds again. This gate is about the objects WE compiled
+# with the Ingenic toolchain, and it names them.
+mips_abi_gate() {
+    local n=0 f hdr flags want
+    while IFS= read -r f; do
+        # readelf itself is the ELF test, rather than comparing the first four
+        # bytes to \177ELF: that comparison was a command substitution over
+        # arbitrary binary content, and every data file in site-packages that
+        # happens to start with a NUL made bash print "warning: command
+        # substitution: ignored null byte in input" -- eight lines of noise
+        # across a clean build, from the gate that is supposed to be the quiet
+        # one. readelf exits non-zero on anything that is not an ELF, which is
+        # the same question asked of the tool that has to answer it anyway.
+        hdr=$(readelf -h "$f" 2>/dev/null) || continue
+        case "$hdr" in
+            *nan2008*o32*mips32r2*) ;;
+            *) echo "   !! $f is not nan2008/o32/mips32r2" >&2
+               readelf -h "$f" 2>&1 | sed 's/^/      /' >&2; return 1 ;;
+        esac
+        flags=$(awk '/Flags:/{print $2}' <<<"$hdr" | tr -d ,)
+        want=0x70001405; grep -q '^  Type:.*DYN' <<<"$hdr" && want=0x70001407
+        [ "$flags" = "$want" ] || {
+            echo "   !! $f has e_flags=$flags, want $want" >&2; return 1; }
+        n=$((n + 1))
+    done < <(find "$@" -type f 2>/dev/null)
+    printf '%s' "$n"
+}
+
 # Staged into the SAME bin/ and lib/ as everything else in this prefix root,
 # which is why this is a copy of the contents and not of the directories: s6's
 # binaries are already in $MOD_PAYLOAD/bin and must stay there.
@@ -913,7 +1336,137 @@ cp -a "$PY_BUILD/bin/." "$MOD_PAYLOAD/bin/"
 mkdir -p "$MOD_PAYLOAD/lib"
 cp -a "$PY_BUILD/lib/." "$MOD_PAYLOAD/lib/"
 chmod +x "$MOD_PAYLOAD/bin/python$PY_MM"
+PY_ELF=$(mips_abi_gate "$MOD_PAYLOAD/bin/python$PY_MM" "$MOD_PAYLOAD/lib/python$PY_MM") || exit 1
+say "python: $PY_ELF ELF objects staged, all nan2008/o32/mips32r2;" \
+    "$(basename "$PY_SQLITE") present; $PY_EXT extension modules in site-packages"
 du -sh "$PY_BUILD/lib/python$PY_MM" | awk '{print "   "$1"\tlib/python'"$PY_MM"'/"}'
+du -sh "$PY_SP" | awk '{print "   "$1"\tlib/python'"$PY_MM"'/site-packages/"}'
+
+# ---------------------------------------------------- 5d. libsodium (shipped)
+# The one library of ours that ships as a .so, and the LAST /usr/prog string
+# in the phase-6 picture.
+#
+# WHY IT CANNOT BE STATIC, when the interpreter's seven dependencies all are.
+# libnacl is pure python: it reaches libsodium through
+# ctypes.cdll.LoadLibrary, which is dlopen, and you cannot dlopen an archive.
+# Moonraker's `authorization` component signs its JWTs with the ed25519 pair
+# libnacl exposes, so this is on the startup path of the web UI rather than
+# beside it.
+#
+# WHY IT COSTS anvil-env.sh NOTHING, which is worth stating because it looks
+# like it should need a library path entry. libnacl's third fallback is
+# __file__[0:__file__.find("lib")+3] + "/libsodium.so", and __file__ here is
+# $MODDIR/lib/python3.13/site-packages/libnacl/__init__.py -- so it resolves
+# $MODDIR/lib/libsodium.so BY ABSOLUTE PATH, measured working in the replica
+# with LD_LIBRARY_PATH unset entirely. That works because this prefix happens
+# to contain the string "lib"; a prefix without it would break silently, which
+# is a thing to remember if $MODDIR ever moves. It is also why the plain
+# `libsodium.so` symlink is not a development leftover to be trimmed: it is
+# the FIRST name libnacl asks for, and the only one that fallback constructs.
+#
+# CACHED ON THE VERSION, like s6 and unlike c_helper.so. 24 seconds is not the
+# reason -- the reason is bin/fetch-assets.sh: an uncached build of this drags
+# the ~203MB Ingenic toolchain download along behind it on every build of a
+# checkout that has nothing else to compile. The stamp is what lets the
+# fetcher skip it, so the stamp is what makes it free.
+SODIUM_XW=work/.sodium-xw
+if [ "$(cat "$SODIUM_BUILD/.version" 2>/dev/null || true)" != "$SODIUM_VERSION" ]; then
+    if [ ! -x "$PY_TOOLCHAIN_DIR/bin/$PY_HOST-gcc" ]; then
+        [ -f "${MIPS_TOOLCHAIN_TGZ:-}" ] || {
+            echo "   !! libsodium needs (re)building and there is no toolchain:" >&2
+            echo "      $MIPS_TOOLCHAIN_TGZ is missing. Run ./bin/fetch-assets.sh." >&2
+            exit 1; }
+        say "libsodium: unpacking the Ingenic MIPS toolchain"
+        mkdir -p work/.mips-toolchain
+        tar -xzf "$MIPS_TOOLCHAIN_TGZ" -C work/.mips-toolchain
+    fi
+    [ -f "${SODIUM_TGZ:-}" ] || {
+        echo "   !! no libsodium source at '$SODIUM_TGZ' -- run ./bin/fetch-assets.sh" >&2
+        exit 1; }
+    say "libsodium: cross-compiling $SODIUM_VERSION for $MODDIR/lib"
+    rm -rf work/.sodium-src work/.sodium-stage "$SODIUM_XW" "$SODIUM_BUILD"
+    mkdir -p work/.sodium-src "$SODIUM_XW/bin"
+    tar -xzf "$SODIUM_TGZ" -C work/.sodium-src
+    (
+        set -e
+        # A subshell, as in 5b and 5c, so the cross-compiler cannot leak.
+        TC="$PWD/$PY_TOOLCHAIN_DIR"
+        XW="$PWD/$SODIUM_XW"
+        STAGE="$PWD/work/.sodium-stage"
+        LOG="$PWD/work"
+        # The same wrapper trick, rebuilt here rather than shared with 5c:
+        # 5c deletes work/.py-xw when its build succeeds, and this step has to
+        # work on a run where 5c did nothing at all because its cache was
+        # warm. -EL -mnan=2008 in the driver, where libsodium's libtool link
+        # lines cannot drop them.
+        for t in gcc g++ cpp; do
+            printf '#!/bin/sh\nexec %s/bin/%s-%s -EL -mnan=2008 "$@"\n' \
+                "$TC" "$PY_HOST" "$t" > "$XW/bin/$PY_HOST-$t"
+            chmod +x "$XW/bin/$PY_HOST-$t"
+        done
+        for t in ar as ld nm objcopy objdump ranlib readelf strip strings size; do
+            ln -sf "$TC/bin/$PY_HOST-$t" "$XW/bin/$PY_HOST-$t"
+        done
+        export PATH="$XW/bin:$PATH"
+        cd "$PWD/work/.sodium-src/libsodium-$SODIUM_VERSION"
+        # --disable-static: nothing links this statically and a .a would only
+        #   be deleted again below.
+        # --host is what makes autoconf reach for the mips-linux-gnu- prefixed
+        #   tools in the wrapper directory, which is the entire point of them.
+        # libsodium's runtime feature probes are AC_RUN_IFELSE with cross
+        #   defaults supplied, so nothing here needs qemu.
+        ./configure --host="$PY_HOST" --prefix="$MODDIR" \
+            --disable-static --enable-shared --with-pic \
+            CFLAGS="-O2 -fPIC" >"$LOG/.sodium-configure.log" 2>&1
+        make -j"$(nproc 2>/dev/null || echo 4)" >"$LOG/.sodium-make.log" 2>&1
+        make install DESTDIR="$STAGE" >>"$LOG/.sodium-make.log" 2>&1
+    ) || { echo "   !! the libsodium cross-build failed -- work/.sodium-configure.log" >&2
+           echo "      and work/.sodium-make.log; the source tree is still in" >&2
+           echo "      work/.sodium-src." >&2
+           exit 1; }
+    # lib/ ONLY. include/ and lib/pkgconfig exist to BUILD against libsodium,
+    # which happens on a developer's machine and not on a printer -- and
+    # pkgconfig would otherwise drop a .pc file describing this build into the
+    # prefix's shared lib/, next to the interpreter's stdlib. The .la file goes
+    # for the same reason plus one more: it names absolute build-machine paths.
+    mkdir -p "$SODIUM_BUILD/lib"
+    cp -a "work/.sodium-stage$MODDIR/lib/"libsodium.so* "$SODIUM_BUILD/lib/"
+    rm -f "$SODIUM_BUILD/lib/"*.la
+    find "$SODIUM_BUILD/lib" -type f -name 'libsodium.so*' \
+        -exec "$PY_TOOLCHAIN_DIR/bin/$PY_HOST-strip" --strip-unneeded {} +
+    rm -rf work/.sodium-src work/.sodium-stage "$SODIUM_XW"
+    echo "$SODIUM_VERSION" > "$SODIUM_BUILD/.version"
+else
+    skip "libsodium: work/.sodium already holds $SODIUM_VERSION"
+fi
+
+# Staged into the prefix's shared lib/, beside lib/python3.13 -- one prefix,
+# one library directory. cp -a and not cp: two of these three names are
+# SYMLINKS (libsodium.so -> libsodium.so.26 -> libsodium.so.26.2.0), the first
+# is the name libnacl constructs and the second is the SONAME the loader then
+# asks for, so a copy that dereferenced them would ship three identical 406KB
+# files and still work -- until someone wondered why the payload had grown.
+cp -a "$SODIUM_BUILD/lib/"libsodium.so* "$MOD_PAYLOAD/lib/"
+[ -L "$MOD_PAYLOAD/lib/libsodium.so" ] \
+    || { echo "   !! libsodium: lib/libsodium.so is not a symlink -- libnacl's" >&2
+         echo "      dlopen fallback asks for that exact name." >&2; exit 1; }
+# The gate, over the payload, with the same rule and the same function 5c
+# uses: this is a DYN, so 0x70001407, and a legacy-NaN or big-endian libsodium
+# would import perfectly on a build host and fail only inside libnacl's
+# ctypes call on the printer -- which surfaces as Moonraker's authorization
+# component failing to load, three layers away from anything that says MIPS.
+#
+# Aimed at the resolved object rather than at $MOD_PAYLOAD/lib, which would
+# be the tidier-looking line: lib/ is also where the interpreter's whole
+# stdlib lives and 5c has just walked all of it, and re-walking two thousand
+# files to reach one is a gate that gets deleted the first time somebody times
+# a build.
+SODIUM_SO=$(readlink -f "$MOD_PAYLOAD/lib/libsodium.so")
+SODIUM_ELF=$(mips_abi_gate "$SODIUM_SO") || exit 1
+say "libsodium: $SODIUM_VERSION staged into lib/ --" \
+    "$SODIUM_ELF object, nan2008/o32/mips32r2," \
+    "$(readelf -d "$SODIUM_SO" | awk '/SONAME/{gsub(/[][]/,"",$5); print $5}')," \
+    "$(du -h "$SODIUM_SO" | cut -f1)"
 
 # ------------------------------------------------------------------- 6. SSH
 # Nothing to install. The stock rootfs (kernel-*.tar.xz -> rootfs.squashfs)

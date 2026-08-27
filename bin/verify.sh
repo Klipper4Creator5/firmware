@@ -188,6 +188,37 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
     grep -qE '(^|/)bin/python3$' <<<"$LIST" \
         && bad "payload ships bin/python3 -- it would shadow FlashForge's interpreter on PATH" \
         || ok "no bin/python3 symlink (nothing shadows FlashForge's python3 on PATH)"
+    # The half of the 3.13 story that is not the interpreter: what runs ON it.
+    # Same shape of check and the same reason -- nothing on the printer uses
+    # any of this yet, so nothing on the printer would notice it going missing,
+    # and the first symptom would be the release AFTER the FF_PYTHON switch.
+    #
+    # Two of the twelve extension modules by name rather than a count, and
+    # these two: lmdb is Moonraker's DATABASE at the pinned commit (no lmdb,
+    # no Moonraker at all, not a degraded one) and _cffi_backend is what
+    # klippy dlopens c_helper.so through, which is the entire reason this
+    # interpreter had to be glibc rather than musl. They are also the two that
+    # a "cross build" quietly resolving to a manylinux wheel gets WRONG rather
+    # than missing -- and the .so suffix is what says which: a mipsel build
+    # spells itself cpython-313-mipsel-linux-gnu.so, an x86-64 wheel spells
+    # itself cpython-313-x86_64-linux-gnu.so, so the name is the architecture.
+    grep -q 'site-packages/lmdb/cpython.cpython-313-mipsel-linux-gnu\.so' <<<"$LIST" \
+        && ok "lmdb's mipsel CPython extension present (Moonraker's database at this pin)" \
+        || bad "no mipsel lmdb extension in site-packages -- Moonraker cannot open its database; check bin/patch.sh section 5c step 4"
+    grep -q 'site-packages/_cffi_backend.cpython-313-mipsel-linux-gnu\.so' <<<"$LIST" \
+        && ok "cffi's mipsel extension present (klippy's route to c_helper.so)" \
+        || bad "no mipsel _cffi_backend in site-packages -- klippy could not load chelper on 3.13"
+    # libsodium is the one library of ours that ships as a .so, because libnacl
+    # dlopens it -- and the bare `libsodium.so` name is not decoration, it is
+    # the exact name libnacl's path fallback constructs. A payload with the
+    # versioned file and no symlink would pass a naive "is libsodium there"
+    # check and fail at Moonraker's authorization component.
+    grep -qE 'lib/libsodium\.so\.[0-9]' <<<"$LIST" \
+        && ok "libsodium present in lib/ (libnacl's ed25519, no /usr/prog needed)" \
+        || bad "no lib/libsodium.so.* in the payload -- bin/patch.sh section 5d did not stage the cross-build"
+    grep -qE 'lib/libsodium\.so$' <<<"$LIST" \
+        && ok "lib/libsodium.so link present (the name libnacl's dlopen fallback builds)" \
+        || bad "lib/libsodium.so link missing -- libnacl looks for that exact name and would fall through to /usr/prog"
     grep -q 'mainsail/index.html' <<<"$LIST" && ok "Mainsail present" || warn "no Mainsail in payload"
     grep -q 'helixscreen/bin/helix-screen' <<<"$LIST" && ok "HelixScreen present" || warn "no HelixScreen in payload"
     # We deliberately ship no dropbear: the stock rootfs already has one, with

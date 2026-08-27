@@ -107,6 +107,49 @@ PY_BUILD="${PY_BUILD:-$ROOT/work/.py313}"
 export PY_TGZ OPENSSL_TGZ SQLITE_TGZ ZLIB_TGZ LIBFFI_TGZ XZ_TGZ BZIP2_TGZ
 export EXPAT_TGZ PY_BUILD
 
+# The third-party python packages that become the interpreter's
+# site-packages, and libsodium, which libnacl dlopens out of $MODDIR/lib.
+#
+# There are eighteen of the former and the list moves, so they are NOT one
+# variable per tarball the way everything above is: versions.env carries
+# PYPKG_LIST plus a FILE/SHA256 pair per entry, and the three helpers below
+# are how both bin/fetch-assets.sh and bin/patch.sh read that table. They live
+# here rather than being written twice because a package the fetcher and the
+# builder disagree about is a build that downloads one file and compiles
+# another -- and because the CACHE KEY has to be computed identically in both
+# places or the ~203MB Ingenic toolchain is skipped by the fetcher on exactly
+# the build that needs it.
+#
+# pypkg_var takes the list entry (`streaming-form-data`) and a suffix and
+# returns the variable versions.env spells for it
+# (PYPKG_STREAMING_FORM_DATA_FILE). Bash indirection, which is why this file
+# is only ever sourced by bin/*.sh -- payload/* is busybox ash and has none.
+pypkg_var() {
+    local _n _v
+    _n=$(printf '%s' "$1" | tr 'a-z' 'A-Z' | tr '-' '_')
+    _v="PYPKG_${_n}_$2"
+    printf '%s' "${!_v-}"
+}
+# The sdist as bin/fetch-assets.sh leaves it in vendor/.
+pypkg_tgz() { printf '%s/vendor/%s' "$ROOT" "$(pypkg_var "$1" FILE)"; }
+# The cache key for the whole package set: every file name (which carries the
+# version) beside its hash, so a bumped pin AND a re-released upstream
+# tarball both invalidate. Compared as a whole string, not hashed, so
+# work/.py313/.pkg-version stays readable -- a diff of it is the changelog.
+pypkg_stamp() {
+    local _p
+    for _p in $PYPKG_LIST $PYPKG_HOST_LIST; do
+        printf '%s %s\n' "$(pypkg_var "$_p" FILE)" "$(pypkg_var "$_p" SHA256)"
+    done
+}
+# libsodium is one pin and one tarball, so it keeps the ordinary shape. Its
+# cache is separate from work/.py313 because it is a separate build with a
+# separate stamp: 24 seconds, but 24 seconds that would otherwise drag the
+# 203MB toolchain download along behind it on every build.
+SODIUM_TGZ="${SODIUM_TGZ:-$ROOT/vendor/libsodium-${SODIUM_VERSION:-unpinned}.tar.gz}"
+SODIUM_BUILD="${SODIUM_BUILD:-$ROOT/work/.sodium}"
+export SODIUM_TGZ SODIUM_BUILD
+
 # Replica-only settings: the factory image and the partition sizes. They exist
 # for the tests and never reach a printer, so they live in their own file --
 # see test.env.example. Values left in config.env keep working.
