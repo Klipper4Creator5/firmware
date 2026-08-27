@@ -420,6 +420,15 @@ def main():
         with reporter.gate("cpython 3.13 runs, with a working sqlite3"):
             gates.python(config, on_output=emit)
 
+        # And the one that puts all four real things together -- the real
+        # Moonraker, on that interpreter, under the real s6, started by the
+        # real init script. It is the slowest gate here and it is the one
+        # whose failure means "do not switch FF_PYTHON", so it runs beside
+        # the interpreter gate rather than at the end where a timeout would
+        # take it out first.
+        with reporter.gate("moonraker on 3.13, supervised"):
+            gates.moonraker313_s6(config, on_output=emit)
+
         with reporter.gate("nginx under s6"):
             gates.nginx(config, on_output=emit)
 

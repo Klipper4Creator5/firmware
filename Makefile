@@ -70,6 +70,7 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
         test-recovery test-mcu test-boot-screen test-moonraker test-services \
         test-libpath \
         test-upgrade test-supervisor test-nginx test-camera test-python \
+        test-moonraker313 \
         boot-screen boot-screen-sim \
         release clean distclean
 
@@ -102,6 +103,7 @@ help:
 	@echo '  make test-nginx       nginx runs under s6, and a stop stays stopped'
 	@echo '  make test-camera      readiness gates: ready means serving, not forked'
 	@echo '  make test-python      the cross-built CPython 3.13 runs, with a real sqlite3'
+	@echo '  make test-moonraker313 the real moonraker on that 3.13, supervised by s6'
 	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo
 	@echo 'Look at things:'
@@ -269,6 +271,16 @@ test-camera: image
 test-python: image
 	@tar -czf work/.py-gate.tgz -C work/.py313 bin lib
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-python.sh py.tgz=work/.py-gate.tgz
+
+# The real Moonraker, on the 3.13 we built, under the s6 we built, started by
+# init.d/S62moonraker. Three build outputs and no stand-ins, which is why it
+# needs three tarballs where every other target needs one or none: work/.s6,
+# work/.py313 + work/.sodium, and the pinned Moonraker sdist in vendor/. Two of
+# the three are assembled by test/ffsim/gates.py rather than by a `tar -czf`
+# here, so this runs the gate through a thin wrapper instead of calling
+# printer-exec.py -- see sim-moonraker313.py for that argument written out.
+test-moonraker313: image
+	@$(RUNSIM) ./test/integration/sim-moonraker313.py
 
 # The installer, run for real over two payloads: what the last one shipped
 # goes, what nobody shipped stays.

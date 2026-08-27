@@ -169,6 +169,142 @@ def _s6_tarball(config):
     return str(out)
 
 
+def moonraker313_s6(config, on_output=None):
+    """The real Moonraker, on OUR 3.13, brought up by S62moonraker under s6.
+
+    THE GATE THE FF_PYTHON SWITCH IS WAITING ON, and the only one that runs all
+    four real things at once. Its two neighbours each leave the same hole on
+    purpose and say so in their own headers: case-moonraker stands the ENTRY
+    POINT in for its supervision sections, because the real Moonraker's
+    fork-to-listen gap is the better part of a minute on qemu and measuring s6
+    through it is slow and imprecise; case-moonraker313 drives the entry point
+    DIRECTLY, with no init script anywhere near it, so that a failure there is
+    the interpreter and not a shell script. Between them nothing had ever taken
+    the boot path -- S40s6, the scandir, `down`, S62moonraker, svc_s6_up, the
+    notification-fd -- on the interpreter the mod is going to switch to.
+
+    What it measures that nothing else does: that s6-svwait -U returns when
+    :7125 is LISTENING and not when the process forked, against the REAL
+    startup rather than a controllable delay; that the process s6 ends up
+    holding is our interpreter and our entry point, read from /proc/PID/cmdline
+    rather than inferred; that a respawn after kill -9 comes back on the same
+    interpreter, because the run script re-sources anvil-env.sh from the
+    scanner's environment every time; and that the supervised process maps zero
+    libraries under /usr/prog.
+
+    IT RUNS ON BOTH SIDES OF THE SWITCH, which is what makes it a gate rather
+    than a thing that has to be written twice. What is under test is the
+    POST-switch configuration, so while payload/anvil-env.sh still names
+    FlashForge's 3.8.2 -- which it does, deliberately, until there is hardware
+    evidence behind the change -- the case applies the same two edits to the
+    INSTALLED copy and says out loud that it did; afterwards it will assert the
+    shipped file already says so and change nothing. Either way the thing
+    measured is identical, so this neither blocks the switch nor rots the day
+    after it.
+
+    Skips rather than degrading when a build output is missing. There is no
+    fallback worth having: a stand-in supervisor, a stand-in interpreter or a
+    stand-in Moonraker each removes one of the exactly four things the case is
+    the intersection of.
+    """
+    s6 = _s6_tarball(config)
+    if not s6:
+        raise Skip("nothing in work/.s6 -- run ./bin/patch.sh first")
+    prefix = _prefix_tarball(config)
+    if not prefix:
+        raise Skip("nothing in work/.py313 or work/.sodium -- run ./bin/patch.sh first")
+    tree = _moonraker_tarball(config)
+    if not tree:
+        raise Skip("no Moonraker tarball in vendor/ -- run ./bin/fetch-assets.sh first")
+    replica = Replica.start(config, want_output=on_output)
+    replica.run_case(_case(config, "case-moonraker313-s6.sh"),
+                     packages={"sup.tgz": s6, "pref.tgz": prefix,
+                               "mr.tgz": tree},
+                     on_output=on_output)
+
+
+def _prefix_tarball(config):
+    """The mod's own /usr/data/anvil prefix: interpreter, stdlib, packages and
+    libsodium, in one tarball because it is one prefix.
+
+    _python_tarball below packs work/.py313 alone, which is right for
+    case-python.sh -- that case is about the interpreter and deliberately has
+    no third-party anything in it. A Moonraker needs the other half too, and
+    bin/patch.sh puts both halves under the same $MODDIR: section 5c writes
+    bin/python3.13 and lib/python3.13 (stdlib AND site-packages), section 5d
+    writes lib/libsodium.so*. Two caches, one destination, so one tarball --
+    which also means the case unpacks it exactly once and every file lands
+    where it was compiled to expect itself.
+
+    Returns None when either cache is missing, which for this gate is a Skip:
+    see the docstring above for why there is no useful fallback.
+    """
+    py = config.root / "work" / ".py313"
+    sodium = config.root / "work" / ".sodium"
+    if not (py / "bin" / "python3.13").is_file():
+        return None
+    if not list(sodium.glob("lib/libsodium.so*")):
+        return None
+    out = config.root / "work" / ".pref-gate.tgz"
+    with tarfile.open(str(out), "w:gz") as tar:
+        for sub in ("bin", "lib"):
+            tar.add(str(py / sub), arcname=sub)
+        for so in sorted(sodium.glob("lib/libsodium.so*")):
+            tar.add(str(so), arcname="lib/" + so.name)
+    return str(out)
+
+
+def _moonraker_tarball(config):
+    """Moonraker's own tree plus the mod's configs, in the payload's shape.
+
+    The other two tarballs come out of work/; this one is made from the two
+    places bin/patch.sh makes the payload's moonraker/ and config/ from -- the
+    pinned sdist in vendor/ and assets/*.conf -- because that is where they
+    exist in a checkout that has not built anything. Repacked here rather than
+    handed over whole for one reason: busybox tar's --strip-components is not
+    something to bet a gate on, and the vendor tarball has a commit-named top
+    directory that has to come off.
+
+    tests/ is dropped, exactly as patch.sh drops it, so that what the case
+    installs is what a printer installs.
+    """
+    version = ""
+    versions = config.root / "versions.env"
+    if versions.is_file():
+        for line in versions.read_text().splitlines():
+            if line.startswith("MOONRAKER_VERSION="):
+                version = line.partition("=")[2].strip().strip('"\'')
+                break
+    src = config.root / "vendor" / ("moonraker-%s.tar.gz" % version)
+    if not src.is_file():
+        found = sorted((config.root / "vendor").glob("moonraker-*.tar.gz"))
+        if not found:
+            return None
+        src = found[-1]
+
+    out = config.root / "work" / ".mrtree-gate.tgz"
+    with tarfile.open(str(src)) as inp, tarfile.open(str(out), "w:gz") as tar:
+        top = None
+        for member in inp.getmembers():
+            parts = member.name.split("/")
+            if top is None:
+                top = parts[0]
+            if len(parts) < 2 or parts[0] != top or parts[1] != "moonraker":
+                continue
+            if len(parts) > 2 and parts[2] == "tests":
+                continue
+            member.name = "/".join(parts[1:])
+            if member.isfile():
+                tar.addfile(member, inp.extractfile(member))
+            else:
+                tar.addfile(member)
+        for name in ("moonraker.conf", "moonraker-custom.conf"):
+            conf = config.root / "assets" / name
+            if conf.is_file():
+                tar.add(str(conf), arcname="config/" + name)
+    return str(out)
+
+
 def supervisor(config, on_output=None):
     """Does the s6 we cross-compiled actually work on the printer?
 
