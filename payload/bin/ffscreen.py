@@ -139,7 +139,7 @@ class Screen:
     no-op, which is exactly what the caller wants when there is no panel, no
     permission, or an unfamiliar pixel format."""
 
-    def __init__(self, device='/dev/fb0', sysfs=SYSFS, geometry=None,
+    def __init__(self, device='/dev/fb0', sysfs=SYSFS, geometry=(480, 800, 32),
                  rotate=None):
         self.device = device
         self.ok = False
@@ -381,8 +381,8 @@ def main(argv):
     import argparse
     parser = argparse.ArgumentParser(description='draw one frame on /dev/fb0')
     parser.add_argument('--fb', default='/dev/fb0')
-    parser.add_argument('--size', default=None,
-                        help='WxH@BPP; default: ask sysfs')
+    parser.add_argument('--size', default='480x800@32',
+                        help='WxH@BPP; default: 480x800@32')
     parser.add_argument('--rotate', type=int, default=None,
                         choices=[0, 90, 270])
     parser.add_argument('--title', default='')
