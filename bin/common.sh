@@ -73,7 +73,7 @@ MIPS_TOOLCHAIN_TGZ="${MIPS_TOOLCHAIN_TGZ:-$ROOT/vendor/${MIPS_TOOLCHAIN_FILE:-mi
 # downloading when that cache is missing or stale.
 SKALIBS_TGZ="${SKALIBS_TGZ:-$ROOT/vendor/skalibs-${SKALIBS_VERSION:-unpinned}.tar.gz}"
 S6_TGZ="${S6_TGZ:-$ROOT/vendor/s6-${S6_VERSION:-unpinned}.tar.gz}"
-MUSL_TOOLCHAIN_TGZ="${MUSL_TOOLCHAIN_TGZ:-$ROOT/vendor/${MUSL_TOOLCHAIN_FILE:-mips32el--musl--stable.tar.xz}}"
+MUSL_TOOLCHAIN_TGZ="${MUSL_TOOLCHAIN_TGZ:-$ROOT/vendor/${MUSL_TOOLCHAIN_FILE:-mips32r5el--musl--stable.tar.xz}}"
 S6_BUILD="${S6_BUILD:-$ROOT/work/.s6}"
 export MAINSAIL_ZIP HELIX_TGZ MOONRAKER_TGZ KLIPPER_TGZ MIPS_TOOLCHAIN_TGZ
 export SKALIBS_TGZ S6_TGZ MUSL_TOOLCHAIN_TGZ S6_BUILD

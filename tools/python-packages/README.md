@@ -193,8 +193,15 @@ libsodium is ours -- and packaging and integration followed:
 2. ~~**Extend the ABI gate's reach.**~~ **Done**, as described: same rule,
    pointed at the staged payload instead of the build cache -- the
    interpreter, `lib/python3.13` (stdlib *and* site-packages) and libsodium's
-   resolved `.so`. Not all of `$MOD_PAYLOAD`, because s6 is built by the musl
-   toolchain and correctly reads `e_flags=0x1007`; it has its own gate in 5b.
+   resolved `.so`. Originally not `$MOD_PAYLOAD/bin/s6-*`: s6 was believed
+   exempt, reading `e_flags=0x1007` (legacy-NaN) from a plain mips32r1 musl
+   toolchain on the theory that a supervisor doing no floating point cannot
+   care about NaN encoding. True of the arithmetic, false of exec() -- a
+   nan2008-only kernel can refuse a legacy-NaN binary outright, which
+   qemu-mipsel-static's user-mode emulation never enforced, so this shipped
+   before it was caught. s6 is IN the gate now, built with Bootlin's
+   mips32r5el toolchain (nan2008 by construction), same rule as everything
+   else in 5b.
 3. ~~**Run it through `S62moonraker` under s6 on 3.13.**~~ **Done.**
    `test/integration/printer/case-moonraker313-s6.sh` drives the real boot
    path -- S40s6's scandir, S62moonraker, readiness gating on `:7125`

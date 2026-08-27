@@ -128,7 +128,7 @@ if [ "$ALL" = 1 ] \
     # Bootlin's own release layout: one directory per target architecture,
     # one versioned tarball per release inside it. See versions.env for why
     # this is Bootlin and not musl.cc.
-    get "https://toolchains.bootlin.com/downloads/releases/toolchains/mips32el/tarballs/$MUSL_TOOLCHAIN_FILE" \
+    get "https://toolchains.bootlin.com/downloads/releases/toolchains/mips32r5el/tarballs/$MUSL_TOOLCHAIN_FILE" \
         "$MUSL_TOOLCHAIN_TGZ" "$MUSL_TOOLCHAIN_SHA256"
 fi
 

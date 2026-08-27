@@ -327,6 +327,82 @@ else
     skip "HelixScreen"
 fi
 
+# ABI, over every ELF this build cross-compiles: s6 in 5b below, the
+# interpreter and its extensions in 5c, libsodium in 5d. The printer's kernel
+# wants nan2008/o32/mips32r2 and says ENOEXEC to anything else, and a
+# cross-build that quietly emitted one host object -- or one legacy-NaN
+# object, because a flag did not reach one link line -- looks like a clean
+# build here. Defined once, up here, because 5b needs it before 5c exists to
+# borrow it from.
+#
+# TWO expected words, not one. 0x70001405 is the measured value for an
+# EXECUTABLE; a shared object additionally carries EF_MIPS_PIC (0x2) and so
+# reads 0x70001407. That is correct and unavoidable for a DYN -- klippy's own
+# c_helper.so has it too -- so a gate that pinned one word would fail on every
+# extension module in the tree. s6's own binaries are static EXECs, so they
+# want 0x70001405 like the interpreter does.
+#
+# A FUNCTION, AND POINTED AT THE PAYLOAD. It used to walk $PY_BUILD/bin and
+# $PY_BUILD/lib -- the build cache. That was the whole tree while the
+# interpreter was the only thing this toolchain produced, and it stopped being
+# so the moment site-packages and libsodium arrived: a .so staged into
+# $MOD_PAYLOAD by a path the gate did not know about ships ungated, and the
+# first machine to notice is a printer. So the rule did not change (it already
+# covers a DYN correctly) -- the REACH did, to the staged payload, which is
+# the only tree that is by definition everything that ships.
+#
+# s6 is IN this gate now, not exempt from it. It used to be built by a plain
+# mips32r1 musl toolchain and read e_flags=0x1007 (mips1, legacy NaN) -- a
+# choice defended here as "no floating point, so the NaN encoding cannot
+# matter" for exactly as long as nobody checked what the printer's own kernel
+# does with that flag at exec() rather than at runtime. It matters at exec():
+# a MIPS kernel built nan2008-only can refuse to run a legacy-NaN binary
+# outright, or silently misconfigure its FPU mode, neither of which shows up
+# under qemu-mipsel-static -- user-mode emulation does not enforce the same
+# ABI check a real kernel's binfmt loader does, which is exactly how s6
+# shipped in this state and every replica gate still passed. Section 5b now
+# cross-builds with Bootlin's mips32r5el-musl toolchain, whose crt/libc
+# objects are nan2008 by construction (mips32r5 has no legacy-NaN silicon to
+# be compatible with), restricted to mips32r2 codegen with the same
+# gcc-wrapper discipline 5c uses -- so s6 gets exactly the ABI everything else
+# on this printer already had to have, checked the same way.
+mips_abi_gate() {
+    local n=0 f hdr flags want
+    while IFS= read -r f; do
+        # readelf itself is the ELF test, rather than comparing the first four
+        # bytes to \177ELF: that comparison was a command substitution over
+        # arbitrary binary content, and every data file in site-packages that
+        # happens to start with a NUL made bash print "warning: command
+        # substitution: ignored null byte in input" -- eight lines of noise
+        # across a clean build, from the gate that is supposed to be the quiet
+        # one. readelf exits non-zero on anything that is not an ELF, which is
+        # the same question asked of the tool that has to answer it anyway.
+        hdr=$(readelf -h "$f" 2>/dev/null) || continue
+        case "$hdr" in
+            *nan2008*o32*mips32r2*) ;;
+            *) echo "   !! $f is not nan2008/o32/mips32r2" >&2
+               readelf -h "$f" 2>&1 | sed 's/^/      /' >&2; return 1 ;;
+        esac
+        # 0x70001405 or 0x70001407, not "whichever the Type says": that was
+        # true of the Ingenic-glibc objects alone, where EF_MIPS_PIC only
+        # ever showed up on a genuine DYN. s6's musl toolchain bakes
+        # EF_MIPS_PIC into its crt startup objects unconditionally -- no
+        # combination of -static/-no-pie/-fno-PIC removes it, measured -- so
+        # a plain static EXEC from that toolchain carries the bit too and
+        # still reads 0x70001407. Both values already mean the same thing
+        # (nan2008/o32/mips32r2, matched above); which one shows up is a
+        # property of the toolchain, not a sign of anything wrong.
+        flags=$(awk '/Flags:/{print $2}' <<<"$hdr" | tr -d ,)
+        case "$flags" in
+            0x70001405|0x70001407) ;;
+            *) echo "   !! $f has e_flags=$flags, want 0x70001405 or 0x70001407" >&2
+               return 1 ;;
+        esac
+        n=$((n + 1))
+    done < <(find "$@" -type f 2>/dev/null)
+    printf '%s' "$n"
+}
+
 # ------------------------------------------------------- 5b. s6 supervision
 # The process supervisor, cross-compiled here from the sources pinned in
 # versions.env with the musl toolchain pinned beside them -- the same shape as
@@ -377,7 +453,13 @@ S6_BINS="s6-svscan s6-svscanctl s6-supervise s6-svc s6-svstat s6-svwait s6-svok
 # the compiled-in libexecdir, and without it every waiting verb dies with
 # "unable to ftrigr_startf: No such file or directory".
 S6_LIBEXEC="s6-ftrigrd"
-S6_STAMP="$SKALIBS_VERSION $S6_VERSION"
+# MUSL_TOOLCHAIN_FILE is IN the stamp, not just the two source versions: the
+# toolchain that builds s6 determines its ABI as much as the sources do, and
+# work/.s6/.version has no other way to notice that the pin moved from a
+# legacy-NaN toolchain to a nan2008 one. Without this, a checkout that had
+# already built s6 once would read its old e_flags=0x1007 tree as current
+# and never rebuild it -- exactly the failure mode that shipped once.
+S6_STAMP="$SKALIBS_VERSION $S6_VERSION $MUSL_TOOLCHAIN_FILE"
 
 if [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
     if [ ! -x "$S6_TOOLCHAIN_DIR/bin/$S6_HOST-gcc" ]; then
@@ -392,7 +474,7 @@ if [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
         # tar picks the decompressor off the file itself either way.
         tar -xf "$MUSL_TOOLCHAIN_TGZ" -C work/.musl-toolchain
         # Bootlin's archive extracts into a directory named after the
-        # release ("mips32el--musl--stable-2025.08-1"), not the fixed
+        # release ("mips32r5el--musl--stable-2025.08-1"), not the fixed
         # "$S6_HOST-cross" musl.cc used. It is the only thing the archive
         # unpacks at top level, so renaming whatever that turns out to be is
         # what decouples S6_TOOLCHAIN_DIR from a version string that moves on
@@ -405,15 +487,66 @@ if [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
         [ -f "$t" ] || { echo "   !! no s6 sources at '$t' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
     done
     say "s6: cross-compiling skalibs $SKALIBS_VERSION + s6 $S6_VERSION for $MODDIR"
-    rm -rf work/.s6-src work/.s6-sysroot work/.s6-stage "$S6_BUILD"
-    mkdir -p work/.s6-src
+    rm -rf work/.s6-src work/.s6-sysroot work/.s6-stage work/.s6-xw "$S6_BUILD"
+    mkdir -p work/.s6-src work/.s6-xw/bin
     tar -xzf "$SKALIBS_TGZ" -C work/.s6-src
     tar -xzf "$S6_TGZ" -C work/.s6-src
     (
         # A subshell so the cross-compiler's CC/CFLAGS/PATH cannot leak into
         # anything patch.sh does afterwards.
-        export PATH="$PWD/$S6_TOOLCHAIN_DIR/bin:$PATH"
+        set -e
+        TC="$PWD/$S6_TOOLCHAIN_DIR"
+        XW="$PWD/work/.s6-xw"
+        SRC="$PWD/work/.s6-src"
+
+        # ---------------------------------------------------------- wrappers
+        # THE SAME DISCIPLINE 5c USES FOR THE INGENIC TOOLCHAIN, and for the
+        # same reason: passing -EL -mnan=2008 -march=mips32r2 in CFLAGS alone
+        # is not enough, because skalibs' and s6's own ./configure-generated
+        # link lines do not all forward CFLAGS to the link step. Baking the
+        # flags into the gcc driver itself means no build system gets a vote.
+        #
+        # -EL is redundant on a toolchain whose triple already says mipsel --
+        # kept anyway, for the same reason the Ingenic wrapper keeps it on a
+        # toolchain that is genuinely bi-endian: explicit beats "the default
+        # happens to be right", and it costs nothing to write.
+        #
+        # This is Bootlin's mips32r5el toolchain, not mips32el: mips32r5 has
+        # no legacy-NaN silicon to be compatible with, so its musl crt/libc
+        # objects are nan2008 by construction and a plain mips32el-legacy
+        # toolchain (which this repo used until the printer's kernel turned
+        # out to enforce the ABI flag at exec() -- ENOEXEC or a silently
+        # wrong FPU mode, neither of which qemu-mipsel-static's user-mode
+        # emulation reproduces) cannot be made to emit nan2008 output at all:
+        # forcing -mnan=2008 on it fails to LINK, "mixing -mnan=2008 module
+        # with previous -mnan=legacy modules", because its own crt is legacy.
+        # -march=mips32r2 restricts codegen to what the actual silicon
+        # implements; nothing here should assume r5 or r6 instructions exist.
+        for t in gcc g++ cpp; do
+            printf '#!/bin/sh\nexec %s/bin/%s-%s -EL -mnan=2008 -march=mips32r2 "$@"\n' \
+                "$TC" "$S6_HOST" "$t" > "$XW/bin/$S6_HOST-$t"
+            chmod +x "$XW/bin/$S6_HOST-$t"
+        done
+        for t in ar as ld nm objcopy objdump ranlib readelf strip strings size; do
+            ln -sf "$TC/bin/$S6_HOST-$t" "$XW/bin/$S6_HOST-$t"
+        done
+        export PATH="$XW/bin:$PATH"
         export CC="$S6_HOST-gcc"
+
+        # Gate the wrapper before building anything on top of it, exactly as
+        # 5c does -- and with -static, because that is how skalibs and s6
+        # actually link. want is 0x70001405 OR 0x70001407 (mips_abi_gate,
+        # defined above, explains why a static EXEC from this toolchain
+        # legitimately carries EF_MIPS_PIC and reads the DYN value anyway).
+        echo 'int main(void){return 0;}' > "$SRC/abi.c"
+        "$S6_HOST-gcc" -static "$SRC/abi.c" -o "$SRC/abi.out"
+        abi=$("$S6_HOST-readelf" -h "$SRC/abi.out" | awk '/Flags:/{print $2}' | tr -d ,)
+        case "$abi" in
+            0x70001405|0x70001407) ;;
+            *) echo "   !! the s6 toolchain wrapper produces e_flags=$abi, want 0x70001405 or 0x70001407" >&2
+               exit 1 ;;
+        esac
+
         # -D_FILE_OFFSET_BITS=64 is not a size optimisation, it is the
         # difference between a supervisor that works and one that starts
         # cleanly and then cannot readdir() its own scandir (EOVERFLOW: a
@@ -433,7 +566,7 @@ if [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
         # unanswered, configure stops. The answers are the printer's:
         # /dev/urandom exists, posix_spawn does not return early, /proc/self/exe
         # is readable, and select() accepts an infinite timeout.
-        cd "$PWD/work/.s6-src/skalibs-$SKALIBS_VERSION"
+        cd "$SRC/skalibs-$SKALIBS_VERSION"
         ./configure --host="$S6_HOST" --prefix="$SK" \
             --disable-shared --enable-static --enable-static-libc \
             --with-sysdep-devurandom=yes \
@@ -456,7 +589,7 @@ if [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
         # nothing would run: our `run` scripts are plain #!/bin/sh. Turning it
         # off here is what makes "we do not ship execline" true rather than
         # aspirational.
-        cd "$OLDPWD/work/.s6-src/s6-$S6_VERSION"
+        cd "$SRC/s6-$S6_VERSION"
         ./configure --host="$S6_HOST" --prefix="$MODDIR" \
             --with-sysdeps="$SK/lib/skalibs/sysdeps" \
             --with-include="$SK/include" --with-lib="$SK/lib" \
@@ -474,28 +607,28 @@ if [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
         cp -f "work/.s6-stage$MODDIR/libexec/$b" "$S6_BUILD/libexec/$b"
     done
     "$PWD/$S6_TOOLCHAIN_DIR/bin/$S6_HOST-strip" "$S6_BUILD/bin"/* "$S6_BUILD/libexec"/*
-    rm -rf work/.s6-src work/.s6-sysroot work/.s6-stage
+    rm -rf work/.s6-src work/.s6-sysroot work/.s6-stage work/.s6-xw
     echo "$S6_STAMP" > "$S6_BUILD/.version"
 else
     skip "s6: work/.s6 already holds $S6_STAMP"
 fi
 
-# The gates, asked of the built tree rather than of the build. A cross-build
-# that silently produced host binaries, or produced a big-endian or 64-bit
-# object, looks like a clean build here and like a printer that cannot exec
-# its own supervisor there -- the kernel says ENOEXEC and nothing explains
-# why. So: every name we promised exists, is not empty, and is an ELF the
-# printer's kernel will load.
+# The gate, asked of the built tree rather than of the build, and the SAME
+# gate 5c and 5d use -- s6 is no longer exempt from it (see mips_abi_gate's
+# own comment, above, for why it used to be and no longer is). A cross-build
+# that silently produced a host object, or one legacy-NaN object because a
+# flag did not reach one link line, looks like a clean build here and like a
+# printer that cannot exec its own supervisor there -- the kernel says
+# ENOEXEC, or worse, execs it with the wrong FPU mode, and explains neither.
+S6_ELF=$(mips_abi_gate "$S6_BUILD/bin" "$S6_BUILD/libexec") || exit 1
+[ "$S6_ELF" = "$(($(echo $S6_BINS | wc -w) + 1))" ] || {
+    echo "   !! s6: expected $(($(echo $S6_BINS | wc -w) + 1)) gated ELF objects, mips_abi_gate saw $S6_ELF" >&2
+    exit 1; }
 for b in $S6_BINS $S6_LIBEXEC; do
     case " $S6_LIBEXEC " in *" $b "*) f="$S6_BUILD/libexec/$b" ;; *) f="$S6_BUILD/bin/$b" ;; esac
     [ -s "$f" ] || { echo "   !! s6: $b is missing or empty in $S6_BUILD" >&2; exit 1; }
-    hdr=$(readelf -h "$f" 2>/dev/null || true)
-    grep -q 'Class:.*ELF32' <<<"$hdr" && grep -q "Machine:.*MIPS" <<<"$hdr" \
-        && grep -q "Data:.*little endian" <<<"$hdr" \
-        || { echo "   !! s6: $b is not a 32-bit little-endian MIPS ELF" >&2
-             readelf -h "$f" 2>&1 | sed 's/^/      /' >&2; exit 1; }
 done
-say "s6: $(echo $S6_BINS | wc -w) binaries + $S6_LIBEXEC are 32-bit MIPS (LE) -- good"
+say "s6: $S6_ELF ELF objects are nan2008/o32/mips32r2 -- good"
 cp -f "$S6_BUILD/bin"/* "$MOD_PAYLOAD/bin/"
 cp -f "$S6_BUILD/libexec"/* "$MOD_PAYLOAD/libexec/"
 chmod +x "$MOD_PAYLOAD/bin"/s6-* "$MOD_PAYLOAD/libexec"/*
@@ -1285,60 +1418,6 @@ PY_EXT=$(find "$PY_SP" -name '*.so' | wc -l)
          echo "      expected at least 12. A native package fell back to a" >&2
          echo "      pure-python or py3-none-any build; check work/.py-pkg-*.log." >&2
          exit 1; }
-
-# ABI, over every ELF the Ingenic toolchain produced: the interpreter, 56
-# stdlib extension modules, the 12 in site-packages and libsodium in 5d below.
-# The printer's kernel wants nan2008/o32/mips32r2 and says ENOEXEC to anything
-# else, and a cross-build that quietly emitted one host object -- or one
-# legacy-NaN object, because a flag did not reach one link line -- looks like a
-# clean build here.
-#
-# TWO expected words, not one. 0x70001405 is the measured value for an
-# EXECUTABLE; a shared object additionally carries EF_MIPS_PIC (0x2) and so
-# reads 0x70001407. That is correct and unavoidable for a DYN -- klippy's own
-# c_helper.so has it too -- so a gate that pinned one word would fail on every
-# extension module in the tree.
-#
-# A FUNCTION, AND POINTED AT THE PAYLOAD. It used to walk $PY_BUILD/bin and
-# $PY_BUILD/lib -- the build cache. That was the whole tree while the
-# interpreter was the only thing this toolchain produced, and it stopped being
-# so the moment site-packages and libsodium arrived: a .so staged into
-# $MOD_PAYLOAD by a path the gate did not know about ships ungated, and the
-# first machine to notice is a printer. So the rule did not change (it already
-# covers a DYN correctly) -- the REACH did, to the staged payload, which is
-# the only tree that is by definition everything that ships.
-#
-# It is NOT pointed at all of $MOD_PAYLOAD, and that is deliberate rather than
-# lazy: s6 in 5b is built by the musl toolchain and reads e_flags=0x1007
-# (mips1, legacy NaN, PIE) -- correct for it, measured working on the printer,
-# and it has its own gate up there. HelixScreen and the stock rootfs binaries
-# are somebody else's builds again. This gate is about the objects WE compiled
-# with the Ingenic toolchain, and it names them.
-mips_abi_gate() {
-    local n=0 f hdr flags want
-    while IFS= read -r f; do
-        # readelf itself is the ELF test, rather than comparing the first four
-        # bytes to \177ELF: that comparison was a command substitution over
-        # arbitrary binary content, and every data file in site-packages that
-        # happens to start with a NUL made bash print "warning: command
-        # substitution: ignored null byte in input" -- eight lines of noise
-        # across a clean build, from the gate that is supposed to be the quiet
-        # one. readelf exits non-zero on anything that is not an ELF, which is
-        # the same question asked of the tool that has to answer it anyway.
-        hdr=$(readelf -h "$f" 2>/dev/null) || continue
-        case "$hdr" in
-            *nan2008*o32*mips32r2*) ;;
-            *) echo "   !! $f is not nan2008/o32/mips32r2" >&2
-               readelf -h "$f" 2>&1 | sed 's/^/      /' >&2; return 1 ;;
-        esac
-        flags=$(awk '/Flags:/{print $2}' <<<"$hdr" | tr -d ,)
-        want=0x70001405; grep -q '^  Type:.*DYN' <<<"$hdr" && want=0x70001407
-        [ "$flags" = "$want" ] || {
-            echo "   !! $f has e_flags=$flags, want $want" >&2; return 1; }
-        n=$((n + 1))
-    done < <(find "$@" -type f 2>/dev/null)
-    printf '%s' "$n"
-}
 
 # Staged into the SAME bin/ and lib/ as everything else in this prefix root,
 # which is why this is a copy of the contents and not of the directories: s6's
