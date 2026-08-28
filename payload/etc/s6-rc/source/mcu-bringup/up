@@ -1,0 +1,37 @@
+/bin/sh -c "
+# The toolhead boards, out of their bootloaders, before klippy opens the ports.
+# klipper DEPENDS ON THIS, so nothing that starts klipper can skip it --
+# including s6 restarting klippy after a crash, which no script of ours is on.
+#
+# The heater board on /dev/ttyS4 is frequently not answering when klippy first
+# opens the port; klippy then gives up after 90s with 'MCU error during connect'
+# and neither exits nor retries.
+#
+# IT NEVER EXITS NON-ZERO. s6-rc does not start what depends on a failed
+# service, so a bring-up that reported a problem would leave the printer with no
+# klipper at all -- worse than the board it is reporting on.
+MODDIR=/usr/data/anvil
+[ -f \$MODDIR/anvil-env.sh ] && . \$MODDIR/anvil-env.sh
+
+# cmd_mcu is on the base rootfs, version-matched to the firmware; the mod does
+# not ship it. This is the main board (/dev/ttyS2); ff-startup.py does the other
+# three.
+if [ -x /usr/bin/cmd_mcu ]; then
+    cmd_mcu write_firmware /usr/prog/libmcu-bare.bin
+    cmd_mcu bootup
+    # It takes a moment to leave its bootloader, and everything after this talks
+    # to serial ports it owns.
+    sleep 2
+else
+    echo 'mcu-bringup: !! no /usr/bin/cmd_mcu -- the main board is not brought up'
+fi
+
+if [ ! -f \$MODDIR/bin/ff-startup.py ] || [ ! -x \"\$FF_PYTHON\" ]; then
+    echo 'mcu-bringup: !! no ff-startup.py or no interpreter -- the toolhead boards'
+    echo '    are left to klippy, which names the one that did not answer'
+    exit 0
+fi
+\"\$FF_PYTHON\" \$MODDIR/bin/ff-startup.py --only-bringup \
+    || echo \"mcu-bringup: !! returned \$? -- going on to klipper anyway\"
+exit 0
+"

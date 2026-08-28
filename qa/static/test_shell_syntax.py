@@ -41,9 +41,16 @@ pytestmark = pytest.mark.static
 # Everything that must at least parse. bin/ and test/ run under bash on the
 # build image; payload/ runs under the printer's ash but bash parses it too,
 # and a file that does not parse under either is broken beyond dialect.
-SYNTAX_GLOBS = ("bin/*.sh", "payload/*.sh", "payload/init.d/S*",
-                "payload/firmwareExe", "test/integration/printer/*.sh",
-                "qa/replica/actions/*.sh")
+SYNTAX_GLOBS = ("bin/*.sh", "payload/*.sh", "payload/firmwareExe",
+                "payload/bin/klipperDaemon",
+                "payload/etc/s6-rc/source/*/run",
+                "test/integration/printer/*.sh", "qa/replica/actions/*.sh")
+
+# NOT the oneshots' `up`/`down`. Those are execline command lines, and the
+# shell they carry is inside a `/bin/sh -c "..."` argument -- `bash -n` and
+# shellcheck would both parse the wrapper, pass, and check none of the code
+# that actually runs. Extracting the body and checking THAT is a real test and
+# belongs in the replica lane beside the rest of the s6-rc assertions.
 
 # The subset executed by the printer's busybox ash. bin/ and test/ are
 # deliberately absent: they run on the build image, where bash is the shell and
@@ -55,8 +62,15 @@ SYNTAX_GLOBS = ("bin/*.sh", "payload/*.sh", "payload/init.d/S*",
 # hold.sh would fail at container start and read as "the replica is broken on
 # this machine" -- a harness failure wearing a machine failure's clothes, which
 # is the hardest kind to diagnose.
-ASH_GLOBS = ("payload/*.sh", "payload/init.d/S*", "payload/firmwareExe",
-             "qa/replica/actions/*.sh")
+#
+# The s6-rc `run` scripts are here for the same reason and were missed until
+# phase 8 moved them: s6-supervise execs them on the printer, under the
+# printer's ash, and a bashism in one is a service that never starts and says
+# so only in s6's own log. They lived at payload/etc/s6/*/run before the move
+# and no glob covered them there either.
+ASH_GLOBS = ("payload/*.sh", "payload/firmwareExe",
+             "payload/bin/klipperDaemon",
+             "payload/etc/s6-rc/source/*/run", "qa/replica/actions/*.sh")
 
 PY_GLOBS = ("bin/*.py", "payload/*.py", "payload/bin/*.py",
             "payload/klipper/extras/*.py", "test/*.py", "test/ffsim/*.py",

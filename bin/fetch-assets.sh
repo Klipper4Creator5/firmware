@@ -123,8 +123,20 @@ get "https://skarnet.org/software/skalibs/skalibs-$SKALIBS_VERSION.tar.gz" \
     "$SKALIBS_TGZ" "$SKALIBS_SHA256"
 get "https://skarnet.org/software/s6/s6-$S6_VERSION.tar.gz" \
     "$S6_TGZ" "$S6_SHA256"
+# execline and s6-rc, on the same terms: small, always fetched, never vendored.
+# See versions.env for why execline is here at all when our own `run` scripts
+# are plain #!/bin/sh.
+get "https://skarnet.org/software/execline/execline-$EXECLINE_VERSION.tar.gz" \
+    "$EXECLINE_TGZ" "$EXECLINE_SHA256"
+get "https://skarnet.org/software/s6-rc/s6-rc-$S6RC_VERSION.tar.gz" \
+    "$S6RC_TGZ" "$S6RC_SHA256"
+# The stamp compared here MUST be the one bin/patch.sh writes, character for
+# character. It was "$SKALIBS_VERSION $S6_VERSION" while patch.sh already
+# stamped the toolchain file too, so this test never matched and every build
+# pulled the ~100MB toolchain it was written to skip. The stamp is a single
+# string in one place now; if it moves, it moves in both files at once.
 if [ "$ALL" = 1 ] \
-   || [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$SKALIBS_VERSION $S6_VERSION" ]; then
+   || [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
     # Bootlin's own release layout: one directory per target architecture,
     # one versioned tarball per release inside it. See versions.env for why
     # this is Bootlin and not musl.cc.

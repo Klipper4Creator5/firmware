@@ -49,7 +49,7 @@
 # is how this list got to ten in the first place.
 #
 # Sourcing twice is safe: each directory is added only if it is not already
-# there, so firmwareExe sourcing this and then running init.d/S62moonraker --
+# there, so firmwareExe sourcing this and then s6 starting moonraker --
 # which sources it again with the first copy already inherited -- does not grow
 # the variable on every boot.
 
@@ -73,7 +73,7 @@
 # NOT /usr/prog/mjpg-streamer: that one is a plugin directory rather than a
 # library package, it carries its own libjpeg.so.9, and putting it in front of
 # every python process invites a version conflict for the sake of one service.
-# init.d/S65camera prepends it for itself.
+# the camera's own s6-rc run script prepends it for itself.
 #
 # libsodium is NOT here any more. It existed only for 3.8's libnacl, in
 # FlashForge's site-packages, which asks the loader for libsodium.so.18 --
@@ -115,8 +115,8 @@ export LD_LIBRARY_PATH
 # callers need -- tornado, lmdb, cffi, greenlet, libnacl -- is cross-built
 # beside it in $MODDIR/lib/python3.13/site-packages; and Moonraker has been
 # measured SERVING on that interpreter THROUGH THE REAL BOOT PATH on the
-# replica (test/integration/printer/case-moonraker313-s6.sh): S40s6's scandir,
-# S62moonraker, s6-svwait -U gating on :7125 actually listening rather than on
+# replica (test/integration/printer/case-moonraker313-s6.sh): the scandir, the
+# moonraker service, s6-svwait -U gating on :7125 actually listening rather than on
 # the process forking, a kill -9 respawning onto 3.13 again, stop staying
 # stopped, and a churn loop when site-packages is moved away -- not just an
 # interpreter that imports cleanly.
@@ -132,7 +132,7 @@ export LD_LIBRARY_PATH
 # WHO THIS DOES NOT MOVE. Klipper is not on this list. It is started by
 # FlashForge's own /usr/prog/klipper/start.sh, hardcoded to
 # /usr/prog/Python-3.8.2/bin/python3, independently of FF_PYTHON -- see
-# init.d/S70klipper's own header. klippy's numpy gap
+# the klipper service's own run script. klippy's numpy gap
 # (extras/stepper_resonance_tester.py) is therefore not this switch's problem;
 # it stays open as a separate, smaller item.
 #
@@ -168,10 +168,11 @@ esac
 #     s6-svc: fatal: unable to exec s6-svlisten: No such file or directory
 #
 # It is here rather than in one init script because both halves need it and
-# they inherit it from different places: S40s6 sources this file before
+# they inherit it from different places: firmwareExe sources this file before
 # starting the SCANNER, which is the process that has to find s6-supervise,
-# and every service script sources it before running s6-svc, which is the
-# process that has to find s6-svlisten. Prepended, not appended: these are
+# and a shell running s6-svc by hand is the process that has to find
+# s6-svlisten. firmwareExe repeats the prepend itself, because this file is
+# allowed to be missing. Prepended, not appended: these are
 # ours and nothing on the base rootfs answers to those names, but a printer
 # that ever grows a second s6 should get the one we shipped.
 #

@@ -29,17 +29,12 @@ rm -rf "$MOD_PAYLOAD" "$SOFTWARE_DIR/mod"   # $SOFTWARE_DIR/mod: leftover from a
 # etc/ is the same idea one directory further on: a --prefix root keeps the
 # mod's own configuration in etc/, and etc/s6/ is the s6 SCANDIR -- the
 # directory s6-svscan watches, one subdirectory per supervised service. It is
-# created here rather than at runtime by payload/init.d/S40s6, and the reason
-# is the install manifest: the manifest is read off this staged tree, so a
-# directory that only ever appeared on the printer would be a path the mod
-# creates and no update can ever account for. It was empty when S40s6 first
-# landed and is not any more -- the service directories themselves are copied
-# in further down, next to init.d -- but the mkdir stays, because a payload
-# that happens to ship no services still needs somewhere for the scanner to
-# look. S40s6 still does its own
-# mkdir -p on top of this -- see the comment there -- because the manifest
-# pass runs BEFORE the new tarball is extracted, and because hand-made
-# installs exist.
+# created here rather than at runtime, and the reason is the install manifest:
+# the manifest is read off this staged tree, so a directory that only ever
+# appeared on the printer would be a path the mod creates and no update can
+# ever account for. It ships EMPTY -- s6-rc-init lays the live servicedirs down
+# at boot from the compiled database -- and the mkdir stays anyway, because the
+# scanner still needs somewhere to look.
 #
 # lib/ completes the prefix root and is CPython's, in the same way libexec/ is
 # s6's: `--prefix=/usr/data/anvil` puts the interpreter in bin/ and its whole
@@ -50,7 +45,8 @@ rm -rf "$MOD_PAYLOAD" "$SOFTWARE_DIR/mod"   # $SOFTWARE_DIR/mod: leftover from a
 # still names the directory it would have used.
 mkdir -p "$MOD_PAYLOAD/bin" "$MOD_PAYLOAD/lib" "$MOD_PAYLOAD/libexec" \
          "$MOD_PAYLOAD/nginx" \
-         "$MOD_PAYLOAD/www" "$MOD_PAYLOAD/config" "$MOD_PAYLOAD/etc/s6"
+         "$MOD_PAYLOAD/www" "$MOD_PAYLOAD/config" "$MOD_PAYLOAD/etc/s6" \
+         "$MOD_PAYLOAD/etc/s6-rc"
 
 # ---------------------------------------------------------------- 1. Klipper
 # BUILD_KLIPPER=fork (the default) ships the creator5 Klipper tree; =stock
@@ -409,12 +405,6 @@ mips_abi_gate() {
 # c_helper.so above, and for the same reason: nothing binary is vendored in
 # this repo, so anything the printer executes is built from a hash we pinned.
 #
-# NOTHING STARTS s6 YET. This step only puts it in the payload. The init
-# scripts still hand-roll their supervision in payload/anvil-service.sh and
-# will keep doing so until the scanner lands (docs/notes/80-s6-migration.md,
-# phase 3). Shipping it first is what makes that a one-file change instead of
-# a build change and a boot change at once.
-#
 # WHY NOT IN A CONTAINER OF ITS OWN. tools/supervisor/Dockerfile builds this
 # in a debian:bookworm of its own -- that was the measurement harness, and it
 # also had to build runit and execline for the comparison. The real build
@@ -446,20 +436,36 @@ S6_TOOLCHAIN_DIR=work/.musl-toolchain/$S6_HOST-cross
 #                     and s6-svwait are unusable without them
 #   mkfifodir/cleanfifodir  create and tidy the fifodirs those listen on
 #   notifyoncheck     readiness for a service that cannot notify for itself
+#   rc/rc-init/rc-db  the boot: compile-time graph, one transition, one query
+#   ipcserver-*/sudod/fdholder-daemon/ipcclient  NOT ours and not optional --
+#                     s6-rc-compile GENERATES two servicedirs that exec these
+#                     (s6rc-oneshot-runner and s6rc-fdholder), and every
+#                     oneshot's `up` runs through the first. Read off the
+#                     generated servicedirs/*/run of a real compile, in the
+#                     replica, rather than guessed from the manual.
 S6_BINS="s6-svscan s6-svscanctl s6-supervise s6-svc s6-svstat s6-svwait s6-svok
          s6-svlisten s6-svlisten1 s6-ftrig-listen1 s6-mkfifodir s6-cleanfifodir
-         s6-notifyoncheck"
-# Not in bin/ and not optional: s6-svlisten spawns this by absolute path out of
-# the compiled-in libexecdir, and without it every waiting verb dies with
-# "unable to ftrigr_startf: No such file or directory".
-S6_LIBEXEC="s6-ftrigrd"
-# MUSL_TOOLCHAIN_FILE is IN the stamp, not just the two source versions: the
-# toolchain that builds s6 determines its ABI as much as the sources do, and
-# work/.s6/.version has no other way to notice that the pin moved from a
-# legacy-NaN toolchain to a nan2008 one. Without this, a checkout that had
-# already built s6 once would read its old e_flags=0x1007 tree as current
-# and never rebuild it -- exactly the failure mode that shipped once.
-S6_STAMP="$SKALIBS_VERSION $S6_VERSION $MUSL_TOOLCHAIN_FILE"
+         s6-notifyoncheck
+         s6-ipcserver-socketbinder s6-ipcserverd s6-ipcserver-access s6-sudod
+         s6-fdholder-daemon s6-ipcclient
+         s6-rc s6-rc-init s6-rc-db"
+
+# Seven of execline's 53. Not a subset we chose for taste: it is exactly what
+# the two generated servicedirs exec, and nothing else. s6-rc-compile itself is
+# NOT shipped -- the database is compiled here, on the build host (see 5b-2).
+EXECLINE_BINS="execlineb fdmove pipeline if forstdin exit redirfd"
+# Not in bin/ and not optional, all three, and each for the same reason: they
+# are spawned by ABSOLUTE PATH out of the compiled-in libexecdir, so PATH
+# cannot rescue them. Without s6-ftrigrd every waiting verb dies with "unable
+# to ftrigr_startf: No such file or directory"; without the two s6-rc helpers
+# the generated servicedirs the oneshot runner and the fdholder live in fail
+# the same way, at the moment the first oneshot runs.
+S6_LIBEXEC="s6-ftrigrd s6-rc-oneshot-run s6-rc-fdholder-filler"
+# S6_STAMP -- the cache key -- is defined in bin/common.sh, because
+# fetch-assets.sh compares against the same string to decide whether the
+# toolchain download is worth doing. It was defined HERE and duplicated
+# (differently) there, so the two never agreed. See common.sh for what is in
+# it and why.
 
 if [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
     if [ ! -x "$S6_TOOLCHAIN_DIR/bin/$S6_HOST-gcc" ]; then
@@ -483,14 +489,17 @@ if [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
         [ -d "$1" ] || { echo "   !! musl toolchain archive unpacked no directory" >&2; exit 1; }
         mv "$1" "$S6_TOOLCHAIN_DIR"
     fi
-    for t in "${SKALIBS_TGZ:-}" "${S6_TGZ:-}"; do
+    for t in "${SKALIBS_TGZ:-}" "${EXECLINE_TGZ:-}" "${S6_TGZ:-}" "${S6RC_TGZ:-}"; do
         [ -f "$t" ] || { echo "   !! no s6 sources at '$t' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
     done
-    say "s6: cross-compiling skalibs $SKALIBS_VERSION + s6 $S6_VERSION for $MODDIR"
-    rm -rf work/.s6-src work/.s6-sysroot work/.s6-stage work/.s6-xw "$S6_BUILD"
+    say "s6: cross-compiling skalibs $SKALIBS_VERSION + execline $EXECLINE_VERSION + s6 $S6_VERSION + s6-rc $S6RC_VERSION for $MODDIR"
+    rm -rf work/.s6-src work/.s6-sysroot work/.s6-stage work/.s6-xw \
+           work/.s6-native "$S6_BUILD"
     mkdir -p work/.s6-src work/.s6-xw/bin
     tar -xzf "$SKALIBS_TGZ" -C work/.s6-src
+    tar -xzf "$EXECLINE_TGZ" -C work/.s6-src
     tar -xzf "$S6_TGZ" -C work/.s6-src
+    tar -xzf "$S6RC_TGZ" -C work/.s6-src
     (
         # A subshell so the cross-compiler's CC/CFLAGS/PATH cannot leak into
         # anything patch.sh does afterwards.
@@ -576,31 +585,56 @@ if [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
         make -j"$JOBS" >/dev/null
         make install >/dev/null
 
+        # execline. It was --disable-execline'd out of the s6 build until
+        # phase 8, on the true grounds that our own `run` scripts are plain
+        # #!/bin/sh -- but s6-rc GENERATES servicedirs whose run scripts are
+        # execline, so the choice is no longer ours to make. It installs to
+        # $MODDIR like s6 (its --shebangdir defaults to $bindir and is baked
+        # into every #! line s6-rc-compile later writes) and stages into the
+        # same DESTDIR, from which only EXECLINE_BINS is taken.
+        cd "$SRC/execline-$EXECLINE_VERSION"
+        ./configure --host="$S6_HOST" --prefix="$MODDIR" \
+            --with-sysdeps="$SK/lib/skalibs/sysdeps" \
+            --with-include="$SK/include" --with-lib="$SK/lib" \
+            --disable-shared --enable-static --enable-static-libc >/dev/null
+        make -j"$JOBS" >/dev/null
+        make install DESTDIR="$STAGE" >/dev/null
+
         # --prefix is $MODDIR and NOT the staging directory, because s6 bakes
         # the prefix into the binaries: this is the path they will look for
         # s6-ftrigrd under at runtime on the printer. DESTDIR is how the tree
         # lands somewhere we can read it here without needing /usr/data/anvil to
         # exist on the build machine.
         #
-        # --disable-execline is not an optimisation either. s6 links against
-        # execline by DEFAULT -- src/libs6 and the ftrig tools #include
-        # <execline/execline.h> and the build simply stops without it -- and
-        # execline is 53 more binaries and 2.1MB we would have to ship and
-        # nothing would run: our `run` scripts are plain #!/bin/sh. Turning it
-        # off here is what makes "we do not ship execline" true rather than
-        # aspirational.
+        # s6 needs execline's headers and .a to link now that it is no longer
+        # --disable-execline'd, and they are inside the DESTDIR tree at the
+        # prefix -- $STAGE$MODDIR, not $STAGE.
         cd "$SRC/s6-$S6_VERSION"
         ./configure --host="$S6_HOST" --prefix="$MODDIR" \
             --with-sysdeps="$SK/lib/skalibs/sysdeps" \
             --with-include="$SK/include" --with-lib="$SK/lib" \
-            --disable-execline \
+            --with-include="$STAGE$MODDIR/include" \
+            --with-lib="$STAGE$MODDIR/lib" \
+            --disable-shared --enable-static --enable-static-libc >/dev/null
+        make -j"$JOBS" >/dev/null
+        make install DESTDIR="$STAGE" >/dev/null
+
+        # s6-rc, last: it links against all three.
+        cd "$SRC/s6-rc-$S6RC_VERSION"
+        ./configure --host="$S6_HOST" --prefix="$MODDIR" \
+            --with-sysdeps="$SK/lib/skalibs/sysdeps" \
+            --with-include="$SK/include" --with-lib="$SK/lib" \
+            --with-include="$STAGE$MODDIR/include" \
+            --with-lib="$STAGE$MODDIR/lib" \
+            --bootdb="$MODDIR/etc/s6-rc/compiled/current" \
+            --livedir=/run/s6-rc \
             --disable-shared --enable-static --enable-static-libc >/dev/null
         make -j"$JOBS" >/dev/null
         make install DESTDIR="$STAGE" >/dev/null
     )
     # Take only what we ship, out of the DESTDIR tree at its real prefix.
     mkdir -p "$S6_BUILD/bin" "$S6_BUILD/libexec"
-    for b in $S6_BINS; do
+    for b in $S6_BINS $EXECLINE_BINS; do
         cp -f "work/.s6-stage$MODDIR/bin/$b" "$S6_BUILD/bin/$b"
     done
     for b in $S6_LIBEXEC; do
@@ -620,20 +654,129 @@ fi
 # flag did not reach one link line, looks like a clean build here and like a
 # printer that cannot exec its own supervisor there -- the kernel says
 # ENOEXEC, or worse, execs it with the wrong FPU mode, and explains neither.
+S6_WANT=$(($(echo $S6_BINS $EXECLINE_BINS $S6_LIBEXEC | wc -w)))
 S6_ELF=$(mips_abi_gate "$S6_BUILD/bin" "$S6_BUILD/libexec") || exit 1
-[ "$S6_ELF" = "$(($(echo $S6_BINS | wc -w) + 1))" ] || {
-    echo "   !! s6: expected $(($(echo $S6_BINS | wc -w) + 1)) gated ELF objects, mips_abi_gate saw $S6_ELF" >&2
+[ "$S6_ELF" = "$S6_WANT" ] || {
+    echo "   !! s6: expected $S6_WANT gated ELF objects, mips_abi_gate saw $S6_ELF" >&2
     exit 1; }
-for b in $S6_BINS $S6_LIBEXEC; do
+for b in $S6_BINS $EXECLINE_BINS $S6_LIBEXEC; do
     case " $S6_LIBEXEC " in *" $b "*) f="$S6_BUILD/libexec/$b" ;; *) f="$S6_BUILD/bin/$b" ;; esac
     [ -s "$f" ] || { echo "   !! s6: $b is missing or empty in $S6_BUILD" >&2; exit 1; }
 done
 say "s6: $S6_ELF ELF objects are nan2008/o32/mips32r2 -- good"
 cp -f "$S6_BUILD/bin"/* "$MOD_PAYLOAD/bin/"
 cp -f "$S6_BUILD/libexec"/* "$MOD_PAYLOAD/libexec/"
-chmod +x "$MOD_PAYLOAD/bin"/s6-* "$MOD_PAYLOAD/libexec"/*
+# NOT s6-* any more. execlineb, fdmove, pipeline, if, forstdin, exit and
+# redirfd are in bin/ too now, and a glob that misses them ships seven files
+# the scanner cannot exec -- which surfaces as the first oneshot failing and
+# nothing else, in s6's own log.
+for b in $S6_BINS $EXECLINE_BINS; do chmod +x "$MOD_PAYLOAD/bin/$b"; done
+chmod +x "$MOD_PAYLOAD/libexec"/*
 du -sh "$S6_BUILD/bin"     | awk '{print "   "$1"\tbin/"}'
 du -sh "$S6_BUILD/libexec" | awk '{print "   "$1"\tlibexec/"}'
+
+# --------------------------------------------- 5b-2. the s6-rc database
+# The boot order, compiled. payload/etc/s6-rc/source/ holds the definition
+# directories (one per service, plus the ok-all bundle) and this turns them
+# into the binary database s6-rc-init reads at boot.
+#
+# COMPILED HERE, ON THE BUILD HOST, NOT ON THE PRINTER. That needs a
+# s6-rc-compile that runs on x86, which means a second, native build of the
+# same four tarballs -- which is why this step exists at all and is not two
+# lines. The alternative was shipping the target s6-rc-compile (131KB) and
+# compiling at install time, and it was rejected for the reason phase 6 of
+# docs/notes/80-s6-migration.md states as "do the gate first, not the
+# installer": a database compiled on the printer can fail on a printer in a
+# way CI never sees, and the ABI gate above cannot look at a database.
+#
+# THAT THIS WORKS AT ALL WAS MEASURED, not reasoned from the manual. On
+# 2026-08-28, in the replica: the same source tree compiled by the native
+# s6-rc-compile and by the target one under qemu produced byte-identical
+# db, n and resolve.cdb, and `diff -r` found no difference in the generated
+# servicedirs. The database files are host-neutral by construction (every
+# integer goes through uint32_pack_big) and the servicedirs are neutral
+# BECAUSE both builds are configured --prefix=$MODDIR -- the #! line
+# s6-rc-compile writes into the oneshot runner comes from the execline the
+# COMPILER was linked against, not from the one we ship. Configure the native
+# stack with a different prefix and every oneshot on the printer dies with
+# ENOENT while every longrun keeps working.
+S6RC_SRC="payload/etc/s6-rc/source"
+S6RC_NATIVE="$PWD/work/.s6-native"
+[ -d "$S6RC_SRC" ] || { echo "   !! no s6-rc source tree at $S6RC_SRC" >&2; exit 1; }
+
+if [ ! -x "$S6RC_NATIVE/bin/s6-rc-compile" ] \
+   || [ "$(cat "$S6RC_NATIVE/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
+    say "s6-rc: building a native compiler ($SKALIBS_VERSION/$EXECLINE_VERSION/$S6_VERSION/$S6RC_VERSION)"
+    rm -rf work/.s6-native work/.s6-native-src
+    mkdir -p work/.s6-native-src
+    for t in "$SKALIBS_TGZ" "$EXECLINE_TGZ" "$S6_TGZ" "$S6RC_TGZ"; do
+        tar -xzf "$t" -C work/.s6-native-src
+    done
+    (
+        # A subshell for the same reason the cross build has one: nothing
+        # about this compiler's environment may leak into the rest of the
+        # build. Note the ABSENCE of --host: this one runs here.
+        set -e
+        NSRC="$PWD/work/.s6-native-src"
+        ND="$PWD/work/.s6-native-stage"
+        rm -rf "$ND"
+        export CFLAGS="-Os"
+        JOBS=$(nproc 2>/dev/null || echo 4)
+        for pkg in "skalibs-$SKALIBS_VERSION" "execline-$EXECLINE_VERSION" \
+                   "s6-$S6_VERSION" "s6-rc-$S6RC_VERSION"; do
+            cd "$NSRC/$pkg"
+            if [ "$pkg" = "skalibs-$SKALIBS_VERSION" ]; then
+                # No --with-sysdep answers here: configure can compile and RUN
+                # its probes, because the target is this machine.
+                ./configure --prefix="$MODDIR" \
+                    --disable-shared --enable-static >/dev/null
+            else
+                ./configure --prefix="$MODDIR" \
+                    --with-sysdeps="$ND$MODDIR/lib/skalibs/sysdeps" \
+                    --with-include="$ND$MODDIR/include" \
+                    --with-lib="$ND$MODDIR/lib" \
+                    --disable-shared --enable-static >/dev/null
+            fi
+            make -j"$JOBS" >/dev/null
+            make install DESTDIR="$ND" >/dev/null
+        done
+    )
+    mkdir -p "$S6RC_NATIVE/bin"
+    cp -f "work/.s6-native-stage$MODDIR/bin/s6-rc-compile" "$S6RC_NATIVE/bin/"
+    rm -rf work/.s6-native-src work/.s6-native-stage
+    echo "$S6_STAMP" > "$S6RC_NATIVE/.version"
+else
+    skip "s6-rc: native compiler already built for $S6_STAMP"
+fi
+
+# The database goes to etc/s6-rc/compiled/<stamp>, with `current` a symlink to
+# it -- skarnet's own advice, so the boot command never changes when the
+# database does. Not /etc/s6-rc/, which is s6-rc-init's default and is inside
+# the read-only squashfs.
+S6RC_DB_NAME="db-$MOD_VER"
+rm -rf "$MOD_PAYLOAD/etc/s6-rc/compiled"
+mkdir -p "$MOD_PAYLOAD/etc/s6-rc/compiled"
+"$S6RC_NATIVE/bin/s6-rc-compile" \
+    "$MOD_PAYLOAD/etc/s6-rc/compiled/$S6RC_DB_NAME" "$S6RC_SRC" || {
+    echo "   !! s6-rc-compile refused $S6RC_SRC" >&2; exit 1; }
+ln -sfn "$S6RC_DB_NAME" "$MOD_PAYLOAD/etc/s6-rc/compiled/current"
+
+# The shebang the compiler baked in is the one assertion that catches a native
+# stack built with the wrong prefix, and it is worth making here rather than
+# discovering on a printer: this file is generated, so it is the only place
+# the build can see what the database will ask the printer to exec.
+S6RC_RUNNER="$MOD_PAYLOAD/etc/s6-rc/compiled/$S6RC_DB_NAME/servicedirs/s6rc-oneshot-runner/run"
+[ -f "$S6RC_RUNNER" ] || {
+    echo "   !! s6-rc-compile produced no oneshot runner -- has the source tree no oneshots?" >&2
+    exit 1; }
+S6RC_SHEBANG=$(head -1 "$S6RC_RUNNER")
+case "$S6RC_SHEBANG" in
+    "#!$MODDIR/bin/execlineb"*) ;;
+    *) echo "   !! the s6-rc database asks for '$S6RC_SHEBANG', not $MODDIR/bin/execlineb --" >&2
+       echo "      the native stack was configured with the wrong --prefix" >&2
+       exit 1 ;;
+esac
+say "s6-rc: database $S6RC_DB_NAME compiled -- $(ls "$S6RC_SRC" | wc -l) definitions"
 
 # -------------------------------------------------- 5c. CPython 3.13 (shipped)
 # A second Python for the printer, cross-compiled here from the sources pinned
@@ -650,13 +793,12 @@ du -sh "$S6_BUILD/libexec" | awk '{print "   "$1"\tlibexec/"}'
 # # libnacl -- is cross-built into $MODDIR/lib/python3.13/site-packages by    #
 # # step 4 below, and Moonraker has been measured SERVING on this            #
 # # interpreter through the real boot path on the replica                    #
-# # (test/integration/printer/case-moonraker313-s6.sh): S40s6's scandir,     #
-# # S62moonraker, readiness gating on :7125 actually listening, a kill -9    #
-# # respawn, and a stop that stays stopped.                                  #
+# # (test/integration/printer/case-moonraker313-s6.sh): the scandir,        #
+# # readiness gating on :7125 actually listening, a kill -9 respawn, and a   #
+# # stop that stays stopped.                                                 #
 # #                                                                          #
 # # klippy is NOT among FF_PYTHON's callers and does not run on this         #
-# # interpreter -- it is started separately, by FlashForge's own             #
-# # /usr/prog/klipper/start.sh, hardcoded to 3.8.2 (see init.d/S70klipper).  #
+# # interpreter -- it is the `klipper` s6-rc service, on FlashForge's 3.8.2. #
 # # klippy's numpy gap is therefore a separate, smaller item, not a          #
 # # precondition of this switch.                                            #
 # ############################################################################
@@ -1613,34 +1755,28 @@ say "firmwareExe: installing wrapper (replaces the stock binary)"
 cp -f payload/firmwareExe "$SOFTWARE_DIR/firmwareExe"
 chmod +x "$SOFTWARE_DIR/firmwareExe"
 
-# ----------------------------------------------------- 10. mod service dir
-mkdir -p "$MOD_PAYLOAD/init.d"
+# ------------------------------------------------------- 10. mod scripts
 # The shared environment. Sourced by run-append.sh, firmwareExe, start.sh and
-# every init.d script -- one library path and one interpreter for the whole
+# every s6-rc run script -- one library path and one interpreter for the whole
 # mod, because carrying a private copy in each of them is how the installer's
 # check and the boot script came to disagree. Not chmod +x: it is sourced.
 cp -f payload/anvil-env.sh "$MOD_PAYLOAD/anvil-env.sh"
-# The shared service shape. Sourced by every init.d script for svc_say,
-# svc_start_daemon, svc_stop_daemon and the start|stop|restart|status block --
-# one answer to "is it alive?" and one busybox correction for
-# start-stop-daemon, instead of a different one per script. Every converted
-# script exits at once if this file is missing, so leaving it out of the
-# payload is a printer with no services at all. Not chmod +x: it is sourced.
-cp -f payload/anvil-service.sh "$MOD_PAYLOAD/anvil-service.sh"
 [ -d payload/bin ] && cp -f payload/bin/* "$MOD_PAYLOAD/bin/" && chmod +x "$MOD_PAYLOAD/bin"/*
-cp -f payload/init.d/S* "$MOD_PAYLOAD/init.d/"
-chmod +x "$MOD_PAYLOAD/init.d"/S*
-# The s6 service directories: one per supervised service, each holding a `run`
-# script and whatever s6 control files it needs beside it (`down` to start in
-# the down state, `notification-fd` to say which descriptor readiness arrives
-# on). cp -a rather than cp -f because those control files are not scripts and
-# a plain glob of *.sh would miss them -- and because a `run` that arrives
-# without its executable bit is a service s6 can never start, which it reports
-# only in its own log. The chmod is belt and braces for exactly that.
-if [ -d payload/etc/s6 ]; then
-    cp -a payload/etc/s6/. "$MOD_PAYLOAD/etc/s6/"
-    chmod +x "$MOD_PAYLOAD"/etc/s6/*/run 2>/dev/null || true
-fi
+# THE SCANDIR SHIPS EMPTY, and that is the phase 8 change in one line.
+#
+# It used to be populated here: payload/etc/s6/{nginx,moonraker,camera} were
+# copied in, each with a `run`, a `down` and sometimes a `notification-fd`, and
+# the S* scripts drove them with s6-svc. Those directories have moved to
+# payload/etc/s6-rc/source/, where they are DEFINITIONS rather than live
+# service directories, and 5b-2 compiles them into the database. s6-rc-init
+# lays the live copies down itself, at boot, into this directory.
+#
+# Anything left here is now actively harmful rather than merely stale:
+# s6-rc-init creates one symlink per service in the scandir it is given and
+# fails outright -- "unable to supervise service directories: File exists" --
+# if the name is taken. That is why payload/run-append.sh sweeps the scandir on
+# upgrade, and why this block does not put anything back.
+[ -d "$MOD_PAYLOAD/etc/s6" ] || mkdir -p "$MOD_PAYLOAD/etc/s6"
 sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
     -e "s/^MOD_CAM=.*/MOD_CAM=${MOD_CAM:-1}/" \
     -e "s/^MOD_UI=.*/MOD_UI=${MOD_UI:-1}/" \

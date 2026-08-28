@@ -1,90 +1,40 @@
 #!/bin/sh
 # /usr/prog/klipper/start.sh
 #
-# Kept as close to stock as possible. The web stack is NOT started here even
-# though stock has the (commented-out) lines for it -- that is the job of
-# /usr/data/anvil/init.d/S60nginx and /usr/data/anvil/init.d/S62moonraker, so
-# there is exactly one place that starts each of them and one place to restart
-# them from over ssh. They were a single S60web until the split; nginx and
-# moonraker fail independently and are now stopped and started independently.
+# Klippy is an s6-rc longrun, so this asks for the service and the graph brings
+# the MCU bring-up along. It is kept rather than deleted because it is a path
+# other things take -- FlashForge's own tooling knows this filename, and it is
+# in every set of notes anybody has written about this printer.
 #
-# Three changes from stock:
-#   * klipper_pri.sh is actually invoked. FlashForge ships that script but
-#     never calls it, so klippy runs at normal priority.
-#   * ff_mcu_bringup.py hands the heat, eboard and level boards over from
-#     their bootloaders. Stock never needed it here because firmwareExe did
-#     all three itself; replacing firmwareExe left two of them stranded, and
-#     the third was covered by checkEboard.
-#   * checkEboard is no longer called. It is one function, hard wired to
-#     /dev/ttyS5, and an older build of the routine ff_mcu_bringup.py already
-#     reimplements -- one that treats ANY byte from that port as a bootloader
-#     banner and so sends 'A' at an eboard already running Klipper. The
-#     binary is still on the firmware partition; nothing runs it.
-#   * the /tmp/uds idempotence guard below, so S70klipper's retry loop cannot
-#     start a second klippy against the same MCU.
-
-cmd_mcu write_firmware /usr/prog/libmcu-bare.bin
-cmd_mcu bootup
-sleep 2
-
-# PATH, LD_LIBRARY_PATH and FF_PYTHON, from the one file that defines them.
-# This script is on the firmware partition and the env file is on the data
-# partition, which is the right way round: the list describes /usr/prog and
-# the mod owns it. See anvil-env.sh.
+# There is deliberately no direct launch left here. One that still ran
+# klipperDaemon would be a second way to start klippy: unsupervised, invisible
+# to s6-rc, and fighting the supervised copy for /dev/ttyS4.
+#
+# bin/patch.sh stages this as a software component and FlashForge's own run.sh
+# copies it onto /usr/prog/klipper, which is why it lives on the firmware
+# partition and why a stock flash replaces it.
 MODDIR=/usr/data/anvil
+
+# This script is on the firmware partition and the env file is on the data
+# partition, which is the right way round: the list describes /usr/prog and the
+# mod owns it.
 if [ -f $MODDIR/anvil-env.sh ]; then
     . $MODDIR/anvil-env.sh
 else
     echo "start.sh: !! no $MODDIR/anvil-env.sh -- klippy will not find its libraries"
 fi
 
-# Idempotence guard: init.d/S70klipper runs this script, and so does its own
-# retry loop. Running it twice would start a second klippy against the same
-# MCU.
+# /tmp/uds is klippy's API socket. The transition below would also be a no-op
+# on a running klippy, but it would not say so.
 if [ -S /tmp/uds ]; then
     echo "start.sh: klippy already running, nothing to do"
     exit 0
 fi
 
-# MCU bring-up. Each of these boards answers Klipper only after its
-# bootloader is told to start the application:
-#
-#   /dev/ttyS2  mcu           cmd_mcu bootup, above
-#   /dev/ttyS4  eheaterboard  ff_mcu_bringup.py   <- was nobody's job
-#   /dev/ttyS5  eboard        ff_mcu_bringup.py   <- was checkEboard
-#   /dev/ttyS7  levelboard    ff_mcu_bringup.py   <- was nobody's job
-#
-# This runs on every klippy start, including the restarts S70klipper issues
-# when a board missed its window.
-#
-# $FF_PYTHON is the absolute path anvil-env.sh sets, not a `python3` lookup:
-# this is the one step Klipper cannot start without. It used to fall back to a
-# bare `python3` when the absolute path was missing, which never helped -- the
-# base rootfs ships no other interpreter, so that either resolved to the same
-# binary or to something untested. LD_LIBRARY_PATH still matters: this
-# interpreter does not start without it, which is exactly how moonrakerDaemon
-# used to fail.
-#
-# Test -f, not -x. The script is handed to the interpreter by path, so its
-# execute bit is irrelevant -- and it is not always set: the payload carries
-# mode 644 in git, and the +x only happens if the file arrived through
-# patch.sh or run-append.sh. A hand-copied file is perfectly runnable and
-# used to be skipped with a "missing" message while sitting right there.
-#
-# FF_SKIP_MCU_BRINGUP=1 says the caller has already done it. bin/ff-startup.py
-# sets that: it owns the boot sequence, so it does the bring-up itself, in
-# process, and then runs this script to launch klippy. Nothing else sets it,
-# so a start.sh run by hand over ssh -- or by S70klipper's fallback -- still
-# does the full job.
-if [ "${FF_SKIP_MCU_BRINGUP:-0}" = 1 ]; then
-    echo "start.sh: MCU bring-up already done by the caller"
-elif [ -f /usr/data/anvil/bin/ff_mcu_bringup.py ]; then
-    "$FF_PYTHON" /usr/data/anvil/bin/ff_mcu_bringup.py \
-        || echo "start.sh: MCU bring-up reported a problem ($?)"
-else
-    echo "start.sh: ff_mcu_bringup.py missing -- the toolhead boards are not brought up"
+if [ ! -x $MODDIR/bin/s6-rc ]; then
+    echo "start.sh: !! no $MODDIR/bin/s6-rc -- the mod payload is not installed"
+    echo "start.sh: !! nothing here can start Klipper; flash the stock package to get it back"
+    exit 1
 fi
-/usr/prog/klipper/klipperDaemon start
-
-# Real-time priority for klippy (stock ships this but never runs it).
-sh /usr/prog/klipper/klipper_pri.sh >/dev/null 2>&1 &
+# The transition pulls mcu-bringup in first, because klipper depends on it.
+exec $MODDIR/bin/s6-rc -u change klipper

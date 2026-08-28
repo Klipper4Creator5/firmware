@@ -370,8 +370,30 @@ def stopped(box, booted):
         "nothing was running to stop, so the assertions that depend on this "
         "would pass vacuously: %s" % before.text)
     box.svc("S40s6", MODDIR + "/init.d").stop()
-    box.sh("sleep 2")
-    return box
+
+    # A WAIT, NOT A SLEEP, and the distinction is the whole bug this line
+    # replaces. `s6-svscanctl -t` asks the scanner to send its s6-supervise
+    # children a TERM, reap them, and only then exit -- so how long the stop
+    # takes is a function of how many services are UP, and after `booted`
+    # there are three. `box.sh("sleep 2")` was enough when this module ran on
+    # its own and not enough in a full `pytest qa` run, so the two tests below
+    # failed intermittently while describing a printer that was fine: the
+    # scanner really was on its way out, the fixture just handed them the
+    # machine too early. That is the same class of defect as the stale pidfile
+    # this suite has three comments about -- asking the clock a question only
+    # the process table can answer.
+    # Whole seconds: busybox `sleep` takes a fractional argument only when it
+    # was built with FEATURE_FANCY_SLEEP, and a `sleep 0.25` this box rejects
+    # would turn the bound below into a spin.
+    for _ in range(12):
+        if "not running" in box.svc("S40s6", MODDIR + "/init.d").status().text:
+            return box
+        box.sh("sleep 1")
+    pytest.fail(
+        "the scanner was still answering 12s after `S40s6 stop` -- either the "
+        "stop verb does not wait for its supervisors, or one of them is "
+        "refusing to die:\n%s"
+        % box.svc("S40s6", MODDIR + "/init.d").status().text)
 
 
 class TestSupervisorLifecycle:

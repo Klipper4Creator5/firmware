@@ -38,49 +38,54 @@ Two properties come for free from keeping that name and that place:
 
 ## Services
 
-Services are ordinary init.d-style scripts in `/usr/data/anvil/init.d/`, run in
-filename order and individually restartable over ssh:
+Services are **s6-rc services**, defined in `payload/etc/s6-rc/source/`,
+compiled into a database at build time and supervised by `s6-svscan`:
 
 ```
-S50wifi      wlan0 + wpa_supplicant + udhcpc
-S60nginx     nginx (Mainsail) on :80
-S62moonraker moonraker on :7125
-S65camera    mjpg-streamer on :8080 (nginx proxies it at /webcam/)
-S70klipper   Klipper
-S80ui        decides whether the UI runs (MOD_UI, HelixScreen installed?)
+mcu-bringup  oneshot   toolhead boards out of their bootloaders
+klipper      longrun   klippy            (depends on mcu-bringup)
+wifi         oneshot   wlan0 + wpa_supplicant + udhcpc
+nginx        longrun   nginx (Mainsail) on :80
+moonraker    longrun   moonraker on :7125
+camera       longrun   mjpg-streamer on :8080 (nginx proxies it at /webcam/)
+ff-startup   oneshot   waits until the printer is usable
+                       (depends on klipper, moonraker)
+ui           longrun   HelixScreen       (depends on ff-startup)
+ok-all       bundle    everything except mcu-bringup, which klipper pulls in
 ```
 
-nginx and moonraker were one script, `S60web`, until they were split. They fail
-separately and are debugged separately — nginx not starting is a missing config
-or a port already bound, and you know within a second; moonraker not starting
-is a component that failed to import, and it takes a background check and a log
-tail to even notice. One script had to say `web: stopped` for both, and
-`status` reported on two unrelated things at once. Now `S62moonraker restart`
-over ssh — the one you run over and over while chasing a moonraker config — no
-longer takes the web UI down with it. The numbering keeps the order: nginx
-first, because it proxies the other two, so a browser gets a page saying the
-backend is not up yet rather than a refused connection.
+`firmwareExe` starts `s6-svscan`, runs `s6-rc-init`, and asks for one machine
+state — that transition is the whole boot order. There is no `init.d/`
+directory and no wrapper scripts: **s6-rc is the command line**.
 
-Two sourced libraries sit beside them, both installed to `/usr/data/anvil` and
-neither executable:
+```sh
+s6-rc -u change moonraker           # start it (and its dependencies)
+s6-rc -d change moonraker           # stop it (and whatever depends on it)
+s6-svc -r /usr/data/anvil/etc/s6/moonraker    # restart, leaving s6-rc's view intact
+s6-svstat /usr/data/anvil/etc/s6/moonraker    # is it up, and for how long
+s6-rc -a list                       # what s6-rc believes is up
+```
+
+Two things are worth knowing before you type them. `-d change` follows
+dependencies, so stopping moonraker also stops `ff-startup` and therefore the
+screen — that is correct, there is nothing for a printer UI to show, and
+`-u change` brings them back. And `moonraker` and `camera` are the only
+services with a `notification-fd`, so only their "up" means *usable* rather
+than *forked*; `klipper`'s does not, because klippy's readiness is a state on
+moonraker's API rather than something klippy reports.
+
+nginx is deliberately **not** a dependency of moonraker even though it proxies
+it: an edge would mean stopping nginx also stopped the API, which is the thing
+splitting the old single `S60web` script in two was meant to prevent.
+
+One sourced library sits beside them, installed to `/usr/data/anvil` and not
+executable:
 
 * **`anvil-env.sh`** — `PATH`, `LD_LIBRARY_PATH` and `FF_PYTHON`, in the one
   place that defines them. `run-append.sh`, `firmwareExe`, `start.sh` and every
   service script source it. A private copy per script is how the installer's
   check and the boot script came to disagree about the library list, with
   moonraker dying on `libpython3.8.so.1.0: cannot open shared object file`.
-* **`anvil-service.sh`** — the shape every service script has: `svc_say` /
-  `svc_warn` for the boot log, `svc_pid_alive` and `svc_proc_alive` for
-  liveness, `svc_start_daemon` / `svc_stop_daemon` around busybox
-  `start-stop-daemon`, `svc_detach` for a wait that must not hold the boot up,
-  and `svc_dispatch` for the `start|stop|restart|status` block. The scripts
-  were written months apart and had arrived at four different answers to "is it
-  still running?" and two to `restart`; none of those differences were
-  decisions. The library also carries the two corrections busybox needs —
-  `start-stop-daemon -K` returns before the process is dead, and does not
-  remove the pidfile, which is how `restart` raced its own start and how
-  `status` came to report a recycled pid as a running service. A script that
-  cannot find this file says so and exits rather than half-starting.
 
 Everything the mod installs lives under `/usr/data/anvil` on the **data**
 partition, which a FlashForge OTA cannot delete. The software component itself
@@ -104,7 +109,7 @@ payload unpacks to `/usr/data/anvil`, and that is the whole installation —
 there is no separate Moonraker step that can fail on its own. Nothing is
 written to `/usr/prog`: FlashForge's tree at `/usr/prog/moonraker/moonraker/`
 is left exactly where it is and simply never used again, and
-`S62moonraker` starts ours by absolute path with no fallback.
+the moonraker service starts ours by absolute path with no fallback.
 
 An earlier release copied the same tree over `/usr/prog/moonraker` as well.
 That is gone. It put a second, byte-identical Moonraker on the one partition
@@ -116,14 +121,14 @@ Both things thought to require that location turned out not to: the
 `moonraker-env` virtualenv beside it was never on `sys.path` (checked by
 running the printer's own interpreter against the real image), and
 `moonrakerDaemon`, the one thing that did exec that tree by absolute path, is
-never invoked — `S62moonraker` starts the server itself.
+never invoked — the moonraker service starts the server itself.
 
 **FlashForge's python 3.8.2 is not what this runs on any more.** `FF_PYTHON`
 in `anvil-env.sh` names a CPython 3.13 of our own, cross-built for mipsel
 (`bin/patch.sh` section 5c) with every third-party C extension Moonraker
 needs beside it in `$MODDIR/lib/python3.13/site-packages` and libsodium in
 `$MODDIR/lib` — none of it borrowed from `/usr/prog`. Measured through the
-real boot path (S40s6's scandir, `S62moonraker`, readiness gating on `:7125`
+real boot path (the scandir, the moonraker service, readiness gating on `:7125`
 actually listening, a `kill -9` respawn, a stop that stays stopped) in
 `test/integration/printer/case-moonraker313-s6.sh`. klippy is not part of
 this: it stays on FlashForge's 3.8.2, started independently by
@@ -213,7 +218,7 @@ One thing it does not cover, worth knowing before you rely on it:
 
 * **Moonraker.** The mod's Moonraker lives on the data partition at
   `/usr/data/anvil/moonraker`, and it is started by
-  `/usr/data/anvil/init.d/S62moonraker` — which a stock flash removes along
+  the mod's own moonraker service — which a stock flash removes along
   with the rest of the mod's boot path. So a stock reflash goes back to
   FlashForge's own 2022 tree at `/usr/prog/moonraker/moonraker/`, which was
   never touched and is still exactly what the factory image shipped. The mod's

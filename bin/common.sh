@@ -73,10 +73,24 @@ MIPS_TOOLCHAIN_TGZ="${MIPS_TOOLCHAIN_TGZ:-$ROOT/vendor/${MIPS_TOOLCHAIN_FILE:-mi
 # downloading when that cache is missing or stale.
 SKALIBS_TGZ="${SKALIBS_TGZ:-$ROOT/vendor/skalibs-${SKALIBS_VERSION:-unpinned}.tar.gz}"
 S6_TGZ="${S6_TGZ:-$ROOT/vendor/s6-${S6_VERSION:-unpinned}.tar.gz}"
+EXECLINE_TGZ="${EXECLINE_TGZ:-$ROOT/vendor/execline-${EXECLINE_VERSION:-unpinned}.tar.gz}"
+S6RC_TGZ="${S6RC_TGZ:-$ROOT/vendor/s6-rc-${S6RC_VERSION:-unpinned}.tar.gz}"
 MUSL_TOOLCHAIN_TGZ="${MUSL_TOOLCHAIN_TGZ:-$ROOT/vendor/${MUSL_TOOLCHAIN_FILE:-mips32r5el--musl--stable.tar.xz}}"
 S6_BUILD="${S6_BUILD:-$ROOT/work/.s6}"
+# THE CACHE KEY, defined once because two files test it: patch.sh writes it to
+# $S6_BUILD/.version after a successful build, and fetch-assets.sh compares
+# against it to decide whether the ~100MB toolchain is worth downloading. They
+# disagreed for as long as both existed -- fetch-assets knew only the two
+# source versions while patch.sh already stamped the toolchain file -- so the
+# skip never fired. Every input that changes the OUTPUT belongs in here: four
+# source versions, because s6-rc's generated servicedirs embed paths from the
+# execline it was compiled against, and the toolchain file, because the
+# toolchain determines the ABI as much as the sources do (a checkout that had
+# already built s6 once would otherwise read its old legacy-NaN tree as
+# current and never rebuild it -- a failure mode that shipped once).
+S6_STAMP="$SKALIBS_VERSION $EXECLINE_VERSION $S6_VERSION $S6RC_VERSION $MUSL_TOOLCHAIN_FILE"
 export MAINSAIL_ZIP HELIX_TGZ MOONRAKER_TGZ KLIPPER_TGZ MIPS_TOOLCHAIN_TGZ
-export SKALIBS_TGZ S6_TGZ MUSL_TOOLCHAIN_TGZ S6_BUILD
+export SKALIBS_TGZ S6_TGZ EXECLINE_TGZ S6RC_TGZ MUSL_TOOLCHAIN_TGZ S6_BUILD S6_STAMP
 
 # CPython and the seven C libraries it is linked against, all pinned in
 # versions.env and all cross-built by bin/patch.sh section 5c. Eight tarballs

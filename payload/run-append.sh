@@ -63,15 +63,11 @@ if [ -n "$MODTAR" ]; then
         # nothing else.
         #
         # THE PROPERTY THIS HAS TO KEEP, which is why anything is removed at
-        # all rather than just extracted over: init.d scripts used to be
-        # overwritten in place and never removed, which was harmless only
-        # while the set of filenames never changed. It does change: S60web was
-        # split into S60nginx and S62moonraker, and on a printer that already
-        # had the mod the old S60web survived the update and sat next to both
-        # new scripts. firmwareExe runs every executable $MODDIR/init.d/S* in
-        # filename order, so nginx and moonraker would each have been started
-        # twice, by two scripts that disagree about where moonraker even
-        # lives. The installed set must end up exactly the shipped set.
+        # all rather than just extracted over: files used to be overwritten in
+        # place and never removed, which is harmless only while the set of
+        # filenames never changes. It does change -- a renamed script survives
+        # the update and sits next to the one that replaced it. The installed
+        # set must end up exactly the shipped set.
         #
         # HOW IT USED TO BE KEPT, and why that had to stop: this line was
         #     rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx ... $MODDIR/init.d
@@ -153,20 +149,22 @@ if [ -n "$MODTAR" ]; then
             rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen $MODDIR/config $MODDIR/moonraker $MODDIR/init.d
             echo "previous install removed (no manifest -- pre-manifest layout)"
         fi
-        # init.d GETS THIS EVEN IN THE MANIFEST BRANCH, and unconditionally --
-        # a diff against the last manifest only knows about files THAT
-        # manifest tracked, so a script from further back than the last
-        # install (planted by hand, restored from a backup, or left over from
-        # the one pre-manifest jump every printer takes exactly once) is
-        # invisible to it and survives forever. That is an acceptable gap for
-        # $MODDIR/bin or $MODDIR/config, where something that is not ours
-        # might legitimately live -- it is not acceptable here: firmwareExe
-        # runs every executable $MODDIR/init.d/S* in filename order, so an
-        # orphan does not just sit unused, it starts a second copy of
-        # whatever it launches. Nothing outside the payload has any business
-        # writing to this directory, so clearing it outright costs nothing a
-        # real install would miss.
-        rm -rf $MODDIR/init.d
+        # init.d/ AND anvil-service.sh ARE GONE, and go unconditionally rather
+        # than by manifest. The payload ships neither any more: s6-rc is the
+        # CLI, and the tree is started by firmwareExe. A leftover S70klipper is
+        # a script that starts an UNSUPERVISED klippy next to the supervised
+        # one, and a leftover anvil-service.sh is a library something stale
+        # could still source, so neither may be left to a diff that only knows
+        # about files the LAST manifest tracked -- a script planted by hand, or
+        # surviving the one pre-manifest jump every printer takes, is invisible
+        # to that.
+        #
+        # No hot migration is attempted. The install runs from app_startup.sh
+        # DURING BOOT, before firmwareExe starts, so there is no supervision
+        # tree up while this runs and the new one comes up from scratch a
+        # moment later. A `sh run.sh` typed over ssh instead is the exception:
+        # that printer needs a reboot, and nothing here forces one.
+        rm -rf $MODDIR/init.d $MODDIR/anvil-service.sh
         mkdir -p $MODDIR
         # Try xz first (FlashForge's own factory installer uses `xz -dc`, so
         # it exists), then fall back to plain tar in case a build shipped it
@@ -204,6 +202,41 @@ if [ -n "$MODTAR" ]; then
             rm -rf $HELIX_KEEP
         fi
         chmod a+x $MODDIR/bin/* 2>/dev/null
+        # ---- the s6 scandir, swept -------------------------------------
+        # MEASURED: s6-rc-init creates one symlink per service in the scandir
+        # and fails outright -- "unable to supervise service directories ...:
+        # File exists" -- if a name is taken. A printer upgrading from the
+        # pre-s6-rc payload has nginx, moonraker and camera in there as real
+        # directories, and the manifest cannot remove them: it deletes the
+        # files it listed, but s6-supervise created supervise/ and event/
+        # inside each at RUNTIME, so the rmdir correctly refuses and leaves
+        # exactly the name s6-rc-init collides with.
+        #
+        # After the extraction, so the payload's own empty etc/s6 has landed.
+        rm -rf $MODDIR/etc/s6
+        mkdir -p $MODDIR/etc/s6
+        # /run is a tmpfs, so this matters only for a `sh run.sh` typed over
+        # ssh: a live s6-rc state points at the database just replaced.
+        rm -rf /run/s6-rc
+        # klipperDaemon, replaced: stock's `start` forks a second, unsupervised
+        # klippy beside the s6 one. It cannot ride in the software component --
+        # FlashForge's run.sh copies a fixed list of files and klipperDaemon is
+        # not on it -- so it is installed from here.
+        #
+        # KLIPPER_NICENESS is carried forward off the file being replaced, so
+        # FlashForge's number survives without being guessed. On later updates
+        # that reads our own copy, which is how the value persists.
+        if [ -f $MODDIR/bin/klipperDaemon ] && [ -d /usr/prog/klipper ]; then
+            KN=`sed -n 's/^ *KLIPPER_NICENESS= *\([-0-9][0-9]*\).*/\1/p' \
+                /usr/prog/klipper/klipperDaemon 2>/dev/null | head -n 1`
+            [ -n "$KN" ] || KN=0
+            sed "s/^KLIPPER_NICENESS=.*/KLIPPER_NICENESS=$KN/" \
+                $MODDIR/bin/klipperDaemon > /usr/prog/klipper/klipperDaemon.new \
+                && mv -f /usr/prog/klipper/klipperDaemon.new /usr/prog/klipper/klipperDaemon \
+                && chmod +x /usr/prog/klipper/klipperDaemon \
+                && echo "klipperDaemon: replaced (start is a no-op; niceness $KN)" \
+                || echo "!! could not replace klipperDaemon -- it can still fork a second klippy"
+        fi
         echo "mod payload installed"
         # From here on this script runs the printer's own interpreter, so it
         # needs the same environment the boot path gets -- and it is a hand-run

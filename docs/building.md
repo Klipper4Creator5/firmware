@@ -199,11 +199,9 @@ belongs to. Nothing from the test lane can reach a printer.
 payload/        POSIX sh, busybox ash -- runs ON the printer
   firmwareExe     the wrapper that replaces the stock binary
   start.sh        replaces the stock Klipper launcher (priority, MCU bring-up)
-  init.d/         S50wifi, S60nginx, S62moonraker, S65camera, S70klipper, S80ui
+  etc/s6-rc/source/  the s6-rc service definitions, compiled at build time
   anvil-env.sh    PATH/LD_LIBRARY_PATH/FF_PYTHON -- sourced, not executable
-  anvil-service.sh the start/stop/status/liveness shape every service shares
-                  -- sourced, not executable
-  bin/            ff_mcu_bringup.py, wifi-action.sh
+  bin/            ff_mcu_bringup.py, wifi-action.sh, klipperDaemon
   klipper/        extras/ff_*.py and config/ff-*.cfg + printer.base.cfg
   helixscreen/    the printer-database entry that makes it a toolchanger
   anvil.conf      runtime switches, preserved across mod updates
