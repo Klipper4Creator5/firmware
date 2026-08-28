@@ -1,0 +1,89 @@
+# The docs are built from this repo, not a wiki, so a page and the code it
+# describes move in the same commit and the same review. CI builds this with
+# --strict (see .github/workflows/ci.yml): a cross-link that stops resolving
+# fails the build rather than rotting in place.
+site_name: Reforge
+site_description: >-
+  Custom firmware for the FlashForge Creator 5 and Creator 5 Pro.
+site_url: https://reforge.readthedocs.io/
+repo_url: https://github.com/Klipper4FlashForge/firmware
+repo_name: Klipper4FlashForge/firmware
+edit_uri: edit/master/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections   # the public/contributor split, always visible
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Dark
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Light
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html          # the <img> pairs in README.md and toolchange.md
+  - tables
+  - toc:
+      permalink: true
+      # GitHub's heading slugs, so an anchor written for the repo view --
+      # `#runout--clog` for `## Runout / clog` -- resolves on the site too.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify {kwds: {case: lower}}
+  - pymdownx.details
+  - pymdownx.superfences
+
+# docs/index.md is generated from README.md at build time; see the hook.
+hooks:
+  - hooks/mkdocs_readme.py
+
+# Release notes are published on the Releases page, which is where the README
+# sends people. They are built but stay out of the nav rather than growing it
+# by one entry per tag.
+not_in_nav: |
+  releases/*
+
+# Two audiences, and a reader should never fall from one into the other. The
+# first section is for someone who owns the printer; the second is for someone
+# building or testing the firmware.
+nav:
+  - Home: index.md
+
+  - Using Reforge:
+      - After the flash: hardware-testing.md
+      - Toolchanges: toolchange.md
+      - Nozzle-offset calibration: calibration.md
+      - How it works: how-it-works.md
+      - Error codes: notes/70-error-codes.md
+
+  - For contributors:
+      - Building packages: building.md
+      - Testing: testing.md
+      - The printer replica: printer-replica.md
+      - Internals:
+          - Overview: notes/00-overview.md
+          - Hardware and MCU topology: notes/10-hardware.md
+          - The FlashForge Klipper fork: notes/20-klipper-fork.md
+          - firmwareExe vs Klipper: notes/25-app-vs-klipper-ownership.md
+          - Toolchange sequences: notes/30-toolchange.md
+          - Offsets and per-unit config: notes/40-offsets.md
+          - Offset calibration, the port: notes/45-tool-offset-calibration.md
+          - Offset calibration, recovered: notes/46-offset-calibration-recovered.md
+          - Filament load, recovered: notes/47-filament-load-recovered.md
+          - Filament load, the port: notes/48-filament-load-port.md
+          - Runout and clog handling: notes/49-runout-recovered.md
+          - Print lifecycle: notes/50-print-lifecycle.md
+          - Nozzle clean, recovered: notes/50a-nozzle-clean-recovered.md
+          - Nozzle clean, the port: notes/50b-nozzle-clean-port.md
+          - Filament, calibration, persistent state: notes/60-background.md
+          - Migrating to s6: notes/80-s6-migration.md

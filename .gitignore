@@ -8,3 +8,7 @@ dist/
 # Python bytecode from editing the klippy extras in payload/klipper/extras/
 __pycache__/
 *.pyc
+
+# Generated from README.md by hooks/mkdocs_readme.py at docs build time.
+docs/index.md
+site/
