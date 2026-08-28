@@ -79,9 +79,9 @@ jobs:
       # (see bin/fetch-assets.sh) -- so this job builds them for real rather
       # than stubbing around them the way it stubs Mainsail, HelixScreen and
       # the Klipper fork. Cached on versions.env: an unchanged pin never
-      # re-fetches the ~100MB musl toolchain or the ~203MB Ingenic one, and
-      # never recompiles either tree, which is the whole point of work/.s6 and
-      # work/.py313 carrying their own version stamps.
+      # re-fetches the ~203MB Ingenic toolchain, and
+      # never recompiles either tree. work/.py313 carries its own version
+      # stamp; s6 is four recipes under work/pkg and carries pkg_stamp's.
       #
       # work/pkg is every recipe under pkg/ at once -- one cache entry instead
       # of one per package, because pkg/lib.sh derives the output directory
@@ -93,7 +93,6 @@ jobs:
         with:
           path: |
             vendor
-            work/.s6
             work/.py313
             work/pkg
           key: fixture-py-${{ hashFiles('versions.env') }}
@@ -325,7 +324,7 @@ jobs:
       # having passed.
       #
       # That also supplies the cross-built s6, because s6 ships INSIDE the
-      # package; there is no separate work/.s6 dependency to track.
+      # package; there is no separate s6 build tree to track.
       #
       # WHEN THE OLD SUITE IS DELETED, this needs an explicit
       # `./bin/unpack.sh && ./bin/patch.sh && ./bin/pack.sh` (or `make build`)

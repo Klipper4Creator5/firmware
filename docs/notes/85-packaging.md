@@ -321,15 +321,19 @@ on this.
 Turn the rest of `bin/patch.sh`'s builds into recipes, the way libsodium
 became one. Roughly ten packages —
 
-    klipper-fork  toolchange-config  mainsail  moonraker  helixscreen
-    skalibs  s6 (+execline +s6-rc)  python3  python3-site-packages
+    klipper-fork  toolchange-config
+    python3  python3-site-packages
     openssl  libffi  sqlite  xz  expat  bzip2
-    zlib ✔  libarchive ✔  libsodium ✔  opkg ✔  anvil
+    zlib ✔  libarchive ✔  libsodium ✔  opkg ✔
+    skalibs ✔  execline ✔  s6 ✔  s6-rc ✔
+    mainsail ✔  moonraker ✔  helixscreen ✔  anvil-core ✔
 
-Section 5b (skalibs + s6) is the one remaining place where one script builds
-two libraries, so it is the natural next recipe — and the one with the most
-measured constraints behind it, since s6's `--prefix` is baked into the
-binaries and only 13 of its ~40 programs are kept.
+Twelve of the nineteen are done. Section 5b — the last place where one script
+built two libraries — is four recipes now (`skalibs`, `execline`, `s6`,
+`s6-rc`), and moving them off the musl toolchain removed the second libc from
+this tree entirely. What is left is CPython and the six static libraries under
+it, and then Klipper, which `docs/notes/80-s6-migration.md` phase 7 makes
+reachable only after CPython.
 
 `patch.sh` keeps staging the payload from those same trees, so the shipped
 tarball does not change. The work is mechanical; the risk is in the two builds
@@ -337,8 +341,23 @@ with the most measured constraints behind them (5b's s6 prefix, 5c's CPython
 cross-build), which should go last — and both are exactly the shape
 `pkg/lib.sh` already handles, since it was written from them.
 
-**Gate:** the `anvil.tar.xz` built after this phase is byte-identical to the
-one built before it. Anything else is a change nobody asked for.
+**Gate, corrected.** This used to read "the `anvil.tar.xz` built after this
+phase is byte-identical to the one built before it". That cannot be the gate,
+for two independent reasons, and stating it that way meant nobody could tell a
+real regression from an expected difference:
+
+* Moving s6 to dynamic glibc changes those binaries **by design**. A tarball
+  that did not change would mean the change had not happened.
+* `bin/pack.sh` builds `anvil.tar.xz` with a bare `tar -cf`, with no
+  `--sort=name`, `--mtime` or `--owner`. It carries filesystem order and
+  per-file mtimes, so it has never been byte-reproducible and the stated gate
+  could never have passed.
+
+What is checked instead: the staged `work/modpayload` **tree** — file list,
+modes and content hashes — is unchanged except for the components a change
+deliberately rebuilt. The `.ipk` files themselves ARE byte-reproducible and
+that is checked directly: two cold `make packages` runs produce twelve
+identical archives.
 
 ## Phase 2 — install packages on the printer  *(~1–2 days)*
 

@@ -52,8 +52,14 @@ Get them wrong and the phase fails on a printer, not in CI.
 * s6 resolves `s6-ftrigrd` through a prefix baked in at compile time. Built for
   the wrong prefix, `status` and respawn still work and every *waiting* verb
   fails. Always configure `--prefix=/usr/data/anvil` and stage with `DESTDIR`.
-* Static glibc is the wrong libc here: s6 came to 73MB, musl to 3.6MB. Use the
-  musl mipsel toolchain.
+* ~~Static glibc is the wrong libc here: s6 came to 73MB, musl to 3.6MB. Use
+  the musl mipsel toolchain.~~ **Superseded.** That measurement is real and
+  its conclusion no longer follows: it compared two STATIC builds, and dynamic
+  glibc was never in it. Measured since, linked dynamically against the
+  printer's own glibc 2.29 -- the same libc.so.6 the interpreter already
+  links -- s6's shipped tree is 696KB, against ~930KB for the static musl one
+  it replaces. The whole supervision stack including execline and s6-rc is
+  2.0MB. The musl toolchain is gone and this tree has one libc again.
 * We do **not** install Klipper. `bin/patch.sh` stages a *software component*
   and FlashForge's own stock `run.sh` copies it onto `/usr/prog/klipper`. That
   is why Klipper sits on the firmware partition -- inherited, not chosen.
@@ -103,9 +109,16 @@ mipsel-musl with `--prefix=/usr/data/anvil`, `make install DESTDIR=`, stripped.
 This mirrors how `c_helper.so` is already built from pinned sources with a
 pinned toolchain -- follow that precedent rather than inventing a second one.
 
-Ship only the supervision subset (13 binaries, ~813KB) plus
-`libexec/s6-ftrigrd` (~116KB). execline is **not** needed: `run` scripts are
-plain `#!/bin/sh`.
+Ship only the supervision subset plus `libexec/s6-ftrigrd`.
+
+**Both halves of this have since changed.** The subset is 21 binaries, not 13:
+s6-rc's generated scripts exec `s6-sudo`, `s6-sudoc`, the `s6-ipcserver-*`
+chain, `s6-sudod` and `s6-fdholder-daemon`, which was found by running a real
+s6-rc up/down cycle with a restricted PATH rather than by reading the docs. And
+execline **is** needed -- s6-rc has no `--disable-execline`, links it
+unconditionally, and writes execline scripts into every database it compiles.
+`run` scripts are still plain `#!/bin/sh`; that was never the whole question.
+All four are recipes under `pkg/` now.
 
 *Files:* `versions.env`, `bin/fetch-assets.sh`, `bin/patch.sh`,
 `tools/supervisor/`.

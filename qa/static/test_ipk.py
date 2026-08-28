@@ -419,12 +419,33 @@ def test_the_package_and_the_payload_share_one_build():
     line, which is a one-line edit and would be invisible in review.
     """
     patch = (ROOT / "bin" / "patch.sh").read_text()
-    conf = (ROOT / "pkg" / "libsodium" / "pkg.conf").read_text()
-    assert "bash pkg/libsodium/build.sh" in patch, (
-        "bin/patch.sh no longer runs the recipe -- the payload's libsodium and "
-        "the packaged one are now built by different code")
-    assert 'PKG_ROOT="$SODIUM_BUILD"' in conf
-    assert '"$SODIUM_BUILD/lib/"libsodium.so*' in patch
+
+    # Every recipe whose output bin/patch.sh stages into the payload. Listed
+    # rather than derived, because the property under test is that a HUMAN
+    # decided each of these ships both ways -- a list read off patch.sh would
+    # agree with patch.sh by construction and assert nothing.
+    staged = ("libsodium", "mainsail", "moonraker", "helixscreen",
+              "skalibs", "execline", "s6", "s6-rc", "anvil-core")
+    for recipe in staged:
+        assert "bash pkg/%s/build.sh" % recipe in patch, (
+            "bin/patch.sh does not run pkg/%s/build.sh -- the payload's copy "
+            "and the packaged one are built by different code, and nothing "
+            "downstream can tell which a printer got" % recipe)
+        assert (ROOT / "pkg" / recipe / "build.sh").is_file(), (
+            "bin/patch.sh runs pkg/%s/build.sh and there is no such recipe"
+            % recipe)
+
+    # And the reverse direction: patch.sh must not have grown its own copy of
+    # a build it delegates. A `./configure` anywhere in it would mean some
+    # component is compiled in two places again -- which is what this whole
+    # layout was written to stop, and what section 5b did for skalibs and s6
+    # until it became four recipes.
+    body = "\n".join(ln for ln in patch.splitlines()
+                      if not ln.lstrip().startswith("#"))
+    for gone in ("--enable-static-libc", "MUSL_TOOLCHAIN", "S6_STAMP"):
+        assert gone not in body, (
+            "bin/patch.sh still mentions %s -- the s6 build moved to pkg/ and "
+            "the musl toolchain was deleted with it" % gone)
 
 
 def test_packages_are_abi_gated_before_they_ship():
@@ -483,24 +504,69 @@ def _conf(recipe, var):
 @pytest.mark.parametrize("recipe", RECIPES,
                          ids=[p.parent.name for p in RECIPES])
 def test_one_recipe_builds_one_package(recipe):
-    """A recipe unpacks one source and seals one tree.
+    """A recipe names one source and seals one tree.
 
-    Counting pkg_unpack is the cheap structural expression of the rule: a
-    recipe that unpacks two tarballs is building somebody else's package
+    Counting the source verbs is the cheap structural expression of the rule:
+    a recipe that unpacks two tarballs is building somebody else's package
     inside its own, which is exactly the shape this layout replaced. If a
     recipe genuinely needs a second source, that source is a package.
+
+    THE COUNT IS OVER ALL SOURCE VERBS TOGETHER, not over pkg_unpack alone.
+    There are two ways for a recipe to say where its inputs come from --
+    pkg_unpack for a pinned download, pkg_intree for the files in this
+    checkout -- and counting only the first would let a recipe use the second
+    to acquire a source the rule was meant to count. One of either, never one
+    of each.
     """
     body = "\n".join(ln for ln in recipe.read_text().splitlines()
                      if not ln.lstrip().startswith("#"))
-    for verb, want in (("pkg_begin", 1), ("pkg_end", 1), ("pkg_unpack", 1)):
+    for verb, want in (("pkg_begin", 1), ("pkg_end", 1)):
         got = len(re.findall(r"^\s*%s\b" % verb, body, re.M))
         assert got == want, (
             "%s calls %s %d time(s), expected %d -- one recipe builds one "
             "package" % (recipe, verb, got, want))
+    sources = len(re.findall(r"^\s*(?:pkg_unpack|pkg_intree)\b", body, re.M))
+    assert sources == 1, (
+        "%s names its source %d time(s), expected exactly 1 -- a recipe "
+        "unpacks one pinned archive (pkg_unpack) or builds from this checkout "
+        "(pkg_intree), never both and never twice" % (recipe, sources))
     assert "pkg_dep_autotools" not in body, (
         "%s uses pkg_dep_autotools, which built a dependency inside the "
         "recipe that needed it. Make it a package and name it in "
         "PKG_BUILD_DEPENDS." % recipe)
+
+
+def test_an_arch_all_package_has_no_native_code():
+    """Architecture: all is a promise, and it is cheap to check.
+
+    Three packages claim it -- anvil-mainsail, anvil-moonraker and anvil-core
+    -- on the grounds that they are JavaScript, Python and shell. The claim
+    matters because pkg/ipk-install accepts `all` on any printer without
+    consulting the ABI, so an ELF object that slipped into one of them would
+    be the one path into $MODDIR that nothing checks. mips_abi_gate passes a
+    tree with no ELF in it by returning zero, which is correct and is also
+    why it cannot be the thing that catches this.
+
+    Checked against the built tree when there is one; a checkout that has not
+    run `make packages` has nothing to inspect and is not a failure.
+    """
+    for recipe in sorted(p.parent.name for p in RECIPES):
+        if _conf(recipe, "PKG_ARCH") != "all":
+            continue
+        out = ROOT / "work" / "pkg" / recipe
+        if not out.is_dir():
+            continue
+        elves = []
+        for f in out.rglob("*"):
+            if not f.is_file() or f.is_symlink():
+                continue
+            with open(f, "rb") as fh:
+                if fh.read(4) == b"\x7fELF":
+                    elves.append(str(f.relative_to(out)))
+        assert not elves, (
+            "pkg/%s declares Architecture: all and its tree contains ELF "
+            "objects: %s. An `all` package installs on any printer without an "
+            "architecture check." % (recipe, ", ".join(sorted(elves)[:5])))
 
 
 def test_every_recipe_has_metadata():
@@ -581,6 +647,19 @@ def test_a_dev_package_ships_what_its_dependents_need():
                  "lib/pkgconfig/libarchive.pc"):
         assert want in arch, "pkg/libarchive does not ship %s" % want
 
+    # skalibs is the interesting one, and the reason this test is not just
+    # "headers and an archive". lib/skalibs is a directory of CROSS-COMPILE
+    # ANSWERS ABOUT THE LIBC -- does this target have /dev/urandom, does
+    # posix_spawn return early -- that skalibs would normally settle by
+    # compiling and running a probe, which a cross-build cannot do. execline,
+    # s6 and s6-rc all read it through --with-sysdeps and refuse to configure
+    # without it, naming a missing FILE rather than a missing flag. It is not a
+    # header, not an archive and not a .pc, so a rule written around those
+    # three would have let it be dropped.
+    ska = (ROOT / "pkg" / "skalibs" / "build.sh").read_text()
+    for want in ("include/skalibs", "lib/libskarnet.a", "lib/skalibs"):
+        assert want in ska, "pkg/skalibs does not ship %s" % want
+
 
 def test_dependencies_are_unpacked_by_upstream():
     """opkg-unbuild fills the sysroot -- we do not open .ipk files by hand.
@@ -652,12 +731,35 @@ def test_no_cache_stamp_is_spelled_in_two_places():
     condition described a fast path that had never once been taken. One
     definition is what makes that class of bug impossible rather than unlikely.
     """
-    spelled = [p.name for p in (ROOT / "bin").glob("*.sh")
-               if 'S6_STAMP="' in p.read_text()]
-    assert spelled == ["common.sh"], (
-        "S6_STAMP is defined in %s; it belongs in bin/common.sh alone"
-        % (spelled or "nowhere"))
+    # The rule, not the variable. S6_STAMP itself is gone -- s6 is a recipe and
+    # pkg_stamp computes its key -- so naming it here would test nothing. What
+    # survives is the property it existed to guarantee, and the property has to
+    # be stated over every stamp rather than over the one that broke.
+    for var in ("S6_STAMP", "PY_STAMP"):
+        spelled = sorted(p.name for p in (ROOT / "bin").glob("*.sh")
+                         if '%s="' % var in p.read_text())
+        assert spelled in ([], ["common.sh"]), (
+            "%s is assigned in %s; a cache stamp is defined in bin/common.sh "
+            "alone, or not at all once its build became a recipe"
+            % (var, ", ".join(spelled)))
+
+    # And the fields themselves, because moving the definition is only half of
+    # it: a file that re-derives the same string under another name has
+    # reintroduced the bug with the evidence removed. These are the two stamps
+    # this repo has actually got wrong -- s6's three fields, and CPython's
+    # eight, which were spelled in THREE places and happened to agree.
     for name in ("patch.sh", "fetch-assets.sh"):
         text = (ROOT / "bin" / name).read_text()
         assert '"$SKALIBS_VERSION $S6_VERSION' not in text, (
-            "bin/%s spells the s6 stamp out instead of using $S6_STAMP" % name)
+            "bin/%s spells the s6 stamp out by hand" % name)
+        assert '"$PY_VERSION $OPENSSL_VERSION' not in text, (
+            "bin/%s spells the CPython stamp out instead of using $PY_STAMP "
+            "from bin/common.sh" % name)
+
+    # The fetcher must ask the recipes rather than compare a string it wrote
+    # itself. This is what makes the whole class impossible for anything under
+    # pkg/: one implementation computes the key and one reads it.
+    fetch = (ROOT / "bin" / "fetch-assets.sh").read_text()
+    assert "pkg_needs" in fetch, (
+        "bin/fetch-assets.sh no longer asks pkg_needs -- it is back to "
+        "deciding whether a recipe is stale by a rule of its own")

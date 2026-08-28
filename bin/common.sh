@@ -101,41 +101,44 @@ MOONRAKER_TGZ="${MOONRAKER_TGZ:-$ROOT/vendor/moonraker-${MOONRAKER_VERSION:-unpi
 # versions.env for why the pin exists.
 KLIPPER_TGZ="${KLIPPER_TGZ:-$ROOT/vendor/klipper-${KLIPPER_VERSION:-unpinned}.tar.gz}"
 MIPS_TOOLCHAIN_TGZ="${MIPS_TOOLCHAIN_TGZ:-$ROOT/vendor/${MIPS_TOOLCHAIN_FILE:-mips-toolchain.tar.gz}}"
-# s6 and its build dependency skalibs, plus the musl cross-toolchain that
-# compiles them. Every package ships s6, so unlike the Klipper pieces there is
-# no flag that switches these off -- see versions.env for why the build is the
-# way it is.
+# The supervision stack: skalibs (s6's own C library), execline (which s6-rc
+# links unconditionally), s6 itself and s6-rc. Every package ships these, so
+# unlike the Klipper pieces there is no flag that switches them off -- see
+# versions.env for why the build is the way it is.
 #
-# S6_BUILD is patch.sh's cache of the CROSS-BUILT tree (bin/ + libexec/,
-# stripped, exactly what ships) and is named here rather than in patch.sh
-# because fetch-assets.sh reads it too: the ~100MB toolchain is only worth
-# downloading when that cache is missing or stale.
+# FOUR TARBALLS AND NO CACHE VARIABLE. There used to be an S6_BUILD here
+# naming work/.s6, because patch.sh cross-built s6 itself and the fetcher had
+# to know whether that tree was stale. All four are recipes under pkg/ now, so
+# the output path is pkg_out's business and staleness is pkg_stale's -- the
+# fetcher asks pkg_needs, which asks the code that writes the stamp instead of
+# a second copy of it. That is the whole of what S6_STAMP existed to get wrong.
 SKALIBS_TGZ="${SKALIBS_TGZ:-$ROOT/vendor/skalibs-${SKALIBS_VERSION:-unpinned}.tar.gz}"
 S6_TGZ="${S6_TGZ:-$ROOT/vendor/s6-${S6_VERSION:-unpinned}.tar.gz}"
-MUSL_TOOLCHAIN_TGZ="${MUSL_TOOLCHAIN_TGZ:-$ROOT/vendor/${MUSL_TOOLCHAIN_FILE:-mips32r5el--musl--stable.tar.xz}}"
-S6_BUILD="${S6_BUILD:-$ROOT/work/.s6}"
+EXECLINE_TGZ="${EXECLINE_TGZ:-$ROOT/vendor/execline-${EXECLINE_VERSION:-unpinned}.tar.gz}"
+S6RC_TGZ="${S6RC_TGZ:-$ROOT/vendor/s6-rc-${S6RC_VERSION:-unpinned}.tar.gz}"
 
-# The cache key for work/.s6, spelled ONCE, here, because two files read it and
-# they have to agree exactly: bin/patch.sh section 5b stamps the tree with it,
-# and bin/fetch-assets.sh tests it to decide whether the ~71MB musl toolchain
-# has to come down.
+# S6_STAMP USED TO BE DEFINED HERE, and the reason it is not any more is worth
+# keeping, because the bug it was written to fix is the reason pkg_stamp exists.
 #
-# THEY DID NOT AGREE, and the bug is the argument for this line. patch.sh wrote
-# three fields ("$SKALIBS_VERSION $S6_VERSION $MUSL_TOOLCHAIN_FILE") while the
-# fetcher compared against two, so the `!=` could never be false: every run
-# re-hashed 71MB on a warm vendor/, and a cold one downloaded a compiler for a
-# build with nothing to compile. The comment above that condition described a
-# fast path that had never once been taken. Two spellings of one string is not
-# duplication that costs style points; it is a condition that silently inverts.
+# It was the cache key for work/.s6, and it had to be spelled once because two
+# files read it: patch.sh stamped the tree with it, and fetch-assets.sh tested
+# it to decide whether the 71MB musl toolchain had to come down. They did not
+# agree. patch.sh wrote three fields ("$SKALIBS_VERSION $S6_VERSION
+# $MUSL_TOOLCHAIN_FILE") and the fetcher compared against two, so the `!=`
+# could never be false: every run re-hashed 71MB on a warm vendor/, and the
+# comment above that condition described a fast path that had never once been
+# taken. Two spellings of one string is not duplication that costs style
+# points; it is a condition that silently inverts.
 #
-# The toolchain filename is in the stamp deliberately: the compiler determines
-# the ABI as much as the sources do, so a tree built by a toolchain that has
-# since been repinned must be rebuilt rather than reused. That is the failure
-# that shipped once -- see versions.env.
-S6_STAMP="$SKALIBS_VERSION $S6_VERSION $MUSL_TOOLCHAIN_FILE"
+# Moving the definition here fixed that instance. Making s6 a recipe removes
+# the class: pkg_stamp computes the key from pkg.conf, pkg_stale compares it,
+# and fetch-assets.sh calls pkg_needs rather than re-deriving anything. There
+# is no second spelling left to drift. The toolchain filename is still in the
+# key, for the reason it always was -- the compiler determines the ABI as much
+# as the sources do -- but now it is in there once, in pkg_stamp.
 
 export MAINSAIL_ZIP HELIX_TGZ MOONRAKER_TGZ KLIPPER_TGZ MIPS_TOOLCHAIN_TGZ
-export SKALIBS_TGZ S6_TGZ MUSL_TOOLCHAIN_TGZ S6_BUILD S6_STAMP
+export SKALIBS_TGZ S6_TGZ EXECLINE_TGZ S6RC_TGZ
 
 # CPython and the seven C libraries it is linked against, all pinned in
 # versions.env and all cross-built by bin/patch.sh section 5c. Eight tarballs
@@ -163,6 +166,23 @@ XZ_TGZ="${XZ_TGZ:-$ROOT/vendor/xz-${XZ_VERSION:-unpinned}.tar.gz}"
 BZIP2_TGZ="${BZIP2_TGZ:-$ROOT/vendor/bzip2-${BZIP2_VERSION:-unpinned}.tar.gz}"
 EXPAT_TGZ="${EXPAT_TGZ:-$ROOT/vendor/expat-${EXPAT_VERSION:-unpinned}.tar.gz}"
 PY_BUILD="${PY_BUILD:-$ROOT/work/.py313}"
+
+# The cache key for work/.py313, spelled ONCE, here, for exactly the reason
+# S6_STAMP had to be and then stopped needing to be -- see the note above.
+#
+# It was spelled THREE times: bin/patch.sh section 5c wrote it, and
+# bin/fetch-assets.sh derived it twice, in two different places, to decide
+# whether the 203MB Ingenic toolchain had to come down. All three happened to
+# agree, which is luck rather than design: the eight fields are the eight
+# source pins of the interpreter and its static libraries, and the next person
+# to add a ninth would have had to find all three. That is the same shape as
+# the s6 stamp bug, caught before it inverted rather than after.
+#
+# It goes away entirely when CPython becomes a recipe: pkg_stamp derives a key
+# from the dependency graph, so "openssl, sqlite, zlib, libffi, xz, bzip2 and
+# expat" stops being a list anybody maintains and becomes PKG_BUILD_DEPENDS.
+PY_STAMP="$PY_VERSION $OPENSSL_VERSION $SQLITE_VERSION $ZLIB_VERSION $LIBFFI_VERSION $XZ_VERSION $BZIP2_VERSION $EXPAT_VERSION"
+export PY_STAMP
 export PY_TGZ OPENSSL_TGZ SQLITE_TGZ ZLIB_TGZ LIBFFI_TGZ XZ_TGZ BZIP2_TGZ
 export EXPAT_TGZ PY_BUILD
 

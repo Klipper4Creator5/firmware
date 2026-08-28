@@ -104,7 +104,6 @@ fi
 # stamp string here is the point: the recipe and the fetcher then compute the
 # cache key with the same code instead of two spellings that can drift -- which
 # is exactly what went wrong with the s6 stamp below.
-PY_STAMP="$PY_VERSION $OPENSSL_VERSION $SQLITE_VERSION $ZLIB_VERSION $LIBFFI_VERSION $XZ_VERSION $BZIP2_VERSION $EXPAT_VERSION"
 if [ "$ALL" = 1 ] \
    || { [ "${BUILD_KLIPPER:-0}" = "fork" ] && [ ! -d "${KLIPPER_FORK:-}/klippy" ]; } \
    || [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ] \
@@ -123,40 +122,26 @@ if [ "$ALL" = 1 ] || [ "${BUILD_MOONRAKER:-0}" = "1" ]; then
         "$MOONRAKER_TGZ" "$MOONRAKER_SHA256"
 fi
 
-# s6 and skalibs, and the musl cross-toolchain that builds them. Every package
-# ships s6, so there is no BUILD_ flag here -- these are fetched on every
-# build, not on request.
+# The supervision stack: skalibs, execline, s6, s6-rc. Every package ships
+# them, so there is no BUILD_ flag here -- these come down on every build, not
+# on request. Four tarballs, well under a megabyte between them.
 #
-# The two source tarballs are a few hundred KB each and always come down. The
-# toolchain is ~100MB, so it is fetched only when bin/patch.sh would actually
-# have to compile: work/.s6 caches the cross-built tree between builds and
-# names the versions it was built from, so a checkout that already has a
-# current one never pulls the compiler at all. (Same shape as the Ingenic
-# toolchain above, which is skipped when there is nothing to compile.)
+# THE musl CROSS-TOOLCHAIN USED TO BE FETCHED HERE and is gone with the second
+# libc. It was ~71MB, conditional on a work/.s6 stamp this file spelled with
+# two of its three fields while patch.sh wrote all three -- so the condition
+# could never be false and it was re-hashed on every single run for months.
+# The fix at the time was to move the stamp into bin/common.sh; the fix now is
+# that there is no such stamp to spell, because all four of these are recipes
+# and the Ingenic toolchain they need is gated on pkg_needs above, which asks
+# pkg_stale rather than re-deriving anything.
 get "https://skarnet.org/software/skalibs/skalibs-$SKALIBS_VERSION.tar.gz" \
     "$SKALIBS_TGZ" "$SKALIBS_SHA256"
+get "https://skarnet.org/software/execline/execline-$EXECLINE_VERSION.tar.gz" \
+    "$EXECLINE_TGZ" "$EXECLINE_SHA256"
 get "https://skarnet.org/software/s6/s6-$S6_VERSION.tar.gz" \
     "$S6_TGZ" "$S6_SHA256"
-#
-# ONE CONSUMER AGAIN: bin/patch.sh section 5b, and nothing else. pkg/opkg used
-# to build against this toolchain too and no longer does -- everything under
-# pkg/ is Ingenic glibc now, so the recipes are gated on the Ingenic fetch
-# above and this condition is back to being about s6 alone. When section 5b
-# becomes a recipe as well, this whole block and the MUSL_TOOLCHAIN_* pins go
-# with it.
-#
-# $S6_STAMP COMES FROM bin/common.sh and is not spelled here. It used to be,
-# with two of its three fields, against a tree patch.sh stamped with all three
-# -- so this test could never be false and the toolchain was re-fetched on
-# every single run. See the comment above S6_STAMP for the whole account.
-if [ "$ALL" = 1 ] \
-   || [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
-    # Bootlin's own release layout: one directory per target architecture,
-    # one versioned tarball per release inside it. See versions.env for why
-    # this is Bootlin and not musl.cc.
-    get "https://toolchains.bootlin.com/downloads/releases/toolchains/mips32r5el/tarballs/$MUSL_TOOLCHAIN_FILE" \
-        "$MUSL_TOOLCHAIN_TGZ" "$MUSL_TOOLCHAIN_SHA256"
-fi
+get "https://skarnet.org/software/s6-rc/s6-rc-$S6RC_VERSION.tar.gz" \
+    "$S6RC_TGZ" "$S6RC_SHA256"
 
 # CPython and the seven C libraries it links against. Like s6 there is no
 # BUILD_ flag: every package ships the interpreter, so these come down on
@@ -174,7 +159,6 @@ fi
 # the cross-built tree and names the versions it came from, so a checkout that
 # already has a current one pulls neither the ~203MB compiler nor a second
 # copy of anything.
-PY_STAMP="$PY_VERSION $OPENSSL_VERSION $SQLITE_VERSION $ZLIB_VERSION $LIBFFI_VERSION $XZ_VERSION $BZIP2_VERSION $EXPAT_VERSION"
 get "https://www.python.org/ftp/python/$PY_VERSION/Python-$PY_VERSION.tgz" \
     "$PY_TGZ" "$PY_SHA256"
 get "https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz" \

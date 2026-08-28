@@ -67,11 +67,25 @@ pkg_die()  { printf '   !! %s\n' "$*" >&2; exit 1; }
 # build order and pkg_deps. PKG_DEPENDS is what opkg reads at install time.
 # Keeping them apart is what stops a package from declaring a runtime
 # dependency on a library that was only ever linked into it.
+#
+# PKG_STAMP_EXTRA is for a recipe whose inputs are not described by its version
+# number. Every recipe here builds a pinned tarball, so version-and-toolchain
+# says everything -- except anvil-core, whose sources are files in this repo
+# that change without any version changing. It puts a content hash there and
+# pkg_stamp folds it in; see pkg/anvil-core/pkg.conf.
+#
+# PKG_WHEN is a shell condition deciding whether this recipe exists at all.
+# Mainsail, Moonraker and HelixScreen are downloads gated by BUILD_* flags, and
+# a build configured without one has no source for it to unpack. Empty means
+# always. A recipe whose condition is false is not a failure, it is absent:
+# pkg_recipes does not list it, so nothing orders it, builds it or expects it
+# in the feed.
 pkg_conf() {
     PKG_NAME=''; PKG_VERSION=''; PKG_RELEASE=1; PKG_SECTION=libs
     PKG_ROOT=''; PKG_EXCLUDE=''; PKG_DEPENDS=''; PKG_BUILD_DEPENDS=''
     PKG_DESCRIPTION=''; PKG_ARCH="$IPK_ARCH"
     PKG_MAINTAINER='anvil <none@example.invalid>'
+    PKG_STAMP_EXTRA=''; PKG_WHEN=''
     [ -f "$ROOT/pkg/$1/pkg.conf" ] || pkg_die "no recipe pkg/$1/pkg.conf"
     # shellcheck disable=SC1090
     . "$ROOT/pkg/$1/pkg.conf"
@@ -116,6 +130,10 @@ pkg_stamp() {
             || pkg_die "pkg_stamp: dependency cycle reached '$1'"
         pkg_conf "$1"
         _s="$1 $PKG_VERSION-$PKG_RELEASE $MIPS_TOOLCHAIN_FILE"
+        # A recipe whose inputs are not its version number says so here. The
+        # extra goes in BEFORE the dependency stamps so the string still reads
+        # outermost-first when a human has to compare two of them by eye.
+        [ -z "$PKG_STAMP_EXTRA" ] || _s="$_s $PKG_STAMP_EXTRA"
         for _d in $PKG_BUILD_DEPENDS; do
             _s="$_s [$(pkg_stamp "$_d")]"
         done
@@ -133,7 +151,14 @@ pkg_stale() {
 # cannot be built into anything.
 pkg_recipes() {
     for _d in "$ROOT"/pkg/*/; do
-        [ -f "$_d/pkg.conf" ] && basename "$_d"
+        [ -f "$_d/pkg.conf" ] || continue
+        _r=$(basename "$_d")
+        # PKG_WHEN in a subshell, because it is arbitrary shell out of a
+        # recipe's metadata and this function is called by the fetcher, by the
+        # packager and by the tests. A condition that set a variable or cd'd
+        # somewhere would otherwise do it to whoever asked.
+        ( pkg_conf "$_r"; [ -z "$PKG_WHEN" ] || eval "$PKG_WHEN" ) || continue
+        printf '%s\n' "$_r"
     done
 }
 
@@ -200,7 +225,11 @@ pkg_begin() {
         pkg_skip "$PKG_ID: $PKG_OUT already holds this build"
         return 1
     fi
-    pkg_say "$PKG_ID: cross-building $PKG_NAME $PKG_VERSION-$PKG_RELEASE"
+    # "building", not "cross-building": since the asset packages landed, not
+    # every recipe here runs a compiler, and a line that says otherwise about
+    # a zip of JavaScript is a small lie in the one place a reader looks to
+    # find out what a build actually did.
+    pkg_say "$PKG_ID: building $PKG_NAME $PKG_VERSION-$PKG_RELEASE"
     rm -rf "$PKG_WORK" "$PKG_OUT"
     # src/  unpacked sources        stage/   DESTDIR of the install
     # xw/   compiler wrappers       sysroot/ build dependencies, unpacked
@@ -327,11 +356,80 @@ pkg_deps() {
     export PKG_CONFIG_SYSROOT_DIR="$PKG_SYSROOT"
 }
 
+# ------------------------------------------------------------ source verbs
+#
+# A recipe names where its inputs come from EXACTLY ONCE, with one of the two
+# verbs below. That is not a style rule: "one recipe builds one package" is
+# checked by counting these calls (qa/static/test_ipk.py), and a recipe that
+# unpacked two sources would be building somebody else's package inside its
+# own -- the shape this whole layout replaced.
+#
 # --------------------------------------------------------------- pkg_unpack
-# Extract this recipe's one pinned source tarball into $PKG_WORK/src.
+#
+#     pkg_unpack <archive>
+#
+# Extract this recipe's one pinned source archive into $PKG_WORK/src.
+#
+# ZIP AS WELL AS TAR, dispatched on the name. Mainsail publishes a .zip and
+# everything else a tarball, and the alternative -- a second source verb, or an
+# `unzip` line in the one recipe that needs it -- would either double the thing
+# being counted or put an extraction command back in a recipe. tar reads its
+# own compression off the file, so only the container needs deciding here.
 pkg_unpack() {
     [ -f "${1:-}" ] || pkg_die "no source at '${1:-}' -- run ./bin/fetch-assets.sh"
-    tar -xf "$1" -C "$PKG_WORK/src"
+    case "$1" in
+        *.zip)
+            command -v unzip >/dev/null 2>&1 \
+                || pkg_die "$PKG_ID needs unzip to unpack $(basename "$1")"
+            unzip -q -o "$1" -d "$PKG_WORK/src" \
+                || pkg_die "$PKG_ID: could not unzip $1" ;;
+        *)
+            tar -xf "$1" -C "$PKG_WORK/src" \
+                || pkg_die "$PKG_ID: could not untar $1" ;;
+    esac
+}
+
+# --------------------------------------------------------------- pkg_intree
+#
+#     pkg_intree
+#
+# This recipe's sources are the checked-out repository, not a download.
+#
+# ONE RECIPE USES THIS AND IT IS anvil-core, whose contents are payload/ and
+# assets/ -- files that are edited in this repo rather than fetched from
+# anywhere. It unpacks nothing and exists for two reasons: so that "a recipe
+# names its source exactly once" stays a countable property rather than one
+# with an exemption, and so that reading the recipe tells you where its inputs
+# are. The freshness of those inputs is PKG_STAMP_EXTRA's job, not this verb's.
+pkg_intree() {
+    PKG_SRC="$ROOT"
+    pkg_say "$PKG_ID: source is this checkout, at $ROOT"
+}
+
+# ----------------------------------------------------------------- pkg_stage
+#
+#     pkg_stage <src> <dest-relative-to-prefix>
+#
+# Put a file or tree into the staged install, where pkg_ship expects to find
+# it: $PKG_WORK/stage$MODDIR/<dest>.
+#
+# THIS IS `make install` FOR THINGS THAT HAVE NO make. Mainsail is a zip of
+# static files, Moonraker is a python tree, HelixScreen is somebody else's
+# prebuilt tarball and anvil-core is this repo's own scripts. None of them has
+# a configure, a Makefile or a DESTDIR, but all of them still have to arrive
+# somewhere before pkg_ship copies them out -- and staging into the same place
+# an autotools install lands means pkg_ship, the .la sweep, the archive
+# normalisation and the ELF-only strip all keep working with no special case
+# for a package that was never compiled.
+#
+# cp -a, for the reason it is used everywhere else here: these trees contain
+# symlinks and modes that are part of what is being shipped.
+pkg_stage() {
+    [ -e "${1:-}" ] || pkg_die "$PKG_ID: nothing to stage at '${1:-}'"
+    [ -n "${2:-}" ] || pkg_die "$PKG_ID: pkg_stage needs a destination"
+    _dst="$PKG_WORK/stage$MODDIR/$2"
+    mkdir -p "$(dirname "$_dst")"
+    cp -a "$1" "$_dst" || pkg_die "$PKG_ID: could not stage $1 -> $2"
 }
 
 # ------------------------------------------------------------ pkg_autotools
@@ -352,8 +450,19 @@ pkg_autotools() {
         cd "$PKG_WORK/src/$_dir"
         ./configure --host="$PKG_HOST" --prefix="$_prefix" "$@" \
             > "$PKG_LOG/$_tag-configure.log" 2>&1
-        make -j"$(nproc 2>/dev/null || echo 4)" > "$PKG_LOG/$_tag-make.log" 2>&1
-        make install DESTDIR="$_dest" >> "$PKG_LOG/$_tag-make.log" 2>&1
+        # PKG_MAKE_ARGS reaches make and not configure, which is a distinction
+        # with one real user: s6 and s6-rc need LDLIBS=-lpthread against this
+        # printer's glibc 2.29. skalibs' pthread_mutex_tailock calls
+        # pthread_mutex_timedlock, which glibc only moved out of libpthread and
+        # into libc in 2.34 -- so upstream never sees this and musl never had
+        # it. s6's own PTHREAD_LIB is wired only to --enable-nsss, so no
+        # configure flag reaches the link line; its Makefile appends $(LDLIBS)
+        # last, which is why this is the lever that works.
+        # shellcheck disable=SC2086
+        make -j"$(nproc 2>/dev/null || echo 4)" ${PKG_MAKE_ARGS:-} \
+            > "$PKG_LOG/$_tag-make.log" 2>&1
+        # shellcheck disable=SC2086
+        make install DESTDIR="$_dest" ${PKG_MAKE_ARGS:-} >> "$PKG_LOG/$_tag-make.log" 2>&1
     ) || pkg_die "$PKG_ID: building $_tag failed -- see $PKG_WORK/$_tag-configure.log and $PKG_WORK/$_tag-make.log (sources kept in $PKG_WORK/src)"
     pkg_say "$PKG_ID: built $_tag"
 }
@@ -431,20 +540,33 @@ pkg_ship() {
     # host binutils indexes mipsel objects correctly -- and the proof that it
     # does is downstream rather than asserted: opkg links against both of these
     # archives, and a broken index fails that link with undefined symbols.
-    find "$PKG_OUT" -name '*.a' -print | while IFS= read -r _a; do
-        "$PKG_HOST-objcopy" --enable-deterministic-archives "$_a" \
-            || pkg_die "$PKG_ID: could not normalise the member headers of $_a"
-        ranlib -D "$_a" \
-            || pkg_die "$PKG_ID: could not write a deterministic index for $_a"
-    done
+    # BOTH PASSES BELOW NEED THE CROSS TOOLCHAIN, and a recipe that compiles
+    # nothing never called pkg_toolchain, so there is none. Mainsail is a zip
+    # of JavaScript, Moonraker is a python tree, anvil-core is this repo's own
+    # shell scripts: no archive to normalise and no ELF to strip, and reaching
+    # for $PKG_HOST-objcopy would fail on the variable rather than on anything
+    # real. Skipping is safe because it is not the last word -- every package
+    # goes through mips_abi_gate at the package boundary in
+    # bin/build-packages.sh, which reads every ELF it can find. A recipe that
+    # forgot pkg_toolchain and did produce objects is caught there, by the gate
+    # whose job that is, instead of here by an unbound variable.
+    if [ -n "${PKG_HOST:-}" ]; then
+        find "$PKG_OUT" -name '*.a' -print | while IFS= read -r _a; do
+            "$PKG_HOST-objcopy" --enable-deterministic-archives "$_a" \
+                || pkg_die "$PKG_ID: could not normalise the member headers of $_a"
+            ranlib -D "$_a" \
+                || pkg_die "$PKG_ID: could not write a deterministic index for $_a"
+        done
 
-    find "$PKG_OUT" -type f -print | while IFS= read -r _f; do
-        case "$_f" in *.a|*.h|*.pc|*.la) continue ;; esac
-        # readelf is the ELF test, because it is the tool that has to answer
-        # the question anyway and it exits non-zero on anything else.
-        "$PKG_HOST-readelf" -h "$_f" >/dev/null 2>&1 || continue
-        # Stripped with the CROSS strip; the host's would refuse a MIPS object.
-        # shellcheck disable=SC2086
-        "$PKG_STRIP" ${PKG_STRIP_ARGS---strip-unneeded} "$_f" 2>/dev/null || true
-    done
+        find "$PKG_OUT" -type f -print | while IFS= read -r _f; do
+            case "$_f" in *.a|*.h|*.pc|*.la) continue ;; esac
+            # readelf is the ELF test, because it is the tool that has to
+            # answer the question anyway and it exits non-zero on anything else.
+            "$PKG_HOST-readelf" -h "$_f" >/dev/null 2>&1 || continue
+            # Stripped with the CROSS strip; the host's would refuse a MIPS
+            # object.
+            # shellcheck disable=SC2086
+            "$PKG_STRIP" ${PKG_STRIP_ARGS---strip-unneeded} "$_f" 2>/dev/null || true
+        done
+    fi
 }

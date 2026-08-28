@@ -30,7 +30,13 @@ is **3.6MB**, and the supervision subset we would actually ship is:
 | s6 `libexec/s6-ftrigrd` | 1 | 116KB |
 | runit (runsv, runsvdir, sv, svlogd, chpst) | 5 | 335KB |
 
-execline is a further 53 binaries / 2.1MB and is **not** needed -- s6 run
+execline was measured here at 53 binaries / 2.1MB and judged unnecessary --
+s6 run
+<!-- SUPERSEDED: that figure is an UNSTRIPPED STATIC MUSL build. Built the
+way the tree builds now (Ingenic glibc, dynamic libc, cross-stripped) all 53
+come to 1008KB, and s6-rc requires execline unconditionally -- it has no
+--disable-execline and compiles execline scripts into every database. It is
+pkg/execline now. -->
 scripts can be plain `#!/bin/sh`.
 
 ## Two findings that cost real time

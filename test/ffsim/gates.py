@@ -11,6 +11,7 @@ directly, and build-printer-image.sh / make-stock-fixture.sh are not wrappers
 at all.)
 """
 import os
+import shutil
 import subprocess
 import tarfile
 
@@ -179,21 +180,36 @@ def moonraker(config, on_output=None):
 def _s6_tarball(config):
     """The cross-built s6 tree, packed the way a printer would see it.
 
-    bin/patch.sh leaves it in work/.s6 as bin/ + libexec/, which is exactly
-    the shape a case wants to unpack straight into $MODDIR. Returns None when
-    nothing has built it yet -- the caller decides whether that is a Skip or a
-    reason to fall back, because those are different questions: case-supervisor
-    is ABOUT s6 and has nothing to say without it, while case-services is
-    about our own scripts and can still check most of its contract against a
-    stand-in.
+    THREE TREES, NOT ONE. This used to read work/.s6, the single directory
+    bin/patch.sh cross-built s6 into. s6 is four packages now -- skalibs, which
+    ships nothing to a printer, plus execline, s6 and s6-rc -- so the bin/ and
+    libexec/ a case unpacks into $MODDIR are merged from three recipe outputs
+    under work/pkg. The shape a case sees is unchanged, which is the point.
+
+    Returns None when nothing has built them yet -- the caller decides whether
+    that is a Skip or a reason to fall back, because those are different
+    questions: case-supervisor is ABOUT s6 and has nothing to say without it,
+    while case-services is about our own scripts and can still check most of
+    its contract against a stand-in.
     """
-    built = config.root / "work" / ".s6"
-    if not (built / "bin" / "s6-svscan").is_file():
+    trees = [config.root / "work" / "pkg" / n
+             for n in ("execline", "s6", "s6-rc")]
+    if not (config.root / "work" / "pkg" / "s6" / "bin" / "s6-svscan").is_file():
         return None
+    staged = config.root / "work" / ".s6-gate"
+    if staged.is_dir():
+        shutil.rmtree(str(staged))
+    for tree in trees:
+        for sub in ("bin", "libexec"):
+            src = tree / sub
+            if src.is_dir():
+                shutil.copytree(str(src), str(staged / sub), dirs_exist_ok=True,
+                                symlinks=True)
     out = config.root / "work" / ".s6-gate.tgz"
     with tarfile.open(str(out), "w:gz") as tar:
         for sub in ("bin", "libexec"):
-            tar.add(str(built / sub), arcname=sub)
+            if (staged / sub).is_dir():
+                tar.add(str(staged / sub), arcname=sub)
     return str(out)
 
 
@@ -237,7 +253,7 @@ def moonraker313_s6(config, on_output=None):
     """
     s6 = _s6_tarball(config)
     if not s6:
-        raise Skip("nothing in work/.s6 -- run ./bin/patch.sh first")
+        raise Skip("nothing in work/pkg/s6 -- run ./bin/patch.sh first")
     prefix = _prefix_tarball(config)
     if not prefix:
         raise Skip("nothing in work/.py313 or work/.sodium -- run ./bin/patch.sh first")
@@ -345,7 +361,7 @@ def supervisor(config, on_output=None):
     """
     s6 = _s6_tarball(config)
     if not s6:
-        raise Skip("nothing in work/.s6 -- run ./bin/patch.sh first")
+        raise Skip("nothing in work/pkg/s6 -- run ./bin/patch.sh first")
     replica = Replica.start(config, want_output=on_output)
     replica.run_case(_case(config, "case-supervisor.sh"),
                      packages={"sup.tgz": s6}, on_output=on_output)
@@ -409,7 +425,7 @@ def nginx(config, on_output=None):
     """
     s6 = _s6_tarball(config)
     if not s6:
-        raise Skip("nothing in work/.s6 -- run ./bin/patch.sh first")
+        raise Skip("nothing in work/pkg/s6 -- run ./bin/patch.sh first")
     replica = Replica.start(config, want_output=on_output)
     replica.run_case(_case(config, "case-nginx.sh"),
                      packages={"sup.tgz": s6}, on_output=on_output)
@@ -427,7 +443,7 @@ def camera(config, on_output=None):
     """
     s6 = _s6_tarball(config)
     if not s6:
-        raise Skip("nothing in work/.s6 -- run ./bin/patch.sh first")
+        raise Skip("nothing in work/pkg/s6 -- run ./bin/patch.sh first")
     replica = Replica.start(config, want_output=on_output)
     replica.run_case(_case(config, "case-camera.sh"),
                      packages={"sup.tgz": s6}, on_output=on_output)

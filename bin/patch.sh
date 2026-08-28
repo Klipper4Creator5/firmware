@@ -3,6 +3,14 @@
 # Idempotent: safe to re-run after editing config.env or assets.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
+# pkg/lib.sh for pkg_out ALONE. This file runs recipes and stages what they
+# produced, and it has to be able to name where a recipe puts its output. The
+# alternative is a $SOMETHING_BUILD variable in bin/common.sh for every recipe,
+# which is what the three legacy aliases there are and what that file's own
+# comment says not to grow: pkg_out derives the path from the recipe name, so a
+# new recipe needs no edit anywhere. Sourcing it costs nothing else -- lib.sh
+# defines functions and sets no build state until a recipe calls pkg_begin.
+. "$ROOT/pkg/lib.sh"
 
 SOFTWARE_DIR=work/software
 [ -d "$SOFTWARE_DIR" ] || { echo "run bin/unpack.sh first" >&2; exit 1; }
@@ -195,22 +203,29 @@ else
 fi
 
 # -------------------------------------------------------------- 3. Mainsail
+# THE BUILD LIVES IN pkg/mainsail/build.sh, and this section stages what it
+# produced -- the same arrangement section 5d has had since libsodium became a
+# recipe, and for the same reason: the .ipk and the tarball have to contain
+# the same bytes or they are two different Mainsails wearing one version
+# number, and no test can tell which a printer got.
 if [ "${BUILD_MAINSAIL:-1}" = "1" ]; then
-    # BUILD_MAINSAIL=1 asked for Mainsail, so a missing file is a broken build,
-    # not a reason to ship a package with an empty web root. bin/fetch-assets.sh
-    # should have put it here.
-    [ -f "${MAINSAIL_ZIP:-}" ] || { echo "BUILD_MAINSAIL=1 but no Mainsail zip at '${MAINSAIL_ZIP:-}' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
-    say "Mainsail: unpacking $(basename "$MAINSAIL_ZIP")"
-    mkdir -p "$MOD_PAYLOAD/www/mainsail"
-    unzip -q -o "$MAINSAIL_ZIP" -d "$MOD_PAYLOAD/www/mainsail"
-    cp -f assets/nginx.conf "$MOD_PAYLOAD/nginx/nginx.conf"
+    bash pkg/mainsail/build.sh
+    mkdir -p "$MOD_PAYLOAD/www"
+    cp -a "$(pkg_out mainsail)/www/mainsail" "$MOD_PAYLOAD/www/mainsail"
     du -sh "$MOD_PAYLOAD/www/mainsail" | awk '{print "   "$1}'
 else
     skip "Mainsail"
 fi
-[ -f assets/moonraker.conf ] && cp -f assets/moonraker.conf "$MOD_PAYLOAD/config/moonraker.conf"
-# The user seam for Moonraker. moonraker.conf includes it by name, and
-# run-append.sh creates it only when it is missing -- never overwrites it.
+# nginx.conf and moonraker.conf USED TO BE COPIED HERE and are shipped by
+# pkg/anvil-core now, with the rest of the configuration this repo writes.
+# Copying them here as well would put two of the same file in the payload from
+# two places, which is the arrangement this migration exists to remove.
+#
+# moonraker-custom.conf is the exception and stays: it is a USER SEAM.
+# moonraker.conf includes it by name, and run-append.sh creates it only when
+# it is missing -- never overwrites it. A package member is overwritten on
+# every upgrade by definition, so putting this in anvil-core would destroy a
+# printer's own Moonraker settings the first time it was upgraded.
 [ -f assets/moonraker-custom.conf ] \
     && cp -f assets/moonraker-custom.conf "$MOD_PAYLOAD/config/moonraker-custom.conf"
 
@@ -289,41 +304,33 @@ fi
 # payload IS the installation: run-append.sh has no Moonraker step left at
 # all, and nothing about getting Moonraker onto the printer can fail
 # separately from the extraction itself.
+# THE TREE IS BUILT BY pkg/moonraker/build.sh, which is where the tarball
+# shape guard and the tests/__pycache__ trims went. They did not change; they
+# moved to the one place that produces this tree, so the .ipk and the payload
+# cannot end up containing different Moonrakers.
 if [ "${BUILD_MOONRAKER:-1}" = "1" ]; then
-    [ -f "${MOONRAKER_TGZ:-}" ] || { echo "BUILD_MOONRAKER=1 but no Moonraker tarball at '${MOONRAKER_TGZ:-}' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
-    say "Moonraker: staging $MOONRAKER_VERSION package tree"
-    rm -rf work/.moonraker
-    mkdir -p work/.moonraker
-    tar -xzf "$MOONRAKER_TGZ" -C work/.moonraker --strip-components=1
-    # Guard against a tarball whose shape changed under us -- silently
-    # shipping nothing here would look like a clean build and a dead UI.
-    [ -f work/.moonraker/moonraker/moonraker.py ] || {
-        echo "   !! no moonraker/moonraker.py in $(basename "$MOONRAKER_TGZ")" >&2; exit 1; }
+    bash pkg/moonraker/build.sh
     rm -rf "$MOD_PAYLOAD/moonraker"
-    cp -a work/.moonraker/moonraker "$MOD_PAYLOAD/moonraker"
-    # Tests never run on the printer and are a sizeable chunk of the tree.
-    rm -rf "$MOD_PAYLOAD/moonraker/tests"
-    find "$MOD_PAYLOAD/moonraker" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
-    rm -rf work/.moonraker
+    cp -a "$(pkg_out moonraker)/moonraker" "$MOD_PAYLOAD/moonraker"
     du -sh "$MOD_PAYLOAD/moonraker" | awk '{print "   "$1}'
 else
     skip "Moonraker: keeping the stock 2022 build"
 fi
 
 # ----------------------------------------------------------- 5. HelixScreen
+# pkg/helixscreen/build.sh unpacks upstream's release and merges this repo's
+# printer-database entry and the optional platform hook into it, so all three
+# of those now happen once rather than here and again in the packager.
+#
+# IT IS ALSO ABI-GATED NOW, which it never was here: bin/build-packages.sh
+# runs mips_abi_gate over every package tree, and until this became a recipe
+# the three mipsel binaries in the largest thing we ship had never been
+# checked. They pass -- measured, 3 objects, nan2008/o32/mips32r2 -- so this
+# is a gate gained, not a gate that had been quietly failing.
 if [ "${BUILD_HELIX:-1}" = "1" ]; then
-    [ -f "${HELIX_TGZ:-}" ] || { echo "BUILD_HELIX=1 but no HelixScreen tarball at '${HELIX_TGZ:-}' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
-    say "HelixScreen: unpacking $(basename "$HELIX_TGZ")"
-    mkdir -p "$MOD_PAYLOAD/helixscreen"
-    tar -xzf "$HELIX_TGZ" -C "$MOD_PAYLOAD" # yields $MOD_PAYLOAD/helixscreen/
-    # Printer-database entry so it detects the Creator 5 Pro as a tool changer
-    mkdir -p "$MOD_PAYLOAD/helixscreen/config/printer_database.d"
-    cp -f payload/helixscreen/printer_database.d/*.json \
-          "$MOD_PAYLOAD/helixscreen/config/printer_database.d/"
-    # Optional platform hook. No such file is in the repo, so this never fires
-    # on a stock checkout -- drop one in assets/ to have it shipped.
-    [ -f assets/hooks-creator5.sh ] && \
-        cp -f assets/hooks-creator5.sh "$MOD_PAYLOAD/helixscreen/assets/config/platform/"
+    bash pkg/helixscreen/build.sh
+    rm -rf "$MOD_PAYLOAD/helixscreen"
+    cp -a "$(pkg_out helixscreen)/helixscreen" "$MOD_PAYLOAD/helixscreen"
     du -sh "$MOD_PAYLOAD/helixscreen" | awk '{print "   "$1}'
 else
     skip "HelixScreen"
@@ -335,241 +342,58 @@ fi
 # second copy of that rule is a second chance to get it wrong. The comment
 # explaining the two expected e_flags words went with it.
 
-# ------------------------------------------------------- 5b. s6 supervision
-# The process supervisor, cross-compiled here from the sources pinned in
-# versions.env with the musl toolchain pinned beside them -- the same shape as
-# c_helper.so above, and for the same reason: nothing binary is vendored in
-# this repo, so anything the printer executes is built from a hash we pinned.
+# --------------------------------------------- 5b. s6 / execline / s6-rc
+# The supervision stack, staged from four recipes.
 #
-# NOTHING STARTS s6 YET. This step only puts it in the payload. The init
-# scripts still hand-roll their supervision in payload/anvil-service.sh and
-# will keep doing so until the scanner lands (docs/notes/80-s6-migration.md,
-# phase 3). Shipping it first is what makes that a one-file change instead of
-# a build change and a boot change at once.
+# THIS SECTION USED TO BE 235 LINES AND BUILT TWO LIBRARIES. It unpacked a
+# musl cross-toolchain, wrote its own compiler wrappers, gated their ABI,
+# cross-built skalibs into a private sysroot, cross-built s6 against it,
+# harvested thirteen binaries out of a DESTDIR and stamped a cache directory
+# that only this file and the fetcher knew the shape of. All of that is now
+# four pkg/ recipes with versions, stamps and packages of their own, and what
+# is left here is what this file is for: putting the result in the payload.
 #
-# WHY NOT IN A CONTAINER OF ITS OWN. tools/supervisor/Dockerfile builds this
-# in a debian:bookworm of its own -- that was the measurement harness, and it
-# also had to build runit and execline for the comparison. The real build
-# cannot work that way: bin/patch.sh already runs inside the pinned build
-# image, and the Makefile's build lane deliberately gives that container no
-# docker socket (only the test lane gets one), so there is no daemon to ask
-# for a second container. It unpacks a toolchain into work/ and compiles in
-# place instead, exactly as the chelper step does.
+# THE TOOLCHAIN AND THE LINK MODE BOTH CHANGED, and the reasons are recorded
+# in versions.env beside the pins rather than here. Briefly: one libc, the
+# printer's own glibc 2.29, linked dynamically -- so the second toolchain in
+# this tree is gone. Measured, s6 alone is smaller this way than the static
+# musl build it replaces (696K against ~930K); the stack is larger only
+# because it now also carries execline and s6-rc, which it did not before.
 #
-# WHY IT IS CACHED AND c_helper.so IS NOT. c_helper.so is rebuilt whenever any
-# chelper source is newer than it, because its sources are a checkout someone
-# may be editing and a stale .so under a fresh klippy is a bug that reached a
-# printer. s6's sources are a pinned tarball that cannot change without its
-# sha256 changing, so the two version strings ARE the whole cache key: build
-# once, stamp work/.s6/.version, and every later build just copies. That also
-# lets bin/fetch-assets.sh skip the ~100MB toolchain download entirely. Staging
-# into the payload is NOT cached -- patch.sh rm -rf's work/modpayload on every
-# run -- so a stale payload is not a thing that can happen.
-S6_HOST=mipsel-buildroot-linux-musl
-S6_TOOLCHAIN_DIR=work/.musl-toolchain/$S6_HOST-cross
-# The supervision subset, and only it. s6 installs ~40 binaries; the rest are
-# the s6-log/fdholder/ipc machinery we have no use for. Every name below is
-# reachable from something an init script will call:
-#   svscan/svscanctl  the scanner and its control channel
-#   supervise/svc     one supervisor per service, and the verb that talks to it
-#   svstat/svok       "is it up", for the `status` verb the S* scripts expose
-#   svwait            the readiness wait that is the whole reason for s6
-#   svlisten/svlisten1/ftrig-listen1  the waiting verbs EXEC these; s6-svc -w
-#                     and s6-svwait are unusable without them
-#   mkfifodir/cleanfifodir  create and tidy the fifodirs those listen on
-#   notifyoncheck     readiness for a service that cannot notify for itself
-S6_BINS="s6-svscan s6-svscanctl s6-supervise s6-svc s6-svstat s6-svwait s6-svok
-         s6-svlisten s6-svlisten1 s6-ftrig-listen1 s6-mkfifodir s6-cleanfifodir
-         s6-notifyoncheck"
-# Not in bin/ and not optional: s6-svlisten spawns this by absolute path out of
-# the compiled-in libexecdir, and without it every waiting verb dies with
-# "unable to ftrigr_startf: No such file or directory".
-S6_LIBEXEC="s6-ftrigrd"
-# $S6_STAMP is defined in bin/common.sh and deliberately not repeated here.
-# MUSL_TOOLCHAIN_FILE is in it, not just the two source versions: the toolchain
-# that builds s6 determines its ABI as much as the sources do, and
-# work/.s6/.version has no other way to notice that the pin moved from a
-# legacy-NaN toolchain to a nan2008 one. Without that, a checkout that had
-# already built s6 once would read its old e_flags=0x1007 tree as current and
-# never rebuild it -- exactly the failure mode that shipped once.
-#
-# It moved to common.sh because bin/fetch-assets.sh compares against it too and
-# was spelling it with two of these three fields, which made its test
-# unfalsifiable and re-fetched a 71MB toolchain on every run for months. One
-# definition is what makes that class of bug impossible rather than unlikely.
-if [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
-    if [ ! -x "$S6_TOOLCHAIN_DIR/bin/$S6_HOST-gcc" ]; then
-        [ -f "${MUSL_TOOLCHAIN_TGZ:-}" ] || {
-            echo "   !! s6 needs (re)building and there is no musl toolchain:" >&2
-            echo "      $MUSL_TOOLCHAIN_TGZ is missing. Run ./bin/fetch-assets.sh." >&2
-            exit 1; }
-        say "s6: unpacking the musl mipsel toolchain"
-        rm -rf work/.musl-toolchain
-        mkdir -p work/.musl-toolchain
-        # -xf, not -xzf: Bootlin ships this .tar.xz, not musl.cc's .tar.gz --
-        # tar picks the decompressor off the file itself either way.
-        tar -xf "$MUSL_TOOLCHAIN_TGZ" -C work/.musl-toolchain
-        # Bootlin's archive extracts into a directory named after the
-        # release ("mips32r5el--musl--stable-2025.08-1"), not the fixed
-        # "$S6_HOST-cross" musl.cc used. It is the only thing the archive
-        # unpacks at top level, so renaming whatever that turns out to be is
-        # what decouples S6_TOOLCHAIN_DIR from a version string that moves on
-        # every release.
-        set -- work/.musl-toolchain/*/
-        [ -d "$1" ] || { echo "   !! musl toolchain archive unpacked no directory" >&2; exit 1; }
-        mv "$1" "$S6_TOOLCHAIN_DIR"
-    fi
-    for t in "${SKALIBS_TGZ:-}" "${S6_TGZ:-}"; do
-        [ -f "$t" ] || { echo "   !! no s6 sources at '$t' -- run ./bin/fetch-assets.sh" >&2; exit 1; }
-    done
-    say "s6: cross-compiling skalibs $SKALIBS_VERSION + s6 $S6_VERSION for $MODDIR"
-    rm -rf work/.s6-src work/.s6-sysroot work/.s6-stage work/.s6-xw "$S6_BUILD"
-    mkdir -p work/.s6-src work/.s6-xw/bin
-    tar -xzf "$SKALIBS_TGZ" -C work/.s6-src
-    tar -xzf "$S6_TGZ" -C work/.s6-src
-    (
-        # A subshell so the cross-compiler's CC/CFLAGS/PATH cannot leak into
-        # anything patch.sh does afterwards.
-        set -e
-        TC="$PWD/$S6_TOOLCHAIN_DIR"
-        XW="$PWD/work/.s6-xw"
-        SRC="$PWD/work/.s6-src"
+# NOTHING STARTS s6-rc YET. As with s6 before it, shipping the binaries is a
+# separate change from using them -- see docs/notes/80-s6-migration.md. This
+# step only puts them in the payload.
+bash pkg/skalibs/build.sh   # dev-only; nothing of it reaches the payload
+bash pkg/execline/build.sh
+bash pkg/s6/build.sh
+bash pkg/s6-rc/build.sh
 
-        # ---------------------------------------------------------- wrappers
-        # THE SAME DISCIPLINE 5c USES FOR THE INGENIC TOOLCHAIN, and for the
-        # same reason: passing -EL -mnan=2008 -march=mips32r2 in CFLAGS alone
-        # is not enough, because skalibs' and s6's own ./configure-generated
-        # link lines do not all forward CFLAGS to the link step. Baking the
-        # flags into the gcc driver itself means no build system gets a vote.
-        #
-        # -EL is redundant on a toolchain whose triple already says mipsel --
-        # kept anyway, for the same reason the Ingenic wrapper keeps it on a
-        # toolchain that is genuinely bi-endian: explicit beats "the default
-        # happens to be right", and it costs nothing to write.
-        #
-        # This is Bootlin's mips32r5el toolchain, not mips32el: mips32r5 has
-        # no legacy-NaN silicon to be compatible with, so its musl crt/libc
-        # objects are nan2008 by construction and a plain mips32el-legacy
-        # toolchain (which this repo used until the printer's kernel turned
-        # out to enforce the ABI flag at exec() -- ENOEXEC or a silently
-        # wrong FPU mode, neither of which qemu-mipsel-static's user-mode
-        # emulation reproduces) cannot be made to emit nan2008 output at all:
-        # forcing -mnan=2008 on it fails to LINK, "mixing -mnan=2008 module
-        # with previous -mnan=legacy modules", because its own crt is legacy.
-        # -march=mips32r2 restricts codegen to what the actual silicon
-        # implements; nothing here should assume r5 or r6 instructions exist.
-        for t in gcc g++ cpp; do
-            printf '#!/bin/sh\nexec %s/bin/%s-%s -EL -mnan=2008 -march=mips32r2 "$@"\n' \
-                "$TC" "$S6_HOST" "$t" > "$XW/bin/$S6_HOST-$t"
-            chmod +x "$XW/bin/$S6_HOST-$t"
-        done
-        for t in ar as ld nm objcopy objdump ranlib readelf strip strings size; do
-            ln -sf "$TC/bin/$S6_HOST-$t" "$XW/bin/$S6_HOST-$t"
-        done
-        export PATH="$XW/bin:$PATH"
-        export CC="$S6_HOST-gcc"
-
-        # Gate the wrapper before building anything on top of it, exactly as
-        # 5c does -- and with -static, because that is how skalibs and s6
-        # actually link. want is 0x70001405 OR 0x70001407 (mips_abi_gate,
-        # defined above, explains why a static EXEC from this toolchain
-        # legitimately carries EF_MIPS_PIC and reads the DYN value anyway).
-        echo 'int main(void){return 0;}' > "$SRC/abi.c"
-        "$S6_HOST-gcc" -static "$SRC/abi.c" -o "$SRC/abi.out"
-        abi=$("$S6_HOST-readelf" -h "$SRC/abi.out" | awk '/Flags:/{print $2}' | tr -d ,)
-        case "$abi" in
-            0x70001405|0x70001407) ;;
-            *) echo "   !! the s6 toolchain wrapper produces e_flags=$abi, want 0x70001405 or 0x70001407" >&2
-               exit 1 ;;
-        esac
-
-        # -D_FILE_OFFSET_BITS=64 is not a size optimisation, it is the
-        # difference between a supervisor that works and one that starts
-        # cleanly and then cannot readdir() its own scandir (EOVERFLOW: a
-        # 32-bit build meeting 64-bit inodes). See versions.env.
-        export CFLAGS="-Os -D_FILE_OFFSET_BITS=64"
-        SK="$PWD/work/.s6-sysroot"
-        STAGE="$PWD/work/.s6-stage"
-        JOBS=$(nproc 2>/dev/null || echo 4)
-
-        # skalibs is a BUILD DEPENDENCY. It goes to a throwaway sysroot, never
-        # to the payload: s6 is linked statically against it, so the .a and the
-        # headers have no reason to exist on a printer.
-        #
-        # The four --with-sysdep flags are answers to questions ./configure
-        # normally settles by COMPILING AND RUNNING a probe, which it cannot do
-        # when the target is a mipsel box and the builder is x86. Left
-        # unanswered, configure stops. The answers are the printer's:
-        # /dev/urandom exists, posix_spawn does not return early, /proc/self/exe
-        # is readable, and select() accepts an infinite timeout.
-        cd "$SRC/skalibs-$SKALIBS_VERSION"
-        ./configure --host="$S6_HOST" --prefix="$SK" \
-            --disable-shared --enable-static --enable-static-libc \
-            --with-sysdep-devurandom=yes \
-            --with-sysdep-posixspawnearlyreturn=no \
-            --with-sysdep-procselfexe=/proc/self/exe \
-            --with-sysdep-selectinfinite=yes >/dev/null
-        make -j"$JOBS" >/dev/null
-        make install >/dev/null
-
-        # --prefix is $MODDIR and NOT the staging directory, because s6 bakes
-        # the prefix into the binaries: this is the path they will look for
-        # s6-ftrigrd under at runtime on the printer. DESTDIR is how the tree
-        # lands somewhere we can read it here without needing /usr/data/anvil to
-        # exist on the build machine.
-        #
-        # --disable-execline is not an optimisation either. s6 links against
-        # execline by DEFAULT -- src/libs6 and the ftrig tools #include
-        # <execline/execline.h> and the build simply stops without it -- and
-        # execline is 53 more binaries and 2.1MB we would have to ship and
-        # nothing would run: our `run` scripts are plain #!/bin/sh. Turning it
-        # off here is what makes "we do not ship execline" true rather than
-        # aspirational.
-        cd "$SRC/s6-$S6_VERSION"
-        ./configure --host="$S6_HOST" --prefix="$MODDIR" \
-            --with-sysdeps="$SK/lib/skalibs/sysdeps" \
-            --with-include="$SK/include" --with-lib="$SK/lib" \
-            --disable-execline \
-            --disable-shared --enable-static --enable-static-libc >/dev/null
-        make -j"$JOBS" >/dev/null
-        make install DESTDIR="$STAGE" >/dev/null
-    )
-    # Take only what we ship, out of the DESTDIR tree at its real prefix.
-    mkdir -p "$S6_BUILD/bin" "$S6_BUILD/libexec"
-    for b in $S6_BINS; do
-        cp -f "work/.s6-stage$MODDIR/bin/$b" "$S6_BUILD/bin/$b"
-    done
-    for b in $S6_LIBEXEC; do
-        cp -f "work/.s6-stage$MODDIR/libexec/$b" "$S6_BUILD/libexec/$b"
-    done
-    "$PWD/$S6_TOOLCHAIN_DIR/bin/$S6_HOST-strip" "$S6_BUILD/bin"/* "$S6_BUILD/libexec"/*
-    rm -rf work/.s6-src work/.s6-sysroot work/.s6-stage work/.s6-xw
-    echo "$S6_STAMP" > "$S6_BUILD/.version"
-else
-    skip "s6: work/.s6 already holds $S6_STAMP"
-fi
-
-# The gate, asked of the built tree rather than of the build, and the SAME
-# gate 5c and 5d use -- s6 is no longer exempt from it (see mips_abi_gate's
-# own comment, above, for why it used to be and no longer is). A cross-build
-# that silently produced a host object, or one legacy-NaN object because a
-# flag did not reach one link line, looks like a clean build here and like a
-# printer that cannot exec its own supervisor there -- the kernel says
-# ENOEXEC, or worse, execs it with the wrong FPU mode, and explains neither.
-S6_ELF=$(mips_abi_gate "$S6_BUILD/bin" "$S6_BUILD/libexec") || exit 1
-[ "$S6_ELF" = "$(($(echo $S6_BINS | wc -w) + 1))" ] || {
-    echo "   !! s6: expected $(($(echo $S6_BINS | wc -w) + 1)) gated ELF objects, mips_abi_gate saw $S6_ELF" >&2
-    exit 1; }
-for b in $S6_BINS $S6_LIBEXEC; do
-    case " $S6_LIBEXEC " in *" $b "*) f="$S6_BUILD/libexec/$b" ;; *) f="$S6_BUILD/bin/$b" ;; esac
-    [ -s "$f" ] || { echo "   !! s6: $b is missing or empty in $S6_BUILD" >&2; exit 1; }
+# bin/ and libexec/ from each, merged into the one prefix root they all
+# configured themselves for. cp -a of the CONTENTS and not of the directory,
+# for the same reason section 5c does it: python's interpreter and libsodium's
+# .so land in these same two directories and must survive.
+for _p in execline s6 s6-rc; do
+    cp -a "$(pkg_out "$_p")/bin/." "$MOD_PAYLOAD/bin/"
+    [ -d "$(pkg_out "$_p")/libexec" ] \
+        && cp -a "$(pkg_out "$_p")/libexec/." "$MOD_PAYLOAD/libexec/"
 done
-say "s6: $S6_ELF ELF objects are nan2008/o32/mips32r2 -- good"
-cp -f "$S6_BUILD/bin"/* "$MOD_PAYLOAD/bin/"
-cp -f "$S6_BUILD/libexec"/* "$MOD_PAYLOAD/libexec/"
-chmod +x "$MOD_PAYLOAD/bin"/s6-* "$MOD_PAYLOAD/libexec"/*
-du -sh "$S6_BUILD/bin"     | awk '{print "   "$1"\tbin/"}'
-du -sh "$S6_BUILD/libexec" | awk '{print "   "$1"\tlibexec/"}'
+chmod +x "$MOD_PAYLOAD/bin"/s6-* "$MOD_PAYLOAD/bin"/execlineb "$MOD_PAYLOAD/libexec"/*
+
+# The gate, over the payload rather than over any one build tree, and the same
+# gate 5c and 5d use. A cross-build that silently produced a host object, or
+# one legacy-NaN object because a flag did not reach one link line, looks like
+# a clean build here and like a printer that cannot exec its own supervisor
+# there -- the kernel says ENOEXEC, or worse, execs it with the wrong FPU mode,
+# and explains neither.
+#
+# The per-binary presence checks that used to live here moved INTO the
+# recipes, next to the ship lists they check. That is strictly better: they now
+# run on `make packages` too, so a missing s6-ftrigrd fails the build that
+# produced the .ipk rather than only a full firmware build.
+S6_ELF=$(mips_abi_gate "$MOD_PAYLOAD/bin" "$MOD_PAYLOAD/libexec") || exit 1
+say "s6 + execline + s6-rc: $S6_ELF ELF objects are nan2008/o32/mips32r2 -- good"
+du -sh "$MOD_PAYLOAD/bin"     | awk '{print "   "$1"\tbin/"}'
+du -sh "$MOD_PAYLOAD/libexec" | awk '{print "   "$1"\tlibexec/"}'
 
 # -------------------------------------------------- 5c. CPython 3.13 (shipped)
 # A second Python for the printer, cross-compiled here from the sources pinned
@@ -641,7 +465,6 @@ PY_PREFIX="$MODDIR"
 # The cache key is every version that goes into the tree, not just CPython's:
 # a bumped OpenSSL with an unchanged PY_VERSION has to rebuild, and the failure
 # if it does not is an interpreter linked against a library nobody can name.
-PY_STAMP="$PY_VERSION $OPENSSL_VERSION $SQLITE_VERSION $ZLIB_VERSION $LIBFFI_VERSION $XZ_VERSION $BZIP2_VERSION $EXPAT_VERSION"
 # The SECOND cache key, for the third-party packages that go into this
 # interpreter's site-packages (step 4 below): every sdist file name and hash
 # from versions.env, as bin/common.sh assembles it.
@@ -1522,33 +1345,23 @@ cp -f payload/firmwareExe "$SOFTWARE_DIR/firmwareExe"
 chmod +x "$SOFTWARE_DIR/firmwareExe"
 
 # ----------------------------------------------------- 10. mod service dir
-mkdir -p "$MOD_PAYLOAD/init.d"
-# The shared environment. Sourced by run-append.sh, firmwareExe, start.sh and
-# every init.d script -- one library path and one interpreter for the whole
-# mod, because carrying a private copy in each of them is how the installer's
-# check and the boot script came to disagree. Not chmod +x: it is sourced.
-cp -f payload/anvil-env.sh "$MOD_PAYLOAD/anvil-env.sh"
-# The shared service shape. Sourced by every init.d script for svc_say,
-# svc_start_daemon, svc_stop_daemon and the start|stop|restart|status block --
-# one answer to "is it alive?" and one busybox correction for
-# start-stop-daemon, instead of a different one per script. Every converted
-# script exits at once if this file is missing, so leaving it out of the
-# payload is a printer with no services at all. Not chmod +x: it is sourced.
-cp -f payload/anvil-service.sh "$MOD_PAYLOAD/anvil-service.sh"
-[ -d payload/bin ] && cp -f payload/bin/* "$MOD_PAYLOAD/bin/" && chmod +x "$MOD_PAYLOAD/bin"/*
-cp -f payload/init.d/S* "$MOD_PAYLOAD/init.d/"
-chmod +x "$MOD_PAYLOAD/init.d"/S*
-# The s6 service directories: one per supervised service, each holding a `run`
-# script and whatever s6 control files it needs beside it (`down` to start in
-# the down state, `notification-fd` to say which descriptor readiness arrives
-# on). cp -a rather than cp -f because those control files are not scripts and
-# a plain glob of *.sh would miss them -- and because a `run` that arrives
-# without its executable bit is a service s6 can never start, which it reports
-# only in its own log. The chmod is belt and braces for exactly that.
-if [ -d payload/etc/s6 ]; then
-    cp -a payload/etc/s6/. "$MOD_PAYLOAD/etc/s6/"
-    chmod +x "$MOD_PAYLOAD"/etc/s6/*/run 2>/dev/null || true
-fi
+# THE MOD'S OWN FILES COME FROM pkg/anvil-core NOW: the shared environment and
+# service libraries every init script sources, the init scripts themselves,
+# the helper programs, the nginx and Moonraker config, the toolchanger's
+# Klipper includes, and the s6 scandir. What used to be eight copies and three
+# chmods here is one copy of a tree that a recipe assembled and checked -- and
+# because bin/build-packages.sh packages the same tree, what a printer gets
+# from the tarball and what it would get from `opkg install anvil-core` cannot
+# drift apart.
+#
+# ANVIL.CONF IS NOT IN THAT PACKAGE and is still written below. It is
+# templated from config.env and then preserved across updates by
+# run-append.sh, which makes it user state rather than a package member: a
+# package would overwrite a printer's settings on the first upgrade. See the
+# header of pkg/anvil-core/build.sh.
+bash pkg/anvil-core/build.sh
+cp -a "$(pkg_out anvil-core)/." "$MOD_PAYLOAD/"
+rm -f "$MOD_PAYLOAD/.version"
 sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
     -e "s/^MOD_CAM=.*/MOD_CAM=${MOD_CAM:-1}/" \
     -e "s/^MOD_UI=.*/MOD_UI=${MOD_UI:-1}/" \
