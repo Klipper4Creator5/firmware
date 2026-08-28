@@ -1,5 +1,17 @@
 # Testing: how we know it does not brick
 
+> **There is a second suite.** `qa/` is the replacement for everything below,
+> built beside it rather than inside it, and both run in CI. It is one
+> framework (pytest), and its results are per-assertion rather than per-case:
+> `case-services.sh`'s 360 lines and single exit code are 43 named tests there.
+> `test/` is still the release gate and nothing has been deleted. See
+> **[qa-migration.md](qa-migration.md)** for what moves when, and run
+> `make qa` / `make qa-static` / `make qa-replica`.
+>
+> The rest of this page describes the suite being migrated away from. It is
+> current and accurate for everything `qa/` has not yet replaced, which is
+> most of it.
+
 Everything lives in `test/integration`, and `test/run-tests.py` runs it. There
 is still a real seam inside it, though — what needs the proprietary firmware
 and what does not — and it is worth knowing which side of that seam a failure
@@ -53,7 +65,7 @@ and a full unpack/patch/pack/verify build on a synthetic stock fixture.
 
 | Gate | What it does | Replica |
 |---|---|:-:|
-| `test-py` | pytest, the whole `test/` tree — 53 tests in six files (five of them skip until `make rootfs` has run). The Klipper config gate (`test_chamber.py`): every `ff-*.cfg` gcode body parses in **Klipper's** Jinja dialect, and the chamber macros are rendered per model to prove a chamber target is refused on a Creator 5 that has no heating element. Plus `test_paths.py` (every absolute path the payload names exists on the printer, once a rootfs has been extracted), `test_includes.py` (the `[include ff-*.cfg]` block is exactly the expected set, in order), `test_config_ownership.py` (every mod-owned config carries its DO-NOT-EDIT banner and `moonraker.conf` does not), `test_gcode.py` (every command in `gcode/*.gcode` is one our configs define) and `test_harness.py` (the harness's own self-checks) | partly |
+| `test-py` | pytest, the whole `test/` tree — 186 tests in twelve files (five of them skip until `make rootfs` has run). The Klipper config gate (`test_chamber.py`): every `ff-*.cfg` gcode body parses in **Klipper's** Jinja dialect, and the chamber macros are rendered per model to prove a chamber target is refused on a Creator 5 that has no heating element. Plus `test_paths.py` (every absolute path the payload names exists on the printer, once a rootfs has been extracted), `test_includes.py` (the `[include ff-*.cfg]` block is exactly the expected set, in order), `test_config_ownership.py` (every mod-owned config carries its DO-NOT-EDIT banner and `moonraker.conf` does not), `test_gcode.py` (every command in `gcode/*.gcode` is one our configs define) and `test_harness.py` (the harness's own self-checks) | partly |
 | `test-install` | **End-to-end.** The package sits on a real FAT filesystem exposed as `/dev/sda1`, and the machine's own `app_startup.sh` runs verbatim through three boots: stick in -> it installs; stick still in -> it installs again (idempotence); stick pulled -> the machine boots with the mod running and the stock `ps`-watchdog satisfied. Asserts along the way: UI present and executable, boot scripts unmodified and still parsing, every installed script `sh -n`-clean under the printer's own busybox, Klipper owned by a service, `c_helper.so` still nan2008 MIPS, user `printer.cfg` preserved, the wrapper unchanged by a re-install | yes |
 | `test-moonraker` | Installs the payload the way an update does and then **runs** the shipped tools, on our own CPython 3.13 (`FF_PYTHON`). `anvil-env.sh` must produce a working interpreter; moonraker's `authorization` component must import on it. Then `init.d/S62moonraker` must actually start moonraker from `/usr/data/anvil/moonraker/moonraker.py` (checked in `/proc/<pid>/cmdline`, along with `TMPDIR` off the ramdisk), answer on :7125, report itself in `status`, clear its pidfile on `stop`, come back on a **new** pid after `restart` — and stopping it must leave `S60nginx` running, which is what splitting `S60web` in two was for | yes |
 | `test-mcu` | Runs `ff_mcu_bringup.py` on our own CPython 3.13 (`FF_PYTHON`) in the exact environment `start.sh` sets — the gate that pins the `LD_LIBRARY_PATH` regression that shipped broken once, and now also proves the bring-up script survives the interpreter switch | yes |

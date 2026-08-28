@@ -72,6 +72,7 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
         test-upgrade test-supervisor test-nginx test-camera test-python \
         test-moonraker313 test-priority \
         boot-screen boot-screen-sim \
+        qa qa-static qa-replica \
         release clean distclean
 
 help:
@@ -88,7 +89,13 @@ help:
 	@echo 'Recovery: keep a copy of the STOCK FlashForge .tgz on a spare stick.'
 	@echo 'Flashing it restores every file the mod touches (see make test-recovery).'
 	@echo
-	@echo 'Test:'
+	@echo 'Test (qa/ -- the new suite, one framework, per-assertion results):'
+	@echo '  make qa               both lanes'
+	@echo '  make qa-static        needs nothing: parses, bashisms, names, probes'
+	@echo '  make qa-replica       needs docker + the firmware'
+	@echo '                        pytest selection works: -k, -m, a single test id'
+	@echo
+	@echo 'Test (test/ -- the old suite, still the release gate; being migrated):'
 	@echo '  make test             all of them, and the shell/bashism/packaging'
 	@echo '                        passes that have no target of their own'
 	@echo '  make test-py          pytest: the whole test/ tree'
@@ -199,6 +206,44 @@ rootfs: image config.env
 
 test: image
 	@$(RUNSIM) ./test/run-tests.py
+
+# ---------------------------------------------------------------------------
+#  THE qa SUITE -- the replacement, running beside the one above.
+#
+#  Same machine, same gates, one framework. See qa/conftest.py for the lanes
+#  and docs/qa-migration.md for what moves when. Both suites run in CI until a
+#  case-*.sh has a green replacement here, and then that case script is
+#  deleted -- so there is never a window where coverage drops.
+#
+#    make qa           both lanes
+#    make qa-static    needs nothing: parses, bashisms, names, the probes
+#    make qa-replica   needs docker + the firmware
+#
+#  There is no strictness flag and there is nothing to remember to pass. A
+#  missing tool, daemon, replica image or package FAILS, at the point that
+#  needs it, with the fix in the message. Skips are reserved for a question
+#  that does not apply to this configuration, and there are currently none.
+#
+#  The replica lane needs two things, and says so if either is absent:
+#
+#    a base replica   PRINTER_IMAGE in test.env (see test.env.example), or
+#                     `make rootfs` from the stock package
+#    a package        work/out/*.tgz, from `make build`
+#
+#  It needs the package because it INSTALLS it, through the printer's own
+#  app_startup.sh off a real FAT stick, rather than hand-placing payload/.
+#  That way the install is under test too, and the payload under test is the
+#  built artefact -- s6 and CPython included, neither of which exists in
+#  payload/. Baked into an image once per package and cached on its md5.
+# ---------------------------------------------------------------------------
+qa: image
+	@$(RUNSIM) python3 -m pytest ./qa -q
+
+qa-static: image
+	@$(RUN) python3 -m pytest ./qa/static -q
+
+qa-replica: image
+	@$(RUNSIM) python3 -m pytest ./qa/replica -q
 
 # A Docker image that IS the printer: real rootfs, real /usr/prog and
 # /usr/data, with the stock package already installed on top of them.

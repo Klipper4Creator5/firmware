@@ -8,3 +8,6 @@ dist/
 # Python bytecode from editing the klippy extras in payload/klipper/extras/
 __pycache__/
 *.pyc
+
+# Agent worktrees (Claude Code scratch), never part of a build.
+.claude/worktrees/

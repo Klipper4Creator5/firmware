@@ -115,6 +115,19 @@ jobs:
           ./bin/fetch-assets.sh
           rm -f config.env
 
+      # The qa suite's static lane. Runs BEFORE the old suite because it is
+      # seconds rather than minutes and it covers the same static ground, so a
+      # syntax error in the payload is reported by name in the first few
+      # seconds of the job rather than several minutes in as one red gate.
+      #
+      # No strictness flag: a missing shellcheck or pyflakes fails on its own,
+      # because there is no configuration in which running this lane without
+      # them is a complete run. Only the static lane here -- this job has no
+      # firmware on purpose, and printer-sim below is where the replica is
+      # proved.
+      - name: qa -- static lane
+        run: python3 -m pytest ./qa/static -q
+
       # This job has no stock package on purpose, so exactly two gates cannot
       # run: the tests that read the real rootfs, and the replica itself. The
       # suite refuses to call a gate it did not run a pass, so they have to be
@@ -289,3 +302,36 @@ jobs:
             -v /var/run/docker.sock:/var/run/docker.sock \
             -e REQUIRE_PRINTER_SIM=1 \
             creator5-fw-build ./test/run-tests.py
+
+      # The qa suite, on the same machine the gate above just used.
+      #
+      # It runs after the old suite rather than instead of it. Every assertion
+      # in qa/replica is currently also made by a case-*.sh, on purpose: a
+      # case script is deleted only once its replacement here has been green,
+      # so there is never a window where coverage drops. As those deletions
+      # land this step grows and the one above shrinks.
+      #
+      # ORDER IS LOAD-BEARING, and not only for tidiness. The qa replica lane
+      # INSTALLS the package for real -- the printer's own app_startup.sh, off
+      # a FAT stick -- so it needs a built package in work/out. The step above
+      # produces one (run-tests.py runs unpack/patch/pack before its install
+      # gate). So this step depends on that one having RUN, not merely on it
+      # having passed.
+      #
+      # That also supplies the cross-built s6, because s6 ships INSIDE the
+      # package; there is no separate work/.s6 dependency to track.
+      #
+      # WHEN THE OLD SUITE IS DELETED, this needs an explicit
+      # `./bin/unpack.sh && ./bin/patch.sh && ./bin/pack.sh` (or `make build`)
+      # step before it, or it goes red for a reason that has nothing to do
+      # with the code under test.
+      #
+      # Not `if: always()` -- if the release gate above failed, the machine is
+      # in a state neither suite is describing any more.
+      - name: qa suite on the printer replica
+        run: |
+          docker run --rm \
+            -v "$PWD":"$PWD" -w "$PWD" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            creator5-fw-build \
+            python3 -m pytest ./qa -q
