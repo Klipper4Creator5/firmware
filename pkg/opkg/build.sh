@@ -66,7 +66,7 @@ pkg_unpack "$OPKG_TGZ"
 #   the error to say that a .pc file was read the wrong way.
 export PKG_CONFIG="pkg-config --static"
 
-pkg_autotools "opkg-$OPKG_VERSION" "$MODDIR" "$PWD/$PKG_WORK/stage" \
+pkg_build "opkg-$OPKG_VERSION" \
     --disable-curl --disable-ssl-curl --disable-gpg \
     --disable-shared --enable-static \
     --disable-dependency-tracking \

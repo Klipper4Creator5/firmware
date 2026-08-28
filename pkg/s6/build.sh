@@ -41,7 +41,7 @@ pkg_unpack "$S6_TGZ"
 PKG_MAKE_ARGS="LDLIBS=-lpthread"
 
 _sr="$PKG_SYSROOT$MODDIR"
-pkg_autotools "s6-$S6_VERSION" "$MODDIR" "$PWD/$PKG_WORK/stage" \
+pkg_build "s6-$S6_VERSION" \
     --with-sysdeps="$_sr/lib/skalibs/sysdeps" \
     --with-include="$_sr/include" \
     --with-lib="$_sr/lib" \

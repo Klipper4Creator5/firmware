@@ -39,16 +39,16 @@ pkg_begin zlib || exit 0
 pkg_toolchain
 pkg_unpack "$ZLIB_TGZ"
 
-_stage="$PWD/$PKG_WORK/stage"
-(
-    set -e
-    cd "$PKG_WORK/src/zlib-$ZLIB_VERSION"
-    export CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64"
-    CHOST=$PKG_HOST ./configure --prefix="$MODDIR" --static > "$PKG_LOG/zlib-configure.log" 2>&1
-    make -j"$(nproc 2>/dev/null || echo 4)" > "$PKG_LOG/zlib-make.log" 2>&1
-    make install DESTDIR="$_stage" >> "$PKG_LOG/zlib-make.log" 2>&1
-) || pkg_die "zlib: the cross-build failed -- see $PKG_WORK/zlib-configure.log and $PKG_WORK/zlib-make.log"
-pkg_say "zlib: built zlib-$ZLIB_VERSION"
+# ZLIB'S CONFIGURE IS NOT AN AUTOCONF CONFIGURE. It rejects --host outright
+# and takes the cross prefix from $CHOST in the environment instead, which is
+# why this recipe used to run ./configure itself -- the only one that did, with
+# a carve-out in qa/static/test_ipk.py permitting it by name. That exception is
+# gone: PKG_CONFIGURE_AUTO=0 says "do not prepend --host and --prefix", and
+# everything zlib does want is passed here like any other argument.
+PKG_CONFIGURE_AUTO=0
+export CHOST="$PKG_HOST"
+export CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64"
+pkg_build "zlib-$ZLIB_VERSION" --prefix="$MODDIR" --static
 
 pkg_ship "include/zlib.h" "include/zconf.h" "lib/libz.a" "lib/pkgconfig/zlib.pc"
 

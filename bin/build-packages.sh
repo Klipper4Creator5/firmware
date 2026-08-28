@@ -46,10 +46,22 @@ done
 # Reproducible by default. opkg-build reads SOURCE_DATE_EPOCH and, when it is
 # set, adds --clamp-mtime to its tar calls on top of the --sort=name it always
 # passes; without it every package carries the second it was built and two
-# builds of an unchanged tree cannot be compared. Defaulting it to 0 rather
-# than to `date` is the difference between reproducible-by-default and
+# builds of an unchanged tree cannot be compared. Defaulting it rather than
+# leaving it to `date` is the difference between reproducible-by-default and
 # reproducible-if-you-remember.
-export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
+#
+# THE DEFAULT IS 1 AND NOT 0, WHICH IS NOT A TYPO. It was 0, and OpenSSL was
+# the one package in the feed that would not reproduce: two builds an hour
+# apart differed in exactly one object, libcrypto-lib-cversion.o, which
+# carries a "built on:" string. OpenSSL does support SOURCE_DATE_EPOCH --
+# util/mkbuildinf.pl reads it -- but the line is
+#
+#     my $date = gmtime($ENV{'SOURCE_DATE_EPOCH'} || time()) . " UTC";
+#
+# and that is Perl's ||, not //. Zero is FALSE in Perl, so the one value we
+# were passing is the single value that silently falls through to the current
+# time. One second past the epoch is just as fixed and is true.
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1}"
 
 # The recipes to build, expanded to include everything they build against and
 # sorted so a dependency always precedes its dependent. Iterating pkg/*/ and
@@ -163,6 +175,33 @@ for r in "${RECIPES[@]}"; do
             # the sort of harmless that accumulates.
             find "$LAYOUT$MODDIR" -type d -empty -delete 2>/dev/null || true
         fi
+
+        # ------------------------------------------- deterministic modes
+        #
+        # A PACKAGE MUST NOT DEPEND ON WHO BUILT IT. opkg-build's `-o 0 -g 0`
+        # settles ownership and SOURCE_DATE_EPOCH settles timestamps, and
+        # neither touches PERMISSIONS -- which arrive from whatever the source
+        # archive happened to carry, filtered through the umask of whoever
+        # extracted it.
+        #
+        # Measured: the Moonraker and HelixScreen packages built in the pinned
+        # container and on a developer's host differed, and nothing else did.
+        # GNU tar restores a directory's exact mode when it runs as root and
+        # applies the umask when it does not, so Moonraker's own drwxrwxr-x
+        # tree came out 0775 in the container and 0755 outside it. Two
+        # byte-different packages containing the same files, and no way to tell
+        # from the outside which one a printer got.
+        #
+        # 0755 for directories, 0755 for anything executable, 0644 for
+        # everything else -- the same normalisation every distro's packaging
+        # applies, for the same reason. Symlinks are left alone: their mode is
+        # not meaningful and chmod would follow them to the target.
+        for lay in "$LAYOUT" "$DEVLAYOUT"; do
+            [ -d "$lay$MODDIR" ] || continue
+            find "$lay$MODDIR" -type d -exec chmod 0755 {} +
+            find "$lay$MODDIR" -type f -perm -u+x -exec chmod 0755 {} +
+            find "$lay$MODDIR" -type f ! -perm -u+x -exec chmod 0644 {} +
+        done
 
         # emit <layout> <name> <section> <depends> <description>
         #

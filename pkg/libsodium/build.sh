@@ -34,7 +34,7 @@ pkg_unpack "$SODIUM_TGZ"
 #   whatever the toolchain's default happens to be this decade.
 # libsodium's runtime feature probes are AC_RUN_IFELSE with cross defaults
 #   supplied, so nothing here needs qemu.
-pkg_autotools "libsodium-$SODIUM_VERSION" "$MODDIR" "$PWD/$PKG_WORK/stage" \
+pkg_build "libsodium-$SODIUM_VERSION" \
     --disable-static --enable-shared --with-pic CFLAGS="-O2 -fPIC"
 
 # All three names: libsodium.so -> libsodium.so.26 -> libsodium.so.26.2.0. The

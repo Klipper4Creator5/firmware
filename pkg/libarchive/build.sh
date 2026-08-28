@@ -33,7 +33,7 @@ pkg_toolchain
 pkg_deps
 pkg_unpack "$LIBARCHIVE_TGZ"
 
-pkg_autotools "libarchive-$LIBARCHIVE_VERSION" "$MODDIR" "$PWD/$PKG_WORK/stage" \
+pkg_build "libarchive-$LIBARCHIVE_VERSION" \
     --enable-static --disable-shared \
     --disable-bsdtar --disable-bsdcpio --disable-bsdcat --disable-bsdunzip \
     --without-bz2lib --without-libb2 --without-iconv --without-lz4 \

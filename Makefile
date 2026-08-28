@@ -45,8 +45,23 @@ DOCKER_BASE = $(DOCKER) run --rm -i \
           $(if $(ASSET_ROOT),-v "$(ASSET_ROOT)":"$(ASSET_ROOT)",) \
           -e MODEL -e TARGET_MACHINE -e CONFIG_ENV
 
+# THE BUILD LANE RUNS AS YOU, NOT AS root. Without this every `make build` and
+# `make packages` fills work/ with root-owned files that the user who started
+# it cannot delete -- so the next `rm -rf work/pkg` fails, and the tempting fix
+# is to run the build outside the container instead. That is how a project ends
+# up with two build environments and packages that differ depending on which
+# one produced them, which is exactly what this image exists to prevent.
+#
+# HOME is set because a container user with no passwd entry has none, and
+# anything that wants a dotfile (perl, pip) writes to / and fails.
+#
+# BUILD LANE ONLY. RUNSIM below keeps root: it talks to the docker socket to
+# start sibling containers, and the socket's ownership inside the container is
+# not the host user's.
+DOCKER_USER = --user $(shell id -u):$(shell id -g) -e HOME=/tmp
+
 ifeq ($(LOCAL),)
-  RUN    = $(DOCKER_BASE) $(IMAGE)
+  RUN    = $(DOCKER_BASE) $(DOCKER_USER) $(IMAGE)
   RUNSIM = $(DOCKER_BASE) \
           -v $(DOCKER_SOCK):$(DOCKER_SOCK) \
           -e TEST_ENV -e PRINTER_IMAGE -e REAL_PKG -e SIM_IMAGE \

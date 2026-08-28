@@ -266,6 +266,10 @@ pkg_begin() {
              "$PKG_WORK/sysroot" "$PKG_WORK/dep"
     PKG_SYSROOT="$PWD/$PKG_WORK/sysroot"
     PKG_LOG="$PWD/$PKG_WORK"
+    # pkg_build's knobs, reset here so a recipe starts from the common case and
+    # only spells what is unusual about its project. See pkg_build.
+    PKG_CONFIGURE='./configure'; PKG_CONFIGURE_AUTO=1
+    PKG_MAKE_TARGET=''; PKG_INSTALL_TARGET='install'; PKG_MAKE_ARGS=''
     return 0
 }
 
@@ -314,6 +318,28 @@ pkg_toolchain() {
         ln -sf "$_tc/bin/$PKG_HOST-$_t" "$PKG_XW/bin/$PKG_HOST-$_t"
     done
     export PATH="$PKG_XW/bin:$PATH"
+
+    # THE CROSS TOOLS ARE EXPORTED, not just put on PATH, and that is not
+    # belt-and-braces -- it is the difference between one mechanism and two.
+    #
+    # An autoconf configure finds the cross compiler from --host: it looks for
+    # $host-gcc on PATH and that is the whole handshake. OpenSSL takes no
+    # --host -- it takes a target NAME, linux-mips32 -- and reads $CC from the
+    # environment, so with PATH alone it quietly used the build machine's gcc
+    # and produced x86-64 objects. mips_abi_gate caught it at the package
+    # boundary, which is the only reason this is a comment and not a shipped
+    # library.
+    #
+    # Setting both means every project gets the toolchain the same way,
+    # whether it asks by --host or by CC. They agree with each other because
+    # they name the same wrappers, so nothing is ambiguous about which
+    # compiler a build used.
+    export CC="$PKG_HOST-gcc"     CXX="$PKG_HOST-g++"
+    export AR="$PKG_HOST-ar"      RANLIB="$PKG_HOST-ranlib"
+    export STRIP="$PKG_HOST-strip" NM="$PKG_HOST-nm"
+    export OBJCOPY="$PKG_HOST-objcopy" OBJDUMP="$PKG_HOST-objdump"
+    export LD="$PKG_HOST-ld"
+
     PKG_STRIP="$_tc/bin/$PKG_HOST-strip"
 
     # THE WRAPPER IS GATED BEFORE ANYTHING IS BUILT ON IT. A wrapper that
@@ -473,38 +499,85 @@ pkg_stage() {
     cp -a "$1" "$_dst" || pkg_die "$PKG_ID: could not stage $1 -> $2"
 }
 
-# ------------------------------------------------------------ pkg_autotools
+# ---------------------------------------------------------------- pkg_build
 #
-#     pkg_autotools <srcdir-under-src> <prefix> <destdir> [configure args...]
+#     pkg_build <srcdir-under-src> [configure args...]
 #
-# The ./configure && make && make install DESTDIR=... that most of these
-# packages are, with the two things that are easy to get wrong done once:
-# --host is what makes autoconf reach for the $PKG_HOST-prefixed tools in the
-# wrapper directory (the entire point of having written them), and the logs go
-# to files because a failing cross-build prints thousands of lines and the
-# useful twenty are never the last twenty.
-pkg_autotools() {
-    _dir=$1; _prefix=$2; _dest=$3; shift 3
+# Configure, make, install into the staging tree. This is the ONLY way a
+# recipe compiles anything.
+#
+# IT USED TO BE FOUR MECHANISMS AND THAT WAS THE BUG. There was pkg_autotools
+# for projects with an autoconf configure; a hand-written ./configure line in
+# pkg/zlib, sanctioned by a carve-out in the test that forbids every other
+# recipe from doing the same; a pkg_make for bzip2, which has no configure at
+# all; and a pkg_build for OpenSSL, whose configure is ./Configure and takes a
+# target name instead of --host. Three of those four had exactly one user.
+#
+# One verb with one user is not a verb, it is an exception with a function
+# name. The projects do not actually differ in four ways -- they differ in
+# four SETTINGS of the same three steps -- so the settings are variables and
+# the steps are written once.
+#
+#   PKG_CONFIGURE       the configure program.        default ./configure
+#                       'none' skips the step entirely (bzip2).
+#   PKG_CONFIGURE_AUTO  1 = prepend --host and --prefix, which is what an
+#                       autoconf configure wants and what zlib and OpenSSL
+#                       both refuse. default 1; set 0 and pass your own.
+#   PKG_MAKE_TARGET     what to build.                default: everything
+#   PKG_INSTALL_TARGET  how to install it.            default install
+#                       'none' means the recipe places the files itself,
+#                       because the project has no install target worth using.
+#   PKG_MAKE_ARGS       extra variables for make (LDLIBS=-lpthread for s6).
+#
+# The prefix is always $MODDIR and the DESTDIR is always the recipe's staging
+# tree -- every call site passed exactly those two values, so they were two
+# arguments that could only ever be spelled one way.
+#
+# RETURNS NON-ZERO, NEVER DIES. Under the `set -euo pipefail` every recipe
+# runs, a failure aborts the build anyway, so the common case reads the same
+# as it did. What this buys is the uncommon one: OpenSSL's mips target
+# hardcodes -mips2 and this toolchain defaults to -mfp64, a combination gcc
+# refuses, and the recovery is to reconfigure for portable C. `if ! pkg_build`
+# expresses that; a verb that called pkg_die could not.
+pkg_build() {
+    _dir=$1; shift
     _tag=$(basename "$_dir")
+    _dest="$PWD/$PKG_WORK/stage"
     (
         set -e
         cd "$PKG_WORK/src/$_dir"
-        ./configure --host="$PKG_HOST" --prefix="$_prefix" "$@" \
-            > "$PKG_LOG/$_tag-configure.log" 2>&1
-        # PKG_MAKE_ARGS reaches make and not configure, which is a distinction
-        # with one real user: s6 and s6-rc need LDLIBS=-lpthread against this
-        # printer's glibc 2.29. skalibs' pthread_mutex_tailock calls
-        # pthread_mutex_timedlock, which glibc only moved out of libpthread and
-        # into libc in 2.34 -- so upstream never sees this and musl never had
-        # it. s6's own PTHREAD_LIB is wired only to --enable-nsss, so no
-        # configure flag reaches the link line; its Makefile appends $(LDLIBS)
-        # last, which is why this is the lever that works.
+
+        # THE TRAILING ARGUMENTS GO TO WHICHEVER STEP CONSUMES THEM: to
+        # configure when there is one, to make when there is not. bzip2 is why
+        # this is spelled out -- it has no configure, so its CC/AR/RANLIB have
+        # to reach make, and an earlier version of this verb dropped them on
+        # the floor and built the library with the BUILD MACHINE's compiler.
+        # It produced a perfectly good x86 archive and mips_abi_gate caught it
+        # at the package boundary, which is the only reason this comment is
+        # about a fixed bug rather than a shipped one.
+        if [ "${PKG_CONFIGURE:-./configure}" != none ]; then
+            if [ "${PKG_CONFIGURE_AUTO:-1}" = 1 ]; then
+                set -- --host="$PKG_HOST" --prefix="$MODDIR" "$@"
+            fi
+            "${PKG_CONFIGURE:-./configure}" "$@" \
+                > "$PKG_LOG/$_tag-configure.log" 2>&1
+            set --
+        fi
+
         # shellcheck disable=SC2086
-        make -j"$(nproc 2>/dev/null || echo 4)" ${PKG_MAKE_ARGS:-} \
+        make -j"$(nproc 2>/dev/null || echo 4)" ${PKG_MAKE_TARGET:-} ${PKG_MAKE_ARGS:-} "$@" \
             > "$PKG_LOG/$_tag-make.log" 2>&1
-        # shellcheck disable=SC2086
-        make install DESTDIR="$_dest" ${PKG_MAKE_ARGS:-} >> "$PKG_LOG/$_tag-make.log" 2>&1
-    ) || pkg_die "$PKG_ID: building $_tag failed -- see $PKG_WORK/$_tag-configure.log and $PKG_WORK/$_tag-make.log (sources kept in $PKG_WORK/src)"
+
+        if [ "${PKG_INSTALL_TARGET:-install}" != none ]; then
+            # shellcheck disable=SC2086
+            make "${PKG_INSTALL_TARGET:-install}" DESTDIR="$_dest" ${PKG_MAKE_ARGS:-} \
+                >> "$PKG_LOG/$_tag-make.log" 2>&1
+        fi
+    ) || {
+        printf '   !! %s: building %s failed -- see %s\n' \
+            "$PKG_ID" "$_tag" "$PKG_WORK/$_tag-{configure,make}.log" >&2
+        return 1
+    }
     pkg_say "$PKG_ID: built $_tag"
 }
 

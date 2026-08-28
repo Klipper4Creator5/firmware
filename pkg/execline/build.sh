@@ -24,7 +24,7 @@ pkg_deps
 pkg_unpack "$EXECLINE_TGZ"
 
 _sr="$PKG_SYSROOT$MODDIR"
-pkg_autotools "execline-$EXECLINE_VERSION" "$MODDIR" "$PWD/$PKG_WORK/stage" \
+pkg_build "execline-$EXECLINE_VERSION" \
     --with-sysdeps="$_sr/lib/skalibs/sysdeps" \
     --with-include="$_sr/include" \
     --with-lib="$_sr/lib" \

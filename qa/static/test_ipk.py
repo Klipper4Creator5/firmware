@@ -380,11 +380,19 @@ def test_a_recipe_does_not_rebuild_the_shared_parts(recipe):
     genuinely needs something pkg/lib.sh cannot express should GROW pkg/lib.sh,
     which is the entire point.
 
-    zlib is the one allowed exception and it is allowed by name: its configure
-    is a hand-written script that has never accepted --host, so pkg/opkg builds
-    it inline with CHOST. If a second exception ever appears, that is the
-    signal that pkg/lib.sh needs another verb, not that this test needs another
-    name.
+    THERE ARE NO EXCEPTIONS ANY MORE. zlib used to be one, allowed by name:
+    its configure has never accepted --host, so the recipe ran it inline with
+    CHOST in the environment. Then bzip2 arrived with no configure at all and
+    OpenSSL with a ./Configure that takes a target name, and each got a verb of
+    its own -- three mechanisms with one user apiece, which is three exceptions
+    wearing function names.
+
+    They are one verb now. pkg_build has knobs for the things projects actually
+    differ in (which configure, whether it takes --host, what to make, what to
+    install) and every recipe goes through it, zlib included. So the rule this
+    test enforces is absolute: a recipe never runs a configure script itself.
+    A project that pkg_build cannot express should GROW pkg_build, which is the
+    entire point.
     """
     text = recipe.read_text()
     assert ". pkg/lib.sh" in text, (
@@ -399,13 +407,28 @@ def test_a_recipe_does_not_rebuild_the_shared_parts(recipe):
     assert "-mnan=2008" not in body, (
         "%s spells its own compiler flags; pkg_toolchain owns the ABI flags"
         % recipe)
-    # ./configure is pkg_autotools' job, with zlib named as the exception.
+    # Running a configure script is pkg_build's job, with no exceptions.
+    # ./Configure as well as ./configure: OpenSSL's is the capitalised one, and
+    # a rule that only knew the lowercase spelling would have let it through.
     for line in body.splitlines():
-        if "./configure" in line:
-            assert "CHOST=" in line, (
-                "%s runs ./configure directly:\n  %s\nUse pkg_autotools, or "
-                "extend pkg/lib.sh if it cannot express what this needs."
+        # PKG_CONFIGURE=./Configure DECLARES which script pkg_build should run.
+        # That is the knob doing its job, not a recipe running a build.
+        if line.lstrip().startswith("PKG_CONFIGURE"):
+            continue
+        if re.search(r"\./[Cc]onfigure\b", line):
+            assert False, (
+                "%s runs a configure script directly:\n  %s\nUse pkg_build. "
+                "If it cannot express what this project needs, add a knob to "
+                "pkg_build -- a verb per awkward project is how this ended up "
+                "with three mechanisms and one user each."
                 % (recipe, line.strip()))
+
+    # And the verbs those exceptions used to be. Named so that bringing one
+    # back is a red test rather than a quiet regression.
+    for gone in ("pkg_autotools", "pkg_make ", "pkg_dep_autotools"):
+        assert gone not in body, (
+            "%s calls %s, which no longer exists -- pkg_build replaced it"
+            % (recipe, gone.strip()))
 
 
 def test_the_package_and_the_payload_share_one_build():

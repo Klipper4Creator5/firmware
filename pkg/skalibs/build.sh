@@ -32,7 +32,7 @@ pkg_unpack "$SKALIBS_TGZ"
 # on this box -- 32-bit build, 64-bit inodes -- and a supervisor cannot see its
 # own service directory: it starts cleanly and then does nothing. Measured on
 # the replica; see versions.env.
-pkg_autotools "skalibs-$SKALIBS_VERSION" "$MODDIR" "$PWD/$PKG_WORK/stage" \
+pkg_build "skalibs-$SKALIBS_VERSION" \
     --disable-shared --enable-static \
     --with-sysdep-devurandom=yes \
     --with-sysdep-posixspawnearlyreturn=no \
