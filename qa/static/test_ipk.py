@@ -506,6 +506,13 @@ def _conf(recipe, var):
 def test_one_recipe_builds_one_package(recipe):
     """A recipe names one source and seals one tree.
 
+    NOT "one package" -- one BUILD. A recipe may emit a second archive,
+    <name>-dev, holding the headers and static library a printer has no use
+    for; that is PKG_DEV_FILES and it is a partition of one build, checked by
+    test_a_dev_split_partitions_the_build. What this test forbids is a recipe
+    building several different upstream projects, which is what pkg/opkg did
+    with zlib and libarchive until each became a recipe of its own.
+
     Counting the source verbs is the cheap structural expression of the rule:
     a recipe that unpacks two tarballs is building somebody else's package
     inside its own, which is exactly the shape this layout replaced. If a
@@ -569,6 +576,69 @@ def test_an_arch_all_package_has_no_native_code():
             "architecture check." % (recipe, ", ".join(sorted(elves)[:5])))
 
 
+def test_a_dev_split_partitions_the_build():
+    """PKG_DEV_FILES moves files; it never copies them.
+
+    A path in both the runtime and the dev package is a path two packages
+    own. opkg resolves that by letting whichever installed last win, and
+    `ipk-install remove` on either one deletes a file the other still lists --
+    so the damage shows up as a missing file long after the install that
+    caused it. The split is a partition, and this is what says so.
+
+    Checked against the built feed when there is one; a checkout that has not
+    run `make packages` has nothing to compare.
+    """
+    feed = ROOT / "work" / "packages"
+    if not feed.is_dir():
+        return
+    for recipe in sorted(p.parent.name for p in RECIPES):
+        if not _conf(recipe, "PKG_DEV_FILES"):
+            continue
+        name = _conf(recipe, "PKG_NAME")
+        pair = []
+        for suffix in ("", "-dev"):
+            hits = sorted(feed.glob("%s%s_*.ipk" % (name, suffix)))
+            if hits:
+                pair.append(hits[0])
+        if len(pair) != 2:
+            continue
+        # Directories are legitimately shared -- both packages live under
+        # $MODDIR and opkg is content for two packages to own a directory.
+        # Files are not: a regular file or symlink in both archives is the
+        # bug this test is about.
+        runtime, dev = ({m.name for m in _data(pair[0]) if not m.isdir()},
+                        {m.name for m in _data(pair[1]) if not m.isdir()})
+        shared = runtime & dev
+        assert not shared, (
+            "%s and %s-dev both contain %s -- PKG_DEV_FILES must move files "
+            "out of the runtime package, not copy them"
+            % (name, name, ", ".join(sorted(shared)[:5])))
+
+
+def test_a_dev_package_installs_nothing_a_printer_runs():
+    """Whatever the split moved out is gone from the runtime package.
+
+    The point of the split is that a printer with no compiler stops carrying
+    headers and static archives. That is only true if the runtime half no
+    longer contains them, which is a different claim from "the dev half does".
+    """
+    feed = ROOT / "work" / "packages"
+    if not feed.is_dir():
+        return
+    for recipe in sorted(p.parent.name for p in RECIPES):
+        if not _conf(recipe, "PKG_DEV_FILES"):
+            continue
+        name = _conf(recipe, "PKG_NAME")
+        hits = sorted(feed.glob("%s_*.ipk" % name))
+        if not hits:
+            continue
+        stragglers = [m.name for m in _data(hits[0])
+                      if m.name.endswith((".a", ".h", ".pc"))]
+        assert not stragglers, (
+            "%s declares a dev split and still ships %s"
+            % (name, ", ".join(sorted(stragglers)[:5])))
+
+
 def test_every_recipe_has_metadata():
     """pkg.conf is what makes a directory a recipe, and it is required.
 
@@ -622,10 +692,19 @@ def test_a_build_dependency_is_not_a_runtime_dependency():
     the printer, for libraries already inside the file being installed.
     """
     build = (ROOT / "bin" / "build-packages.sh").read_text()
-    assert "'Depends: %s\\n' \"$PKG_DEPENDS\"" in build, (
-        "bin/build-packages.sh no longer writes Depends from PKG_DEPENDS alone")
     body = "\n".join(ln for ln in build.splitlines()
                      if not ln.lstrip().startswith("#"))
+
+    # The property, not a spelling. Depends is written once, from a value the
+    # caller passes -- PKG_DEPENDS for a runtime package, the runtime package's
+    # own name for its -dev half. What matters is that PKG_BUILD_DEPENDS is not
+    # among the things that can reach it.
+    assert "Depends: %s" in body, (
+        "bin/build-packages.sh no longer writes a Depends field at all")
+    assert '"$PKG_DEPENDS"' in body, (
+        "bin/build-packages.sh no longer passes PKG_DEPENDS into the control "
+        "file -- a package's declared runtime dependencies have stopped "
+        "reaching opkg")
     assert "PKG_BUILD_DEPENDS" not in body, (
         "bin/build-packages.sh reads PKG_BUILD_DEPENDS while writing the "
         "package; build dependencies are pkg_deps' business, not opkg's")

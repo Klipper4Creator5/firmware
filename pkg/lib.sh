@@ -2,15 +2,24 @@
 #
 # Sourced by pkg/*/build.sh, after bin/common.sh.
 #
-# ONE RECIPE BUILDS ONE PACKAGE. That is the rule this file exists to make
+# ONE RECIPE BUILDS ONE SOURCE. That is the rule this file exists to make
 # cheap. A recipe unpacks one source, builds it, and ships it; anything it
 # needs to build against arrives as a package that some other recipe produced,
 # unpacked out of the feed by pkg_deps. The alternative -- a recipe that builds
 # its own dependencies inline, which is what pkg/opkg used to do with zlib and
-# libarchive, and what bin/patch.sh section 5b still does with skalibs -- makes
-# every library an invisible detail of whoever needed it first: unversioned,
+# libarchive, and what bin/patch.sh section 5b did with skalibs -- makes every
+# library an invisible detail of whoever needed it first: unversioned,
 # unshippable, and rebuilt from scratch by the next consumer. zlib was the
 # proof, cross-built twice in one tree.
+#
+# IT USED TO SAY "ONE PACKAGE", and the change is worth explaining because it
+# looks like the rule being weakened. One BUILD may now produce two archives:
+# <name> with what a printer runs and <name>-dev with the headers and static
+# library only a build machine opens (PKG_DEV_FILES). That is one source, one
+# configure, one version, sorted afterwards -- not the thing the rule forbids,
+# which is one script compiling several different projects. The invariant that
+# actually catches that is countable and unchanged: exactly one source verb
+# per recipe.
 #
 # WHAT A RECIPE LOOKS LIKE:
 #
@@ -39,10 +48,12 @@
 # library that both worlds wanted, which is not a thing a package feed can
 # express without lying about one of them.
 #
-# NOT SOURCED BY bin/patch.sh. Section 5c still carries its own copy of all of
-# this for CPython, and will until phase 1 of docs/notes/85-packaging.md turns
-# it into a recipe too. Claiming otherwise would be claiming the duplication is
-# already gone.
+# SOURCED BY bin/patch.sh, for pkg_out alone -- it stages what recipes built
+# and has to be able to name where they put it. It does NOT use the rest:
+# section 5c still carries its own copy of the toolchain setup, the wrappers
+# and the cross-build for CPython, and will until phase 1 of
+# docs/notes/85-packaging.md turns that into recipes too. Claiming otherwise
+# would be claiming the duplication is already gone.
 
 # Recipes run as their own process (bin/patch.sh and bin/build-packages.sh both
 # exec them rather than sourcing them), which is why nothing below bothers with
@@ -74,6 +85,21 @@ pkg_die()  { printf '   !! %s\n' "$*" >&2; exit 1; }
 # that change without any version changing. It puts a content hash there and
 # pkg_stamp folds it in; see pkg/anvil-core/pkg.conf.
 #
+# PKG_DEV_FILES SPLITS ONE BUILD INTO TWO PACKAGES. A library that is both
+# linked against and run -- execline, s6 -- produces headers and a static
+# archive that only a build machine wants, alongside binaries a printer needs.
+# Listing the first kind here moves it into a second package, <name>-dev,
+# section libdevel, which nothing installs on a printer and which pkg_deps
+# unpacks into a sysroot when the next recipe builds against it.
+#
+# THIS IS NOT "one recipe, two packages" IN THE SENSE THE RULE FORBIDS. The
+# rule exists to stop one script building several different upstream projects
+# -- zlib compiled inside the opkg recipe, which is what this whole layout
+# replaced. A dev split is one source, one configure, one version, one build,
+# sorted into two archives afterwards. Every distro does it and nothing about
+# it lets a library go unversioned. The countable invariant is unchanged: one
+# source verb per recipe.
+#
 # PKG_WHEN is a shell condition deciding whether this recipe exists at all.
 # Mainsail, Moonraker and HelixScreen are downloads gated by BUILD_* flags, and
 # a build configured without one has no source for it to unpack. Empty means
@@ -86,6 +112,7 @@ pkg_conf() {
     PKG_DESCRIPTION=''; PKG_ARCH="$IPK_ARCH"
     PKG_MAINTAINER='anvil <none@example.invalid>'
     PKG_STAMP_EXTRA=''; PKG_WHEN=''
+    PKG_DEV_FILES=''; PKG_DEV_DESCRIPTION=''
     [ -f "$ROOT/pkg/$1/pkg.conf" ] || pkg_die "no recipe pkg/$1/pkg.conf"
     # shellcheck disable=SC1090
     . "$ROOT/pkg/$1/pkg.conf"
@@ -103,8 +130,9 @@ pkg_out() { printf '%s/work/pkg/%s' "$ROOT" "$1"; }
 # opkg-build spells it: name_version-release_arch.ipk.
 pkg_ipk() {
     ( pkg_conf "$1"
-      printf '%s/%s_%s-%s_%s.ipk' \
-          "$PKG_FEED" "$PKG_NAME" "$PKG_VERSION" "$PKG_RELEASE" "$PKG_ARCH" )
+      printf '%s/%s%s_%s-%s_%s.ipk' \
+          "$PKG_FEED" "$PKG_NAME" "${2:+-$2}" \
+          "$PKG_VERSION" "$PKG_RELEASE" "$PKG_ARCH" )
 }
 
 # ---------------------------------------------------------------- pkg_stamp
@@ -330,21 +358,34 @@ pkg_toolchain() {
 pkg_deps() {
     [ -n "$PKG_BUILD_DEPENDS" ] || return 0
     for _d in $PKG_BUILD_DEPENDS; do
-        _ipk=$(pkg_ipk "$_d")
-        [ -f "$_ipk" ] || pkg_die \
-            "$PKG_ID builds against '$_d' and $_ipk is missing -- build it first (./bin/build-packages.sh $_d)"
-        _un="$PKG_WORK/dep/$_d"
-        rm -rf "$_un"; mkdir -p "$_un"
-        ( cd "$_un" && "$OPKG_UNBUILD_BIN" "$_ipk" ) > "$PKG_LOG/$_d-unbuild.log" 2>&1 \
-            || pkg_die "$PKG_ID: could not unpack $_ipk -- see $PKG_WORK/$_d-unbuild.log"
-        # opkg-unbuild names the directory after the file it came from, and
-        # drops CONTROL/ beside the payload. Only the payload is a sysroot.
-        _payload="$_un/$(basename "$_ipk" .ipk)$MODDIR"
-        [ -d "$_payload" ] || pkg_die \
-            "$PKG_ID: $_d unpacked nothing under $MODDIR -- is it built for this prefix?"
-        mkdir -p "$PKG_SYSROOT$MODDIR"
-        cp -a "$_payload/." "$PKG_SYSROOT$MODDIR/"
-        pkg_say "$PKG_ID: sysroot += $_d"
+        # BOTH HALVES OF THE DEPENDENCY, when it has two. A library that is
+        # linked against and also run is packaged twice: <name> carries the
+        # binaries a printer needs and <name>-dev the headers and the archive
+        # a build machine needs. Which of the two exists is the dependency's
+        # business, not ours -- a pure-dev library like anvil-zlib-dev has no
+        # runtime half at all -- so both are tried and it is an error only if
+        # NEITHER is there.
+        _found=0
+        for _v in '' dev; do
+            _ipk=$(pkg_ipk "$_d" "$_v")
+            [ -f "$_ipk" ] || continue
+            _found=1
+            _un="$PKG_WORK/dep/$_d${_v:+-$_v}"
+            rm -rf "$_un"; mkdir -p "$_un"
+            ( cd "$_un" && "$OPKG_UNBUILD_BIN" "$_ipk" ) \
+                > "$PKG_LOG/$_d${_v:+-$_v}-unbuild.log" 2>&1 \
+                || pkg_die "$PKG_ID: could not unpack $_ipk -- see $PKG_WORK/$_d${_v:+-$_v}-unbuild.log"
+            # opkg-unbuild names the directory after the file it came from, and
+            # drops CONTROL/ beside the payload. Only the payload is a sysroot.
+            _payload="$_un/$(basename "$_ipk" .ipk)$MODDIR"
+            [ -d "$_payload" ] || pkg_die \
+                "$PKG_ID: $_d unpacked nothing under $MODDIR -- is it built for this prefix?"
+            mkdir -p "$PKG_SYSROOT$MODDIR"
+            cp -a "$_payload/." "$PKG_SYSROOT$MODDIR/"
+            pkg_say "$PKG_ID: sysroot += $_d${_v:+-$_v}"
+        done
+        [ "$_found" = 1 ] || pkg_die \
+            "$PKG_ID builds against '$_d' and neither $(pkg_ipk "$_d") nor $(pkg_ipk "$_d" dev) exists -- build it first (./bin/build-packages.sh $_d)"
     done
 
     _inc="$PKG_SYSROOT$MODDIR/include"

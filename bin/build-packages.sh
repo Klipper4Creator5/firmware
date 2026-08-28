@@ -124,42 +124,145 @@ for r in "${RECIPES[@]}"; do
         [ -n "$(find "$LAYOUT$MODDIR" \( -type f -o -type l \) -print -quit)" ] \
             || { echo "!! pkg/$r staged nothing -- empty package refused" >&2; exit 1; }
 
+        # ------------------------------------------- the runtime/dev split
+        #
+        # A library that is BOTH linked against and run produces two kinds of
+        # file from one build: binaries a printer executes, and headers and a
+        # static archive only a build machine will ever open. PKG_DEV_FILES
+        # names the second kind, and everything it matches is MOVED out of the
+        # layout into a second one that becomes <name>-dev.
+        #
+        # WHY MOVE RATHER THAN COPY. A file in both packages is a file two
+        # packages own, and opkg resolves that by letting whichever installed
+        # last win -- silently. The dev half is a partition of the build, not a
+        # view onto it, so every path lands in exactly one archive and
+        # `ipk-install remove` can never delete a file the other package still
+        # needs.
+        #
+        # WHAT IT BUYS: the headers and .a files stop being installed on a
+        # printer that has no compiler, and the feed still contains everything
+        # the next recipe needs to build against -- in a package that says so
+        # in its name and its section.
+        DEVLAYOUT="work/.ipk-$PKG_NAME-dev"
+        rm -rf "$DEVLAYOUT"
+        if [ -n "$PKG_DEV_FILES" ]; then
+            mkdir -p "$DEVLAYOUT$MODDIR" "$DEVLAYOUT/CONTROL"
+            # shellcheck disable=SC2086
+            for g in $PKG_DEV_FILES; do
+                for m in "$LAYOUT$MODDIR"/$g; do
+                    [ -e "$m" ] || continue
+                    rel=${m#"$LAYOUT$MODDIR"/}
+                    mkdir -p "$DEVLAYOUT$MODDIR/$(dirname "$rel")"
+                    mv "$m" "$DEVLAYOUT$MODDIR/$rel"
+                done
+            done
+            [ -n "$(find "$DEVLAYOUT$MODDIR" \( -type f -o -type l \) -print -quit)" ] \
+                || { echo "!! pkg/$r sets PKG_DEV_FILES and none of it matched" >&2; exit 1; }
+            # Directories the move emptied. Left behind they would be shipped
+            # as an empty include/ on every printer -- harmless, and exactly
+            # the sort of harmless that accumulates.
+            find "$LAYOUT$MODDIR" -type d -empty -delete 2>/dev/null || true
+        fi
+
+        # emit <layout> <name> <section> <depends> <description>
+        #
         # The five fields opkg-build's own required_field() insists on, plus
         # the ones opkg reads. Description LAST because it is the only one that
         # may continue onto further lines, and a continuation line is defined
         # as one starting with whitespace -- so a field after it would have to
         # be unindented, and an unindented line is where the next stanza begins.
-        {
-            printf 'Package: %s\n' "$PKG_NAME"
-            printf 'Version: %s-%s\n' "$PKG_VERSION" "$PKG_RELEASE"
-            printf 'Architecture: %s\n' "$PKG_ARCH"
-            printf 'Maintainer: %s\n' "$PKG_MAINTAINER"
-            printf 'Section: %s\n' "$PKG_SECTION"
-            printf 'Priority: optional\n'
-            [ -n "$PKG_DEPENDS" ] && printf 'Depends: %s\n' "$PKG_DEPENDS"
-            printf 'Description: %s\n' "$PKG_DESCRIPTION"
-        } > "$LAYOUT/CONTROL/control"
+        emit() {
+            _lay=$1; _nm=$2; _sect=$3; _dep=$4; _desc=$5
+            {
+                printf 'Package: %s\n' "$_nm"
+                printf 'Version: %s-%s\n' "$PKG_VERSION" "$PKG_RELEASE"
+                printf 'Architecture: %s\n' "$PKG_ARCH"
+                printf 'Maintainer: %s\n' "$PKG_MAINTAINER"
+                printf 'Section: %s\n' "$_sect"
+                printf 'Priority: optional\n'
+                [ -n "$_dep" ] && printf 'Depends: %s\n' "$_dep"
+                printf 'Description: %s\n' "$_desc"
+            } > "$_lay/CONTROL/control"
 
-        # -o 0 -g 0: every file in the archive is owned by root. Without them
-        # opkg-build hands tar whatever uid the build ran as, which is a
-        # developer's account on one machine and a CI runner's on another --
-        # two packages that differ in nothing that matters and compare
-        # unequal.
-        #
-        # BOTH PATHS ABSOLUTE, and that is a requirement rather than a style:
-        # opkg-build builds its scratch directory as "$dest_dir/IPKG_BUILD.$$"
-        # and then reads it from inside `( cd $pkg_dir/CONTROL && ... )`, so a
-        # relative destination resolves against the wrong directory and the
-        # build dies on a missing control_list -- an error that names a
-        # temporary file and not the argument that caused it.
-        "$OPKG_BUILD_BIN" -o 0 -g 0 "$PWD/$LAYOUT" "$PKG_FEED" > /dev/null
-        rm -rf "$LAYOUT"
+            # -o 0 -g 0: every file in the archive is owned by root. Without
+            # them opkg-build hands tar whatever uid the build ran as, which is
+            # a developer's account on one machine and a CI runner's on another
+            # -- two packages that differ in nothing that matters and compare
+            # unequal.
+            #
+            # BOTH PATHS ABSOLUTE, and that is a requirement rather than a
+            # style: opkg-build builds its scratch directory as
+            # "$dest_dir/IPKG_BUILD.$$" and then reads it from inside
+            # `( cd $pkg_dir/CONTROL && ... )`, so a relative destination
+            # resolves against the wrong directory and the build dies on a
+            # missing control_list -- an error that names a temporary file and
+            # not the argument that caused it.
+            "$OPKG_BUILD_BIN" -o 0 -g 0 "$PWD/$_lay" "$PKG_FEED" > /dev/null
+            rm -rf "$_lay"
 
-        ipk="$PKG_FEED/${PKG_NAME}_${PKG_VERSION}-${PKG_RELEASE}_${PKG_ARCH}.ipk"
-        [ -f "$ipk" ] || { echo "!! opkg-build produced no $ipk" >&2; exit 1; }
-        say "$PKG_NAME: $(basename "$ipk") ($(du -h "$ipk" | cut -f1))"
+            _ipk="$PKG_FEED/${_nm}_${PKG_VERSION}-${PKG_RELEASE}_${PKG_ARCH}.ipk"
+            [ -f "$_ipk" ] || { echo "!! opkg-build produced no $_ipk" >&2; exit 1; }
+            say "$_nm: $(basename "$_ipk") ($(du -h "$_ipk" | cut -f1))"
+        }
+
+        # The runtime half, unless the split took everything -- which is the
+        # normal case for a library that is only ever linked against, like
+        # zlib. An empty runtime package would be a name in the feed that
+        # installs nothing.
+        if [ -n "$(find "$LAYOUT$MODDIR" \( -type f -o -type l \) -print -quit)" ]; then
+            emit "$LAYOUT" "$PKG_NAME" "$PKG_SECTION" "$PKG_DEPENDS" "$PKG_DESCRIPTION"
+        else
+            rm -rf "$LAYOUT"
+        fi
+
+        # The dev half depends on the runtime half by name when there is one:
+        # its headers describe that build, and installing them against a
+        # different version of the library is the mistake the dependency
+        # prevents.
+        if [ -d "$DEVLAYOUT/CONTROL" ]; then
+            if [ -f "$PKG_FEED/${PKG_NAME}_${PKG_VERSION}-${PKG_RELEASE}_${PKG_ARCH}.ipk" ]; then
+                _devdep="$PKG_NAME"
+            else
+                _devdep=""
+            fi
+            emit "$DEVLAYOUT" "$PKG_NAME-dev" libdevel "$_devdep" \
+                 "${PKG_DEV_DESCRIPTION:-Headers and static library for $PKG_NAME. Nothing installs this on a printer; it exists to be built against.}"
+        fi
     )
 done
+
+# ------------------------------------------------------------------ the prune
+#
+# A FULL BUILD OWNS THE FEED. Every .ipk here should be one some recipe under
+# pkg/ produces right now; anything else is an orphan, and an orphan in a feed
+# is worse than a stray file because opkg-make-index puts it in the index and
+# a printer can then install it.
+#
+# They appear the moment a package is RENAMED, which is not hypothetical: the
+# runtime/dev split renamed anvil-zlib to anvil-zlib-dev, and the old archive
+# sat in the feed advertising a package no recipe had built since. It would
+# have installed perfectly and been impossible to rebuild.
+#
+# Only on a full build. `./bin/build-packages.sh s6` asks for one recipe and
+# its dependencies and must not delete everything it did not ask about --
+# which is also why the expected set below is computed from ALL recipes rather
+# than from the ones this run happened to build.
+if [ $# -eq 0 ]; then
+    expected=""
+    for r in $(pkg_recipes); do
+        for v in '' dev; do
+            expected="$expected $(basename "$(pkg_ipk "$r" "$v")")"
+        done
+    done
+    for f in "$PKG_FEED"/*.ipk; do
+        [ -e "$f" ] || continue
+        case " $expected " in
+            *" $(basename "$f") "*) continue ;;
+        esac
+        say "prune: $(basename "$f") -- no recipe produces this any more"
+        rm -f "$f"
+    done
+fi
 
 # ------------------------------------------------------------------ the index
 #

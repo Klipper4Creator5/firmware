@@ -379,6 +379,41 @@ compose —
 Route 1 is simpler and route 2 is what makes a hand-repaired printer
 recoverable. Both are cheap; ship 1 and keep 2.
 
+### What the tarball becomes
+
+The end state, and the thing every recipe added so far is for: **`bin/pack.sh`
+stops being handed a tree that `bin/patch.sh` assembled, and is handed one that
+was produced by installing the feed.**
+
+    ./bin/build-packages.sh                 # the feed
+    for p in work/packages/*.ipk; do        # into a staging root
+        pkg/ipk-install install "$p" --root work/modpayload-root
+    done
+    tar -C work/modpayload-root/usr/data/anvil ...   # the payload
+
+At that point `bin/patch.sh` has no staging left in it at all. Sections 3, 4,
+5, 5b, 5c, 5d and 10 exist today only to copy a recipe's output tree into
+`work/modpayload`, and every one of those copies is a second description of
+what a package already contains — the same class of duplication the recipes
+themselves removed one level down. The payload becomes a *view* of the feed
+rather than a parallel assembly of it, and "what does this release install?"
+has one answer, readable with `opkg-list-fields` instead of by reading a
+1400-line shell script.
+
+What still cannot move: sections 1, 2, 7, 8, 9 and 11 do not write to
+`$MODDIR` at all. They patch the SOFTWARE component (`/usr/prog`) — the
+Klipper tree, the toolchanger configs, the root password, `start.sh`,
+`firmwareExe` and the `run.sh` injection. Those are edits to somebody else's
+filesystem, not packages of ours, and they stay in `patch.sh` until phase 7 of
+`docs/notes/80-s6-migration.md` moves Klipper under `$MODDIR` and leaves
+`firmwareExe` as the only file placed outside `/usr/data`.
+
+**The blocker is CPython.** `patch.sh` section 5c is 800 lines and builds the
+interpreter, seven static libraries and eighteen cross-built wheels; until
+that is a set of recipes there is no feed that contains everything the payload
+needs, so the loop above would produce a tree with no Python in it. That is
+the next chunk of work, and it is the last one before this becomes possible.
+
 **Gate:** a replica install driven by packages leaves the same tree the
 tarball leaves, and an upgrade removes exactly what the previous version
 installed — the property `test-upgrade` already checks for the tarball. The
