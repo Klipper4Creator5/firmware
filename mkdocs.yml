@@ -42,6 +42,10 @@ markdown_extensions:
       slugify: !!python/object/apply:pymdownx.slugs.slugify {kwds: {case: lower}}
   - pymdownx.details
   - pymdownx.superfences
+  # The status checkboxes on the front page, and the checklists in
+  # is-this-for-you.md and after-the-flash.md.
+  - pymdownx.tasklist:
+      custom_checkbox: true
 
 # docs/index.md is generated from README.md at build time; see the hook.
 hooks:

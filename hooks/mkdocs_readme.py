@@ -25,6 +25,9 @@ DOCS = ROOT / "docs"
 
 # A markdown link target that is not absolute, an anchor, or a mail address.
 LINK = re.compile(r"\]\((?!https?:|#|mailto:)([^)\s]+)\)")
+# The same, for a raw HTML attribute: mkdocs rewrites markdown links but not
+# these, and with directory URLs a page sits one level below its own images.
+ATTR = re.compile(r'\b(src|href)="(?!https?:|#|mailto:|/|\.\./)([^"]+)"')
 
 
 def on_pre_build(config, **kwargs):
@@ -34,7 +37,7 @@ def on_pre_build(config, **kwargs):
     # URLs, then strip the prefix from what is left, which is the site itself.
     text = _rewrite_links(text, ROOT)
     text = re.sub(r"\]\(docs/", "](", text)
-    text = re.sub(r'(src|href)="docs/', r"\1=\"", text)
+    text = re.sub(r'(src|href)="docs/', r'\1="', text)
     index = DOCS / "index.md"
     # Only write on a real change: `mkdocs serve` watches docs/, and touching
     # index.md every build would rebuild forever.
@@ -43,7 +46,27 @@ def on_pre_build(config, **kwargs):
 
 
 def on_page_markdown(markdown, page, **kwargs):
-    return _rewrite_links(markdown, (DOCS / page.file.src_path).parent)
+    markdown = _rewrite_links(markdown, (DOCS / page.file.src_path).parent)
+    return _rewrite_html_paths(markdown, page)
+
+
+def _rewrite_html_paths(markdown, page):
+    """Point a raw <img src="x.jpg"> at the file, from wherever the page is.
+
+    `page.url` is "" for the front page and "is-this-for-you/" for a page one
+    level down, so the number of slashes in it is how far the image is above
+    the reader.
+    """
+    up = "../" * page.url.count("/")
+    here = (DOCS / page.file.src_path).parent
+
+    def rewrite(match):
+        attr, target = match.group(1), match.group(2)
+        if not (here / target).exists():
+            return match.group(0)
+        return f'{attr}="{up}{target}"'
+
+    return ATTR.sub(rewrite, markdown)
 
 
 def _rewrite_links(markdown, here):
