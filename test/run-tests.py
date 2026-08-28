@@ -59,8 +59,10 @@ def check_shell_syntax(reporter):
     """One line per check, not one per file: 25 green lines saying "syntax ok"
     hide the two that matter."""
     targets = []
-    for pattern in ("bin/*.sh", "payload/*.sh", "payload/init.d/S*",
-                    "payload/firmwareExe", "test/integration/printer/*.sh"):
+    for pattern in ("bin/*.sh", "pkg/*/payload/*.sh",
+                    "pkg/*/payload/init.d/S*", "pkg/*/prog/*.sh",
+                    "pkg/*/prog/firmwareExe", "installer/*.sh",
+                    "test/integration/printer/*.sh"):
         targets += sorted(ROOT.glob(pattern))
     broken = []
     for script in targets:
@@ -88,16 +90,19 @@ def check_no_bashisms(reporter):
     if not shutil.which("shellcheck"):
         raise Fail("shellcheck not installed (the build image has it -- run "
                    "through 'make test')")
-    targets = (sorted(ROOT.glob("payload/*.sh"))
-               + sorted(ROOT.glob("payload/init.d/S*"))
-               + [ROOT / "payload" / "firmwareExe"])
+    targets = (sorted(ROOT.glob("pkg/*/payload/*.sh"))
+               + sorted(ROOT.glob("pkg/*/payload/init.d/S*"))
+               + sorted(ROOT.glob("pkg/*/prog/*.sh"))
+               + sorted(ROOT.glob("pkg/*/prog/firmwareExe"))
+               + sorted(ROOT.glob("installer/*.sh")))
     targets = [str(t) for t in targets if t.is_file()]
     # With no targets shellcheck writes usage to stderr and exits 1, leaving
     # `hits` empty -- a green gate that examined nothing. check_shell_syntax
-    # guards this; this one did not, so moving payload/ would have retired the
-    # ash-compatibility check silently.
+    # guards this; this one did not, so moving these files would have retired
+    # the ash-compatibility check silently.
     if not targets:
-        raise Fail("no payload scripts found to check -- has payload/ moved?")
+        raise Fail("no on-printer scripts found to check -- has the recipe "
+                   "layout moved?")
     checked = subprocess.run(
         ["shellcheck", "-s", "dash", "-f", "gcc"] + targets,
         capture_output=True, text=True)
@@ -137,8 +142,8 @@ def check_undefined_names(reporter):
         raise Fail("pyflakes not installed (the build image has it -- run "
                    "through 'make test')")
     targets = []
-    for pattern in ("bin/*.py", "payload/*.py", "payload/bin/*.py",
-                    "payload/klipper/extras/*.py", "test/*.py",
+    for pattern in ("bin/*.py", "pkg/*/payload/bin/*.py",
+                    "pkg/*/prog/klippy/extras/*.py", "test/*.py",
                     "test/ffsim/*.py", "test/integration/*.py"):
         targets += sorted(ROOT.glob(pattern))
     targets = [str(t) for t in targets if t.is_file()]

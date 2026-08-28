@@ -34,7 +34,7 @@ Couplings to `load_channel` worth knowing: bare `M104`/`M109` get ` T<print_chan
 appended (543-547), and `SET_PRESSURE_ADVANCE` is rewritten to the per-channel value
 when `pa_enable == 1` (479-487). `ff_toolchange.py` used to issue
 `SDCARD_SET_CHANNEL` to keep that channel in sync; it was dropped in `764af2a`
-("upstream needs no channel") and appears nowhere in `payload/` now — the upstream
+("upstream needs no channel") and appears nowhere in the shipped tree now — the upstream
 `virtual_sdcard` we ship does neither rewrite, so there is no channel to sync.
 
 ### `c_helper.so` is built from the tree it ships with

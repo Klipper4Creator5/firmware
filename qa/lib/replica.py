@@ -147,7 +147,7 @@ class File:
 
 
 class Service:
-    """One of payload/init.d/S*, driven through its own dispatcher.
+    """One of anvil-core's init.d/S*, driven through its own dispatcher.
 
     Every method returns a Result. Nothing here decides anything by reading
     the script: it runs the service and reports what came back, which is the
@@ -449,7 +449,7 @@ def mod_package(config):
             "no package in work/out, so there is nothing to install and the "
             "replica lane has nothing to test.\n"
             "    build one:  make build\n"
-            "This lane deliberately does NOT hand-place payload/ into the "
+            "This lane deliberately does NOT hand-place a recipe's files into the "
             "machine -- it installs the real package through the printer's "
             "own updater, so that the install is under test too.")
     # Newest by mtime: on a tree that has been built more than once, "the
@@ -582,7 +582,21 @@ def start(config=None, base_pkg=None, packages=None, setup_timeout=600,
     argv += [
         "-v", "%s/pkgs:/pkgs:ro" % stage,
         "-v", "%s/case.sh:/case.sh:ro" % stage,
-        "-v", "%s/payload:/payload:ro" % ROOT,
+        # THE PRINTER'S FILES, FROM THE RECIPES THAT OWN THEM. This used to
+        # be one mount of a top-level payload/ directory. It is three now, and
+        # entrypoint.sh reassembles /tmp/payload out of them, because the
+        # files a case script reaches for are split across two recipes and two
+        # roles: anvil-core's $MODDIR overlay, its anvil.conf template, and
+        # Klipper's launcher, which goes to /usr/prog.
+        #
+        # Reassembled rather than re-pointed on purpose. Every case script
+        # copies out of /tmp/payload with `2>/dev/null` -- a path that stops
+        # resolving does not fail there, it copies nothing and the case runs
+        # green against an empty $MODDIR. Keeping the assembled tree byte-for
+        # -byte what it was means none of those copies had to be touched.
+        "-v", "%s/pkg/anvil-core/payload:/payload:ro" % ROOT,
+        "-v", "%s/pkg/anvil-core/seed:/payload-seed:ro" % ROOT,
+        "-v", "%s/pkg/klipper/prog:/payload-klipper:ro" % ROOT,
         "-e", "FF_KEY=%s" % config.ff_key,
         "-e", "BASE_PKG=%s" % ("/pkgs/base.tgz" if base_pkg else ""),
         "-e", "PKGS=%s" % "".join(" %s=/pkgs/%s" % (n, n) for n in packages),

@@ -1,9 +1,9 @@
 # Pre-print nozzle clean and tool gate — Klipper port
 
 Source of truth: [`50a-nozzle-clean-recovered.md`](50a-nozzle-clean-recovered.md).
-Port: `payload/klipper/config/ff-print-macros.cfg` — `_FF_PREFLIGHT`, `_FF_NOZZLE_CLEAN`, and the
+Port: `pkg/anvil-core/payload/config/ff-print-macros.cfg` — `_FF_PREFLIGHT`, `_FF_NOZZLE_CLEAN`, and the
 `TOOLS=` / `TEMPS=` / `CLEAN=` / `SOAK=` parameters of `START_PRINT`; tunables
-`clean_*` in `[gcode_macro _FF_FILAMENT]` (`payload/klipper/config/ff-filament.cfg`);
+`clean_*` in `[gcode_macro _FF_FILAMENT]` (`pkg/anvil-core/payload/config/ff-filament.cfg`);
 `docked_tools` in `printer.ff_toolchange` status.
 
 ## START_PRINT now

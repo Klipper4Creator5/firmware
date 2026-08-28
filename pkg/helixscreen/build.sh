@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # HelixScreen -- unpack upstream's build and add the printer-database entry.
 #
-# THE JSON BELONGS IN THIS PACKAGE AND NOT IN anvil-core, which is a judgement
-# worth stating because it is the only repo-owned file that leaves payload/
-# for somebody else's package. printer_database.d/flashforge_creator5.json is
+# THIS RECIPE HAS BOTH A TARBALL AND A payload/, which is the shape every
+# recipe that adds something of ours to somebody else's tree now has: the
+# tarball is the source, and pkg/helixscreen/payload/ is the $MODDIR overlay
+# laid out exactly as it lands. printer_database.d/flashforge_creator5.json is
 # what makes HelixScreen detect this machine as a tool changer: it is
 # meaningless without the tree it configures, it is read from inside that
 # tree's own config directory, and if HelixScreen is ever removed it should go
@@ -27,17 +28,17 @@ _src="$PKG_WORK/src/helixscreen"
 
 pkg_stage "$_src" "helixscreen"
 
-# The printer-database entry, into the tree's own config directory.
-mkdir -p "$PKG_WORK/stage$MODDIR/helixscreen/config/printer_database.d"
-cp -f "$ROOT"/payload/helixscreen/printer_database.d/*.json \
-      "$PKG_WORK/stage$MODDIR/helixscreen/config/printer_database.d/"
-
-# An optional platform hook. No such file is in the repo, so this never fires
-# on a stock checkout -- drop one in assets/ to have it shipped. Carried over
-# from bin/patch.sh section 5 unchanged.
-[ -f "$ROOT/assets/hooks-creator5.sh" ] && \
-    cp -f "$ROOT/assets/hooks-creator5.sh" \
-          "$PKG_WORK/stage$MODDIR/helixscreen/assets/config/platform/"
+# Our half, staged OVER the unpacked tarball rather than beside it: the
+# printer-database entry belongs inside HelixScreen's own config directory,
+# and payload/ already spells that path, so this is a copy with no
+# destinations written down. cp -a, and -T-free, because the tree it lands on
+# exists -- pkg_stage would refuse to merge into it.
+#
+# An optional platform hook rides the same way: no hooks-creator5.sh is in the
+# repo, so a stock checkout ships nothing extra, and dropping one at
+# payload/helixscreen/assets/config/platform/ has it shipped with no edit
+# here. Carried over from bin/patch.sh section 5 unchanged.
+cp -a "$PKG_DIR/payload/." "$PKG_WORK/stage$MODDIR/"
 
 pkg_ship "helixscreen"
 pkg_end

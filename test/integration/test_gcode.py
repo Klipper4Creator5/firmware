@@ -68,7 +68,7 @@ def defined(root, cfgdir):
             m = MACRO.match(section)
             if m:
                 names.add(m.group(1).upper())
-    extras = os.path.join(root, "payload", "klipper", "extras")
+    extras = os.path.join(root, "pkg", "klipper", "prog", "klippy", "extras")
     for py in sorted(os.listdir(extras)):
         if py.endswith(".py"):
             src = open(os.path.join(extras, py), encoding="utf-8").read()
@@ -108,7 +108,7 @@ def test_every_command_is_defined(files, defined, name):
     unknown = sorted({word for _, word, _ in commands(files[name])
                       if not GCODE_WORD.match(word) and word not in defined})
     assert not unknown, (
-        "%s calls commands nothing in payload/ defines: %s"
+        "%s calls commands nothing the mod ships defines: %s"
         % (name, ", ".join(unknown)))
 
 

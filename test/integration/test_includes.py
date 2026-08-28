@@ -6,8 +6,8 @@ So printer.base.cfg carries the includes, and this checks the two things that
 silently break if it stops:
 
   * every ff-*.cfg we ship is included, and every include resolves to a file
-    we ship. A new config added to payload/klipper/config/ and not wired up
-    would otherwise be dead weight nobody notices.
+    we ship. A new ff-*.cfg added to pkg/anvil-core/payload/config/ and not
+    wired up would otherwise be dead weight nobody notices.
   * the includes sit after the sections they override. Klipper applies
     includes in parse order, so ff-chamber.cfg has to follow
     printer.chamber.cfg, and ff-runout.cfg the filament sensors that

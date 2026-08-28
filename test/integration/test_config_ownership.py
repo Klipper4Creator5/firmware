@@ -11,8 +11,10 @@ KEPT when edited, because there is no include-and-override seam for it and a
 printer reached through a tuned trusted_clients block would lose that access.
 It must NOT carry the banner, or the banner starts lying.
 
-Adding a config to payload/klipper/config/ therefore forces a decision here,
-which is the point.
+Adding a config to either recipe's config directory therefore forces a
+decision here, which is the point. There are two of them now -- the ff-*.cfg
+are anvil-core's, printer.base.cfg is pkg/klipper's -- and the `cfgdir`
+fixture merges them the way the printer does.
 """
 import os
 
@@ -38,15 +40,14 @@ def owned(name):
 
 
 @pytest.fixture(scope="session")
-def shipped(root):
-    """What patch.sh copies to the printer, by basename.
+def shipped(cfgdir):
+    """What reaches the printer, by basename.
 
-    Read from the payload rather than a built tree so this needs no package:
-    bin/patch.sh ships ff-*.cfg, printer.base.cfg and moonraker.conf.
+    Read from the recipes rather than a built tree so this needs no package:
+    ff-*.cfg and moonraker.conf are anvil-core's, printer.base.cfg is
+    pkg/klipper's, and the cfgdir fixture is the one directory they land in.
     """
-    cfgdir = os.path.join(root, "payload", "klipper", "config")
-    names = [f for f in config_files(cfgdir)]
-    return cfgdir, names
+    return cfgdir, config_files(cfgdir)
 
 
 def test_every_mod_owned_config_warns_the_user(shipped):
@@ -90,17 +91,15 @@ def test_the_banner_is_at_the_top(shipped):
     assert not late, "banner buried too far down: %s" % ", ".join(late)
 
 
-def test_preserved_configs_do_not_claim_to_be_overwritten(shipped, root):
+def test_preserved_configs_do_not_claim_to_be_overwritten(cfgdir):
     """moonraker.conf keeps the .mod-new dance, so it must not warn."""
     for name in PRESERVED:
-        for base in (os.path.join(root, "payload", "klipper", "config"),
-                     os.path.join(root, "assets")):
-            path = os.path.join(base, name)
-            if os.path.isfile(path):
-                text = open(path, encoding="utf-8").read()
-                assert BANNER not in text, (
-                    "%s is kept when edited, so it must not carry the "
-                    "overwrite warning" % name)
+        path = os.path.join(cfgdir, name)
+        if os.path.isfile(path):
+            text = open(path, encoding="utf-8").read()
+            assert BANNER not in text, (
+                "%s is kept when edited, so it must not carry the "
+                "overwrite warning" % name)
 
 
 def test_installer_actually_overwrites_what_the_banner_promises(root):
@@ -110,7 +109,7 @@ def test_installer_actually_overwrites_what_the_banner_promises(root):
     leaves a .mod-new is worse than no banner: the user trusts it, puts nothing
     in printer.cfg, and their edit quietly wins instead.
     """
-    src = open(os.path.join(root, "payload", "run-append.sh"),
+    src = open(os.path.join(root, "installer", "run-append.sh"),
                encoding="utf-8").read()
     body = src[src.index("klipper + moonraker configs"):]
     assert "ff-*.cfg)" in body, (

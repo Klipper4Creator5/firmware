@@ -39,7 +39,7 @@ rm -rf "$MOD_PAYLOAD" "$SOFTWARE_DIR/mod"   # $SOFTWARE_DIR/mod: leftover from a
 # etc/ is the same idea one directory further on: a --prefix root keeps the
 # mod's own configuration in etc/, and etc/s6/ is the s6 SCANDIR -- the
 # directory s6-svscan watches, one subdirectory per supervised service. It is
-# created here rather than at runtime by payload/init.d/S40s6, and the reason
+# created here rather than at runtime by anvil-core's init.d/S40s6, and the reason
 # is the install manifest: the manifest is read off this staged tree, so a
 # directory that only ever appeared on the printer would be a path the mod
 # creates and no update can ever account for. It was empty when S40s6 first
@@ -137,16 +137,28 @@ stock)
 esac
 
 # ----------------------------------------------------------- 2. Toolchanger
-# Lives in this repo under payload/klipper/ -- it used to be the separate
+# Lives in this repo under pkg/klipper/prog/ -- it used to be the separate
 # creator5-toolchange checkout, pointed at by TOOLCHANGE= in config.env.
+#
+# WHY prog/ AND NOT payload/. Everything under pkg/<recipe>/payload/ is what
+# that recipe stages into its .ipk, and every path in a package lands under
+# $MODDIR. These files do not: klippy's extras and printer.base.cfg go to
+# /usr/prog, beside FlashForge's own Klipper tree, which is a filesystem no
+# package of ours may write. prog/ is the residue -- the files a recipe owns
+# and cannot yet ship -- and it empties out when a postinst places them from
+# a staging root instead. See docs/notes/85-packaging.md phase 2.
 if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     say "Toolchange: ff_*.py + configs"
     mkdir -p "$SOFTWARE_DIR/klipper/extras"
-    cp -f payload/klipper/extras/ff_*.py "$SOFTWARE_DIR/klipper/extras/"
-    # .cfg files belong on the data partition. These are mod-owned: run.sh
-    # overwrites them on every update (test_config_ownership.py enforces it).
-    # User changes go in printer.cfg, which no flash ever writes.
-    cp -f payload/klipper/config/ff-*.cfg "$MOD_PAYLOAD/config/"
+    cp -f pkg/klipper/prog/klippy/extras/ff_*.py "$SOFTWARE_DIR/klipper/extras/"
+    # THE ff-*.cfg COPY THAT USED TO BE HERE IS GONE. Those files belong on
+    # the data partition, they are staged by pkg/anvil-core, and section 10
+    # copies that package's whole tree into $MOD_PAYLOAD -- after this line
+    # ran, over the top of it. So this was a second copy of the same bytes
+    # from a second place, differing only in being gated on BUILD_TOOLCHANGE
+    # while the package is not: with BUILD_TOOLCHANGE=0 the files arrived
+    # anyway, one section later, which is the sort of disagreement that reads
+    # as a working feature flag right up until somebody relies on it.
     # Our printer.base.cfg is FlashForge's with the chamber block replaced by
     # [include printer.chamber.cfg] -- Klipper can override an option but
     # cannot un-declare a section, and the plain Creator 5 has no chamber
@@ -154,7 +166,7 @@ if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     # NOTE: this cp is why the stock-drift check lives in bin/unpack.sh and
     # not in a test -- it overwrites the pristine copy, and the test that used
     # to read it afterwards was comparing our file against itself.
-    cp -f payload/klipper/config/printer.base.cfg "$SOFTWARE_DIR/klipper/config/printer.base.cfg"
+    cp -f pkg/klipper/prog/config/printer.base.cfg "$SOFTWARE_DIR/klipper/config/printer.base.cfg"
 
     # Anything that differs between models exists once per model, named
     # <file>.creator5 / <file>.creator5pro, and the matching one is installed
@@ -162,7 +174,7 @@ if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     # difference. printer.*.cfg belongs beside printer.base.cfg on the program
     # partition; ff-*.cfg belongs on the data partition with the rest.
     SUFFIX=$(printf '%s' "$TARGET_MACHINE" | tr 'A-Z' 'a-z')
-    for variant in payload/klipper/config/*."$SUFFIX"; do
+    for variant in pkg/klipper/prog/config/*."$SUFFIX"; do
         [ -e "$variant" ] || continue
         base=$(basename "$variant" ".$SUFFIX")
         case "$base" in
@@ -204,8 +216,8 @@ fi
 # it is missing -- never overwrites it. A package member is overwritten on
 # every upgrade by definition, so putting this in anvil-core would destroy a
 # printer's own Moonraker settings the first time it was upgraded.
-[ -f assets/moonraker-custom.conf ] \
-    && cp -f assets/moonraker-custom.conf "$MOD_PAYLOAD/config/moonraker-custom.conf"
+[ -f pkg/moonraker/seed/moonraker-custom.conf ] \
+    && cp -f pkg/moonraker/seed/moonraker-custom.conf "$MOD_PAYLOAD/config/moonraker-custom.conf"
 
 # ------------------------------------------------------------- 4. Moonraker
 # WHY THIS EXISTS -- the stock Moonraker is a 2022 build (it reports API
@@ -382,7 +394,7 @@ du -sh "$MOD_PAYLOAD/libexec" | awk '{print "   "$1"\tlibexec/"}'
 # pkg/lib.sh); every reason WHY is in the pkg.conf beside each one.
 #
 # ############################################################################
-# # FF_PYTHON POINTS HERE. payload/anvil-env.sh names this interpreter for   #
+# # FF_PYTHON POINTS HERE. anvil-core's anvil-env.sh names this interpreter  #
 # # Moonraker, ff-startup.py, ffscreen.py and ff_mcu_bringup.py, and every   #
 # # third-party C extension those need is one of the packages below.         #
 # # Moonraker has been measured SERVING on it through the real boot path on  #
@@ -595,7 +607,7 @@ fi
 
 # ------------------------------------------------ 8. start.sh (web stack on)
 say "start.sh: enabling nginx + moonraker"
-cp -f payload/start.sh "$SOFTWARE_DIR/start.sh"
+cp -f pkg/klipper/prog/start.sh "$SOFTWARE_DIR/start.sh"
 chmod +x "$SOFTWARE_DIR/start.sh"
 
 # ------------------------------------- 9. firmwareExe -> our wrapper script
@@ -609,7 +621,7 @@ chmod +x "$SOFTWARE_DIR/start.sh"
 # here could ever be a reliable backup. Flashing the stock FlashForge package
 # -- which still ships the binary -- is the uninstall.
 say "firmwareExe: installing wrapper (replaces the stock binary)"
-cp -f payload/firmwareExe "$SOFTWARE_DIR/firmwareExe"
+cp -f pkg/anvil-core/prog/firmwareExe "$SOFTWARE_DIR/firmwareExe"
 chmod +x "$SOFTWARE_DIR/firmwareExe"
 
 # ----------------------------------------------------- 10. mod service dir
@@ -637,7 +649,7 @@ sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
     -e "s/^MOD_WIFI=.*/MOD_WIFI=${MOD_WIFI:-1}/" \
     -e "s/^NICE_MOONRAKER=.*/NICE_MOONRAKER=${NICE_MOONRAKER:-5}/" \
     -e "s/^NICE_CAM=.*/NICE_CAM=${NICE_CAM:-10}/" \
-    payload/anvil.conf > "$MOD_PAYLOAD/anvil.conf"
+    pkg/anvil-core/seed/anvil.conf.in > "$MOD_PAYLOAD/anvil.conf"
 
 # ------------------------------------------------ 10b. the install manifest
 # The list of every path this payload installs, shipped inside the payload
@@ -653,7 +665,7 @@ sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
 # It has to keep the property the rm -rf was written for, though. The
 # installed set must end up exactly the shipped set, or a RENAMED init script
 # leaves a stale twin behind and firmwareExe runs both -- see the comment in
-# payload/run-append.sh, which is where that bill came due. A manifest gives
+# installer/run-append.sh, which is where that bill came due. A manifest gives
 # that property for free: a file the last payload shipped and this one does
 # not is still named in the list the last payload wrote, so it still goes.
 #
@@ -692,8 +704,8 @@ else
     PW_AUTO=0
 fi
 sed -e "s/^MOD_PW_AUTO=.*/MOD_PW_AUTO=$PW_AUTO/" \
-    payload/run-append.sh > "$POST"
-python3 - "$SOFTWARE_DIR/run.sh" payload/run-pre.sh "$POST" <<'PY'
+    installer/run-append.sh > "$POST"
+python3 - "$SOFTWARE_DIR/run.sh" installer/run-pre.sh "$POST" <<'PY'
 import sys, re
 run, pre_f, post_f = sys.argv[1], sys.argv[2], sys.argv[3]
 B1, E1 = "# >>> anvil pre >>>",  "# <<< anvil pre <<<"

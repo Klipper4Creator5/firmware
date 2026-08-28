@@ -120,9 +120,21 @@ fi
 
 # The mod payload, for cases that exercise it directly rather than through an
 # installed package.
+#
+# ASSEMBLED FROM THREE MOUNTS, because the repository files it draws on live
+# with the recipes that own them: anvil-core's $MODDIR overlay, its
+# anvil.conf template (which the build normally renders from config.env --
+# here the unrendered defaults are exactly what the cases want), and
+# Klipper's start.sh, which is a /usr/prog file and so lives in prog/.
+# The assembled tree is what /tmp/payload has always been; see the comment on
+# the mounts in qa/lib/replica.py.
 if [ -d /payload ]; then
     mkdir -p $R/tmp/payload
     cp -a /payload/. $R/tmp/payload/
+    [ -f /payload-seed/anvil.conf.in ] \
+        && cp -f /payload-seed/anvil.conf.in $R/tmp/payload/anvil.conf
+    [ -f /payload-klipper/start.sh ] \
+        && cp -f /payload-klipper/start.sh $R/tmp/payload/start.sh
 fi
 
 # The USB stick. In USB_STICK mode it is already a FAT filesystem on

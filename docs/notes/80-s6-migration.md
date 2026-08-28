@@ -10,7 +10,7 @@ gate is not passing.
 
 ## Why, in one paragraph
 
-`payload/anvil-service.sh` hand-rolls in `ash` what a supervisor does in C:
+`pkg/anvil-core/payload/anvil-service.sh` hand-rolls in `ash` what a supervisor does in C:
 liveness, a stop that waits, a respawn loop. Two real bugs lived in that code
 before it was consolidated. s6 was measured against runit on the replica and
 won on one thing that matters here -- readiness notification: a service can
@@ -63,7 +63,7 @@ Get them wrong and the phase fails on a printer, not in CI.
 * We do **not** install Klipper. `bin/patch.sh` stages a *software component*
   and FlashForge's own stock `run.sh` copies it onto `/usr/prog/klipper`. That
   is why Klipper sits on the firmware partition -- inherited, not chosen.
-* `payload/start.sh` already **is** `/usr/prog/klipper/start.sh`; the mod
+* `pkg/klipper/prog/start.sh` already **is** `/usr/prog/klipper/start.sh`; the mod
   replaces it. What we do not own are the FlashForge pieces it calls:
   `klipperDaemon`, `klipper_pri.sh`, `checkEboard`, `libmcu-bare.bin`.
   `cmd_mcu` is at `/usr/bin/cmd_mcu`, on the rootfs, not `/usr/prog`.
@@ -81,7 +81,7 @@ Get them wrong and the phase fails on a printer, not in CI.
 
 ## Phase 1 -- the install manifest
 
-**Do this first.** `payload/run-append.sh` currently does
+**Do this first.** `installer/run-append.sh` currently does
 
     rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen \
            $MODDIR/config $MODDIR/moonraker $MODDIR/init.d
@@ -95,7 +95,7 @@ Keep the property the current code was written for: the installed set must end
 up exactly the shipped set, so a renamed init script cannot leave a stale twin
 behind (that is why `init.d` is in the list at all).
 
-*Files:* `payload/run-append.sh`, `bin/patch.sh` (emit the manifest).
+*Files:* `installer/run-append.sh`, `bin/patch.sh` (emit the manifest).
 *Gate:* a replica case that installs the old layout, upgrades, and asserts (a)
 a file the previous payload shipped and this one does not is gone, (b) a file
 nothing shipped -- drop one in `bin/` by hand -- survives, (c) `anvil.conf` and
@@ -139,8 +139,8 @@ a dead printer either way.
 `anvil-service.sh` grows `svc_s6_*` helpers so the `S*` scripts can talk to the
 scanner. It does not shrink yet.
 
-*Files:* `payload/init.d/S40s6` (new), `payload/anvil-service.sh`,
-`payload/firmwareExe`.
+*Files:* `pkg/anvil-core/payload/init.d/S40s6` (new), `pkg/anvil-core/payload/anvil-service.sh`,
+`pkg/anvil-core/prog/firmwareExe`.
 *Gate:* extend `case-services.sh`: the scanner is running after the init
 sequence, and the init sequence still returns promptly.
 

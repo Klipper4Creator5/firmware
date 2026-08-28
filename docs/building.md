@@ -175,7 +175,7 @@ is no better than no access, and leaving a guessable one behind would be worse
 than saying so.
 
 `bin/patch.sh` decides which of the two applies and sets `MOD_PW_AUTO` in the
-injected install block; `payload/run-append.sh` does the on-device half with
+injected install block; `installer/run-append.sh` does the on-device half with
 the printer's own `mkpasswd`.
 
 ## Two config files
@@ -195,21 +195,48 @@ belongs to. Nothing from the test lane can reach a printer.
 
 **Ships** — everything that ends up inside the `.tgz` and runs on the machine:
 
+Files that run on the printer live with the RECIPE THAT OWNS THEM, and the
+directory inside that recipe says how they get there. Three names, no fourth
+(`qa/static/test_recipe_layout.py` holds this):
+
 ```
-payload/        POSIX sh, busybox ash -- runs ON the printer
-  firmwareExe     the wrapper that replaces the stock binary
-  start.sh        replaces the stock Klipper launcher (priority, MCU bring-up)
-  init.d/         S50wifi, S60nginx, S62moonraker, S65camera, S70klipper, S80ui
-  anvil-env.sh    PATH/LD_LIBRARY_PATH/FF_PYTHON -- sourced, not executable
-  anvil-service.sh the start/stop/status/liveness shape every service shares
-                  -- sourced, not executable
-  bin/            ff_mcu_bringup.py, wifi-action.sh
-  klipper/        extras/ff_*.py and config/ff-*.cfg + printer.base.cfg
-  helixscreen/    the printer-database entry that makes it a toolchanger
-  anvil.conf      runtime switches, preserved across mod updates
-  run-pre.sh      backups, injected at the TOP of the stock run.sh
-  run-append.sh   payload install, injected before its exit
-assets/         nginx.conf, moonraker.conf, moonraker-custom.conf
+pkg/<recipe>/payload/   staged into the .ipk, laid out as it lands under
+                        $MODDIR: payload/init.d/S60nginx installs as
+                        $MODDIR/init.d/S60nginx and no recipe says so
+pkg/<recipe>/prog/      placed on /usr/prog by patch.sh -- somebody else's
+                        filesystem, so it cannot be in a package of ours
+pkg/<recipe>/seed/      templated or seeded user state: not a package member,
+                        because a member is overwritten on every upgrade
+
+installer/              run-pre.sh, run-append.sh -- never files on the
+                        printer at all: patch.sh splices them into the stock
+                        run.sh
+```
+
+Which is to say:
+
+```
+pkg/anvil-core/
+  payload/  anvil-env.sh      PATH/LD_LIBRARY_PATH/FF_PYTHON -- sourced
+            anvil-service.sh  the start/stop/status/liveness shape services share
+            init.d/           S40s6, S50wifi, S60nginx, S62moonraker, S65camera,
+                              S70klipper, S80ui
+            bin/              ff-startup.py, ff_mcu_bringup.py, ffscreen.py,
+                              wifi-action.sh
+            etc/s6/           the s6 scandir, one directory per service
+            config/           ff-*.cfg + moonraker.conf
+            nginx/nginx.conf
+  prog/     firmwareExe       the wrapper that replaces the stock binary
+  seed/     anvil.conf.in     runtime switches, preserved across mod updates
+pkg/klipper/
+  prog/     start.sh          replaces the stock Klipper launcher
+            config/           printer.base.cfg + the per-model chamber variants
+            klippy/extras/    ff_*.py
+pkg/moonraker/
+  seed/     moonraker-custom.conf   the user's own Moonraker settings
+pkg/helixscreen/
+  payload/  helixscreen/config/printer_database.d/
+                              the entry that makes it a toolchanger
 ```
 
 **Builds it** — host-side, never installed:
@@ -242,8 +269,8 @@ pkg/            package recipes: one directory per cross-build, each a
                   libarchive as build-only dependencies linked into it.
   ipk-install     the exception in here: POSIX sh, runs ON the printer, and
                   needs no opkg and no `ar`. It is how the first packages get
-                  onto a machine that has neither. Not under payload/
-                  because it does not ship yet.
+                  onto a machine that has neither. Not in a recipe's
+                  payload/ because it does not ship yet.
 ```
 
 **Tests it** — never ships, and never touched by a build:
@@ -285,10 +312,10 @@ qemu stays shell, because the fact that it survives that is a large part of
 what the suite proves. See [testing.md](testing.md#why-the-harness-is-python)
 for why the host half moved.
 
-Two things keep the boundary from eroding: only `payload/` and `assets/` are
-ever copied into a package by `patch.sh`, and `make verify` fails if a built
-package contains any file byte-identical to one in `bin/`, `test/` or
-`docker/`.
+Two things keep the boundary from eroding: the only files of ours that
+`patch.sh` copies into a package are the ones under a recipe's `payload/`,
+`prog/` or `seed/`, and `make verify` fails if a built package contains any
+file byte-identical to one in `bin/`, `test/` or `docker/`.
 
 ## Rebuilding chelper
 

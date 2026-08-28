@@ -9,9 +9,9 @@ print is driven from Mainsail unless `ff_*` re-provides it.
 |---|---|---|---|
 | Heaters | `M104 S.. T0..T3`, `M140`, `SET_HEATER_TEMPERATURE HEATER=chamber_heater`; **never M109/M190** — waiting is app-side polling; staged heating e1+e2 then e3+e4; 5-min bed soak; chamber heater coupled to `chamber_heat_fan` 0.9 / `chamber_loop_fan` 0.3 in the app only | `[verify_heater]` (fork hardcodes gain times, caps concurrent extruder heating at 2, loosens PID settle so M109 returns early); `min_extrude_temp: -200` on all extruders = cold-extrude guard effectively off. The chamber is **ported**: `ff-chamber.cfg` wraps `SET_HEATER_TEMPERATURE` and adds `M141`/`M191`, gated on the model that actually has an element | `CommMgr::heatManager` @0x76… (CommMgr.c:2576-2700) |
 | Material temps | from `filament.json` via `getFilamentOperationTemp` | none | CommMgr.c, LoadFilamentPrint.c |
-| Runout / clog | app state machine on `filament_switch_sensor fd_ex*` `filament_detected` + `"wheel runout:Tn"` text; arms/disarms with `SET_FILAMENT_SENSOR … ENABLE=0/1`; endless-spool auto-swap (E0162/E0163) | all eight sensors `pause_on_runout: False`; motion sensors' `runout_gcode` only `action_respond_info` — **ported** (mounted-tool arming in `ff_toolchange.py`, pause via `payload/klipper/config/ff-runout.cfg`; no endless spool), see `49-runout-recovered.md` | `printer.filament.cfg`, `dealFilamentWheelStatus`, `checkAndAutoFeed` |
+| Runout / clog | app state machine on `filament_switch_sensor fd_ex*` `filament_detected` + `"wheel runout:Tn"` text; arms/disarms with `SET_FILAMENT_SENSOR … ENABLE=0/1`; endless-spool auto-swap (E0162/E0163) | all eight sensors `pause_on_runout: False`; motion sensors' `runout_gcode` only `action_respond_info` — **ported** (mounted-tool arming in `ff_toolchange.py`, pause via `pkg/anvil-core/payload/config/ff-runout.cfg`; no endless spool), see `49-runout-recovered.md` | `printer.filament.cfg`, `dealFilamentWheelStatus`, `checkAndAutoFeed` |
 | Doors | `openDoorPause` toggle in general.json | `[gcode_button topDoor/frontDoor]` with **empty** `press_gcode` | `printer.base.cfg:278-287` |
-| Load / unload / purge | app sequences (`FilamentLoad::doLoad/doUnload`, `clearNozzlePrint`) — grab tool, purge chute X275 Y254, material+30 °C, `G1 E150`+`E145`; "unload" is the same push | nothing (extruders are direct drive; `gear_stepper` is the tool lock) — **ported** to `payload/klipper/config/ff-filament.cfg`, see `48-filament-load-port.md` | `47-filament-load-recovered.md` |
+| Load / unload / purge | app sequences (`FilamentLoad::doLoad/doUnload`, `clearNozzlePrint`) — grab tool, purge chute X275 Y254, material+30 °C, `G1 E150`+`E145`; "unload" is the same push | nothing (extruders are direct drive; `gear_stepper` is the tool lock) — **ported** to `pkg/anvil-core/payload/config/ff-filament.cfg`, see `48-filament-load-port.md` | `47-filament-load-recovered.md` |
 | Print lifecycle | prepare (14 steps), preamble, pause (**all hotends off**), resume (staged reheat + re-grab), exit block | no START/END/PAUSE/RESUME macros in stock config | 50-print-lifecycle.md |
 | Z frame | absolute print-start Z offset (~+3.2 mm) computed in `BuildPage::startPrint`; per-tool XY/Z diffs applied on every grab | nothing; eddy `G28 Z` is **not** nozzle zero | 40-offsets.md |
 | Mesh / leveling | app triggers `BED_MESH_CALIBRATE` / `BED_MESH_PROFILE LOAD=…` | executes | 50-print-lifecycle.md |
@@ -103,7 +103,7 @@ But the real thing is also on the box and merely unused. `/usr/prog/mjpg-streame
 `app_startup.sh:159` exports `LD_LIBRARY_PATH=/usr/prog/mjpg-streamer` for it -- and then never
 launches it. So nothing has to be cross-compiled or shipped: start FlashForge's own binary.
 
-`payload/init.d/S65camera` does exactly that, on the S50wifi pattern (the wait for `/dev/video0`
+`pkg/anvil-core/payload/init.d/S65camera` does exactly that, on the S50wifi pattern (the wait for `/dev/video0`
 and the respawn loop are backgrounded so a printer with no camera never delays the boot):
 
 ```sh
@@ -117,5 +117,5 @@ Two details that bite: `libjpeg.so.9` lives in that directory, so without the LD
 binary dies on a missing shared object (the same failure moonrakerDaemon had, which is why
 `anvil-env.sh` is the one place the library path is written down); and the
 plugin `.so` names resolve against the working directory, hence the `cd`. nginx proxies it at
-`/webcam/` and `assets/moonraker.conf` carries the matching `[webcam]` entry with relative URLs,
+`/webcam/` and `pkg/anvil-core/payload/config/moonraker.conf` carries the matching `[webcam]` entry with relative URLs,
 so one forwarded port is enough.

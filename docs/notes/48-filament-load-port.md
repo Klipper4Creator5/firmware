@@ -2,7 +2,7 @@
 
 Source of truth: [`47-filament-load-recovered.md`](47-filament-load-recovered.md), recovered 2026-08-21
 from MIPS code (Ghidra bodies were 36-byte stubs).
-Port: `payload/klipper/config/ff-filament.cfg` — `LOAD_FILAMENT`, `UNLOAD_FILAMENT`, `PURGE`, tunables in
+Port: `pkg/anvil-core/payload/config/ff-filament.cfg` — `LOAD_FILAMENT`, `UNLOAD_FILAMENT`, `PURGE`, tunables in
 `[gcode_macro _FF_FILAMENT]`.
 
 ## What the app really does 

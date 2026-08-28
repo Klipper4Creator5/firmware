@@ -68,6 +68,7 @@ pkg_end
 | `pkg_deps` | unpack each `PKG_BUILD_DEPENDS` package from the feed into a sysroot |
 | `pkg_unpack <archive>` | extract the one pinned source (tar or zip) |
 | `pkg_intree` | source is this checkout rather than a download |
+| `pkg_payload_hash` | cache key over `$PKG_DIR/payload` — for a recipe that ships files of ours |
 | `pkg_build <srcdir> [args]` | configure, make, install into the staging tree |
 | `pkg_stage <src> <dest>` | put a tree into the staging tree, for things with no build |
 | `pkg_ship <glob>...` | copy from staging into the package; globs are relative to the prefix |
@@ -118,6 +119,20 @@ retry with different flags. See `pkg/openssl/build.sh`.
    ABI flags. If `pkg_build` cannot express the project, add a knob to
    `pkg_build` — not a verb for that one project.
 3. Everything installs under `/usr/data/anvil`. Nothing else is packageable.
+4. A recipe directory holds `build.sh`, `pkg.conf`, and up to three subtrees —
+   nothing else, and `qa/static/test_recipe_layout.py` fails if a fourth
+   appears:
+
+   | directory | where its contents end up |
+   | --- | --- |
+   | `payload/` | staged into the .ipk, laid out exactly as it lands under `$MODDIR` |
+   | `prog/` | placed on `/usr/prog` by `bin/patch.sh` — not packageable, because every path in a package of ours is under the prefix |
+   | `seed/` | templated or seeded user state, deliberately not a package member |
+
+   A recipe with a `payload/` needs `PKG_STAMP_EXTRA="$(pkg_payload_hash)"`.
+   Its version number describes an upstream and cannot see those files, and a
+   stamp that cannot see an input does not fail — it reports "already current"
+   and hands over the previous build.
 
 ## Copy from
 
@@ -125,6 +140,7 @@ retry with different flags. See `pkg/openssl/build.sh`.
 - builds against another package — `pkg/s6`
 - no compiler, just files — `pkg/moonraker`
 - from this repo, not a download — `pkg/anvil-core`
+- a download plus files of ours — `pkg/helixscreen`
 - awkward build — `pkg/openssl`, `pkg/bzip2`, `pkg/zlib`
 - no build system, one link line — `pkg/klipper`
 - a python package — `pkg/python-distro` (pure), `pkg/python-cffi` (native)

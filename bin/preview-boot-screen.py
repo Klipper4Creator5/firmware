@@ -64,7 +64,8 @@ LOGFILE = '/USR/DATA/LOGS/ANVIL-BOOT.LOG'
 
 
 def load_ffscreen():
-    path = os.path.join(ROOT, 'payload', 'bin', 'ffscreen.py')
+    path = os.path.join(ROOT, 'pkg', 'anvil-core', 'payload', 'bin',
+                        'ffscreen.py')
     spec = importlib.util.spec_from_file_location('ffscreen', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

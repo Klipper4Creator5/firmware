@@ -15,7 +15,7 @@ single 53MB `anvil.tar.xz` that the printer's installer unpacks whole. Changing
 one line of `anvil.conf` ships all 53MB. There is no way to install just a new
 Moonraker onto a printer you are debugging, no record on the machine of what
 version of anything is on it, and the "remove what the last release installed"
-problem has already been solved once by hand — `payload/run-append.sh` reads an
+problem has already been solved once by hand — `installer/run-append.sh` reads an
 install manifest and prunes by it, which is a package manager's file database
 with one package in it. The question is whether to keep growing that or to
 adopt the format that already means it.
@@ -401,6 +401,51 @@ that is checked directly: two cold `make packages` runs produce identical
 archives. Measured over all 40 with `work/pkg`, the shared build-python and
 the unpacked toolchain all deleted in between — so the x86-64 interpreter that
 generates every mipsel extension module is itself rebuilt rather than reused.
+
+### A recipe owns its files, and the directory says how they ship
+
+The recipes came first and the repository's own files stayed where they were:
+one top-level `payload/` tree organised by DESTINATION (`init.d/`, `bin/`,
+`etc/s6/`, `klipper/config/`) plus an `assets/` directory of three .conf
+files. That was right when there was one owner. With 38 recipes it hid three
+different kinds of file behind identical-looking paths, and the only thing
+recording which package owned any of them was a thirty-line comment at the top
+of `pkg/anvil-core/build.sh`.
+
+Files now live with the recipe that owns them, in one of three subtrees:
+
+    pkg/<recipe>/payload/   staged into the .ipk, laid out as it lands under
+                            $MODDIR -- payload/init.d/S60nginx installs as
+                            $MODDIR/init.d/S60nginx and no recipe says so
+    pkg/<recipe>/prog/      placed on /usr/prog by bin/patch.sh
+    pkg/<recipe>/seed/      templated or seeded user state
+
+and `installer/` holds the two files that are never files on a printer at all:
+`run-pre.sh` and `run-append.sh` are spliced into FlashForge's own `run.sh`.
+`qa/static/test_recipe_layout.py` fails if a fourth kind of directory appears,
+which is the failure this layout is actually for — a misfiled file is caught
+by a build, an unruled directory is caught by nothing.
+
+**prog/ and seed/ are the not-yet-packaged residue, and that is the point of
+naming them.** Both empty out on the way to the end state: `seed/` when
+maintainer-script support lands and a postinst seeds `anvil.conf.default` only
+when the real file is absent; `prog/` when a postinst run against a STAGING
+ROOT places `/usr/prog/PROGRAM/software/firmwareExe` as a symlink into
+`$MODDIR`. The second is the interesting one, and it is only possible because
+`/usr/prog` is written by a tarball this repo bakes, not by a flash we do not
+control: the install can happen in the build container, which is what "the
+tarball becomes a view of the feed" below already assumes. The trap there is
+`$IPKG_INSTROOT` -- a postinst that writes a bare `/usr/prog/...` symlinks the
+BUILD CONTAINER's root, the staging tree gets nothing, and the build stays
+green.
+
+**What it cost and what it caught.** Nothing shipped changed: all 41 packages
+are byte-identical across the move. It did surface one live bug --
+HelixScreen's `printer_database.d` entry was hashed into ANVIL-CORE's
+`PKG_STAMP_EXTRA`, so editing the json rebuilt a package that does not contain
+it and left the one that does sitting in the cache. `pkg_payload_hash` is now
+the one way a recipe keys its own files, and a recipe cannot hash somebody
+else's.
 
 ## Phase 2 — install packages on the printer  *(~1–2 days)*
 

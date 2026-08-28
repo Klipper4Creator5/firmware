@@ -213,8 +213,8 @@ mistake that costs a print.
 ### Keeping them honest
 
 `make test-py` checks both files against the shipped macros and the configured
-axis limits: every command in them must be one `payload/klipper/config/` or
-`payload/klipper/extras/` defines (bar an explicit allowlist of Klipper
+axis limits: every command in them must be one the mod's Klipper config or
+`pkg/klipper/prog/klippy/extras/` defines (bar an explicit allowlist of Klipper
 built-ins, currently just `SET_PRESSURE_ADVANCE`), `TOOLS=` must list every
 tool the feature print uses, and the safe file's own lines must stay cold and
 above Z50 — the check reads the file, so it does not see what an implicit

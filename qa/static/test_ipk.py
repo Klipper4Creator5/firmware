@@ -250,7 +250,7 @@ def _run_installer(*args, root=None):
 def test_install_then_remove_is_a_round_trip(tmp_path, ipk):
     """Everything the package brought, and nothing else, goes away again.
 
-    This is the property payload/run-append.sh's install manifest exists to
+    This is the property installer/run-append.sh's install manifest exists to
     give the tarball, and the reason it exists there is written down in that
     file: the installer used to `rm -rf` seven whole directories, which is
     correct only while every file under them is ours.

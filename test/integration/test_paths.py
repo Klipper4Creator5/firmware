@@ -33,11 +33,29 @@ PATHS = re.compile(
 
 
 def payload_scripts(root):
+    """Every script that runs on the PRINTER, wherever its recipe keeps it.
+
+    Two subtrees per recipe and one directory beside them: payload/ is what
+    the recipe installs under $MODDIR, prog/ is what bin/patch.sh places on
+    /usr/prog, and installer/ is the text spliced into FlashForge's run.sh.
+    Deliberately NOT the whole of pkg/ -- build.sh and pkg.conf are build-host
+    bash that never leaves the container, and rootfs-absolute paths in them
+    are not a defect.
+    """
+    roots = [os.path.join(root, "installer")]
+    pkgdir = os.path.join(root, "pkg")
+    for name in sorted(os.listdir(pkgdir)):
+        for sub in ("payload", "prog"):
+            d = os.path.join(pkgdir, name, sub)
+            if os.path.isdir(d):
+                roots.append(d)
     out = []
-    for dirpath, _, names in os.walk(os.path.join(root, "payload")):
-        for n in names:
-            if n.endswith(".sh") or n == "firmwareExe" or re.match(r"^S\d", n):
-                out.append(os.path.join(dirpath, n))
+    for r in roots:
+        for dirpath, _, names in os.walk(r):
+            for n in names:
+                if n.endswith(".sh") or n == "firmwareExe" \
+                        or re.match(r"^S\d", n):
+                    out.append(os.path.join(dirpath, n))
     return sorted(out)
 
 
@@ -50,7 +68,8 @@ def absolute_paths(root):
 
 
 def test_payload_scripts_are_found(root):
-    assert payload_scripts(root), "no on-printer scripts found under payload/"
+    assert payload_scripts(root), \
+        "no on-printer scripts found -- has the recipe layout moved?"
 
 
 def test_some_absolute_paths_are_checked(root):

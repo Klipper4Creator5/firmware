@@ -106,6 +106,32 @@ pkg_die()  { printf '   !! %s\n' "$*" >&2; exit 1; }
 # always. A recipe whose condition is false is not a failure, it is absent:
 # pkg_recipes does not list it, so nothing orders it, builds it or expects it
 # in the feed.
+# ------------------------------------------------------- pkg_payload_hash
+#
+#     PKG_STAMP_EXTRA="$(pkg_payload_hash)"
+#
+# Sixteen hex digits over every file in this recipe's payload/ -- the cache
+# key for the half of a package that comes out of this checkout instead of out
+# of a tarball. Called from pkg.conf, where $PKG_DIR is already set.
+#
+# WHY A RECIPE NEEDS THIS AT ALL. pkg_stamp is built from a version number,
+# and a version number only describes an upstream. A recipe that also ships
+# files of ours has inputs the version cannot see, and a stamp that cannot see
+# an input does not fail -- it reports "already current" and hands over the
+# previous build. That is exactly what was happening to helixscreen: its
+# printer-database entry was hashed into ANVIL-CORE's stamp, so editing the
+# json rebuilt a package that does not contain it and left the package that
+# does sitting in the cache.
+#
+# It hashes payload/ and nothing else, because payload/ is what a recipe
+# ships. prog/ and seed/ are placed by bin/patch.sh, are in no package, and
+# must not invalidate one.
+pkg_payload_hash() {
+    find "$PKG_DIR/payload" -type f -print0 2>/dev/null \
+        | LC_ALL=C sort -z | xargs -0 sha256sum 2>/dev/null \
+        | sha256sum | cut -c1-16
+}
+
 pkg_conf() {
     PKG_NAME=''; PKG_VERSION=''; PKG_RELEASE=1; PKG_SECTION=libs
     PKG_ROOT=''; PKG_EXCLUDE=''; PKG_DEPENDS=''; PKG_BUILD_DEPENDS=''
@@ -113,9 +139,17 @@ pkg_conf() {
     PKG_MAINTAINER='anvil <none@example.invalid>'
     PKG_STAMP_EXTRA=''; PKG_WHEN=''
     PKG_DEV_FILES=''; PKG_DEV_DESCRIPTION=''
-    [ -f "$ROOT/pkg/$1/pkg.conf" ] || pkg_die "no recipe pkg/$1/pkg.conf"
+    # PKG_DIR IS SET BEFORE THE FILE IS SOURCED so that pkg.conf and build.sh
+    # can name their own directory without either of them spelling out where
+    # recipes live. That matters more than it looks: a recipe that carries
+    # files of this repo -- anvil-core's $MODDIR overlay, helixscreen's
+    # printer-database entry -- has to reach them by path, and a path written
+    # as "$ROOT/pkg/<name>/..." in twelve places is twelve edits the day the
+    # recipe tree grows a level.
+    PKG_DIR="$ROOT/pkg/$1"
+    [ -f "$PKG_DIR/pkg.conf" ] || pkg_die "no recipe pkg/$1/pkg.conf"
     # shellcheck disable=SC1090
-    . "$ROOT/pkg/$1/pkg.conf"
+    . "$PKG_DIR/pkg.conf"
     PKG_ROOT="${PKG_ROOT:-$(pkg_out "$1")}"
 }
 

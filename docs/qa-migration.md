@@ -51,13 +51,13 @@ own `/usr/prog/app_startup.sh`, off a genuine FAT filesystem on `/dev/sda1`,
 exactly as a user installs it from a USB stick.
 
 An earlier version of this tree had `install-payload.sh`, which copied
-`payload/*.sh` and `payload/init.d/S*` into `$MODDIR` by hand — the same shape
+`payload/*.sh` and `pkg/anvil-core/payload/init.d/S*` into `$MODDIR` by hand — the same shape
 `case-services.sh` uses today. Two things are wrong with it:
 
 - It is a **second implementation of the install**, so everything downstream
   asserts against a layout the harness built rather than one the installer
   produced. The real installer could break and nothing here would go red.
-- It can only place what is in `payload/`, so **anything the build produces is
+- It can only place what a recipe keeps in the repo, so **anything the build produces is
   missing**. The cross-compiled s6 is the obvious one: it lives in `work/.s6`
   and `bin/patch.sh` stages it into the package, so a hand-placed payload has
   no supervisor at all — which is why the tests had to carry a stand-in
@@ -72,7 +72,7 @@ lands in `/usr/data/anvil`:
 | `anvil-env.sh anvil-service.sh anvil.conf init.d etc/s6` | `VERSION anvil-env.sh anvil-service.sh anvil.conf backup bin config config-installed etc helixscreen init.d lib libexec moonraker nginx www` |
 
 `bin`, `lib` and `libexec` are the cross-built s6 and CPython 3.13. No amount
-of copying from `payload/` produces them.
+of copying a recipe's files produces them.
 
 This repo has learned this once already, in `case-install.sh`'s own header:
 
@@ -224,7 +224,7 @@ That last row is the point of the exercise. The equivalent in the old suite is
 afterwards.
 
 Checked by injecting a real regression — deleting `SVC_EXTRA_VERBS="|force-start"`
-from `payload/init.d/S70klipper`, which is the drift `case-services.sh` was
+from `pkg/anvil-core/payload/init.d/S70klipper`, which is the drift `case-services.sh` was
 written to catch. One named test failed
 (`test_klipper_advertises_force_start`), the assertion printed the usage line
 that actually came back, the other 41 still reported, and re-running just that

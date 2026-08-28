@@ -5,7 +5,7 @@ vendor/
 build-tmp/
 dist/
 
-# Python bytecode from editing the klippy extras in payload/klipper/extras/
+# Python bytecode from editing the klippy extras in pkg/klipper/prog/klippy/
 __pycache__/
 *.pyc
 

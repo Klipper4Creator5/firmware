@@ -15,6 +15,7 @@ maintainer who always has the firmware, so neither was earning the split. The
 `rootfs` fixture below skips instead, which is the honest report anyway.
 """
 import os
+import shutil
 import sys
 
 import pytest
@@ -34,10 +35,38 @@ def root():
     return ROOT
 
 
+# The mod's Klipper config comes out of two recipes now. The ff-*.cfg
+# includes are anvil-core's and install to $MODDIR/config; printer.base.cfg
+# and the per-model chamber variants are pkg/klipper's and are placed on the
+# firmware partition by bin/patch.sh, which is why they sit in prog/ rather
+# than payload/.
+CFG_SOURCES = (
+    os.path.join(ROOT, "pkg", "anvil-core", "payload", "config"),
+    os.path.join(ROOT, "pkg", "klipper", "prog", "config"),
+)
+
+
 @pytest.fixture(scope="session")
-def cfgdir():
-    """payload/klipper/config -- in the repo, so this needs no firmware."""
-    return os.path.join(ROOT, "payload", "klipper", "config")
+def cfgdir(tmp_path_factory):
+    """The mod's Klipper config as the PRINTER sees it: one directory.
+
+    A merged copy, not a path into the checkout, and that is the point. The
+    split above is a fact about which package ships what. On the machine there
+    is no split: the stock run.sh force-copies printer.base.cfg into
+    /usr/data/config/ beside the ff-*.cfg, which is exactly why its includes
+    are relative and bare (see the header of printer.base.cfg). A test about
+    include resolution has to model where the files END UP, or it is testing
+    the repository's filing system instead of the printer's.
+
+    In the repo, so this still needs no firmware.
+    """
+    d = tmp_path_factory.mktemp("cfg")
+    for src in CFG_SOURCES:
+        for name in sorted(os.listdir(src)):
+            path = os.path.join(src, name)
+            if os.path.isfile(path):
+                shutil.copy2(path, str(d / name))
+    return str(d)
 
 
 @pytest.fixture(scope="session")

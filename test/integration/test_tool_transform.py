@@ -27,7 +27,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 
 def _load(name):
-    path = os.path.join(ROOT, "payload", "klipper", "extras", name + ".py")
+    path = os.path.join(ROOT, "pkg", "klipper", "prog", "klippy", "extras", name + ".py")
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

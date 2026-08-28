@@ -18,7 +18,7 @@ granularity and the quiet are no longer in tension.
 WHY THE PAYLOAD IS CHECKED TWICE, WITH DIFFERENT DIALECTS
 
 `bash -n` proves a file parses at all. shellcheck's dash dialect proves it uses
-nothing bash-only, which is what matters for anything under payload/: the
+nothing bash-only, which is what matters for anything a recipe ships: the
 printer runs busybox ash, not bash, and a bash-only construct parses perfectly
 here and fails there. dash rather than sh as the dialect because busybox ash,
 like dash, supports `local`, which the payload uses.
@@ -39,10 +39,17 @@ pytestmark = pytest.mark.static
 # ------------------------------------------------------------------ the sets
 
 # Everything that must at least parse. bin/ and test/ run under bash on the
-# build image; payload/ runs under the printer's ash but bash parses it too,
-# and a file that does not parse under either is broken beyond dialect.
-SYNTAX_GLOBS = ("bin/*.sh", "payload/*.sh", "payload/init.d/S*",
-                "payload/firmwareExe", "test/integration/printer/*.sh",
+# build image; the printer's scripts run under its ash but bash parses them
+# too, and a file that does not parse under either is broken beyond dialect.
+#
+# THE PRINTER'S SCRIPTS ARE ADDRESSED BY THE SHAPE OF A RECIPE, not by a
+# top-level directory: pkg/<recipe>/payload/ is what that recipe installs
+# under $MODDIR and pkg/<recipe>/prog/ is what bin/patch.sh places on
+# /usr/prog. Both run on the printer; neither is named recipe by recipe here,
+# so a new recipe with scripts in it is covered the day it lands.
+SYNTAX_GLOBS = ("bin/*.sh", "pkg/*/payload/*.sh", "pkg/*/payload/init.d/S*",
+                "pkg/*/prog/*.sh", "pkg/*/prog/firmwareExe", "installer/*.sh",
+                "test/integration/printer/*.sh",
                 "qa/replica/actions/*.sh",
                 "pkg/*.sh", "pkg/*/build.sh", "pkg/ipk-install")
 
@@ -59,14 +66,25 @@ SYNTAX_GLOBS = ("bin/*.sh", "payload/*.sh", "payload/init.d/S*",
 # pkg/ipk-install is here and pkg/*/build.sh is deliberately not. The recipes
 # are build-host bash, like everything in bin/; the installer is the one file
 # under pkg/ that the PRINTER runs, so it is as exposed to busybox ash as
-# anything under payload/ -- and it is not under payload/ only because the PoC
-# does not ship it yet (docs/notes/85-packaging.md, phase 2). A bashism in it
-# would be found by the printer rather than by this lane.
-ASH_GLOBS = ("payload/*.sh", "payload/init.d/S*", "payload/firmwareExe",
+# anything a recipe ships -- and it is not under a recipe's payload/ only
+# because the PoC does not ship it yet (docs/notes/85-packaging.md, phase 2).
+# A bashism in it would be found by the printer rather than by this lane.
+#
+# installer/ is here too: run-pre.sh and run-append.sh are spliced into
+# FlashForge's own run.sh and execute inside the stock installer's shell,
+# which is the same busybox.
+#
+# NOT here, and it is a real gap rather than a decision:
+# pkg/*/payload/bin/*.sh. wifi-action.sh runs on the printer and no lane
+# checks its dialect. It was not covered before the recipe layout either --
+# the old glob was payload/*.sh, one level up from it -- so adding it belongs
+# with the fix, not with a move.
+ASH_GLOBS = ("pkg/*/payload/*.sh", "pkg/*/payload/init.d/S*",
+             "pkg/*/prog/*.sh", "pkg/*/prog/firmwareExe", "installer/*.sh",
              "qa/replica/actions/*.sh", "pkg/ipk-install")
 
-PY_GLOBS = ("bin/*.py", "payload/*.py", "payload/bin/*.py",
-            "payload/klipper/extras/*.py", "test/*.py", "test/ffsim/*.py",
+PY_GLOBS = ("bin/*.py", "pkg/*/payload/bin/*.py",
+            "pkg/*/prog/klippy/extras/*.py", "test/*.py", "test/ffsim/*.py",
             "test/integration/*.py", "qa/*.py", "qa/lib/*.py",
             "qa/static/*.py", "qa/replica/*.py")
 
@@ -105,7 +123,7 @@ def test_shell_globs_match_something():
 
 
 def test_ash_globs_match_something():
-    assert ASH_FILES, "no payload scripts -- has payload/ moved?"
+    assert ASH_FILES, "no on-printer scripts -- has the recipe layout moved?"
 
 
 def test_python_globs_match_something():

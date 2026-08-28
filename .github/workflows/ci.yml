@@ -70,10 +70,10 @@ jobs:
           # Errors are a gate. These used to end in `|| true`, which meant
           # shellcheck could report anything it liked and the job stayed green.
           # payload scripts run under busybox ash on the printer.
-          shellcheck -s sh   -S error payload/*.sh payload/init.d/S* payload/firmwareExe
+          shellcheck -s sh   -S error pkg/*/payload/*.sh pkg/*/payload/init.d/S* pkg/*/prog/*.sh pkg/*/prog/firmwareExe installer/*.sh
           shellcheck -s bash -S error bin/*.sh test/integration/*.sh
           # Warnings are advisory: printed, not enforced.
-          shellcheck -s sh -S warning payload/*.sh payload/init.d/S* payload/firmwareExe || true
+          shellcheck -s sh -S warning pkg/*/payload/*.sh pkg/*/payload/init.d/S* pkg/*/prog/*.sh pkg/*/prog/firmwareExe installer/*.sh || true
 
       # s6 and CPython 3.13 have no BUILD_ flag -- every package ships them
       # (see bin/fetch-assets.sh) -- so this job builds them for real rather
