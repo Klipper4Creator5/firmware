@@ -60,9 +60,10 @@ not_in_nav: |
   printing.md
   upgrading.md
 
-# Two audiences, and a reader should never fall from one into the other. The
-# first section is for someone who owns the printer; the second is for someone
-# building or testing the firmware.
+# Three audiences, and a reader should never fall from one into the next: the
+# printer's owner, someone who knows Klipper and wants to change what the
+# machine does, and someone building or testing the firmware. What belongs in
+# each is .claude/skills/reforge-docs/SKILL.md.
 nav:
   - Home: index.md
 
