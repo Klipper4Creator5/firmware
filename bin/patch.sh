@@ -742,7 +742,12 @@ if [ ! -x "$S6RC_NATIVE/bin/s6-rc-compile" ] \
         done
     )
     mkdir -p "$S6RC_NATIVE/bin"
-    cp -f "work/.s6-native-stage$MODDIR/bin/s6-rc-compile" "$S6RC_NATIVE/bin/"
+    # s6-rc-db comes too: qa/static/test_s6rc_source.py reads the boot graph
+    # back out of the compiled database rather than out of the source tree,
+    # and this is the only copy of it that runs on the build host.
+    for b in s6-rc-compile s6-rc-db; do
+        cp -f "work/.s6-native-stage$MODDIR/bin/$b" "$S6RC_NATIVE/bin/"
+    done
     rm -rf work/.s6-native-src work/.s6-native-stage
     echo "$S6_STAMP" > "$S6RC_NATIVE/.version"
 else

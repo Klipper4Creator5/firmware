@@ -237,6 +237,60 @@ readiness assertion pass by the absence of contradiction. Neither failure looks
 like a failure — they look like a green suite. So they are tested against
 captured output, in the static lane, with no docker involved.
 
+## What phase 8 did to both suites
+
+`docs/notes/80-s6-migration.md` phase 8 deleted `payload/init.d/` and
+`payload/anvil-service.sh` and made the boot a compiled s6-rc database. That is
+not a refactor the suites can be patched through: a large part of what they
+assert no longer exists to be asserted.
+
+**Retired.** `qa/replica/test_services.py` is deleted. It was the port of
+`case-services.sh` and its subject was the wrapper contract -- seven `S*`
+scripts, each loading a shared library, answering `status`, naming itself, and
+rejecting an unknown verb. There are no wrapper scripts. Three of its
+assertions survived the move and live in `qa/replica/test_s6rc.py`: the scanner
+is the cross-built ELF we shipped, its log is empty, and every `run` in the
+scandir is executable. The rest describe a machine that cannot be built any
+more.
+
+**Replaced.** The contract that a `run` script is startable and a service comes
+up is now asked two ways, and the split is deliberate:
+
+| lane | file | asks |
+|---|---|---|
+| static | `test_s6rc_source.py` | what the database SAYS -- graph, bundle, timeouts, the generated shebang, and the shell inside each oneshot |
+| replica | `test_s6rc.py` | what the printer DOES -- init, one transition, a killed daemon coming back |
+
+The static half needs no docker and runs in about a second, which is where a
+boot-order mistake should be caught. It compiles the real source tree with the
+native `s6-rc-compile` that `bin/patch.sh` section 5b-2 builds, and reads the
+answers back out with `s6-rc-db` -- never out of the source tree, because the
+compiler is free to reject, rewrite, or silently drop what it was given.
+`down` is the one that bit us: `s6-rc-compile` accepts a `down` file in a
+definition directory and discards it, producing a byte-identical servicedir.
+
+### The old suite is not green and cannot be made green by editing
+
+These `test/integration/printer/case-*.sh` gates assert deleted architecture.
+None of them can pass against a package built from this tree, and none of them
+can be *run* on a machine without a stock FlashForge package, which is why they
+have been left alone rather than edited blind:
+
+| case | what it asserts | where that lives now |
+|---|---|---|
+| `case-services.sh` | the seven-script wrapper contract, `force-start` | nowhere -- the contract is deleted |
+| `case-nginx.sh`, `case-moonraker.sh` | the `MOD_S6=0` unsupervised fallback | nowhere -- the fallback and the flag are deleted |
+| `case-priority.sh` | `svc_start_daemon` niceness | unasserted; the surviving path is `-N` inside `etc/s6-rc/source/klipper/run` |
+| `test_startup.py` | `FF_SKIP_MCU_BRINGUP`, `--start-sh`, `--daemon` | `ff-startup.py` takes `--only-bringup` / `--no-bringup` now |
+| `gates.py` | gates that drive the above | -- |
+
+Retiring them is a coverage decision and it should be made against real
+output, not against a reading of the scripts. The next person with a stock
+package should: `make build`, run `make test` and `make qa-replica`, and retire
+each red gate whose subject is genuinely gone -- moving anything that still
+matters into `qa/` first. The rule at the top of this document has not changed;
+what changed is that for some of these there is nothing left to replace.
+
 ## Moving the rest
 
 **A `case-*.sh` is deleted only when its replacement here has been green in the
