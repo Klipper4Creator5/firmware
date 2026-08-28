@@ -29,7 +29,8 @@ skip() { printf '   (skip) %s\n' "$*"; }
 # HelixScreen are ~100MB and would overflow it. They ride in the outer package
 # instead, land in /usr/data/update/ (data partition), and are moved to
 # /usr/data/anvil from there.
-MOD_PAYLOAD=work/modpayload
+# MOD_PAYLOAD comes from bin/common.sh: three other files delete this tree and
+# one of them tars it, so where it is cannot be a local answer.
 rm -rf "$MOD_PAYLOAD" "$SOFTWARE_DIR/mod"   # $SOFTWARE_DIR/mod: leftover from an older layout
 # libexec/ is here because $MODDIR is a --prefix root, not a junk drawer: it
 # holds helper programs that other programs exec and users do not, which for

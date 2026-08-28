@@ -65,11 +65,11 @@ ls -lh "work/stage/software-$OUT_VER.tar.xz" | awk '{print "   "$5}'
 # ---------------------------------------------------------------------------
 # The mod payload: rides in the outer package so it lands on /usr/data,
 # not on the firmware partition.
-if [ -d work/modpayload ]; then
+if [ -d "$MOD_PAYLOAD" ]; then
     # This one IS really xz: we extract it ourselves with `xz -dc`, and
     # FlashForge's factory installer proves xz exists on the printer.
     echo ">> compressing anvil.tar.xz (Mainsail / HelixScreen / Moonraker / bin)"
-    tar -cf - -C work/modpayload . | xz -T0 -6 > work/stage/anvil.tar.xz
+    tar -cf - -C "$MOD_PAYLOAD" . | xz -T0 -6 > work/stage/anvil.tar.xz
     ls -lh work/stage/anvil.tar.xz | awk '{print "   "$5}'
 fi
 

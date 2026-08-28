@@ -56,6 +56,17 @@ MOD_UI="${MOD_UI:-1}"
 # payload whose halves disagree about where the payload is.
 MODDIR="${MODDIR:-/usr/data/anvil}"
 
+# Where the payload -- everything bound for $MODDIR on the printer -- is
+# assembled, before bin/pack.sh tars it into anvil.tar.xz.
+#
+# Spelled here, once, for the same reason MODDIR is. It was a local assignment
+# in bin/patch.sh that bin/pack.sh, the Makefile's clean target and
+# test/run-tests.py's teardown each restated as a literal -- four files free to
+# disagree about where the payload is, and the three that do not create it
+# would have failed silently, leaving the next build to ship a mixture of two.
+MOD_PAYLOAD="${MOD_PAYLOAD:-$ROOT/work/modpayload}"
+export MOD_PAYLOAD
+
 # The Ingenic GLIBC cross-toolchain and its tool prefix: gcc 7.2.0 / glibc
 # 2.29 for the X2000, the one that produces this printer's ABI. Used by
 # bin/patch.sh section 5c (CPython and its extensions) and by the libsodium
