@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build every recipe under pkg/ into work/packages/, then write the feed index
-# that makes that directory an opkg repository rather than a pile of files.
+# Build every recipe under pkg/ into work/packages/, then index that directory
+# into an opkg feed.
 #
 #     ./bin/build-packages.sh              all recipes
 #     ./bin/build-packages.sh libsodium    just that one
@@ -9,17 +9,20 @@
 # evidence that this repo's cross-builds can be delivered as packages, standing
 # beside the tarball rather than replacing it. Nothing here is on the release
 # path yet. bin/patch.sh still stages libsodium into the payload exactly as it
-# did, `make build` is untouched, and the .ipk this produces is an artefact
-# nobody installs until the migration's phase 2 lands an installer on the
-# printer.
+# did, `make build` is untouched, and the .ipk files this produces are
+# artefacts nobody installs until the migration's phase 2 lands an installer on
+# the printer.
 #
-# THE POINT OF IT STANDING BESIDE. Both copies of libsodium now come out of
-# pkg/libsodium/build.sh -- one goes into anvil.tar.xz and one goes into an
-# .ipk -- so the packaged library cannot drift from the shipped one while the
-# recipe is the only place either is compiled. qa/static/test_ipk.py asserts
-# that: it opens the .ipk and compares what is inside against $SODIUM_BUILD
-# file by file. When phase 2 makes the package the shipping vehicle, that test
-# is what says the switch changed nothing.
+# THE ARCHIVES ARE BUILT BY UPSTREAM'S OWN TOOLS, not by this file. opkg-build
+# and opkg-make-index come from opkg-utils, pinned by commit in versions.env
+# and fetched by bin/fetch-assets.sh. An earlier revision of this work carried
+# a hand-written ar-and-two-tarballs script instead, which was 120 lines of
+# this repo's code re-deriving a format somebody else already maintains --
+# including the parts that are easy to get subtly wrong (member ORDER, the
+# CONTROL field validation, the tar flags that make a build reproducible) and
+# whose failure mode is a package that inspects fine and installs nowhere.
+# What is left here is the part that is genuinely ours: laying out the tree
+# that opkg-build packages.
 #
 # IT NEEDS NO STOCK FIRMWARE PACKAGE, which bin/patch.sh does. That is
 # deliberate and it is most of why this is a separate script: packaging has to
@@ -31,12 +34,24 @@ set -euo pipefail
 say() { printf '>> %s\n' "$*"; }
 
 OUTDIR="${OUTDIR:-work/packages}"
+OPKG_BUILD_BIN="$OPKG_UTILS_DIR/opkg-build"
+OPKG_INDEX_BIN="$OPKG_UTILS_DIR/opkg-make-index"
+
+for t in "$OPKG_BUILD_BIN" "$OPKG_INDEX_BIN"; do
+    [ -x "$t" ] || { echo "!! $t is missing -- run ./bin/fetch-assets.sh" >&2; exit 1; }
+done
+
+# Reproducible by default. opkg-build reads SOURCE_DATE_EPOCH and, when it is
+# set, adds --clamp-mtime to its tar calls on top of the --sort=name it always
+# passes; without it every package carries the second it was built and two
+# builds of an unchanged tree cannot be compared. Defaulting it to 0 rather
+# than to `date` is the difference between reproducible-by-default and
+# reproducible-if-you-remember.
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
 
 # The recipes, in the order pkg/ lists them. Order is not dependency order and
 # does not need to be: opkg resolves Depends at install time from the index,
-# not from the order the feed was built in. It will matter to a build that has
-# to LINK one package against another -- the python site-packages against the
-# interpreter -- and that is the phase-1 problem, not this one.
+# not from the order the feed was built in.
 if [ $# -gt 0 ]; then
     RECIPES=("$@")
 else
@@ -52,12 +67,10 @@ mkdir -p "$OUTDIR"
 for r in "${RECIPES[@]}"; do
     [ -f "pkg/$r/pkg.conf" ] || { echo "!! no recipe pkg/$r/pkg.conf" >&2; exit 1; }
 
-    # Build first. Every recipe's build.sh is responsible for its own caching
-    # -- libsodium's is stamped on the version in versions.env -- so this is a
-    # no-op on a warm tree and the whole script costs a few process spawns.
-    if [ -x "pkg/$r/build.sh" ] || [ -f "pkg/$r/build.sh" ]; then
-        bash "pkg/$r/build.sh"
-    fi
+    # Build first. Every recipe's build.sh caches on its own version stamp --
+    # pkg/lib.sh's pkg_begin is that check -- so this is a no-op on a warm tree
+    # and the whole script costs a few process spawns.
+    [ -f "pkg/$r/build.sh" ] && bash "pkg/$r/build.sh"
 
     # Sourced in a subshell, one recipe at a time. PKG_DEPENDS from one recipe
     # leaking into the next is precisely the bug that makes a package declare a
@@ -65,6 +78,7 @@ for r in "${RECIPES[@]}"; do
     (
         PKG_NAME=''; PKG_VERSION=''; PKG_RELEASE=1; PKG_SECTION=libs
         PKG_ROOT=''; PKG_EXCLUDE=''; PKG_DEPENDS=''; PKG_DESCRIPTION=''
+        PKG_MAINTAINER='anvil <none@example.invalid>'
         # shellcheck disable=SC1090
         . "pkg/$r/pkg.conf"
 
@@ -78,30 +92,74 @@ for r in "${RECIPES[@]}"; do
         # THE ABI GATE, AT THE PACKAGE BOUNDARY. bin/patch.sh runs the same
         # check over the staged payload, and that does not cover this: a
         # package can be built by `make packages` on a machine that never runs
-        # patch.sh at all. An .ipk is a shipping vehicle, so it gets gated like
-        # one -- and it is gated over PKG_ROOT rather than over the finished
-        # archive because readelf cannot look inside a tarball.
+        # patch.sh. An .ipk is a shipping vehicle, so it gets gated like one --
+        # and it is gated over PKG_ROOT rather than over the finished archive
+        # because readelf cannot look inside a tarball.
         n=$(mips_abi_gate "$PKG_ROOT") || exit 1
         say "$PKG_NAME: $n ELF object(s) pass nan2008/o32/mips32r2"
 
+        # ---------------------------------------------------- the layout
+        #
+        # opkg-build packages a DIRECTORY: the file tree exactly as it will
+        # appear on the target, plus a CONTROL/ subdirectory it lifts the
+        # metadata out of and does not ship. So the recipe's tree is laid down
+        # under $MODDIR here -- work/.sodium/lib/libsodium.so.26.2.0 becomes
+        # ./usr/data/anvil/lib/libsodium.so.26.2.0 -- which is why `opkg
+        # install` needs no prefix of its own later, and why a package built
+        # for this mod can never land on the rootfs by accident: every path it
+        # owns is under /usr/data.
+        #
+        # cp -a and not cp: libsodium ships libsodium.so -> .so.26 ->
+        # .so.26.2.0, and the first of those is the name libnacl's dlopen
+        # fallback constructs. A copy that dereferenced them would put three
+        # identical 400KB files in the package and still work, until somebody
+        # wondered why it had tripled in size.
+        LAYOUT="work/.ipk-$PKG_NAME"
+        rm -rf "$LAYOUT"
+        mkdir -p "$LAYOUT$MODDIR" "$LAYOUT/CONTROL"
+        cp -a "$PKG_ROOT/." "$LAYOUT$MODDIR/"
+        # PKG_EXCLUDE is a space-separated list of patterns and is meant
+        # to word-split here.
         # shellcheck disable=SC2086
-        # $PKG_EXCLUDE is a space-separated list of patterns and is meant to
-        # word-split; mkipk.sh takes one --exclude per pattern.
-        EXCL=()
-        for p in $PKG_EXCLUDE; do EXCL+=(--exclude "$p"); done
+        for p in $PKG_EXCLUDE; do
+            find "$LAYOUT$MODDIR" -name "$p" -exec rm -rf {} + 2>/dev/null || true
+        done
+        [ -n "$(find "$LAYOUT$MODDIR" \( -type f -o -type l \) -print -quit)" ] \
+            || { echo "!! pkg/$r staged nothing -- empty package refused" >&2; exit 1; }
 
-        ipk=$(bin/mkipk.sh \
-            --name "$PKG_NAME" \
-            --version "$PKG_VERSION" \
-            --release "$PKG_RELEASE" \
-            --arch "$IPK_ARCH" \
-            --prefix "$MODDIR" \
-            --root "$PKG_ROOT" \
-            --outdir "$OUTDIR" \
-            --section "$PKG_SECTION" \
-            --depends "$PKG_DEPENDS" \
-            --description "$PKG_DESCRIPTION" \
-            ${EXCL+"${EXCL[@]}"})
+        # The five fields opkg-build's own required_field() insists on, plus
+        # the ones opkg reads. Description LAST because it is the only one that
+        # may continue onto further lines, and a continuation line is defined
+        # as one starting with whitespace -- so a field after it would have to
+        # be unindented, and an unindented line is where the next stanza begins.
+        {
+            printf 'Package: %s\n' "$PKG_NAME"
+            printf 'Version: %s-%s\n' "$PKG_VERSION" "$PKG_RELEASE"
+            printf 'Architecture: %s\n' "$IPK_ARCH"
+            printf 'Maintainer: %s\n' "$PKG_MAINTAINER"
+            printf 'Section: %s\n' "$PKG_SECTION"
+            printf 'Priority: optional\n'
+            [ -n "$PKG_DEPENDS" ] && printf 'Depends: %s\n' "$PKG_DEPENDS"
+            printf 'Description: %s\n' "$PKG_DESCRIPTION"
+        } > "$LAYOUT/CONTROL/control"
+
+        # -o 0 -g 0: every file in the archive is owned by root. Without them
+        # opkg-build hands tar whatever uid the build ran as, which is a
+        # developer's account on one machine and a CI runner's on another --
+        # two packages that differ in nothing that matters and compare
+        # unequal.
+        #
+        # BOTH PATHS ABSOLUTE, and that is a requirement rather than a style:
+        # opkg-build builds its scratch directory as "$dest_dir/IPKG_BUILD.$$"
+        # and then reads it from inside `( cd $pkg_dir/CONTROL && ... )`, so a
+        # relative destination resolves against the wrong directory and the
+        # build dies on a missing control_list -- an error that names a
+        # temporary file and not the argument that caused it.
+        "$OPKG_BUILD_BIN" -o 0 -g 0 "$PWD/$LAYOUT" "$PWD/$OUTDIR" > /dev/null
+        rm -rf "$LAYOUT"
+
+        ipk="$OUTDIR/${PKG_NAME}_${PKG_VERSION}-${PKG_RELEASE}_${IPK_ARCH}.ipk"
+        [ -f "$ipk" ] || { echo "!! opkg-build produced no $ipk" >&2; exit 1; }
         say "$PKG_NAME: $ipk ($(du -h "$ipk" | cut -f1))"
     )
 done
@@ -110,34 +168,28 @@ done
 #
 # `Packages` is what turns a directory of .ipk files into something opkg can be
 # pointed at: one stanza per package -- the package's own control file, plus
-# the three fields only the feed can know (where the file is, how big it is,
-# what it hashes to). opkg-make-index is the upstream tool for this and it is a
-# python script; this is the same output in fifteen lines of shell, which is
-# one fewer dependency to pin and one fewer thing to explain.
+# the fields only the feed can know (where the file is, how big it is, what it
+# hashes to). opkg-make-index is upstream's tool for exactly this and is used
+# for exactly the same reason opkg-build is.
 #
 # THE HASH IS THE POINT, not the convenience. It is the same argument
 # versions.env makes about vendored tarballs: once the index is trusted, the
 # packages under it do not have to be, because opkg refuses one whose sha256
-# does not match the stanza. Signing the INDEX (usign, phase 3) therefore
-# signs the whole feed, and nothing has to sign each package.
+# does not match its stanza. Signing the INDEX (usign, phase 3) therefore signs
+# the whole feed, and nothing has to sign each package.
 #
 # Both plain and gzipped, because opkg asks for Packages.gz first and falls
-# back to Packages, and a feed served off a USB stick or a laptop's `python3
-# -m http.server` is easier to eyeball when the plain one is there too.
+# back to Packages, and a feed served off a USB stick or a laptop's `python3 -m
+# http.server` is easier to eyeball when the plain one is there too.
+#
+# --checksum sha256 IS NOT THE DEFAULT and has to be asked for: opkg-make-index
+# writes MD5Sum alone unless told otherwise, and an index whose only integrity
+# claim is MD5 cannot carry the argument above -- a collision against a stanza
+# is a solved problem, and the whole point of trusting the index instead of the
+# packages is that it is the thing worth attacking. md5 is kept beside it
+# because opkg still reports it and some tooling looks for it; the sha256 is
+# what actually gates an install.
 say "index: writing $OUTDIR/Packages"
-: > "$OUTDIR/Packages"
-for f in "$OUTDIR"/*.ipk; do
-    [ -e "$f" ] || continue
-    # The control file straight out of the package, which is why the stanza
-    # cannot disagree with what opkg reads after installing: it IS what opkg
-    # reads. ar p writes one member to stdout.
-    ar p "$f" control.tar.gz | tar -xzO ./control >> "$OUTDIR/Packages"
-    {
-        printf 'Filename: %s\n' "$(basename "$f")"
-        printf 'Size: %s\n' "$(stat -c %s "$f")"
-        printf 'SHA256sum: %s\n' "$(sha256sum "$f" | cut -d' ' -f1)"
-        printf '\n'
-    } >> "$OUTDIR/Packages"
-done
+( cd "$OUTDIR" && python3 "$OPKG_INDEX_BIN" --checksum md5 --checksum sha256 . > Packages )
 gzip -n -9 -c "$OUTDIR/Packages" > "$OUTDIR/Packages.gz"
 say "index: $(grep -c '^Package:' "$OUTDIR/Packages") package(s) in $OUTDIR"

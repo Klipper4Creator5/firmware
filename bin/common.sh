@@ -189,6 +189,34 @@ SODIUM_TGZ="${SODIUM_TGZ:-$ROOT/vendor/libsodium-${SODIUM_VERSION:-unpinned}.tar
 SODIUM_BUILD="${SODIUM_BUILD:-$ROOT/work/.sodium}"
 export SODIUM_TGZ SODIUM_BUILD
 
+# opkg, its two build-only dependencies, and the upstream tools that build the
+# packages. The same shape as everything above -- a tarball per pin, a build
+# cache that names the versions it came from -- with two exceptions worth
+# naming here because they look like mistakes otherwise.
+#
+# ZLIB_TGZ is NOT repeated: opkg's libarchive links the very same pinned zlib
+# tarball CPython does, thirty lines up. One pin, two consumers.
+#
+# OPKG_UTILS_DIR is a git CHECKOUT and not a tarball, because opkg-utils
+# publishes no release archive anywhere -- see versions.env. It is the one
+# vendor/ entry whose integrity is a commit sha rather than a sha256.
+OPKG_TGZ="${OPKG_TGZ:-$ROOT/vendor/opkg-${OPKG_VERSION:-unpinned}.tar.gz}"
+LIBARCHIVE_TGZ="${LIBARCHIVE_TGZ:-$ROOT/vendor/libarchive-${LIBARCHIVE_VERSION:-unpinned}.tar.gz}"
+OPKG_BUILD="${OPKG_BUILD:-$ROOT/work/.opkg}"
+OPKG_UTILS_DIR="${OPKG_UTILS_DIR:-$ROOT/vendor/opkg-utils}"
+
+# The cache key for work/.opkg, spelled ONCE. pkg/opkg/build.sh stamps the tree
+# with it and bin/fetch-assets.sh tests it to decide whether the ~71MB musl
+# toolchain has to come down -- and the two have to agree exactly or the
+# fetcher skips the compiler on precisely the build that needs it. That is not
+# hypothetical caution: it is the warning already written above pypkg_stamp,
+# which exists because the same two readers have to agree about CPython's.
+#
+# All three versions, not just opkg's: an opkg rebuilt because libarchive moved
+# is exactly the case a version-only stamp gets wrong.
+OPKG_STAMP="$OPKG_VERSION $LIBARCHIVE_VERSION $ZLIB_VERSION"
+export OPKG_TGZ LIBARCHIVE_TGZ OPKG_BUILD OPKG_UTILS_DIR OPKG_STAMP
+
 # Replica-only settings: the factory image and the partition sizes. They exist
 # for the tests and never reach a printer, so they live in their own file --
 # see test.env.example. Values left in config.env keep working.

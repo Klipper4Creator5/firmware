@@ -1,24 +1,34 @@
-"""The .ipk builder and the installer that reads what it writes.
+"""The packages we build, and the installer that reads what upstream writes.
 
-WHY THESE ARE STATIC TESTS AND NOT REPLICA ONES. Every test here builds its own
-package out of a synthetic tree -- three files and two symlinks, no compiler,
-no toolchain, no firmware image -- so the lane keeps the property qa/conftest.py
-insists on: it needs nothing but the checkout, and it can therefore never be
-quietly skipped into looking green. The real libsodium package needs a 200MB
-cross-toolchain and thirty seconds of gcc; that belongs to `make packages`,
-which is a build target, not a gate.
+WHAT IS AND IS NOT UNDER TEST HERE. The .ipk archives are built by opkg-build,
+which is upstream's tool and upstream's problem -- these tests do not re-derive
+the format, they check the things that are OURS and that upstream cannot know
+about: that the layout we hand it puts every path under $MODDIR, that the
+architecture string is one no public feed can satisfy, that a package is
+reproducible, and that pkg/ipk-install can install and remove what comes out.
+Plus one structural gate per worry that has already cost time once -- a recipe
+growing its own copy of the cross-build, or a package escaping the ABI check.
 
-What is left to prove here is everything that is actually about PACKAGING:
-that the archive has the shape opkg reads, that two builds of the same tree
-produce the same bytes, that installing and removing a package is a round trip,
-and that a package built for somebody else's mips cannot be installed by
-accident. The format itself was verified against real opkg 0.6.3 -- install,
-list, files, remove -- and docs/notes/85-packaging.md records that run.
+Every test builds its own package out of a synthetic tree -- three files and
+two symlinks, no compiler, no firmware image -- so the lane stays fast and
+cannot be skipped into looking green.
+
+IT DOES NEED vendor/opkg-utils, which bin/fetch-assets.sh clones. That is a
+change to what qa/static costs, and it is deliberate: the alternative was to
+keep hand-rolling the archive format in this repo so that the tests needed
+nothing, which is the trade the packager was rewritten to stop making. A
+missing opkg-utils FAILS rather than skips, for the reason qa/conftest.py
+gives about shellcheck.
+
+The format itself was verified against real opkg 0.7.0 -- our own cross-built
+mipsel binary, under qemu, installing these packages and removing them again.
+docs/notes/85-packaging.md records that run.
 """
 import gzip
 import hashlib
 import io
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -29,7 +39,8 @@ from lib.paths import ROOT
 
 pytestmark = pytest.mark.static
 
-MKIPK = ROOT / "bin" / "mkipk.sh"
+OPKG_UTILS = ROOT / "vendor" / "opkg-utils"
+OPKG_BUILD = OPKG_UTILS / "opkg-build"
 INSTALLER = ROOT / "pkg" / "ipk-install"
 
 # The prefix every package this repo builds installs into, and the one
@@ -40,48 +51,62 @@ MODDIR = "/usr/data/anvil"
 ARCH = "mipsel_xburst2"
 
 
+@pytest.fixture(scope="session", autouse=True)
+def opkg_utils_present():
+    """A failure, not a skip -- see the module docstring and qa/conftest.py."""
+    if not OPKG_BUILD.is_file():
+        pytest.fail(
+            "vendor/opkg-utils is missing, so nothing checked the packages we "
+            "build. It is pinned by commit in versions.env and cloned by "
+            "`./bin/fetch-assets.sh`; `make vendor` does it in the build image.")
+
+
 # ------------------------------------------------------------------ fixtures
 
 def _tree(tmp_path):
-    """A staged tree shaped like a real one: a file, its soname link, junk.
+    """A staged tree shaped like a real one: a file, its soname links, junk.
 
     The symlinks are the part that matters. libsodium ships
     libsodium.so -> .so.26 -> .so.26.2.0 and the first of those is the name
     libnacl's dlopen fallback constructs, so a packager that dereferenced them
-    would ship three copies of the same 400KB object and still work -- until
-    somebody noticed the payload had tripled. Every test that walks the archive
-    is really asking about these two entries.
+    would ship three copies of one 400KB object and still work -- until
+    somebody noticed the payload had tripled.
     """
     root = tmp_path / "stage"
     (root / "lib").mkdir(parents=True)
     (root / "lib" / "libtest.so.1.2.3").write_bytes(b"\x7fELF" + b"payload" * 64)
     (root / "lib" / "libtest.so.1").symlink_to("libtest.so.1.2.3")
     (root / "lib" / "libtest.so").symlink_to("libtest.so.1.2.3")
-    # The build stamp pkg/libsodium/build.sh leaves behind. It is a build
-    # artefact and PKG_EXCLUDE exists to keep it out of the package.
-    (root / ".version").write_text("1.2.3\n")
     return root
 
 
-def _build(root, outdir, name="libtest", version="1.2.3", release="1",
-           arch=ARCH, prefix=MODDIR, excludes=(".version",), extra=()):
-    cmd = [str(MKIPK),
-           "--name", name, "--version", version, "--release", release,
-           "--arch", arch, "--prefix", prefix,
-           "--root", str(root), "--outdir", str(outdir),
-           "--description", "a test package"]
-    for e in excludes:
-        cmd += ["--exclude", e]
-    cmd += list(extra)
-    done = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
-    assert done.returncode == 0, done.stderr.strip()
-    return done.stdout.strip()
+def _build(tree, outdir, name="libtest", version="1.2.3-1", arch=ARCH,
+           prefix=MODDIR, description="a test package"):
+    """Lay out what opkg-build wants and run it -- the same two steps
+    bin/build-packages.sh takes, at the same boundary."""
+    layout = outdir.parent / ("layout-" + name + arch)
+    shutil.rmtree(layout, ignore_errors=True)
+    (layout / prefix.lstrip("/")).mkdir(parents=True)
+    (layout / "CONTROL").mkdir(parents=True)
+    subprocess.run(["cp", "-a", str(tree) + "/.",
+                    str(layout / prefix.lstrip("/"))], check=True)
+    (layout / "CONTROL" / "control").write_text(
+        "Package: %s\nVersion: %s\nArchitecture: %s\n"
+        "Maintainer: anvil <none@example.invalid>\nSection: libs\n"
+        "Priority: optional\nDescription: %s\n"
+        % (name, version, arch, description))
+    outdir.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ, SOURCE_DATE_EPOCH="0")
+    done = subprocess.run([str(OPKG_BUILD), "-o", "0", "-g", "0",
+                           str(layout), str(outdir)],
+                          capture_output=True, text=True, env=env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    return outdir / ("%s_%s_%s.ipk" % (name, version, arch))
 
 
 @pytest.fixture
 def ipk(tmp_path):
-    out = tmp_path / "packages"
-    return _build(_tree(tmp_path), out)
+    return _build(_tree(tmp_path), tmp_path / "packages")
 
 
 # --------------------------------------------------------- ar member handling
@@ -94,15 +119,14 @@ def _ar_members(path):
     bet on -- and a test that used the real ar would not notice if the two
     disagreed about where a member starts.
     """
-    raw = path.read_bytes() if hasattr(path, "read_bytes") else open(path, "rb").read()
+    raw = open(path, "rb").read()
     assert raw[:8] == b"!<arch>\n", "not an ar archive"
     off, out = 8, []
     while off + 60 <= len(raw):
         hdr = raw[off:off + 60]
         name = hdr[0:16].decode().strip().rstrip("/")
         size = int(hdr[48:58].decode().strip())
-        data = raw[off + 60:off + 60 + size]
-        out.append((name, data))
+        out.append((name, raw[off + 60:off + 60 + size]))
         off += 60 + size + (size % 2)
     return out
 
@@ -111,24 +135,24 @@ def test_member_order_is_the_format(ipk):
     """debian-binary, control.tar.gz, data.tar.gz -- in that order.
 
     Not a convention. opkg reads the archive as a stream and gives up on a
-    package whose control follows its data, so a builder that emitted them in
-    alphabetical order would produce files that every structural test passes
-    and no package manager installs.
+    package whose control follows its data. This is upstream's job to get
+    right; the test is here because the day somebody "simplifies" the packager
+    back into this repo, this is the property that breaks silently.
     """
     assert [n for n, _ in _ar_members(ipk)] == \
         ["debian-binary", "control.tar.gz", "data.tar.gz"]
 
 
 def test_debian_binary_declares_2_0(ipk):
-    members = dict(_ar_members(ipk))
-    assert members["debian-binary"] == b"2.0\n"
+    assert dict(_ar_members(ipk))["debian-binary"] == b"2.0\n"
 
 
 # ----------------------------------------------------------------- the control
 
 def _control(path):
     members = dict(_ar_members(path))
-    with tarfile.open(fileobj=io.BytesIO(gzip.decompress(members["control.tar.gz"]))) as t:
+    with tarfile.open(fileobj=io.BytesIO(
+            gzip.decompress(members["control.tar.gz"]))) as t:
         return t.extractfile("./control").read().decode()
 
 
@@ -144,25 +168,10 @@ def _fields(text):
 def test_control_carries_what_opkg_reads(ipk):
     f = _fields(_control(ipk))
     assert f["Package"] == "libtest"
-    # Version is upstream-release, and the release half is what lets a
-    # repackage ship without lying about which upstream is inside.
+    # Version is upstream-release: the release half is what lets a repackage
+    # ship without lying about which upstream is inside.
     assert f["Version"] == "1.2.3-1"
     assert f["Architecture"] == ARCH
-    assert int(f["Installed-Size"]) > 0
-
-
-def test_description_is_the_last_field(ipk):
-    """Because it is the only one that may continue onto further lines.
-
-    A continuation line in a control file is one starting with whitespace, so a
-    field written AFTER a multi-line Description would have to be unindented --
-    and an unindented line in the feed index is where the next package's stanza
-    begins. Putting Description last removes the question rather than
-    documenting it.
-    """
-    keys = [ln.split(":", 1)[0] for ln in _control(ipk).splitlines()
-            if ln and not ln[0].isspace()]
-    assert keys[-1] == "Description"
 
 
 def test_architecture_is_not_an_openwrt_name(ipk):
@@ -209,50 +218,13 @@ def test_symlinks_stay_symlinks(ipk):
                      "libtest.so.1": "libtest.so.1.2.3"}
 
 
-def test_excluded_paths_do_not_ship(ipk):
-    with _data(ipk) as t:
-        assert not [m.name for m in t.getmembers()
-                    if os.path.basename(m.name) == ".version"]
-
-
-def test_an_empty_package_is_refused(tmp_path):
-    """A recipe whose build produced nothing must not yield a valid package.
-
-    It is the failure that explains itself least: the package installs, opkg
-    reports success, and the library it was supposed to carry is simply absent
-    at the point something dlopens it.
-    """
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    done = subprocess.run(
-        [str(MKIPK), "--name", "x", "--version", "1", "--arch", ARCH,
-         "--prefix", MODDIR, "--root", str(empty), "--outdir", str(tmp_path),
-         "--description", "d"],
-        capture_output=True, text=True, cwd=str(ROOT))
-    assert done.returncode != 0
-    assert "empty package refused" in done.stderr
-
-
-def test_a_relative_prefix_is_refused(tmp_path):
-    done = subprocess.run(
-        [str(MKIPK), "--name", "x", "--version", "1", "--arch", ARCH,
-         "--prefix", "usr/data/anvil", "--root", str(_tree(tmp_path)),
-         "--outdir", str(tmp_path), "--description", "d"],
-        capture_output=True, text=True, cwd=str(ROOT))
-    assert done.returncode != 0
-    assert "must be absolute" in done.stderr
-
-
-# ------------------------------------------------------------ reproducibility
-
 def test_two_builds_of_one_tree_are_byte_identical(tmp_path):
-    """The property the whole builder is arranged around.
+    """Reproducibility, which is what makes a pin bump reviewable.
 
-    Without it there is no cheap way to prove that a pin bump changed what it
-    said it changed: every rebuild differs, so every diff is noise. tar sorting
-    its entries, gzip -n, and ar's deterministic mode are each load-bearing for
-    this test and for nothing else -- which is why the test exists, because the
-    comment saying so would rot the first time someone added a flag.
+    Without it there is no cheap way to prove that a bump changed what it said
+    it changed: every rebuild differs, so every diff is noise. opkg-build gets
+    this right when SOURCE_DATE_EPOCH is set and bin/build-packages.sh always
+    sets it -- the test is what says nobody has stopped.
     """
     tree = _tree(tmp_path)
     a = _build(tree, tmp_path / "a")
@@ -267,7 +239,7 @@ def test_two_builds_of_one_tree_are_byte_identical(tmp_path):
 # ------------------------------------------------------- the installer, on it
 
 def _run_installer(*args, root=None):
-    cmd = ["sh", str(INSTALLER)] + list(args)
+    cmd = ["sh", str(INSTALLER)] + [str(a) for a in args]
     if root is not None:
         cmd += ["--root", str(root)]
     return subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
@@ -279,8 +251,7 @@ def test_install_then_remove_is_a_round_trip(tmp_path, ipk):
     This is the property payload/run-append.sh's install manifest exists to
     give the tarball, and the reason it exists there is written down in that
     file: the installer used to `rm -rf` seven whole directories, which is
-    correct only while every file under them is ours. A package knows exactly
-    what it owns, so it can be exact -- and this test is what says it is.
+    correct only while every file under them is ours.
     """
     root = tmp_path / "root"
     # A file that is not ours, in a directory the package will also use.
@@ -316,20 +287,18 @@ def test_reinstall_leaves_one_stanza(tmp_path, ipk):
     assert second.returncode == 0, second.stderr
     status = (root / MODDIR.lstrip("/") / "var/lib/opkg/status").read_text()
     assert status.count("Package: libtest") == 1
-
-    listed = _run_installer("list", root=root)
-    assert listed.stdout.strip() == "libtest - 1.2.3-1"
+    assert _run_installer("list", root=root).stdout.strip() == "libtest - 1.2.3-1"
 
 
 def test_the_database_is_where_opkg_looks_for_it(tmp_path, ipk):
     """$MODDIR/var/lib/opkg, with opkg's own file names.
 
-    Phase 2 of docs/notes/85-packaging.md cross-builds the real opkg and points
-    it at this directory; that is a swap only for as long as the layout is
-    genuinely opkg's. It also has a trap in it worth keeping a test near: opkg
-    bakes its lib directory in at COMPILE time, so the phase-2 build has to be
-    configured --prefix=/usr/data/anvil or it will look somewhere else entirely
-    and conclude that nothing is installed.
+    Not a homage: it is what makes pkg/opkg a swap rather than a migration.
+    Verified from the other side too -- our cross-built opkg, run under qemu,
+    puts its status file at exactly this path, because it was configured
+    --prefix=/usr/data/anvil. opkg resolves that directory from its COMPILE
+    TIME prefix and not from --offline-root, which is the trap pkg/opkg/build.sh
+    exists to document.
     """
     root = tmp_path / "root"
     assert _run_installer("install", ipk, root=root).returncode == 0
@@ -350,25 +319,102 @@ def test_a_foreign_architecture_is_refused(tmp_path):
     library nothing can load, and the report would come back as an ImportError
     from Moonraker with no mips in it anywhere.
     """
-    out = tmp_path / "packages"
-    foreign = _build(_tree(tmp_path), out, arch="mipsel_24kc")
+    foreign = _build(_tree(tmp_path), tmp_path / "packages", arch="mipsel_24kc")
     done = _run_installer("install", foreign, root=tmp_path / "root")
     assert done.returncode != 0
     assert "mipsel_24kc" in done.stderr and "mipsel_xburst2" in done.stderr
 
 
-# ------------------------------------------------- the recipe and the payload
+def test_the_installer_needs_no_ar(tmp_path, ipk):
+    """It walks the ar headers itself, because busybox here may have no ar.
+
+    The printer's busybox is 1.31.1 built small -- no `timeout`, no `nc`, no
+    `ionice`, all measured on the replica rather than assumed. Betting the
+    installer on an applet nobody has checked for is how a firmware update
+    fails at the last step. The test runs it with ar removed from PATH.
+    """
+    if shutil.which("ar") is None:
+        pytest.fail("this machine has no ar, so the test proves nothing -- "
+                    "install binutils")
+    fake = tmp_path / "nobin"
+    fake.mkdir()
+    for tool in ("sh", "tar", "gzip", "sed", "awk", "cut", "tr", "sort",
+                 "head", "tail", "rm", "mkdir", "cp", "mv", "date", "wc",
+                 "cat", "grep", "rmdir", "find", "ln"):
+        src = shutil.which(tool)
+        if src:
+            os.symlink(src, fake / tool)
+    done = subprocess.run(
+        ["sh", str(INSTALLER), "install", str(ipk),
+         "--root", str(tmp_path / "root")],
+        capture_output=True, text=True, cwd=str(ROOT),
+        env={"PATH": str(fake), "HOME": os.environ.get("HOME", "/tmp")})
+    assert done.returncode == 0, done.stderr
+
+
+# ------------------------------------------------- the recipes and the payload
+
+RECIPES = sorted((ROOT / "pkg").glob("*/build.sh"))
+
+
+def test_there_are_recipes():
+    assert RECIPES, "no recipes under pkg/ -- has the layout moved?"
+
+
+@pytest.mark.parametrize("recipe", RECIPES,
+                         ids=[p.parent.name for p in RECIPES])
+def test_a_recipe_does_not_rebuild_the_shared_parts(recipe):
+    """No recipe carries its own copy of the cross-build.
+
+    This is the gate for the thing that was already going wrong before pkg/
+    existed: bin/patch.sh had the toolchain-unpack, the gcc-wrapper trick and
+    the configure/make/install dance written out three times, for s6, CPython
+    and libsodium, and the copies had drifted -- one gated its compiler wrapper
+    before trusting it and the others did not.
+
+    So a recipe must go through pkg/lib.sh rather than spell those steps again.
+    Checked by looking for the shapes that mean "I wrote my own": a gcc wrapper
+    heredoc, a bare ./configure --host, an untarred toolchain. A recipe that
+    genuinely needs something pkg/lib.sh cannot express should GROW pkg/lib.sh,
+    which is the entire point.
+
+    zlib is the one allowed exception and it is allowed by name: its configure
+    is a hand-written script that has never accepted --host, so pkg/opkg builds
+    it inline with CHOST. If a second exception ever appears, that is the
+    signal that pkg/lib.sh needs another verb, not that this test needs another
+    name.
+    """
+    text = recipe.read_text()
+    assert ". pkg/lib.sh" in text, (
+        "%s does not source pkg/lib.sh, so whatever it does instead is a "
+        "second copy of the cross-build" % recipe)
+
+    body = "\n".join(ln for ln in text.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    # The toolchain is pkg_toolchain's job, exclusively.
+    assert not re.search(r"tar .*(mips-toolchain|musl-toolchain)", body), (
+        "%s unpacks a toolchain itself; pkg_toolchain does that" % recipe)
+    assert "-mnan=2008" not in body, (
+        "%s spells its own compiler flags; pkg_toolchain owns the ABI flags"
+        % recipe)
+    # ./configure is pkg_autotools' job, with zlib named as the exception.
+    for line in body.splitlines():
+        if "./configure" in line:
+            assert "CHOST=" in line, (
+                "%s runs ./configure directly:\n  %s\nUse pkg_autotools, or "
+                "extend pkg/lib.sh if it cannot express what this needs."
+                % (recipe, line.strip()))
+
 
 def test_the_package_and_the_payload_share_one_build():
-    """The property the whole PoC rests on: libsodium is compiled once.
+    """libsodium is compiled once, whichever vehicle it ships in.
 
     bin/patch.sh stages $SODIUM_BUILD into the payload and pkg/libsodium
     packages $SODIUM_BUILD, and both get there by running
     pkg/libsodium/build.sh. While that is true the tarball's copy and the
     package's copy cannot be different libraries wearing one version number.
     It stops being true the moment somebody gives either side its own configure
-    line, which is a one-line edit and would be invisible in review -- so it is
-    asserted rather than trusted.
+    line, which is a one-line edit and would be invisible in review.
     """
     patch = (ROOT / "bin" / "patch.sh").read_text()
     conf = (ROOT / "pkg" / "libsodium" / "pkg.conf").read_text()
@@ -390,28 +436,20 @@ def test_packages_are_abi_gated_before_they_ship():
     assert "mips_abi_gate()" in (ROOT / "bin" / "common.sh").read_text()
 
 
-def test_the_installer_needs_no_ar(tmp_path, ipk):
-    """It walks the ar headers itself, because busybox here may have no ar.
+def test_the_archives_are_built_by_upstream():
+    """We drive opkg-build; we do not reimplement it.
 
-    The printer's busybox is 1.31.1 built small -- no `timeout`, no `nc`, no
-    `ionice`, all measured on the replica rather than assumed. Betting the
-    installer on an applet nobody has checked for is how a firmware update
-    fails at the last step. The test runs the installer with ar removed from
-    PATH; if it ever grows an `ar` call this goes red.
+    There was a hand-written ar-and-two-tarballs packager here for one
+    revision. It worked, and it was still 120 lines of this repo re-deriving a
+    format somebody else maintains -- including the parts whose failure mode is
+    a package that inspects fine and installs nowhere. If those lines come
+    back, this goes red.
     """
-    if shutil.which("ar") is None:
-        pytest.fail("this machine has no ar, so the test proves nothing -- "
-                    "install binutils")
-    fake = tmp_path / "nobin"
-    fake.mkdir()
-    for tool in ("sh", "tar", "gzip", "sed", "awk", "cut", "tr", "sort",
-                 "head", "tail", "rm", "mkdir", "cp", "mv", "date", "wc",
-                 "cat", "grep", "rmdir", "find", "ln"):
-        src = shutil.which(tool)
-        if src:
-            os.symlink(src, fake / tool)
-    done = subprocess.run(
-        ["sh", str(INSTALLER), "install", ipk, "--root", str(tmp_path / "root")],
-        capture_output=True, text=True, cwd=str(ROOT),
-        env={"PATH": str(fake), "HOME": os.environ.get("HOME", "/tmp")})
-    assert done.returncode == 0, done.stderr
+    build = (ROOT / "bin" / "build-packages.sh").read_text()
+    assert "opkg-build" in build and "opkg-make-index" in build
+    assert not (ROOT / "bin" / "mkipk.sh").exists(), (
+        "bin/mkipk.sh is back -- opkg-utils is the packager")
+    body = "\n".join(ln for ln in build.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "ar rD" not in body and "debian-binary" not in body, (
+        "bin/build-packages.sh is assembling the archive itself again")

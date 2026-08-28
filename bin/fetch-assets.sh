@@ -123,8 +123,19 @@ get "https://skarnet.org/software/skalibs/skalibs-$SKALIBS_VERSION.tar.gz" \
     "$SKALIBS_TGZ" "$SKALIBS_SHA256"
 get "https://skarnet.org/software/s6/s6-$S6_VERSION.tar.gz" \
     "$S6_TGZ" "$S6_SHA256"
+#
+# TWO CONSUMERS NOW, NOT ONE, and the second is why the condition below is not
+# just s6's stamp. pkg/opkg builds against this same musl toolchain -- opkg is
+# a standalone static binary for exactly the reasons s6 is -- so a checkout
+# with a current work/.s6 and a stale work/.opkg needs the compiler that the
+# s6 stamp alone would say nobody needs. The failure without this is late and
+# confusing: the fetcher reports success, and pkg/opkg/build.sh stops several
+# minutes into a build to say a toolchain is missing. Same shape as the
+# Ingenic toolchain above, which is asked for by both the Klipper path and the
+# CPython one for the same reason.
 if [ "$ALL" = 1 ] \
-   || [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$SKALIBS_VERSION $S6_VERSION" ]; then
+   || [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$SKALIBS_VERSION $S6_VERSION" ] \
+   || [ "$(cat "$OPKG_BUILD/.version" 2>/dev/null || true)" != "$OPKG_STAMP" ]; then
     # Bootlin's own release layout: one directory per target architecture,
     # one versioned tarball per release inside it. See versions.env for why
     # this is Bootlin and not musl.cc.
@@ -206,6 +217,52 @@ for p in $PYPKG_LIST $PYPKG_HOST_LIST; do
 done
 get "https://github.com/jedisct1/libsodium/releases/download/$SODIUM_VERSION-RELEASE/libsodium-$SODIUM_VERSION.tar.gz" \
     "$SODIUM_TGZ" "$SODIUM_SHA256"
+
+# --------------------------------------------------------------------- opkg
+# The package manager and its two build-only dependencies. See
+# docs/notes/85-packaging.md; versions.env says why 0.7.0 and not 0.6.3.
+#
+# zlib is NOT fetched here: it is the same pinned tarball the CPython section
+# above already pulls (ZLIB_TGZ), and asking for it twice is how two pins that
+# are supposed to be one drift apart.
+get "https://downloads.yoctoproject.org/releases/opkg/opkg-$OPKG_VERSION.tar.gz" \
+    "$OPKG_TGZ" "$OPKG_SHA256"
+get "https://github.com/libarchive/libarchive/releases/download/v$LIBARCHIVE_VERSION/libarchive-$LIBARCHIVE_VERSION.tar.gz" \
+    "$LIBARCHIVE_TGZ" "$LIBARCHIVE_SHA256"
+
+# opkg-utils: opkg-build and opkg-make-index, which bin/build-packages.sh
+# drives instead of assembling .ipk archives itself.
+#
+# A GIT CLONE AND NOT A `get`, uniquely in this file, and not by choice:
+# opkg-utils publishes no release tarball anywhere. Upstream's cgit has
+# snapshots disabled and the GitHub mirror has been dead since 2012 --
+# versions.env has the full account. So the integrity check is git's own: a
+# commit sha is a hash of the entire tree, which is the same guarantee every
+# sha256 above provides, and it is verified below rather than assumed from the
+# tag. A tag can be moved; the sha it has to resolve to cannot.
+if [ ! -d "$OPKG_UTILS_DIR/.git" ]; then
+    say "clone   opkg-utils $OPKG_UTILS_VERSION"
+    rm -rf "$OPKG_UTILS_DIR"
+    git clone -q https://git.yoctoproject.org/opkg-utils "$OPKG_UTILS_DIR"
+fi
+( cd "$OPKG_UTILS_DIR"
+  # Fetch only if the pinned commit is not already here, so the common case is
+  # offline and instant.
+  git cat-file -e "$OPKG_UTILS_COMMIT^{commit}" 2>/dev/null || git fetch -q origin
+  git checkout -q "$OPKG_UTILS_COMMIT"
+  have=$(git rev-parse HEAD)
+  if [ "$have" != "$OPKG_UTILS_COMMIT" ]; then
+      echo "   !! opkg-utils is at $have, not the pinned $OPKG_UTILS_COMMIT" >&2
+      exit 1
+  fi
+  # A dirty checkout is a build whose tooling nobody can name. The sha covers
+  # what git tracks and says nothing about what someone edited in place.
+  if [ -n "$(git status --porcelain)" ]; then
+      echo "   !! $OPKG_UTILS_DIR has local modifications -- the pinned commit" >&2
+      echo "      no longer describes what is in it. Delete it and re-run." >&2
+      exit 1
+  fi )
+say "cached  opkg-utils $OPKG_UTILS_VERSION ($OPKG_UTILS_COMMIT)"
 
 # The Ingenic toolchain, on the condition that decides whether patch.sh has to
 # compile at all. THREE stamps and not one, because three separate things are

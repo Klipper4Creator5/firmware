@@ -44,7 +44,7 @@ pytestmark = pytest.mark.static
 SYNTAX_GLOBS = ("bin/*.sh", "payload/*.sh", "payload/init.d/S*",
                 "payload/firmwareExe", "test/integration/printer/*.sh",
                 "qa/replica/actions/*.sh",
-                "pkg/*/build.sh", "pkg/ipk-install")
+                "pkg/*.sh", "pkg/*/build.sh", "pkg/ipk-install")
 
 # The subset executed by the printer's busybox ash. bin/ and test/ are
 # deliberately absent: they run on the build image, where bash is the shell and

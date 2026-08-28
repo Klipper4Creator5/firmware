@@ -84,7 +84,8 @@ help:
 	@echo '  make release      build BOTH models into dist/'
 	@echo '  make packages     .ipk packages + feed index into work/packages/'
 	@echo '                    (proof of concept -- docs/notes/85-packaging.md;'
-	@echo '                     needs no stock package, ships nothing)'
+	@echo '                     needs no stock package, ships nothing.'
+	@echo '                     PKG=<name> builds one recipe)'
 	@echo
 	@echo 'Models: packages are model-specific and refuse to install on the'
 	@echo 'other one. MODEL=Creator5 make build  builds the non-Pro variant.'
