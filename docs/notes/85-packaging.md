@@ -94,13 +94,16 @@ package that inspects fine and installs nowhere.
 
 Each of these was run, not assumed. They constrain the phases below.
 
-* **Our cross-built opkg installs our packages, on mipsel.** The `opkg` this
-  repo builds — static, musl, mips32r2/nan2008/o32 — run under
-  `qemu-mipsel-static` against an `--offline-root`: it installed
-  `libsodium_1.0.20-1_mipsel_xburst2.ipk` and `opkg_0.7.0-1_mipsel_xburst2.ipk`,
-  reported both under `list-installed`, listed their files, and removed both
-  leaving nothing behind. The opkg it installed then ran and reported its own
-  version. That is the whole loop closed on the target architecture.
+* **Our cross-built opkg installs our packages, on mipsel** — measured when
+  opkg was still a *static musl* binary. Run under `qemu-mipsel-static` against
+  an `--offline-root`, it installed both packages of the day, reported them
+  under `list-installed`, listed their files, and removed both leaving nothing
+  behind; the opkg it installed then ran and reported its own version. The
+  whole loop, closed on the target architecture.
+
+  **This has not been re-run since opkg moved to dynamic glibc**, and the
+  command changed with it — a dynamic binary needs `qemu -L <sysroot>`. See the
+  end of phase 0. Nothing suggests it broke; nobody has checked.
 * **opkg bakes its state directory in at compile time.** Its status file
   landed at `/usr/data/anvil/var/lib/opkg` because it was configured
   `--prefix=/usr/data/anvil` — `--offline-root` does not move it. Built with
@@ -125,8 +128,13 @@ Each of these was run, not assumed. They constrain the phases below.
   "prefer static libtool libraries" and does not pass it to gcc. `-all-static`
   is the one that means it, and it cannot go through `./configure` (configure's
   own link probes call gcc directly, which rejects it), so it goes to `make`.
-  The only symptom of getting this wrong is a `NEEDED` entry nobody looks at —
-  hence the explicit check in `pkg/opkg/build.sh`.
+  Nothing relies on this any more — opkg links glibc dynamically now and gets
+  its static zlib and libarchive simply by there being no `.so` of either in
+  the sysroot — but the *check* it motivated stayed, inverted: `readelf -d` on
+  the finished binary, expecting `libc.so.6` and nothing of ours. The lesson is
+  the check, not the flag. A link that is not what it was asked to be shows up
+  as a `NEEDED` entry nobody looks at, and then as a missing `.so` on a
+  printer.
 * **opkg-utils has no release tarball, anywhere.** Upstream's cgit has
   snapshots disabled (every format returns "Unsupported snapshot format"),
   `downloads.yoctoproject.org` carries opkg but not opkg-utils, and the GitHub
@@ -139,21 +147,56 @@ Each of these was run, not assumed. They constrain the phases below.
   `pkg/ipk-install` walks the ar headers itself with `tail`/`head` and needs
   only `tar` and `gzip`, which the stock FlashForge installer already proves
   are present.
-* **Both packages are reproducible.** `rm -rf work/.sodium` and a full
-  recompile produce a byte-identical `.ipk`. That is a measurement of *these*
-  packages and this toolchain, not a property of the build system — a package
-  whose upstream embeds a timestamp will not have it, and the honest response
-  is to record which ones do rather than to claim the fleet is reproducible.
+* **All four packages are reproducible.** `rm -rf work/pkg work/packages` and a
+  full recompile produce byte-identical `.ipk` files. That is a measurement of
+  *these* packages and this toolchain, not a property of the build system — a
+  package whose upstream embeds a timestamp will not have it, and the honest
+  response is to record which ones do rather than to claim the fleet is
+  reproducible.
+* **A static archive is not reproducible until it is made so, and this
+  toolchain cannot do it alone.** `ar` stores an mtime and the builder's
+  uid/gid in every member header, plus another timestamp in the symbol index —
+  none of which `SOURCE_DATE_EPOCH` or `opkg-build`'s `-o 0 -g 0` reaches,
+  because they are *inside* a file the tarball merely contains. Measured: two
+  cold builds of `pkg/zlib` produced different sha256, every member reading
+  `1000/1000 Aug 28 15:10`. `objcopy -D` normalises the member headers, but the
+  cross binutils is **2.27** and its `ranlib -D` writes a *fresh current*
+  timestamp into the index instead of zeroing it. The index is therefore
+  rewritten with the build machine's `ranlib` (2.40 in `docker/Dockerfile.build`),
+  which is version-sensitive and worth knowing before anyone changes the image.
+  The proof it produces a valid index is downstream: opkg links against both
+  archives, and a broken index fails that link.
+* **The ABI gate's `e_flags` whitelist was a proxy, and object files exposed
+  it.** It accepted exactly `0x70001405` and `0x70001407`, both measured from
+  linked *binaries* — where crt startup objects set `EF_MIPS_NOREORDER`, so
+  every executable and shared object read one or the other. Individual objects
+  need not: libarchive's `xxhash.o` is `0x70001406`, identical ABI, no
+  NOREORDER, and the old gate called it wrong. The ABI is the high bits
+  (`0x70001400` = arch32r2 | o32 | nan2008); the low three (noreorder, pic,
+  cpic) say nothing about whether the kernel will exec the file. The gate now
+  masks them, and reads **every** header rather than one — `readelf -h` on an
+  archive prints one per member, 122 for `libarchive.a`, and the single-line
+  version handed a multi-line string to a comparison expecting one word.
+* **A cache stamp compared by one file and written by another will drift.**
+  `bin/fetch-assets.sh` compared `work/.s6/.version` against
+  `"$SKALIBS_VERSION $S6_VERSION"` while `bin/patch.sh` wrote three fields into
+  it. The test could therefore never be false: a 71MB toolchain was re-hashed
+  on every run, downloaded on every cold one, and the comment above the
+  condition described a fast path that had never once been taken. `$S6_STAMP`
+  now lives in `bin/common.sh`, the recipes compute theirs in `pkg_stamp`, and
+  `test_no_cache_stamp_is_spelled_in_two_places` keeps it that way.
 
 ## Phase 0 — the proof of concept  *(implemented)*
 
-Two packages, end to end, beside the existing build and changing nothing about
-it.
+Four packages, end to end, beside the existing build and changing nothing that
+ships.
 
     make packages            # or ./bin/build-packages.sh [name...]
 
-    work/packages/libsodium_1.0.20-1_mipsel_xburst2.ipk
-    work/packages/opkg_0.7.0-1_mipsel_xburst2.ipk
+    work/packages/anvil-zlib_1.3.1-1_mipsel_xburst2.ipk
+    work/packages/anvil-libarchive_3.7.9-1_mipsel_xburst2.ipk
+    work/packages/anvil-libsodium_1.0.20-1_mipsel_xburst2.ipk
+    work/packages/anvil-opkg_0.7.0-1_mipsel_xburst2.ipk
     work/packages/Packages{,.gz}
 
 Needs **no stock FlashForge package**, which is most of the point: packaging
@@ -163,67 +206,115 @@ proprietary firmware is and stops being a gate.
 | file | what it is |
 | ---- | ---------- |
 | `pkg/lib.sh` | the part of a cross-build that is the same for every package |
+| `pkg/zlib/` | the library that was cross-built **twice**, now built once |
+| `pkg/libarchive/` | what opkg reads `.ipk` files with; builds against `anvil-zlib` |
+| `pkg/opkg/` | opkg itself; builds against both of the above |
 | `pkg/libsodium/` | `build.sh` + `pkg.conf`. **`bin/patch.sh` section 5d's build, moved.** |
-| `pkg/opkg/` | opkg itself: static musl, with zlib and libarchive as build-only dependencies |
 | `pkg/ipk-install` | installs/removes `.ipk` with no opkg present, writing opkg's own database layout |
-| `bin/build-packages.sh` | lays out the tree, drives `opkg-build`, indexes the feed |
-| `qa/static/test_ipk.py` | 18 tests, no toolchain needed |
+| `bin/build-packages.sh` | orders the recipes, lays out each tree, drives `opkg-build`, indexes the feed |
+| `qa/static/test_ipk.py` | 29 tests, no toolchain needed |
 
-### Why the second package is opkg
+### One recipe builds one package
 
-Two reasons, and the second is the one that mattered.
+This is the rule the layout exists to enforce, and it did not hold at first.
+`pkg/opkg/build.sh` used to unpack zlib, build it into a private sysroot,
+unpack libarchive, build that against it, and only then build the binary it
+shipped: one script, three libraries, one package. Section 5b still does the
+same thing with skalibs and s6.
 
-It is **phase 2's deliverable**, so building it now retires the biggest unknown
-in the plan — and it turned up three findings above (the compile-time prefix,
-the musl `basename` bug, libtool eating `-static`) that would otherwise have
-been discovered later and under more pressure.
+What that costs is not tidiness. A library built inside somebody else's recipe
+has no version, no package and no way to be reused, so the next consumer builds
+its own — **zlib was cross-built twice in this tree**, once in section 5c for
+CPython and once here for libarchive, from one pinned tarball with the same
+flags, and neither copy could see the other. Splitting them is what makes the
+feed the interface between recipes rather than an output nobody reads.
 
-And it is the only honest test of whether `pkg/lib.sh` is a shared build
-library or just libsodium's build with the comments moved. opkg shares
-*nothing* with libsodium except that file: a different toolchain (Bootlin musl,
-not Ingenic glibc), a different libc, a different link mode (static, not
-shared), and a dependency chain three builds deep instead of none. Both recipes
-are now short enough to read in one screen, and everything they have in common
-is in one place.
+So a recipe now declares `PKG_BUILD_DEPENDS`, and `pkg_deps` fills its sysroot
+by unpacking those packages **out of the feed**. Building against the package
+rather than against the build tree is the part worth paying for: a package that
+forgets to ship a header fails the next recipe's configure, on the build that
+produced it.
 
-The split that fell out:
+### opkg is not special, and nothing waits for it
 
-* `pkg_begin` / `pkg_end` — the version-stamped build cache, which is what lets
+The obvious objection to a feed-based build is that it needs a package manager
+to install the build dependencies, and the package manager is itself a package.
+It does not. `opkg-unbuild` is upstream's own inverse of `opkg-build` and comes
+from the same pinned `opkg-utils` checkout, so a sysroot can be filled without
+a working opkg existing anywhere. There is no bootstrap stage, no ordering rule
+beyond declared dependencies, and no qemu in the build path.
+
+`bin/build-packages.sh` topologically sorts the recipes and packages each one
+before the next is built, because the next one reads it out of the feed.
+Alphabetical order — what iterating `pkg/*/` gives you — puts libarchive before
+the zlib it needs.
+
+### The split in `pkg/lib.sh`
+
+* `pkg_conf` / `pkg_stamp` — a recipe's metadata and its cache key, both read
+  from `pkg.conf`. The stamp includes the toolchain and, recursively, the
+  stamps of everything the recipe builds against, so a zlib bump rebuilds
+  libarchive and opkg with nobody maintaining a composite stamp by hand.
+* `pkg_order` — dependency-first build order, and the closure of a single
+  named recipe so that `PKG=opkg` builds what opkg needs.
+* `pkg_begin` / `pkg_end` — the stamped build cache, which is what lets
   `bin/fetch-assets.sh` skip a 203MB toolchain download.
-* `pkg_toolchain ingenic|musl` — unpack, write the gcc wrappers that bake
-  `-EL -mnan=2008` into the *driver* (autotools link lines do not all forward
-  `CFLAGS`), and then **prove the wrapper emits the right ABI** before anything
-  is built on it. That last step existed in section 5b and was missing from 5d;
-  the copies had already drifted before there was anywhere to put them.
-* `pkg_autotools` / `pkg_dep_autotools` / `pkg_dep_paths` — configure, make,
-  install, either into the staging tree or into the recipe's private sysroot.
-* `pkg_ship` — copy out what ships, strip it with the *cross* strip, and leave
-  `include/`, `pkgconfig/` and `.la` files behind.
+* `pkg_toolchain` — unpack, write the gcc wrappers that bake `-EL -mnan=2008`
+  into the *driver* (autotools link lines do not all forward `CFLAGS`), and
+  then **prove the wrapper emits the right ABI** before anything is built on
+  it. That step existed in section 5b and was missing from 5d; the copies had
+  drifted before there was anywhere to put them.
+* `pkg_deps` — unpack this recipe's build dependencies out of the feed with
+  `opkg-unbuild` and point `CPPFLAGS`, `LDFLAGS` and pkg-config at the result.
+  The sysroot mirrors the printer, dependencies living under `$MODDIR` inside
+  it, which is why `PKG_CONFIG_SYSROOT_DIR` is set to the sysroot rather than
+  emptied: the `.pc` files say `prefix=/usr/data/anvil` and that variable is
+  what turns them into paths that exist on the build machine.
+* `pkg_autotools` — configure, make, install into the staging tree.
+* `pkg_ship` — copy out what the package contains, normalise static archives,
+  strip ELF with the *cross* strip. What a package contains depends on what it
+  is for: a library that ships to the printer ships its `.so`, and a library
+  that exists to be built against ships headers, `.a` and `.pc`.
 
 `qa/static/test_ipk.py` gates this directly: a recipe that does not source
-`pkg/lib.sh`, or that spells its own `-mnan=2008`, unpacks its own toolchain,
-or calls `./configure` itself, fails the suite. The one named exception is
-zlib, whose configure has never accepted `--host`. A recipe that needs
-something `pkg/lib.sh` cannot express should *grow* `pkg/lib.sh` — that is what
-the gate is for.
+`pkg/lib.sh`, spells its own `-mnan=2008`, unpacks its own toolchain, calls
+`./configure` itself, or unpacks more than one source tarball fails the suite.
+The one named exception is zlib, whose configure has never accepted `--host`.
+A recipe that needs something `pkg/lib.sh` cannot express should *grow*
+`pkg/lib.sh` — that is what the gate is for.
 
-**Not yet shared:** `bin/patch.sh` sections 5b (s6) and 5c (CPython) still
-carry their own copies of all of this. Phase 1 is what turns them into recipes.
-Claiming otherwise would be claiming the duplication is already gone.
+**Not yet shared:** `bin/patch.sh` section 5b (s6 and skalibs) still carries
+its own copy of all of this, and is the remaining instance of one script
+building two libraries. Phase 1 is what turns it into recipes.
 
 ### The property everything rests on
 
-**libsodium is compiled once.** `bin/patch.sh` runs `pkg/libsodium/build.sh`
-and stages its output into the payload exactly as before;
-`bin/build-packages.sh` runs the same recipe and packages the same tree. While
-that holds, the tarball's copy and the package's copy cannot be different
-libraries wearing one version number — and
+**A library is compiled once, whichever vehicle it ships in.** `bin/patch.sh`
+runs `pkg/libsodium/build.sh` and stages its output into the payload exactly as
+before, and `bin/build-packages.sh` packages the same tree. Section 5c now does
+the same with zlib: it runs `pkg/zlib/build.sh` and stages the result into
+CPython's dependency sysroot instead of compiling its own copy. While that
+holds, the tarball's copy and the package's copy cannot be different libraries
+wearing one version number — and
 `test_the_package_and_the_payload_share_one_build` asserts it rather than
 trusting it.
 
-**Gate:** `pytest qa/static/test_ipk.py` (18 tests) plus `make packages`
-producing packages that our own cross-built opkg installs and removes under
-qemu. Both pass.
+**Gate:** `pytest qa/static` (127 tests, 29 of them packaging) plus `make
+packages` from a cold cache producing four byte-reproducible `.ipk` files and
+an index. Both pass.
+
+**Not re-run since opkg moved to glibc:** the end-to-end check where our own
+cross-built opkg installs and removes this feed. It used to be a bare
+`qemu-mipsel-static` invocation because opkg was a static musl binary; a
+dynamic one needs a sysroot, so the command is now
+
+    qemu-mipsel-static -L work/.mips-toolchain/mips-gcc720-glibc229/mips-linux-gnu/libc \
+        work/pkg/opkg/bin/opkg --offline-root <tmpdir> install work/packages/*.ipk
+
+(`readelf -l` says the interpreter is `/lib/ld-linux-mipsn8.so.1`, the nan2008
+loader, which that sysroot provides and the printer's rootfs must too — the
+same loader the interpreter already links.) Worth running before anyone leans
+on this.
 
 ## Phase 1 — a recipe per cross-build  *(~3–5 days)*
 
@@ -231,8 +322,14 @@ Turn the rest of `bin/patch.sh`'s builds into recipes, the way libsodium
 became one. Roughly ten packages —
 
     klipper-fork  toolchange-config  mainsail  moonraker  helixscreen
-    s6 (+execline +s6-rc)  python3  python3-site-packages
-    libsodium ✔  opkg ✔  anvil
+    skalibs  s6 (+execline +s6-rc)  python3  python3-site-packages
+    openssl  libffi  sqlite  xz  expat  bzip2
+    zlib ✔  libarchive ✔  libsodium ✔  opkg ✔  anvil
+
+Section 5b (skalibs + s6) is the one remaining place where one script builds
+two libraries, so it is the natural next recipe — and the one with the most
+measured constraints behind it, since s6's `--prefix` is baked into the
+binaries and only 13 of its ~40 programs are kept.
 
 `patch.sh` keeps staging the payload from those same trees, so the shipped
 tarball does not change. The work is mechanical; the risk is in the two builds

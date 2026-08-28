@@ -28,10 +28,12 @@ import gzip
 import hashlib
 import io
 import os
+import pathlib
 import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 
 import pytest
 
@@ -453,3 +455,209 @@ def test_the_archives_are_built_by_upstream():
                      if not ln.lstrip().startswith("#"))
     assert "ar rD" not in body and "debian-binary" not in body, (
         "bin/build-packages.sh is assembling the archive itself again")
+
+
+# --------------------------------------------------------------------------
+# One recipe, one package.
+#
+# The rule the pkg/ layout exists to enforce. It was not always true:
+# pkg/opkg/build.sh used to unpack zlib, libarchive and opkg and ship one
+# binary, so two of the three libraries in this repo's dependency graph had no
+# version, no package and no way to be reused -- which is why zlib was
+# cross-built twice, once here and once in bin/patch.sh section 5c.
+
+def _sh(snippet):
+    """Run a snippet with bin/common.sh and pkg/lib.sh sourced, from ROOT."""
+    out = subprocess.run(
+        ["bash", "-c", ". bin/common.sh; . pkg/lib.sh; %s" % snippet],
+        cwd=ROOT, capture_output=True, text=True)
+    assert out.returncode == 0, (
+        "shell helper failed:\n%s\n%s" % (out.stdout, out.stderr))
+    return out.stdout.strip()
+
+
+def _conf(recipe, var):
+    return _sh('pkg_conf %s; printf "%%s" "$%s"' % (recipe, var))
+
+
+@pytest.mark.parametrize("recipe", RECIPES,
+                         ids=[p.parent.name for p in RECIPES])
+def test_one_recipe_builds_one_package(recipe):
+    """A recipe unpacks one source and seals one tree.
+
+    Counting pkg_unpack is the cheap structural expression of the rule: a
+    recipe that unpacks two tarballs is building somebody else's package
+    inside its own, which is exactly the shape this layout replaced. If a
+    recipe genuinely needs a second source, that source is a package.
+    """
+    body = "\n".join(ln for ln in recipe.read_text().splitlines()
+                     if not ln.lstrip().startswith("#"))
+    for verb, want in (("pkg_begin", 1), ("pkg_end", 1), ("pkg_unpack", 1)):
+        got = len(re.findall(r"^\s*%s\b" % verb, body, re.M))
+        assert got == want, (
+            "%s calls %s %d time(s), expected %d -- one recipe builds one "
+            "package" % (recipe, verb, got, want))
+    assert "pkg_dep_autotools" not in body, (
+        "%s uses pkg_dep_autotools, which built a dependency inside the "
+        "recipe that needed it. Make it a package and name it in "
+        "PKG_BUILD_DEPENDS." % recipe)
+
+
+def test_every_recipe_has_metadata():
+    """pkg.conf is what makes a directory a recipe, and it is required.
+
+    bin/build-packages.sh discovers recipes by pkg.conf, so a build.sh without
+    one is never built by anything and would rot unnoticed.
+    """
+    for recipe in RECIPES:
+        assert (recipe.parent / "pkg.conf").is_file(), (
+            "%s has no pkg.conf, so nothing will ever build it" % recipe)
+
+
+def test_build_order_is_topological():
+    """pkg_order puts a dependency before the recipe that needs it.
+
+    Alphabetical order -- what iterating pkg/*/ gives you, and what this used
+    to do -- is wrong the moment there are two recipes: libarchive sorts before
+    the zlib it builds against. The failure is not subtle (configure cannot
+    find zlib.h) but it is a build that worked yesterday failing today because
+    somebody added a package whose name sorts early.
+    """
+    recipes = _sh("pkg_recipes").split()
+    order = _sh("pkg_order %s" % " ".join(recipes)).split()
+    assert sorted(order) == sorted(recipes), (
+        "pkg_order returned %s for %s" % (order, recipes))
+    for r in recipes:
+        for dep in _conf(r, "PKG_BUILD_DEPENDS").split():
+            assert order.index(dep) < order.index(r), (
+                "%s is built before its dependency %s: %s" % (r, dep, order))
+
+
+def test_asking_for_one_recipe_builds_its_dependencies():
+    """`PKG=opkg make packages` must not fail on an empty sysroot.
+
+    A recipe consumes its dependencies out of the feed, so asking for one
+    package has to mean asking for its closure -- otherwise the first build on
+    a clean checkout dies in configure with a missing header.
+    """
+    for r in _sh("pkg_recipes").split():
+        closure = _sh("pkg_order %s" % r).split()
+        assert closure[-1] == r
+        for dep in _conf(r, "PKG_BUILD_DEPENDS").split():
+            assert dep in closure, (
+                "pkg_order %s omits its build dependency %s" % (r, dep))
+
+
+def test_a_build_dependency_is_not_a_runtime_dependency():
+    """PKG_BUILD_DEPENDS must never reach the control file.
+
+    zlib and libarchive are linked INTO opkg. A package that also declared them
+    as Depends would refuse to install unless two development packages were on
+    the printer, for libraries already inside the file being installed.
+    """
+    build = (ROOT / "bin" / "build-packages.sh").read_text()
+    assert "'Depends: %s\\n' \"$PKG_DEPENDS\"" in build, (
+        "bin/build-packages.sh no longer writes Depends from PKG_DEPENDS alone")
+    body = "\n".join(ln for ln in build.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "PKG_BUILD_DEPENDS" not in body, (
+        "bin/build-packages.sh reads PKG_BUILD_DEPENDS while writing the "
+        "package; build dependencies are pkg_deps' business, not opkg's")
+
+
+def test_a_dev_package_ships_what_its_dependents_need():
+    """A library that exists to be built against ships headers, .a and .pc.
+
+    This is what makes building against the PACKAGE rather than against the
+    build tree worth the extra step: a package that forgot a header fails the
+    next recipe's configure. Asserted on the ship list so it is checked without
+    a toolchain, on a bare checkout, in CI.
+    """
+    zlib = (ROOT / "pkg" / "zlib" / "build.sh").read_text()
+    for want in ("include/zlib.h", "lib/libz.a", "lib/pkgconfig/zlib.pc"):
+        assert want in zlib, "pkg/zlib does not ship %s" % want
+    arch = (ROOT / "pkg" / "libarchive" / "build.sh").read_text()
+    for want in ("include/archive.h", "lib/libarchive.a",
+                 "lib/pkgconfig/libarchive.pc"):
+        assert want in arch, "pkg/libarchive does not ship %s" % want
+
+
+def test_dependencies_are_unpacked_by_upstream():
+    """opkg-unbuild fills the sysroot -- we do not open .ipk files by hand.
+
+    Same argument as opkg-build for making them: the format is somebody else's
+    and the pinned checkout already carries the tool for reading it. It is also
+    what makes opkg an ordinary recipe rather than a bootstrap stage, since
+    nothing needs a working opkg in order to build packages.
+    """
+    lib = (ROOT / "pkg" / "lib.sh").read_text()
+    assert "OPKG_UNBUILD_BIN" in lib, (
+        "pkg/lib.sh no longer uses opkg-unbuild to fill a build sysroot")
+    assert (OPKG_UTILS / "opkg-unbuild").is_file(), (
+        "vendor/opkg-utils has no opkg-unbuild -- check the pinned commit")
+    body = "\n".join(ln for ln in lib.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "ar x" not in body and "debian-binary" not in body, (
+        "pkg/lib.sh is taking .ipk files apart itself again")
+
+
+def test_the_abi_gate_reads_every_member_of_an_archive():
+    """A static archive is many ELF headers, and all of them are checked.
+
+    readelf -h on a .a prints one header per MEMBER -- 122 for this repo's
+    libarchive.a. The gate used to read a single `Flags:` line, so it handed a
+    multi-line string to a comparison expecting one word and every archive
+    failed with an unreadable error. Nothing caught it because no package had
+    ever shipped a .a until pkg/zlib did.
+
+    Built here rather than mocked: a two-member x86 archive must be REFUSED
+    (wrong ABI) and the refusal must say it looked at both members, which is
+    the part that proves per-member iteration.
+    """
+    for tool in ("gcc", "ar"):
+        assert shutil.which(tool), (
+            "%s is missing, so this gate cannot run -- it must not be skipped"
+            % tool)
+    with tempfile.TemporaryDirectory() as td:
+        td = pathlib.Path(td)
+        objs = []
+        for i in (1, 2):
+            src = td / ("m%d.c" % i)
+            src.write_text("int m%d(void){return %d;}\n" % (i, i))
+            obj = td / ("m%d.o" % i)
+            subprocess.run(["gcc", "-c", str(src), "-o", str(obj)], check=True)
+            objs.append(str(obj))
+        lib = td / "lib" / "libhost.a"
+        lib.parent.mkdir()
+        subprocess.run(["ar", "rcs", str(lib)] + objs, check=True)
+
+        out = subprocess.run(
+            ["bash", "-c",
+             ". bin/common.sh; mips_abi_gate '%s'" % lib.parent],
+            cwd=ROOT, capture_output=True, text=True)
+        assert out.returncode != 0, (
+            "mips_abi_gate accepted an x86-64 archive:\n%s" % out.stdout)
+        assert "of 2 ELF header(s)" in out.stderr, (
+            "mips_abi_gate did not report per-member counts, so it is not "
+            "looking inside the archive:\n%s" % out.stderr)
+
+
+def test_no_cache_stamp_is_spelled_in_two_places():
+    """A stamp compared by one file and written by another must be defined once.
+
+    This is not hypothetical tidiness. bin/fetch-assets.sh compared
+    work/.s6/.version against "$SKALIBS_VERSION $S6_VERSION" while bin/patch.sh
+    wrote three fields into it, so the test could never be false: a 71MB
+    toolchain was re-fetched on every single run, and the comment above the
+    condition described a fast path that had never once been taken. One
+    definition is what makes that class of bug impossible rather than unlikely.
+    """
+    spelled = [p.name for p in (ROOT / "bin").glob("*.sh")
+               if 'S6_STAMP="' in p.read_text()]
+    assert spelled == ["common.sh"], (
+        "S6_STAMP is defined in %s; it belongs in bin/common.sh alone"
+        % (spelled or "nowhere"))
+    for name in ("patch.sh", "fetch-assets.sh"):
+        text = (ROOT / "bin" / name).read_text()
+        assert '"$SKALIBS_VERSION $S6_VERSION' not in text, (
+            "bin/%s spells the s6 stamp out instead of using $S6_STAMP" % name)

@@ -385,14 +385,18 @@ S6_BINS="s6-svscan s6-svscanctl s6-supervise s6-svc s6-svstat s6-svwait s6-svok
 # the compiled-in libexecdir, and without it every waiting verb dies with
 # "unable to ftrigr_startf: No such file or directory".
 S6_LIBEXEC="s6-ftrigrd"
-# MUSL_TOOLCHAIN_FILE is IN the stamp, not just the two source versions: the
-# toolchain that builds s6 determines its ABI as much as the sources do, and
+# $S6_STAMP is defined in bin/common.sh and deliberately not repeated here.
+# MUSL_TOOLCHAIN_FILE is in it, not just the two source versions: the toolchain
+# that builds s6 determines its ABI as much as the sources do, and
 # work/.s6/.version has no other way to notice that the pin moved from a
-# legacy-NaN toolchain to a nan2008 one. Without this, a checkout that had
-# already built s6 once would read its old e_flags=0x1007 tree as current
-# and never rebuild it -- exactly the failure mode that shipped once.
-S6_STAMP="$SKALIBS_VERSION $S6_VERSION $MUSL_TOOLCHAIN_FILE"
-
+# legacy-NaN toolchain to a nan2008 one. Without that, a checkout that had
+# already built s6 once would read its old e_flags=0x1007 tree as current and
+# never rebuild it -- exactly the failure mode that shipped once.
+#
+# It moved to common.sh because bin/fetch-assets.sh compares against it too and
+# was spelling it with two of these three fields, which made its test
+# unfalsifiable and re-fetched a 71MB toolchain on every run for months. One
+# definition is what makes that class of bug impossible rather than unlikely.
 if [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
     if [ ! -x "$S6_TOOLCHAIN_DIR/bin/$S6_HOST-gcc" ]; then
         [ -f "${MUSL_TOOLCHAIN_TGZ:-}" ] || {
@@ -820,9 +824,37 @@ if [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ] \
         export PKG_CONFIG_PATH="$DEP/lib/pkgconfig"
         BUILDTRIPLE=x86_64-linux-gnu
 
-        ( cd "$SRC/zlib-$ZLIB_VERSION"
-          CHOST=$PY_HOST ./configure --prefix="$DEP" --static >/dev/null
-          make -j"$JOBS" >/dev/null && make install >/dev/null )
+        # zlib is a PACKAGE now, and this is the second CONSUMER of one build
+        # rather than a second build of one source. It used to be three lines
+        # of ./configure here and another three in pkg/opkg/build.sh: the same
+        # pinned tarball, the same flags, compiled twice, with neither copy
+        # able to see the other because each was a private detail of whatever
+        # needed it. pkg/zlib/build.sh is now the only place it is compiled,
+        # and pkg/libarchive names it as a build dependency the same way this
+        # does. See docs/notes/85-packaging.md.
+        #
+        # RUN WITH THE CROSS ENVIRONMENT REMOVED. Everything exported above
+        # points at $DEP -- CPPFLAGS, LDFLAGS, PKG_CONFIG_LIBDIR -- and the
+        # recipe has to configure against its own empty sysroot, not against a
+        # half-populated one belonging to the caller. `env -u` is what keeps
+        # this call from meaning something different depending on where in 5c
+        # it appears.
+        ( cd "$ROOT" \
+          && env -u CC -u CXX -u AR -u RANLIB -u STRIP -u CFLAGS -u CPPFLAGS \
+                 -u LDFLAGS -u PKG_CONFIG_LIBDIR -u PKG_CONFIG_PATH \
+                 bash pkg/zlib/build.sh )
+        mkdir -p "$DEP"
+        cp -a "$ZLIB_BUILD/." "$DEP/"
+        rm -f "$DEP/.version"
+        # The .pc file is the one thing that does not relocate by being copied:
+        # the package was configured --prefix=$MODDIR, so zlib.pc says
+        # prefix=/usr/data/anvil and pkg-config would answer with -I and -L
+        # paths that do not exist on this machine. CPython's configure asks
+        # pkg-config for zlib, so this is not cosmetic. pkg/lib.sh solves the
+        # same problem properly with PKG_CONFIG_SYSROOT_DIR for recipes that
+        # consume a package; 5c is not a recipe yet, so it does the one
+        # substitution by hand until phase 1 makes it one.
+        sed -i "s|^prefix=.*|prefix=$DEP|" "$DEP/lib/pkgconfig/zlib.pc"
 
         # OpenSSL, and two traps that were both hit for real:
         #  * `no-docs` only exists from 3.1. On 3.0.x it is an "Unsupported

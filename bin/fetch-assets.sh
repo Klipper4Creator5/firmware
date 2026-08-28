@@ -11,6 +11,11 @@
 set -euo pipefail
 # shellcheck disable=SC1091
 . "$(dirname "$0")/common.sh"
+# Sourced for pkg_needs alone, which answers "is any recipe under pkg/ going to
+# have to compile something?" -- the question that decides whether the ~203MB
+# toolchain is worth downloading. It defines functions and nothing else.
+# shellcheck disable=SC1091
+. "$ROOT/pkg/lib.sh"
 say() { printf '>> %s\n' "$*"; }
 
 ALL=0
@@ -91,11 +96,20 @@ fi
 # compiler and dies there instead of here. Checked against patch.sh's own
 # work/.py313 stamp, so a checkout with a current cross-built interpreter
 # never pulls this compiler either.
+#
+# THE RECIPES UNDER pkg/ ARE THE THIRD CONSUMER, and pkg_needs is how they are
+# asked. Every one of them cross-compiles with this toolchain, so a checkout
+# with a stale work/pkg/zlib needs the compiler even when the interpreter and
+# the Klipper fork are both current. Asking pkg/lib.sh rather than comparing a
+# stamp string here is the point: the recipe and the fetcher then compute the
+# cache key with the same code instead of two spellings that can drift -- which
+# is exactly what went wrong with the s6 stamp below.
 PY_STAMP="$PY_VERSION $OPENSSL_VERSION $SQLITE_VERSION $ZLIB_VERSION $LIBFFI_VERSION $XZ_VERSION $BZIP2_VERSION $EXPAT_VERSION"
 if [ "$ALL" = 1 ] \
    || { [ "${BUILD_KLIPPER:-0}" = "fork" ] && [ ! -d "${KLIPPER_FORK:-}/klippy" ]; } \
    || [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ] \
-   || [ "$(cat "$PY_BUILD/.pkg-version" 2>/dev/null || true)" != "$(pypkg_stamp)" ]; then
+   || [ "$(cat "$PY_BUILD/.pkg-version" 2>/dev/null || true)" != "$(pypkg_stamp)" ] \
+   || pkg_needs; then
     get "https://github.com/ballaswag/k1-discovery/releases/download/$MIPS_TOOLCHAIN_VERSION/$MIPS_TOOLCHAIN_FILE" \
         "$MIPS_TOOLCHAIN_TGZ" "$MIPS_TOOLCHAIN_SHA256"
 fi
@@ -124,18 +138,19 @@ get "https://skarnet.org/software/skalibs/skalibs-$SKALIBS_VERSION.tar.gz" \
 get "https://skarnet.org/software/s6/s6-$S6_VERSION.tar.gz" \
     "$S6_TGZ" "$S6_SHA256"
 #
-# TWO CONSUMERS NOW, NOT ONE, and the second is why the condition below is not
-# just s6's stamp. pkg/opkg builds against this same musl toolchain -- opkg is
-# a standalone static binary for exactly the reasons s6 is -- so a checkout
-# with a current work/.s6 and a stale work/.opkg needs the compiler that the
-# s6 stamp alone would say nobody needs. The failure without this is late and
-# confusing: the fetcher reports success, and pkg/opkg/build.sh stops several
-# minutes into a build to say a toolchain is missing. Same shape as the
-# Ingenic toolchain above, which is asked for by both the Klipper path and the
-# CPython one for the same reason.
+# ONE CONSUMER AGAIN: bin/patch.sh section 5b, and nothing else. pkg/opkg used
+# to build against this toolchain too and no longer does -- everything under
+# pkg/ is Ingenic glibc now, so the recipes are gated on the Ingenic fetch
+# above and this condition is back to being about s6 alone. When section 5b
+# becomes a recipe as well, this whole block and the MUSL_TOOLCHAIN_* pins go
+# with it.
+#
+# $S6_STAMP COMES FROM bin/common.sh and is not spelled here. It used to be,
+# with two of its three fields, against a tree patch.sh stamped with all three
+# -- so this test could never be false and the toolchain was re-fetched on
+# every single run. See the comment above S6_STAMP for the whole account.
 if [ "$ALL" = 1 ] \
-   || [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$SKALIBS_VERSION $S6_VERSION" ] \
-   || [ "$(cat "$OPKG_BUILD/.version" 2>/dev/null || true)" != "$OPKG_STAMP" ]; then
+   || [ "$(cat "$S6_BUILD/.version" 2>/dev/null || true)" != "$S6_STAMP" ]; then
     # Bootlin's own release layout: one directory per target architecture,
     # one versioned tarball per release inside it. See versions.env for why
     # this is Bootlin and not musl.cc.
@@ -270,7 +285,16 @@ say "cached  opkg-utils $OPKG_UTILS_VERSION ($OPKG_UTILS_COMMIT)"
 # is needed: the interpreter (work/.py313/.version), the packages that go into
 # its site-packages (work/.py313/.pkg-version -- same cache directory, its own
 # key, because a package bump forces a full interpreter rebuild; see the
-# comment in bin/patch.sh) and libsodium (work/.sodium/.version).
+# comment in bin/patch.sh) and every recipe under pkg/, which pkg_needs answers
+# for all of them at once.
+#
+# libsodium USED TO BE SPELLED OUT HERE, as a comparison against
+# $SODIUM_VERSION. It is one of the recipes pkg_needs covers now, and the
+# comparison had already gone subtly wrong: a recipe's cache key includes the
+# toolchain and its dependencies, so a bare version string stopped being the
+# thing written into work/pkg/libsodium/.version and the test would have been
+# true forever. Asking the code that writes the stamp is the only spelling that
+# cannot drift -- which is the same lesson as the s6 stamp above.
 #
 # Getting this wrong is not a slow build, it is a stopped one: patch.sh would
 # get 53MB of sdists and then halt for want of a compiler, halfway through,
@@ -278,7 +302,7 @@ say "cached  opkg-utils $OPKG_UTILS_VERSION ($OPKG_UTILS_COMMIT)"
 if [ "$ALL" = 1 ] \
    || [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ] \
    || [ "$(cat "$PY_BUILD/.pkg-version" 2>/dev/null || true)" != "$(pypkg_stamp)" ] \
-   || [ "$(cat "$SODIUM_BUILD/.version" 2>/dev/null || true)" != "$SODIUM_VERSION" ]; then
+   || pkg_needs; then
     get "https://github.com/ballaswag/k1-discovery/releases/download/$MIPS_TOOLCHAIN_VERSION/$MIPS_TOOLCHAIN_FILE" \
         "$MIPS_TOOLCHAIN_TGZ" "$MIPS_TOOLCHAIN_SHA256"
 fi

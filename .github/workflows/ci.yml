@@ -82,6 +82,12 @@ jobs:
       # re-fetches the ~100MB musl toolchain or the ~203MB Ingenic one, and
       # never recompiles either tree, which is the whole point of work/.s6 and
       # work/.py313 carrying their own version stamps.
+      #
+      # work/pkg is every recipe under pkg/ at once -- one cache entry instead
+      # of one per package, because pkg/lib.sh derives the output directory
+      # from the recipe name rather than naming each one in bin/common.sh. A
+      # new recipe therefore needs no edit here, which is the same property
+      # that makes adding a package one directory.
       - name: Cache the s6 + CPython 3.13 build inputs and outputs
         uses: actions/cache@v4
         with:
@@ -89,7 +95,7 @@ jobs:
             vendor
             work/.s6
             work/.py313
-            work/.sodium
+            work/pkg
           key: fixture-py-${{ hashFiles('versions.env') }}
 
       - name: Fetch the s6 + CPython 3.13 build inputs

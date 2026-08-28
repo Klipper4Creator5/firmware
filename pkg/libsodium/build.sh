@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# libsodium, cross-compiled for the printer into $SODIUM_BUILD (work/.sodium).
+# libsodium, cross-compiled for the printer into $SODIUM_BUILD.
 #
 # This was bin/patch.sh section 5d, and then it was that same block moved into
 # a file; it is now the block with everything generic taken out of it and put
-# in pkg/lib.sh. What is left is the four facts that are actually about
-# libsodium. patch.sh runs this and stages what it leaves behind, so the
-# tarball's copy and the .ipk's copy are one build.
+# in pkg/lib.sh. What is left is the facts that are actually about libsodium.
+# patch.sh runs this and stages what it leaves behind, so the tarball's copy
+# and the .ipk's copy are one build.
 #
-# WHY IT IS THE INGENIC GLIBC TOOLCHAIN and not the musl one pkg/opkg uses:
-# libnacl is pure python and reaches libsodium through ctypes.cdll.LoadLibrary,
-# which is dlopen -- performed by FlashForge's own glibc interpreter. A
-# musl-linked libsodium is not loadable by it. opkg, next door, talks to
-# nothing of ours and is static musl for exactly the same reason s6 is.
+# WHOSE INTERPRETER DLOPENS IT, corrected: libnacl reaches libsodium through
+# ctypes.cdll.LoadLibrary, and the process doing that is OUR CPython 3.13, not
+# FlashForge's 3.8.2. Moonraker moved onto our interpreter and
+# /usr/prog/libsodium left ANVIL_LIBS with it -- payload/anvil-env.sh has the
+# account. This comment used to say the opposite, which mattered because it was
+# the stated reason for the toolchain choice. The real reason is simpler and
+# still points the same way: it has to match whatever interpreter loads it, and
+# that interpreter is built by this toolchain.
 #
 # WHY IT CANNOT BE STATIC, when the interpreter's seven dependencies all are:
 # you cannot dlopen an archive. Moonraker's `authorization` component signs its
@@ -21,8 +24,8 @@ set -euo pipefail
 . "$(dirname "$0")/../../bin/common.sh"
 . pkg/lib.sh
 
-pkg_begin libsodium "$SODIUM_VERSION" "$SODIUM_BUILD" || exit 0
-pkg_toolchain ingenic
+pkg_begin libsodium || exit 0
+pkg_toolchain
 pkg_unpack "$SODIUM_TGZ"
 
 # --disable-static: nothing links this statically and a .a would only be

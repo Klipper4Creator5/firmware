@@ -114,8 +114,28 @@ SKALIBS_TGZ="${SKALIBS_TGZ:-$ROOT/vendor/skalibs-${SKALIBS_VERSION:-unpinned}.ta
 S6_TGZ="${S6_TGZ:-$ROOT/vendor/s6-${S6_VERSION:-unpinned}.tar.gz}"
 MUSL_TOOLCHAIN_TGZ="${MUSL_TOOLCHAIN_TGZ:-$ROOT/vendor/${MUSL_TOOLCHAIN_FILE:-mips32r5el--musl--stable.tar.xz}}"
 S6_BUILD="${S6_BUILD:-$ROOT/work/.s6}"
+
+# The cache key for work/.s6, spelled ONCE, here, because two files read it and
+# they have to agree exactly: bin/patch.sh section 5b stamps the tree with it,
+# and bin/fetch-assets.sh tests it to decide whether the ~71MB musl toolchain
+# has to come down.
+#
+# THEY DID NOT AGREE, and the bug is the argument for this line. patch.sh wrote
+# three fields ("$SKALIBS_VERSION $S6_VERSION $MUSL_TOOLCHAIN_FILE") while the
+# fetcher compared against two, so the `!=` could never be false: every run
+# re-hashed 71MB on a warm vendor/, and a cold one downloaded a compiler for a
+# build with nothing to compile. The comment above that condition described a
+# fast path that had never once been taken. Two spellings of one string is not
+# duplication that costs style points; it is a condition that silently inverts.
+#
+# The toolchain filename is in the stamp deliberately: the compiler determines
+# the ABI as much as the sources do, so a tree built by a toolchain that has
+# since been repinned must be rebuilt rather than reused. That is the failure
+# that shipped once -- see versions.env.
+S6_STAMP="$SKALIBS_VERSION $S6_VERSION $MUSL_TOOLCHAIN_FILE"
+
 export MAINSAIL_ZIP HELIX_TGZ MOONRAKER_TGZ KLIPPER_TGZ MIPS_TOOLCHAIN_TGZ
-export SKALIBS_TGZ S6_TGZ MUSL_TOOLCHAIN_TGZ S6_BUILD
+export SKALIBS_TGZ S6_TGZ MUSL_TOOLCHAIN_TGZ S6_BUILD S6_STAMP
 
 # CPython and the seven C libraries it is linked against, all pinned in
 # versions.env and all cross-built by bin/patch.sh section 5c. Eight tarballs
@@ -181,41 +201,47 @@ pypkg_stamp() {
         printf '%s %s\n' "$(pypkg_var "$_p" FILE)" "$(pypkg_var "$_p" SHA256)"
     done
 }
-# libsodium is one pin and one tarball, so it keeps the ordinary shape. Its
-# cache is separate from work/.py313 because it is a separate build with a
-# separate stamp: 24 seconds, but 24 seconds that would otherwise drag the
-# 203MB toolchain download along behind it on every build.
+# The sources every recipe under pkg/ builds from. ZLIB_TGZ is NOT repeated
+# here: it is pinned thirty lines up for CPython, and pkg/zlib builds that same
+# tarball once for everybody. One pin, one build, two consumers -- which is the
+# whole point of the packaging work and the reason zlib stopped being an
+# invisible detail of two other builds.
 SODIUM_TGZ="${SODIUM_TGZ:-$ROOT/vendor/libsodium-${SODIUM_VERSION:-unpinned}.tar.gz}"
-SODIUM_BUILD="${SODIUM_BUILD:-$ROOT/work/.sodium}"
-export SODIUM_TGZ SODIUM_BUILD
+OPKG_TGZ="${OPKG_TGZ:-$ROOT/vendor/opkg-${OPKG_VERSION:-unpinned}.tar.gz}"
+LIBARCHIVE_TGZ="${LIBARCHIVE_TGZ:-$ROOT/vendor/libarchive-${LIBARCHIVE_VERSION:-unpinned}.tar.gz}"
+export SODIUM_TGZ OPKG_TGZ LIBARCHIVE_TGZ
 
-# opkg, its two build-only dependencies, and the upstream tools that build the
-# packages. The same shape as everything above -- a tarball per pin, a build
-# cache that names the versions it came from -- with two exceptions worth
-# naming here because they look like mistakes otherwise.
-#
-# ZLIB_TGZ is NOT repeated: opkg's libarchive links the very same pinned zlib
-# tarball CPython does, thirty lines up. One pin, two consumers.
+# WHERE A RECIPE'S OUTPUT LIVES IS DERIVED, NOT NAMED. pkg/lib.sh's pkg_out
+# spells work/pkg/<recipe>, so adding a package is one directory under pkg/ and
+# no edit to this file. These three names remain because bin/patch.sh and
+# bin/fetch-assets.sh refer to them, and one alias here is cheaper than the
+# same path spelled in four scripts -- but nothing new should be added below.
+# There were three schemes for this (work/.sodium named by hand, work/.pkg-$id
+# and work/.ipk-$name each derived differently) all describing one recipe.
+SODIUM_BUILD="${SODIUM_BUILD:-$ROOT/work/pkg/libsodium}"
+OPKG_BUILD="${OPKG_BUILD:-$ROOT/work/pkg/opkg}"
+ZLIB_BUILD="${ZLIB_BUILD:-$ROOT/work/pkg/zlib}"
+export SODIUM_BUILD OPKG_BUILD ZLIB_BUILD
+
+# The feed: where bin/build-packages.sh writes .ipk files and the index, and
+# where pkg/lib.sh's pkg_deps reads a recipe's build dependencies back out of.
+# It is a local opkg repository, and it is the interface between recipes --
+# which is why the path is defined once here rather than in the script that
+# happens to write it.
+PKG_FEED="${PKG_FEED:-$ROOT/work/packages}"
+
+# The upstream tools, all three from one pinned checkout: opkg-build makes a
+# package, opkg-make-index makes the feed, opkg-unbuild takes a package apart
+# again to fill a build sysroot.
 #
 # OPKG_UTILS_DIR is a git CHECKOUT and not a tarball, because opkg-utils
 # publishes no release archive anywhere -- see versions.env. It is the one
 # vendor/ entry whose integrity is a commit sha rather than a sha256.
-OPKG_TGZ="${OPKG_TGZ:-$ROOT/vendor/opkg-${OPKG_VERSION:-unpinned}.tar.gz}"
-LIBARCHIVE_TGZ="${LIBARCHIVE_TGZ:-$ROOT/vendor/libarchive-${LIBARCHIVE_VERSION:-unpinned}.tar.gz}"
-OPKG_BUILD="${OPKG_BUILD:-$ROOT/work/.opkg}"
 OPKG_UTILS_DIR="${OPKG_UTILS_DIR:-$ROOT/vendor/opkg-utils}"
-
-# The cache key for work/.opkg, spelled ONCE. pkg/opkg/build.sh stamps the tree
-# with it and bin/fetch-assets.sh tests it to decide whether the ~71MB musl
-# toolchain has to come down -- and the two have to agree exactly or the
-# fetcher skips the compiler on precisely the build that needs it. That is not
-# hypothetical caution: it is the warning already written above pypkg_stamp,
-# which exists because the same two readers have to agree about CPython's.
-#
-# All three versions, not just opkg's: an opkg rebuilt because libarchive moved
-# is exactly the case a version-only stamp gets wrong.
-OPKG_STAMP="$OPKG_VERSION $LIBARCHIVE_VERSION $ZLIB_VERSION"
-export OPKG_TGZ LIBARCHIVE_TGZ OPKG_BUILD OPKG_UTILS_DIR OPKG_STAMP
+OPKG_BUILD_BIN="${OPKG_BUILD_BIN:-$OPKG_UTILS_DIR/opkg-build}"
+OPKG_INDEX_BIN="${OPKG_INDEX_BIN:-$OPKG_UTILS_DIR/opkg-make-index}"
+OPKG_UNBUILD_BIN="${OPKG_UNBUILD_BIN:-$OPKG_UTILS_DIR/opkg-unbuild}"
+export PKG_FEED OPKG_UTILS_DIR OPKG_BUILD_BIN OPKG_INDEX_BIN OPKG_UNBUILD_BIN
 
 # Replica-only settings: the factory image and the partition sizes. They exist
 # for the tests and never reach a printer, so they live in their own file --
@@ -301,7 +327,7 @@ export TARGET_MACHINE TARGET_PID STOCK_TGZ PROG_DUMP
 # gcc-wrapper discipline 5c uses -- so s6 gets exactly the ABI everything else
 # on this printer already had to have, checked the same way.
 mips_abi_gate() {
-    local n=0 f hdr flags want
+    local n=0 f hdr counts total good
     while IFS= read -r f; do
         # readelf itself is the ELF test, rather than comparing the first four
         # bytes to \177ELF: that comparison was a command substitution over
@@ -312,27 +338,57 @@ mips_abi_gate() {
         # one. readelf exits non-zero on anything that is not an ELF, which is
         # the same question asked of the tool that has to answer it anyway.
         hdr=$(readelf -h "$f" 2>/dev/null) || continue
-        case "$hdr" in
-            *nan2008*o32*mips32r2*) ;;
-            *) echo "   !! $f is not nan2008/o32/mips32r2" >&2
-               readelf -h "$f" 2>&1 | sed 's/^/      /' >&2; return 1 ;;
-        esac
-        # 0x70001405 or 0x70001407, not "whichever the Type says": that was
-        # true of the Ingenic-glibc objects alone, where EF_MIPS_PIC only
-        # ever showed up on a genuine DYN. s6's musl toolchain bakes
-        # EF_MIPS_PIC into its crt startup objects unconditionally -- no
-        # combination of -static/-no-pie/-fno-PIC removes it, measured -- so
-        # a plain static EXEC from that toolchain carries the bit too and
-        # still reads 0x70001407. Both values already mean the same thing
-        # (nan2008/o32/mips32r2, matched above); which one shows up is a
-        # property of the toolchain, not a sign of anything wrong.
-        flags=$(awk '/Flags:/{print $2}' <<<"$hdr" | tr -d ,)
-        case "$flags" in
-            0x70001405|0x70001407) ;;
-            *) echo "   !! $f has e_flags=$flags, want 0x70001405 or 0x70001407" >&2
-               return 1 ;;
-        esac
-        n=$((n + 1))
+        # ONE HEADER PER MEMBER, NOT ONE PER FILE. readelf -h on a static
+        # archive prints a full ELF header for every object inside it --
+        # measured: 11 for an 11-member .a, 298 for a host libgcc.a. The
+        # version of this loop that read a single `Flags:` line therefore
+        # handed a multi-line string to a `case` expecting one word, and every
+        # .a failed the gate with an error naming a value nobody could parse.
+        # That went unnoticed while no package shipped an archive; pkg/zlib and
+        # pkg/skalibs are the recipes that ship one.
+        #
+        # So every header is checked and every header has to conform. Both
+        # conditions live on the same awk line because readelf prints them
+        # there: `Flags: 0x70001407, noreorder, pic, cpic, nan2008, o32,
+        # mips32r2` is one line carrying the word and the hex together, and
+        # checking them per-line is what keeps one member's flags from being
+        # matched against another member's ISA.
+        #
+        # 0x7000140[0-7] -- the ABI is the HIGH bits and the low three are not
+        # part of it. 0x70001400 is EF_MIPS_ARCH_32R2 | EF_MIPS_ABI_O32 |
+        # EF_MIPS_NAN2008, which is the whole of what this gate is for. The
+        # bottom three bits are EF_MIPS_NOREORDER (0x1), EF_MIPS_PIC (0x2) and
+        # EF_MIPS_CPIC (0x4), none of which says anything about whether the
+        # printer's kernel will exec the file.
+        #
+        # This used to accept exactly 0x70001405 and 0x70001407, and those two
+        # values were measured from linked BINARIES -- where crt startup
+        # objects happen to set NOREORDER, so every executable and every shared
+        # object in the tree read one or the other. Object files need not:
+        # libarchive's xxhash.o comes out 0x70001406, identical ABI, no
+        # NOREORDER, and the old whitelist called it a wrong-ABI object. The
+        # pair was always a proxy for the mask, and it only looked exact while
+        # nothing but whole binaries went through here. Packaging a .a is what
+        # exposed the difference.
+        counts=$(awk '
+            /Flags:/ {
+                total++
+                fl = $2; sub(/,$/, "", fl)
+                if (fl ~ /^0x7000140[0-7]$/ \
+                    && $0 ~ /nan2008/ && $0 ~ /o32/ && $0 ~ /mips32r2/) good++
+            }
+            END { print (total + 0), (good + 0) }' <<<"$hdr")
+        total=${counts% *}; good=${counts#* }
+        # total==0 is a failure and not a pass: it means readelf recognised
+        # the file and then found nothing to check, which is the shape of a
+        # gate that looks green because it examined nothing.
+        if [ "$total" -eq 0 ] || [ "$total" != "$good" ]; then
+            echo "   !! $f is not nan2008/o32/mips32r2 with e_flags 0x7000140[0-7]" >&2
+            echo "      ($good of $total ELF header(s) conform)" >&2
+            readelf -h "$f" 2>&1 | sed 's/^/      /' >&2
+            return 1
+        fi
+        n=$((n + total))
     done < <(find "$@" -type f 2>/dev/null)
     printf '%s' "$n"
 }

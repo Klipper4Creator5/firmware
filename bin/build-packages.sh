@@ -1,28 +1,33 @@
 #!/usr/bin/env bash
-# Build every recipe under pkg/ into work/packages/, then index that directory
-# into an opkg feed.
+# Build every recipe under pkg/ into the feed, in dependency order, and index
+# it.
 #
 #     ./bin/build-packages.sh              all recipes
-#     ./bin/build-packages.sh libsodium    just that one
+#     ./bin/build-packages.sh opkg         that one and everything it needs
 #
 # WHAT THIS IS. The proof-of-concept half of docs/notes/85-packaging.md: the
 # evidence that this repo's cross-builds can be delivered as packages, standing
-# beside the tarball rather than replacing it. Nothing here is on the release
-# path yet. bin/patch.sh still stages libsodium into the payload exactly as it
-# did, `make build` is untouched, and the .ipk files this produces are
-# artefacts nobody installs until the migration's phase 2 lands an installer on
-# the printer.
+# beside the tarball rather than replacing it. bin/patch.sh still stages
+# libsodium into the payload exactly as it did and `make build` is untouched.
+#
+# ONE RECIPE PRODUCES ONE PACKAGE, and a recipe that needs a library names it
+# in PKG_BUILD_DEPENDS and gets it out of this feed. That is why the loop below
+# packages each recipe before it moves to the next one rather than building
+# everything and packaging afterwards: pkg/libarchive's configure reads zlib's
+# headers out of anvil-zlib_1.3.1-1_mipsel_xburst2.ipk, so that file has to
+# exist by the time libarchive is built. The feed is not an output of this
+# script so much as the medium it works in.
 #
 # THE ARCHIVES ARE BUILT BY UPSTREAM'S OWN TOOLS, not by this file. opkg-build
-# and opkg-make-index come from opkg-utils, pinned by commit in versions.env
-# and fetched by bin/fetch-assets.sh. An earlier revision of this work carried
-# a hand-written ar-and-two-tarballs script instead, which was 120 lines of
-# this repo's code re-deriving a format somebody else already maintains --
-# including the parts that are easy to get subtly wrong (member ORDER, the
-# CONTROL field validation, the tar flags that make a build reproducible) and
-# whose failure mode is a package that inspects fine and installs nowhere.
-# What is left here is the part that is genuinely ours: laying out the tree
-# that opkg-build packages.
+# and opkg-make-index -- and opkg-unbuild, which pkg/lib.sh uses to take them
+# apart again -- come from opkg-utils, pinned by commit in versions.env. An
+# earlier revision of this work carried a hand-written ar-and-two-tarballs
+# script instead, which was 120 lines of this repo re-deriving a format
+# somebody else already maintains, including the parts that are easy to get
+# subtly wrong (member ORDER, the CONTROL field validation, the tar flags that
+# make a build reproducible) and whose failure mode is a package that inspects
+# fine and installs nowhere. What is left here is the part that is genuinely
+# ours: laying out the tree that opkg-build packages.
 #
 # IT NEEDS NO STOCK FIRMWARE PACKAGE, which bin/patch.sh does. That is
 # deliberate and it is most of why this is a separate script: packaging has to
@@ -30,14 +35,11 @@
 # gate only runs where the secrets are and stops being a gate.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
+. "$ROOT/pkg/lib.sh"
 
 say() { printf '>> %s\n' "$*"; }
 
-OUTDIR="${OUTDIR:-work/packages}"
-OPKG_BUILD_BIN="$OPKG_UTILS_DIR/opkg-build"
-OPKG_INDEX_BIN="$OPKG_UTILS_DIR/opkg-make-index"
-
-for t in "$OPKG_BUILD_BIN" "$OPKG_INDEX_BIN"; do
+for t in "$OPKG_BUILD_BIN" "$OPKG_INDEX_BIN" "$OPKG_UNBUILD_BIN"; do
     [ -x "$t" ] || { echo "!! $t is missing -- run ./bin/fetch-assets.sh" >&2; exit 1; }
 done
 
@@ -49,38 +51,33 @@ done
 # reproducible-if-you-remember.
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
 
-# The recipes, in the order pkg/ lists them. Order is not dependency order and
-# does not need to be: opkg resolves Depends at install time from the index,
-# not from the order the feed was built in.
+# The recipes to build, expanded to include everything they build against and
+# sorted so a dependency always precedes its dependent. Iterating pkg/*/ and
+# taking the order the shell gives is wrong the moment there are two recipes:
+# alphabetically, libarchive comes before the zlib it needs.
 if [ $# -gt 0 ]; then
-    RECIPES=("$@")
+    REQUESTED=("$@")
 else
-    RECIPES=()
-    for d in pkg/*/; do
-        [ -f "$d/pkg.conf" ] && RECIPES+=("$(basename "$d")")
-    done
+    mapfile -t REQUESTED < <(pkg_recipes)
 fi
-[ ${#RECIPES[@]} -gt 0 ] || { echo "no recipes under pkg/" >&2; exit 1; }
+[ ${#REQUESTED[@]} -gt 0 ] || { echo "no recipes under pkg/" >&2; exit 1; }
+read -r -a RECIPES <<< "$(pkg_order "${REQUESTED[@]}")"
 
-mkdir -p "$OUTDIR"
+say "order: ${RECIPES[*]}"
+mkdir -p "$PKG_FEED"
 
 for r in "${RECIPES[@]}"; do
-    [ -f "pkg/$r/pkg.conf" ] || { echo "!! no recipe pkg/$r/pkg.conf" >&2; exit 1; }
+    [ -f "$ROOT/pkg/$r/build.sh" ] || { echo "!! pkg/$r has no build.sh" >&2; exit 1; }
 
-    # Build first. Every recipe's build.sh caches on its own version stamp --
-    # pkg/lib.sh's pkg_begin is that check -- so this is a no-op on a warm tree
-    # and the whole script costs a few process spawns.
-    [ -f "pkg/$r/build.sh" ] && bash "pkg/$r/build.sh"
+    # Every recipe caches on its own stamp -- pkg/lib.sh's pkg_begin is that
+    # check -- so this is a no-op on a warm tree and costs a process spawn.
+    bash "$ROOT/pkg/$r/build.sh"
 
     # Sourced in a subshell, one recipe at a time. PKG_DEPENDS from one recipe
     # leaking into the next is precisely the bug that makes a package declare a
     # dependency nobody wrote down, and it would install fine and stay wrong.
     (
-        PKG_NAME=''; PKG_VERSION=''; PKG_RELEASE=1; PKG_SECTION=libs
-        PKG_ROOT=''; PKG_EXCLUDE=''; PKG_DEPENDS=''; PKG_DESCRIPTION=''
-        PKG_MAINTAINER='anvil <none@example.invalid>'
-        # shellcheck disable=SC1090
-        . "pkg/$r/pkg.conf"
+        pkg_conf "$r"
 
         for v in PKG_NAME PKG_VERSION PKG_ROOT PKG_DESCRIPTION; do
             [ -n "${!v}" ] || { echo "!! pkg/$r/pkg.conf leaves $v empty" >&2; exit 1; }
@@ -103,11 +100,11 @@ for r in "${RECIPES[@]}"; do
         # opkg-build packages a DIRECTORY: the file tree exactly as it will
         # appear on the target, plus a CONTROL/ subdirectory it lifts the
         # metadata out of and does not ship. So the recipe's tree is laid down
-        # under $MODDIR here -- work/.sodium/lib/libsodium.so.26.2.0 becomes
-        # ./usr/data/anvil/lib/libsodium.so.26.2.0 -- which is why `opkg
-        # install` needs no prefix of its own later, and why a package built
-        # for this mod can never land on the rootfs by accident: every path it
-        # owns is under /usr/data.
+        # under $MODDIR here -- work/pkg/libsodium/lib/libsodium.so.26.2.0
+        # becomes ./usr/data/anvil/lib/libsodium.so.26.2.0 -- which is why
+        # `opkg install` needs no prefix of its own later, and why a package
+        # built for this mod can never land on the rootfs by accident: every
+        # path it owns is under /usr/data.
         #
         # cp -a and not cp: libsodium ships libsodium.so -> .so.26 ->
         # .so.26.2.0, and the first of those is the name libnacl's dlopen
@@ -135,7 +132,7 @@ for r in "${RECIPES[@]}"; do
         {
             printf 'Package: %s\n' "$PKG_NAME"
             printf 'Version: %s-%s\n' "$PKG_VERSION" "$PKG_RELEASE"
-            printf 'Architecture: %s\n' "$IPK_ARCH"
+            printf 'Architecture: %s\n' "$PKG_ARCH"
             printf 'Maintainer: %s\n' "$PKG_MAINTAINER"
             printf 'Section: %s\n' "$PKG_SECTION"
             printf 'Priority: optional\n'
@@ -155,12 +152,12 @@ for r in "${RECIPES[@]}"; do
         # relative destination resolves against the wrong directory and the
         # build dies on a missing control_list -- an error that names a
         # temporary file and not the argument that caused it.
-        "$OPKG_BUILD_BIN" -o 0 -g 0 "$PWD/$LAYOUT" "$PWD/$OUTDIR" > /dev/null
+        "$OPKG_BUILD_BIN" -o 0 -g 0 "$PWD/$LAYOUT" "$PKG_FEED" > /dev/null
         rm -rf "$LAYOUT"
 
-        ipk="$OUTDIR/${PKG_NAME}_${PKG_VERSION}-${PKG_RELEASE}_${IPK_ARCH}.ipk"
+        ipk="$PKG_FEED/${PKG_NAME}_${PKG_VERSION}-${PKG_RELEASE}_${PKG_ARCH}.ipk"
         [ -f "$ipk" ] || { echo "!! opkg-build produced no $ipk" >&2; exit 1; }
-        say "$PKG_NAME: $ipk ($(du -h "$ipk" | cut -f1))"
+        say "$PKG_NAME: $(basename "$ipk") ($(du -h "$ipk" | cut -f1))"
     )
 done
 
@@ -189,7 +186,7 @@ done
 # packages is that it is the thing worth attacking. md5 is kept beside it
 # because opkg still reports it and some tooling looks for it; the sha256 is
 # what actually gates an install.
-say "index: writing $OUTDIR/Packages"
-( cd "$OUTDIR" && python3 "$OPKG_INDEX_BIN" --checksum md5 --checksum sha256 . > Packages )
-gzip -n -9 -c "$OUTDIR/Packages" > "$OUTDIR/Packages.gz"
-say "index: $(grep -c '^Package:' "$OUTDIR/Packages") package(s) in $OUTDIR"
+say "index: writing $PKG_FEED/Packages"
+( cd "$PKG_FEED" && python3 "$OPKG_INDEX_BIN" --checksum md5 --checksum sha256 . > Packages )
+gzip -n -9 -c "$PKG_FEED/Packages" > "$PKG_FEED/Packages.gz"
+say "index: $(grep -c '^Package:' "$PKG_FEED/Packages") package(s) in $PKG_FEED"
