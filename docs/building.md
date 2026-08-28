@@ -216,7 +216,7 @@ installer/              run-pre.sh, run-append.sh -- never files on the
 Which is to say:
 
 ```
-pkgs/anvil-core/
+pkgs/anvil-core/            what makes the machine ours, and nothing else
   payload/  anvil-env.sh      PATH/LD_LIBRARY_PATH/FF_PYTHON -- sourced
             anvil-service.sh  the start/stop/status/liveness shape services share
             init.d/           S40s6, S50wifi, S60nginx, S62moonraker, S65camera,
@@ -224,20 +224,32 @@ pkgs/anvil-core/
             bin/              ff-startup.py, ff_mcu_bringup.py, ffscreen.py,
                               wifi-action.sh
             etc/s6/           the s6 scandir, one directory per service
-            config/           ff-*.cfg + moonraker.conf
             nginx/nginx.conf
   prog/     firmwareExe       the wrapper that replaces the stock binary
   seed/     anvil.conf.in     runtime switches, preserved across mod updates
 pkgs/klipper/
   prog/     start.sh          replaces the stock Klipper launcher
-            config/           printer.base.cfg + the per-model chamber variants
+            config/           printer.base.cfg
             klippy/extras/    ff_*.py
+pkgs/klipper-config/        the toolchanger's Klipper includes
+  payload/  config/ff-*.cfg
+pkgs/klipper-creator5-config/ , pkgs/klipper-creator5pro-config/
+  payload/  config/printer.chamber.cfg   one per model; exactly one installed
 pkgs/moonraker/
+  payload/  config/moonraker.conf   the server's own config, with the server
   seed/     moonraker-custom.conf   the user's own Moonraker settings
 pkgs/helixscreen/
   payload/  helixscreen/config/printer_database.d/
                               the entry that makes it a toolchanger
 ```
+
+The init scripts stay with `anvil-core` and do NOT move to the components
+they start, which looks inconsistent and is not. Those services are gated at
+RUNTIME by flags in `anvil.conf`; the packages that would own the scripts are
+gated at BUILD time by `BUILD_KLIPPER` and `BUILD_HELIX`. A
+`BUILD_KLIPPER=stock` tarball has no `anvil-klipper` package, so it would
+carry no `S70klipper`, and nothing would start Klipper at all. The script that
+reads a flag must not itself sit behind a second, different flag.
 
 **Builds it** — host-side, never installed:
 

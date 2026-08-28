@@ -137,28 +137,38 @@ stock)
 esac
 
 # ----------------------------------------------------------- 2. Toolchanger
-# Lives in this repo under pkgs/klipper/prog/ -- it used to be the separate
-# creator5-toolchange checkout, pointed at by TOOLCHANGE= in config.env.
+# Lives in this repo, under the recipes that own each half -- it used to be
+# the separate creator5-toolchange checkout, pointed at by TOOLCHANGE= in
+# config.env.
 #
-# WHY prog/ AND NOT payload/. Everything under pkgs/<recipe>/payload/ is what
-# that recipe stages into its .ipk, and every path in a package lands under
-# $MODDIR. These files do not: klippy's extras and printer.base.cfg go to
+# THE CONFIG IS THREE PACKAGES NOW and this section stages what they built,
+# the same arrangement sections 3, 4 and 5d have: anvil-klipper-config for the
+# ff-*.cfg, and one of anvil-klipper-creator5-config /
+# anvil-klipper-creator5pro-config for printer.chamber.cfg. Both model
+# packages are BUILT on every build; this picks the one this tarball is for.
+# The model stopped being a property of the build -- two builds of one commit
+# used to produce different bytes under one version number, with nothing in
+# the feed or on the printer recording which machine they were for.
+#
+# WHAT IS STILL prog/ AND WHY. klippy's extras and printer.base.cfg go to
 # /usr/prog, beside FlashForge's own Klipper tree, which is a filesystem no
-# package of ours may write. prog/ is the residue -- the files a recipe owns
-# and cannot yet ship -- and it empties out when a postinst places them from
-# a staging root instead. See docs/notes/85-packaging.md phase 2.
+# package of ours may write -- every path in one lands under $MODDIR. prog/ is
+# that residue, and it empties out when a postinst places them from a staging
+# root instead. See docs/notes/85-packaging.md phase 2.
+#
+# printer.chamber.cfg LEFT prog/ WITH THE MODEL PACKAGES, and that is a change
+# in where it lands: it used to be copied to /usr/prog/klipper/config beside
+# printer.base.cfg and reach /usr/data/config only because the stock run.sh
+# copies that whole directory. It now installs to $MODDIR/config like the
+# ff-*.cfg, and installer/run-append.sh copies it into /usr/data/config on the
+# same mod-owned terms. The include in printer.base.cfg is bare and relative,
+# so it resolves either way -- and this way the file is in a package that can
+# be installed and upgraded on its own.
 if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     say "Toolchange: ff_*.py + configs"
     mkdir -p "$SOFTWARE_DIR/klipper/extras"
     cp -f pkgs/klipper/prog/klippy/extras/ff_*.py "$SOFTWARE_DIR/klipper/extras/"
-    # THE ff-*.cfg COPY THAT USED TO BE HERE IS GONE. Those files belong on
-    # the data partition, they are staged by pkgs/anvil-core, and section 10
-    # copies that package's whole tree into $MOD_PAYLOAD -- after this line
-    # ran, over the top of it. So this was a second copy of the same bytes
-    # from a second place, differing only in being gated on BUILD_TOOLCHANGE
-    # while the package is not: with BUILD_TOOLCHANGE=0 the files arrived
-    # anyway, one section later, which is the sort of disagreement that reads
-    # as a working feature flag right up until somebody relies on it.
+
     # Our printer.base.cfg is FlashForge's with the chamber block replaced by
     # [include printer.chamber.cfg] -- Klipper can override an option but
     # cannot un-declare a section, and the plain Creator 5 has no chamber
@@ -166,28 +176,39 @@ if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     # NOTE: this cp is why the stock-drift check lives in bin/unpack.sh and
     # not in a test -- it overwrites the pristine copy, and the test that used
     # to read it afterwards was comparing our file against itself.
-    cp -f pkgs/klipper/prog/config/printer.base.cfg "$SOFTWARE_DIR/klipper/config/printer.base.cfg"
+    cp -f pkgs/klipper-config/prog/config/printer.base.cfg "$SOFTWARE_DIR/klipper/config/printer.base.cfg"
 
-    # Anything that differs between models exists once per model, named
-    # <file>.creator5 / <file>.creator5pro, and the matching one is installed
-    # under its real name. Nothing is edited: the suffixed file IS the
-    # difference. printer.*.cfg belongs beside printer.base.cfg on the program
-    # partition; ff-*.cfg belongs on the data partition with the rest.
-    SUFFIX=$(printf '%s' "$TARGET_MACHINE" | tr 'A-Z' 'a-z')
-    for variant in pkgs/klipper/prog/config/*."$SUFFIX"; do
-        [ -e "$variant" ] || continue
-        base=$(basename "$variant" ".$SUFFIX")
-        case "$base" in
-            printer.*) dest="$SOFTWARE_DIR/klipper/config/$base" ;;
-            *)         dest="$MOD_PAYLOAD/config/$base" ;;
-        esac
-        cp -f "$variant" "$dest"
-        say "Model: $base for $TARGET_MACHINE"
-    done
-    # printer.base.cfg includes it unconditionally, so without it klippy will
-    # not start at all. A broken build, not a silent default.
-    [ -f "$SOFTWARE_DIR/klipper/config/printer.chamber.cfg" ] \
-        || { echo "no printer.chamber.cfg.$SUFFIX for TARGET_MACHINE=$TARGET_MACHINE" >&2; exit 1; }
+    # BOTH MODEL RECIPES RUN, and one of them is staged. Building both costs
+    # two text files and keeps the feed the same on every machine, which is
+    # what makes "install either" true rather than aspirational -- a package
+    # that only exists when TARGET_MACHINE names it is a package the other
+    # model's printer can never install. It also keeps these three named
+    # literally here rather than through a variable, which is what
+    # qa/static/test_ipk.py reads to prove the payload and the .ipk come from
+    # one build.
+    bash pkgs/klipper-config/build.sh
+    bash pkgs/klipper-creator5-config/build.sh
+    bash pkgs/klipper-creator5pro-config/build.sh
+
+    cp -a "$(pkg_out klipper-config)/config/." "$MOD_PAYLOAD/config/"
+
+    # The model. TARGET_MACHINE names a package rather than selecting a file
+    # suffix; an unknown value is a build that stops rather than a payload
+    # with no chamber config in it, which is a printer whose klippy will not
+    # start (printer.base.cfg includes it unconditionally).
+    case "$TARGET_MACHINE" in
+        Creator5)    MODEL_PKG=klipper-creator5-config ;;
+        Creator5Pro) MODEL_PKG=klipper-creator5pro-config ;;
+        *) echo "no chamber-config package for TARGET_MACHINE=$TARGET_MACHINE" >&2
+           exit 1 ;;
+    esac
+    cp -a "$(pkg_out "$MODEL_PKG")/config/." "$MOD_PAYLOAD/config/"
+    say "Model: printer.chamber.cfg from anvil-$MODEL_PKG"
+
+    # The gate the suffixed-variant loop used to carry, kept and moved to
+    # where the file now is. A broken build, not a silent default.
+    [ -f "$MOD_PAYLOAD/config/printer.chamber.cfg" ] \
+        || { echo "no printer.chamber.cfg staged for TARGET_MACHINE=$TARGET_MACHINE" >&2; exit 1; }
 else
     skip "Toolchange"
 fi
@@ -207,9 +228,10 @@ else
     skip "Mainsail"
 fi
 # nginx.conf and moonraker.conf USED TO BE COPIED HERE and are shipped by
-# pkgs/anvil-core now, with the rest of the configuration this repo writes.
-# Copying them here as well would put two of the same file in the payload from
-# two places, which is the arrangement this migration exists to remove.
+# packages now -- nginx.conf by pkgs/anvil-core, moonraker.conf by
+# pkgs/moonraker with the server it configures. Copying them here as well
+# would put two of the same file in the payload from two places, which is the
+# arrangement this migration exists to remove.
 #
 # moonraker-custom.conf is the exception and stays: it is a USER SEAM.
 # moonraker.conf includes it by name, and run-append.sh creates it only when
@@ -298,13 +320,21 @@ fi
 # shape guard and the tests/__pycache__ trims went. They did not change; they
 # moved to the one place that produces this tree, so the .ipk and the payload
 # cannot end up containing different Moonrakers.
+#
+# MOONRAKER.CONF COMES WITH IT NOW, which is why this stages the whole package
+# rather than reaching for its moonraker/ directory. It used to be shipped by
+# anvil-core, unconditionally, which meant a BUILD_MOONRAKER=0 build still
+# overwrote the printer's moonraker.conf with one written for a server it was
+# not going to install -- [webcam anvil] and all. The flag is documented as
+# "leaves the stock server alone" (docs/building.md) and now it does.
 if [ "${BUILD_MOONRAKER:-1}" = "1" ]; then
     bash pkgs/moonraker/build.sh
     rm -rf "$MOD_PAYLOAD/moonraker"
-    cp -a "$(pkg_out moonraker)/moonraker" "$MOD_PAYLOAD/moonraker"
+    cp -a "$(pkg_out moonraker)/." "$MOD_PAYLOAD/"
+    rm -f "$MOD_PAYLOAD/.version"
     du -sh "$MOD_PAYLOAD/moonraker" | awk '{print "   "$1}'
 else
-    skip "Moonraker: keeping the stock 2022 build"
+    skip "Moonraker: keeping the stock 2022 build (and its config)"
 fi
 
 # ----------------------------------------------------------- 5. HelixScreen

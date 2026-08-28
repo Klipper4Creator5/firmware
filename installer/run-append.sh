@@ -257,8 +257,9 @@ sync
 # writing to it is the whole fix.
 
 # ---- klipper + moonraker configs -------------------------------------------
-# Every file here is one the mod ships (ff-*.cfg, moonraker.conf); printer.cfg
-# is the user's and is never shipped, so it is never a candidate.
+# Every file here is one the mod ships (ff-*.cfg, printer.chamber.cfg,
+# moonraker.conf); printer.cfg is the user's and is never shipped, so it is
+# never a candidate.
 #
 # Two rules, because the two kinds of file differ in whether the user has
 # somewhere else to put a change.
@@ -276,7 +277,8 @@ sync
 #
 # printer.base.cfg is on the same footing and needs no rule here: it installs
 # to /usr/prog/klipper/config with the software component, which a flash
-# replaces wholesale.
+# replaces wholesale. printer.chamber.cfg used to be beside it and is not any
+# more -- see the case below.
 #
 # moonraker.conf is KEPT when edited. It is not a Klipper config, there is no
 # include-and-override seam for it, and a printer that is reached through a
@@ -315,9 +317,18 @@ if [ -d $MODDIR/config ]; then
             fi
             continue
             ;;
-        ff-*.cfg)
+        ff-*.cfg|printer.chamber.cfg)
             # Ours. Overwrite and say so when it had drifted, so the log
             # explains where a local edit went.
+            #
+            # printer.chamber.cfg joined this branch when it became a package
+            # of its own. It used to ride the software component to
+            # /usr/prog/klipper/config and reach /usr/data/config only because
+            # the stock run.sh copies that whole directory -- so it was
+            # replaced wholesale by every flash and needed no rule here. Now
+            # it installs to $MODDIR/config like the ff-*.cfg and is
+            # overwritten on the same terms, which is what it always was: mod
+            # -owned, with printer.cfg as the place to override it.
             if [ -f "$live" ] && [ "`md5sum < "$live"`" != "`md5sum < "$source"`" ]; then
                 echo "config: $name overwritten (mod-owned; override it from printer.cfg)"
             fi

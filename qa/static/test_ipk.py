@@ -462,7 +462,8 @@ def test_the_package_and_the_payload_share_one_build():
     # agree with patch.sh by construction and assert nothing.
     staged = ("libsodium", "mainsail", "moonraker", "helixscreen",
               "skalibs", "execline", "s6", "s6-rc", "anvil-core", "python",
-              "klipper")
+              "klipper", "klipper-config", "klipper-creator5-config",
+              "klipper-creator5pro-config")
     for recipe in staged:
         d = recipe_dir(recipe)
         assert d is not None, (
@@ -971,6 +972,11 @@ def test_every_declared_dependency_is_a_package_this_feed_builds():
         provided.add(name)
         if _conf(recipe, "PKG_DEV_FILES"):
             provided.add(name + "-dev")
+        # A VIRTUAL NAME COUNTS AS PROVIDED, which is the whole point of
+        # Provides: anvil-klipper-config depends on "a chamber config" and
+        # either model package satisfies it. Without this the check would
+        # reject exactly the arrangement it exists to protect.
+        provided.update(_conf(recipe, "PKG_PROVIDES").split())
 
     for conf in RECIPES:
         recipe = conf.parent.name

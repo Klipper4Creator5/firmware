@@ -35,14 +35,24 @@ def root():
     return ROOT
 
 
-# The mod's Klipper config comes out of two recipes now. The ff-*.cfg
-# includes are anvil-core's and install to $MODDIR/config; printer.base.cfg
-# and the per-model chamber variants are pkgs/klipper's and are placed on the
-# firmware partition by bin/patch.sh, which is why they sit in prog/ rather
-# than payload/.
+# The mod's Klipper config comes out of four recipes, one per thing it is:
+# the ff-*.cfg includes, one chamber config per model, and printer.base.cfg,
+# which is still placed on the firmware partition by bin/patch.sh and so sits
+# in prog/ rather than payload/.
+#
+# The two model files are BOTH NAMED printer.chamber.cfg, because each is what
+# its package installs and only one is ever installed. Merging them into one
+# directory would have one silently overwrite the other, so they are merged
+# back under the suffixed names the tests know them by -- which is exactly
+# what they were called when one recipe held both.
 CFG_SOURCES = (
-    os.path.join(ROOT, "pkgs", "anvil-core", "payload", "config"),
-    os.path.join(ROOT, "pkgs", "klipper", "prog", "config"),
+    (os.path.join(ROOT, "pkgs", "klipper-config", "payload", "config"), None),
+    (os.path.join(ROOT, "pkgs", "klipper-config", "prog", "config"), None),
+    (os.path.join(ROOT, "pkgs", "moonraker", "payload", "config"), None),
+    (os.path.join(ROOT, "pkgs", "klipper-creator5-config",
+                  "payload", "config"), "creator5"),
+    (os.path.join(ROOT, "pkgs", "klipper-creator5pro-config",
+                  "payload", "config"), "creator5pro"),
 )
 
 
@@ -61,11 +71,16 @@ def cfgdir(tmp_path_factory):
     In the repo, so this still needs no firmware.
     """
     d = tmp_path_factory.mktemp("cfg")
-    for src in CFG_SOURCES:
+    for src, suffix in CFG_SOURCES:
         for name in sorted(os.listdir(src)):
             path = os.path.join(src, name)
-            if os.path.isfile(path):
-                shutil.copy2(path, str(d / name))
+            if not os.path.isfile(path):
+                continue
+            dest = "%s.%s" % (name, suffix) if suffix else name
+            assert not (d / dest).exists(), (
+                "two recipes ship %s and the merged view cannot hold both -- "
+                "one would silently overwrite the other" % dest)
+            shutil.copy2(path, str(d / dest))
     return str(d)
 
 

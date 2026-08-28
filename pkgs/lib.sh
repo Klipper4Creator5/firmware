@@ -168,6 +168,7 @@ pkg_dir() {
 pkg_conf() {
     PKG_NAME=''; PKG_VERSION=''; PKG_RELEASE=1; PKG_SECTION=libs
     PKG_ROOT=''; PKG_EXCLUDE=''; PKG_DEPENDS=''; PKG_BUILD_DEPENDS=''
+    PKG_PROVIDES=''; PKG_CONFLICTS=''
     PKG_DESCRIPTION=''; PKG_ARCH="$IPK_ARCH"
     PKG_MAINTAINER='anvil <none@example.invalid>'
     PKG_STAMP_EXTRA=''; PKG_WHEN=''

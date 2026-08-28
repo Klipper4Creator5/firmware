@@ -231,6 +231,20 @@ for r in "${RECIPES[@]}"; do
                 printf 'Section: %s\n' "$_sect"
                 printf 'Priority: optional\n'
                 [ -n "$_dep" ] && printf 'Depends: %s\n' "$_dep"
+                # PROVIDES AND CONFLICTS, TOGETHER, BECAUSE THEY ONLY WORK
+                # TOGETHER. A virtual name that several packages Provide lets
+                # a dependency be satisfied by any one of them -- which is
+                # what "install either chamber config" means -- and on its own
+                # it also lets a printer install BOTH, whereupon two packages
+                # own one path and opkg resolves that by letting whichever
+                # unpacked last win, silently. Conflicts on the same virtual
+                # name is what makes "either" mean "exactly one".
+                # shellcheck disable=SC2086
+                [ -n "$PKG_PROVIDES" ] \
+                    && printf 'Provides: %s\n' "$(echo $PKG_PROVIDES)"
+                # shellcheck disable=SC2086
+                [ -n "$PKG_CONFLICTS" ] \
+                    && printf 'Conflicts: %s\n' "$(echo $PKG_CONFLICTS)"
                 printf 'Description: %s\n' "$_desc"
             } > "$_lay/CONTROL/control"
 

@@ -59,7 +59,7 @@ echo "$SRC"          > work/.source_pkg
 # A warning, not a gate: their file changing is news, not a broken build, and
 # it can only happen when you point the build at a new stock package.
 STOCK_BASE=work/software/klipper/config/printer.base.cfg
-OURS=pkgs/klipper/prog/config/printer.base.cfg
+OURS=pkgs/klipper-config/prog/config/printer.base.cfg
 if [ -f "$STOCK_BASE" ] && [ -f "$OURS" ]; then
     # Compare only the section/option lines: comments and blank lines differ by
     # design, our chamber include replaces their heater block, and the ff-*.cfg

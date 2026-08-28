@@ -136,6 +136,30 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
                                           || bad "mod payload missing init.d services"
     grep -q 'init.d/S70klipper' <<<"$LIST" && ok "mod payload owns Klipper startup" \
                                           || bad "mod payload missing S70klipper -- Klipper would never start"
+    # THE KLIPPER CONFIG, WHICH IS THREE PACKAGES AND ONE DIRECTORY. Both
+    # halves are checked because they fail differently and neither failure is
+    # visible until klippy starts.
+    #
+    # printer.base.cfg has a bare [include printer.chamber.cfg] and Klipper
+    # treats a missing include as fatal, so a payload without a chamber config
+    # is a printer that comes up with no motion and no heaters -- and the file
+    # moved recently, from riding the software component to /usr/prog into a
+    # package of its own per model, which is exactly when a staging line gets
+    # dropped. The ff-*.cfg are the toolchanger itself: without them klippy
+    # starts fine and the machine is a single-tool printer that reports no
+    # error anywhere.
+    #
+    # Only when the toolchanger is in this build. BUILD_TOOLCHANGE=0 ships
+    # neither these nor our printer.base.cfg, which is a coherent package and
+    # not a broken one.
+    if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
+        grep -q 'config/printer.chamber.cfg' <<<"$LIST" \
+            && ok "mod payload carries a chamber config (printer.base.cfg includes it unconditionally)" \
+            || bad "mod payload has no config/printer.chamber.cfg -- klippy will not start"
+        grep -q 'config/ff-toolchange.cfg' <<<"$LIST" \
+            && ok "mod payload carries the toolchanger config" \
+            || bad "mod payload has no config/ff-*.cfg -- klippy starts as a single-tool printer, silently"
+    fi
     # The manifest is what the NEXT update deletes before it extracts. A
     # payload shipping without one still installs fine -- run-append.sh falls
     # back to the old seven-directory rm -rf -- but every printer that takes

@@ -27,12 +27,26 @@
 #       that copies it only when the real file is absent -- which needs
 #       maintainer-script support that pkgs/lib.sh does not have yet.
 #
-# WHAT LIVES UNDER ANOTHER RECIPE, because ownership follows the component:
-# Klipper's launcher, its klippy extras and its printer.*.cfg are pkgs/klipper's
-# (in prog/, for now, for the same /usr/prog reason); moonraker-custom.conf is
-# pkgs/moonraker's. The Klipper .cfg files still in payload/config/ below are
-# the ones anvil-core has always shipped and they move next, with the
-# ownership shift -- this file is a move, not a repackaging.
+# WHAT LIVES UNDER ANOTHER RECIPE, because ownership follows the component.
+# This package used to hold all of it, for no better reason than being the
+# first recipe written:
+#
+#   moonraker.conf, moonraker-custom.conf     pkgs/moonraker
+#   ff-*.cfg                                  pkgs/klipper-config
+#   printer.chamber.cfg, per model            pkgs/klipper-creator5-config,
+#                                             pkgs/klipper-creator5pro-config
+#   start.sh, klippy extras, printer.base.cfg pkgs/klipper (in prog/)
+#
+# WHAT STAYS, AND WHY IT IS NOT THE SAME QUESTION. init.d/ and etc/s6/ look
+# like they belong to the services they start -- S62moonraker to Moonraker,
+# S70klipper to Klipper -- and moving them would brick a printer. Those
+# services are gated at RUNTIME by flags in anvil.conf, and the packages that
+# would own the scripts are gated at BUILD time by BUILD_KLIPPER and
+# BUILD_HELIX. A BUILD_KLIPPER=stock tarball has no anvil-klipper package, so
+# it would ship no S70klipper, and nothing would start Klipper at all. The
+# scripts that read a flag must not themselves be behind a second, different
+# flag. nginx.conf stays for a plainer reason: nginx is the rootfs's binary
+# and there is no package here to give it to.
 #
 # THE s6 SERVICE DEFINITIONS ARE HERE, for now, and that is a decision with a
 # short shelf life. Today payload/etc/s6/ is a plain s6-svscan scandir: text

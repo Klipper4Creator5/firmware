@@ -449,6 +449,26 @@ tarball becomes a view of the feed" below already assumes. The trap there is
 BUILD CONTAINER's root, the staging tree gets nothing, and the build stays
 green.
 
+**Ownership followed, once the files could be seen.** `anvil-core` had held
+everything of ours for no better reason than being the first recipe written,
+and with the files visible per-recipe the misfilings were obvious:
+`moonraker.conf` went to `pkgs/moonraker` with the server it configures, the
+`ff-*.cfg` to `pkgs/klipper-config`, and the two per-model chamber configs
+became `anvil-klipper-creator5-config` and `anvil-klipper-creator5pro-config`
+— which is the first use of `Provides`/`Conflicts` in this feed, on a virtual
+`anvil-klipper-chamber-config` that either satisfies and neither may share.
+The model stopped being a property of the build: two builds of one commit used
+to produce different bytes under one version number, with nothing in the feed
+or on the printer recording which machine they were for.
+
+Two flags became honest as a side effect, and both are behaviour changes worth
+knowing about. `BUILD_TOOLCHANGE=0` used to ship the toolchanger's `.cfg`
+anyway, because they rode in `anvil-core` while everything else the flag
+controls was gated; it no longer does. `BUILD_MOONRAKER=0` used to overwrite
+the printer's `moonraker.conf` with one written for a server it was not going
+to install; it no longer does, which is what `docs/building.md` already said
+the flag meant.
+
 **What it cost and what it caught.** Nothing shipped changed: all 41 packages
 are byte-identical across the move. It did surface one live bug --
 HelixScreen's `printer_database.d` entry was hashed into ANVIL-CORE's
