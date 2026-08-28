@@ -457,6 +457,11 @@ and with the files visible per-recipe the misfilings were obvious:
 became `anvil-klipper-creator5-config` and `anvil-klipper-creator5pro-config`
 — which is the first use of `Provides`/`Conflicts` in this feed, on a virtual
 `anvil-klipper-chamber-config` that either satisfies and neither may share.
+The dependency runs from the model package to the shared one and not the
+other way: `opkg install anvil-klipper-config` would otherwise resolve the
+virtual name by picking whichever provider it found first, which is a coin
+flip between two files describing different hardware. The model is the one
+fact opkg cannot work out for itself, so it is the name you install.
 The model stopped being a property of the build: two builds of one commit used
 to produce different bytes under one version number, with nothing in the feed
 or on the printer recording which machine they were for.
