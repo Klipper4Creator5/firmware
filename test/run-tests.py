@@ -200,11 +200,10 @@ def run_pytest(reporter):
 
     passed = total - failures - skipped
     # A run that collected nothing is not a pass. pytest exits 5 and writes
-    # tests="0", which used to give passed=0/failures=0/skipped=0 and a green
-    # gate -- so renaming test/integration/, breaking a conftest import or
-    # adding a collect_ignore would silently stop the whole Python lane while
-    # make test and CI stayed green. That is the exact failure this harness
-    # was written to end (see test-abi.sh in docs/testing.md).
+    # tests="0", which reads as passed=0/failures=0/skipped=0 and a green gate
+    # -- so renaming test/integration/, breaking a conftest import or adding a
+    # collect_ignore would silently stop the whole Python lane while make test
+    # and CI stayed green.
     if not total:
         raise Fail("pytest collected no tests (exit %d) -- collection is "
                    "broken, or the suite has moved" % completed.returncode)
@@ -278,16 +277,16 @@ def make_fixture(reporter, tmp):
     subprocess.run(["tar", "-czf", str(assets / "moonraker.tar.gz"),
                     "-C", str(assets / "mr"), "moonraker-fixture"], check=True)
 
-    # A throwaway config, passed through CONFIG_ENV. It used to overwrite
-    # ./config.env and copy it back afterwards, which put the config you
-    # edited one crashed run away from being replaced by a fixture one.
+    # A throwaway config, passed through CONFIG_ENV rather than written over
+    # ./config.env -- which would put the config you edited one crashed run
+    # away from being replaced by a fixture one.
     config_file = Path(tmp) / "config.env"
     # BUILD_KLIPPER=stock, BY NAME: this job must not need the network, and
     # the fork path needs the pinned tarball plus the ~203MB toolchain from
-    # vendor/. patch.sh no longer falls back silently -- KLIPPER_FORK="" here
-    # used to mean "quietly keep the stock tree", which is exactly how
-    # v20260824 shipped without its Klipper. The fork path is exercised where
-    # vendor/ exists: the printer-sim job and the release workflow.
+    # vendor/. Named explicitly because patch.sh refuses to fall back silently
+    # -- a fork build that quietly kept the stock tree is how v20260824 shipped
+    # without its Klipper. The fork path is exercised where vendor/ exists: the
+    # printer-sim job and the release workflow.
     config_file.write_text(
         "MOD_NAME=anvil\n"
         "MOD_VER=ci\n"

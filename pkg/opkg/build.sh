@@ -1,48 +1,29 @@
 #!/usr/bin/env bash
 # opkg -- the package manager itself, cross-compiled for the printer.
 #
-# THIS RECIPE USED TO BUILD THREE THINGS. It unpacked zlib, built it into a
-# private sysroot, unpacked libarchive, built that against it, and then finally
-# built opkg -- one script, three libraries, one shipped binary. Both of those
-# libraries are now packages of their own, and the only trace left here is the
-# PKG_BUILD_DEPENDS line in pkg.conf. What that bought: zlib is compiled once
-# for this and for CPython instead of twice, either dependency can be bumped
-# without touching this file, and the .ipk files they produce are checked --
-# by this build failing -- to actually contain the headers a consumer needs.
+# NOTHING WAITS FOR opkg. The package manager does not have to be built first
+# to install everyone else's build dependencies: pkg_deps fills a sysroot with
+# opkg-unbuild, upstream's own inverse of opkg-build. So there is no bootstrap
+# stage and no qemu in the build path -- opkg is an ordinary recipe that builds
+# late only because it has two dependencies.
 #
-# opkg IS NOT SPECIAL AND NOTHING WAITS FOR IT. It would be natural to assume
-# the package manager has to be built first so that it can install everything
-# else's build dependencies. It does not: pkg_deps fills a sysroot with
-# opkg-unbuild, which is upstream's own inverse of opkg-build and comes out of
-# the same pinned opkg-utils checkout. So there is no bootstrap stage and no
-# qemu in the build path -- opkg is an ordinary recipe that happens to build
-# late because it has two dependencies.
-#
-# THE PREFIX IS PART OF THE ABI HERE, and it is the single thing most likely to
-# be got wrong by whoever bumps this next. opkg BAKES ITS STATE DIRECTORY IN AT
-# COMPILE TIME: an opkg configured --prefix=/usr/local looks for its status
-# file in /usr/local/var/lib/opkg no matter what --offline-root it is handed at
-# runtime. Measured from both sides -- an x86-64 opkg built --prefix=/usr/local
-# looked there, and a mipsel one built this way put its status file at
-# /usr/data/anvil/var/lib/opkg, which is only where pkg/ipk-install writes
-# because the two agree rather than by coincidence. Configured anywhere but
-# $MODDIR it comes up believing nothing is installed and reinstalls the world.
-# Same trap as s6's baked-in libexecdir and execline's shebangdir; three for
-# three, and the reason $MODDIR lives in bin/common.sh where a recipe cannot
-# spell it differently.
+# THE PREFIX IS PART OF THE ABI HERE, and the thing most likely to be got wrong
+# by whoever bumps this next: opkg bakes its state directory in at compile
+# time, so one configured --prefix=/usr/local looks for its status file in
+# /usr/local/var/lib/opkg whatever --offline-root it is handed at runtime.
+# Built this way it lands at /usr/data/anvil/var/lib/opkg, which is where
+# pkg/ipk-install writes. Configured anywhere but $MODDIR it comes up believing
+# nothing is installed and reinstalls the world. Same trap as s6's baked-in
+# libexecdir and execline's shebangdir, and the reason $MODDIR lives in
+# bin/common.sh where a recipe cannot spell it differently.
 #
 # DYNAMIC AGAINST THE PRINTER'S glibc, STATIC FOR EVERYTHING ELSE. zlib and
 # libarchive exist in the sysroot only as .a, so they end up inside the binary
-# and there is no libarchive.so or libz.so to ship or to find. libc is the one
-# thing linked dynamically, and it is the same libc.so.6 2.29 the interpreter
-# already links -- so this adds no dependency the payload did not have. An
-# earlier revision linked opkg fully static against musl; that made it the only
-# thing in the tree with a second libc, and a second libc means a second copy
-# of every library both worlds want, which a feed cannot express without lying
-# about one of them.
+# and there is no libarchive.so or libz.so to ship or find. libc is the one
+# dynamic link, and it is the libc.so.6 2.29 the interpreter already uses.
 #
-# WHAT SHIPS IS ONE FILE: $MODDIR/bin/opkg. Not lib/libopkg.a (a static archive
-# nothing on a printer links against), not include/, not the pkgconfig .pc.
+# WHAT SHIPS IS ONE FILE: $MODDIR/bin/opkg. Not lib/libopkg.a, not include/,
+# not the pkgconfig .pc.
 set -euo pipefail
 . "$(dirname "$0")/../../bin/common.sh"
 . pkg/lib.sh
@@ -52,12 +33,10 @@ pkg_toolchain
 pkg_deps
 pkg_unpack "$OPKG_TGZ"
 
-# --disable-curl and --disable-ssl-curl: opkg's downloader is for fetching from
-#   a feed over the network, which is phase 3 of docs/notes/85-packaging.md and
-#   not this. Leaving them on would drag libcurl and OpenSSL into the binary
-#   for a capability nothing uses yet. When phase 3 arrives this is the line
-#   that changes, and it changes here rather than in nine places.
-# --disable-gpg: same argument. Feed signing is usign or gpg and is phase 3.
+# --disable-curl and --disable-ssl-curl: opkg's downloader fetches from a feed
+#   over the network, which is phase 3 of docs/notes/85-packaging.md. Leaving
+#   them on drags libcurl and OpenSSL into the binary for nothing.
+# --disable-gpg: same argument -- feed signing is phase 3 too.
 # --disable-shared: libopkg would otherwise be a .so that the opkg binary needs
 #   at runtime, which is an LD_LIBRARY_PATH entry for no reason.
 # PKG_CONFIG="pkg-config --static" is not decoration: libarchive.pc lists -lz
@@ -74,12 +53,9 @@ pkg_build "opkg-$OPKG_VERSION" \
 
 pkg_ship "bin/opkg"
 
-# THE LINK HAS TO BE WHAT IT WAS ASKED TO BE, checked rather than assumed. An
-# opkg that picked up a shared libarchive or libz would run perfectly here and
-# fail on the printer at the first missing .so, and the message would name a
-# library rather than a link flag. libc is expected and everything else is not,
-# so the check is spelled that way round: anything NEEDED that is not a libc is
-# a dependency nobody decided to take.
+# THE LINK HAS TO BE WHAT IT WAS ASKED TO BE. An opkg that picked up a shared
+# libarchive or libz would run perfectly here and fail on the printer at the
+# first missing .so, naming a library rather than a link flag.
 _needed=$(readelf -d "$OPKG_BUILD/bin/opkg" 2>/dev/null \
     | awk '/NEEDED/{gsub(/[][]/,"",$5); print $5}')
 case "$_needed" in

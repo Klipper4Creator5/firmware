@@ -662,11 +662,10 @@ def test_an_error_naming_no_board_still_reports_something(tmp_path, stack,
 
 # -- owning klipper's start ------------------------------------------------
 #
-# This is the job init.d/S70klipper used to do by tailing printer.log, which
-# was the only signal a shell script had. The reason it moved is that the
-# retry which actually fixes a stranded board is "hand it over again, then
-# reopen the port" -- so the thing doing the handshake has to be the thing
-# restarting klippy.
+# Owned here rather than by init.d/S70klipper tailing printer.log, which is the
+# only signal a shell script has: the retry that actually fixes a stranded
+# board is "hand it over again, then reopen the port", so the thing doing the
+# handshake has to be the thing restarting klippy.
 
 
 class FakeKlipper:

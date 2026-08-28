@@ -72,11 +72,9 @@ PREFIX = {"S40s6": "s6", "S50wifi": "wifi", "S60nginx": "nginx",
 # There is no payload-install fixture and no supervisor-staging fixture. The
 # `printer` fixture (qa/replica/conftest.py) is already a machine that had the
 # real package installed by its own app_startup.sh, so the payload is where the
-# installer put it and s6 is the cross-built one the package ships. The
-# stand-in scanner this file used to carry -- and the s6_real flag that gated
-# one test on whether it was in use -- were both artefacts of hand-placing
-# payload/, which could not deliver a binary that only exists as a build
-# output. They are gone with it.
+# installer put it and s6 is the cross-built one the package ships. Nothing
+# here stands in a scanner: hand-placing payload/ cannot deliver a binary that
+# only exists as a build output.
 
 
 @pytest.fixture(scope="module")

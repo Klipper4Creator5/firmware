@@ -2,14 +2,11 @@
 # Does the s6 the BUILD produced actually supervise on the printer's own
 # kernel? Behaviour only -- no greps.
 #
-# WHAT THIS USED TO BE. It was a comparison: s6 and runit, side by side, on
-# the replica. That question is answered -- the measurements and the reasons
-# are written down in tools/supervisor/README.md, and s6 won on readiness
-# notification, the one thing runit has no concept of. Nothing builds runit
-# any more, so a gate that still expected runit/ in the tarball could only
-# ever be fed a hand-made one; this one is fed `bin/` and `libexec/` straight
-# out of work/.s6, which is what bin/patch.sh stages into the payload. The
-# contrast note in section 3 is left in because it is why we are here.
+# The supervisor choice itself is settled -- s6 over runit, on readiness
+# notification, which runit has no concept of; the measurements are in
+# tools/supervisor/README.md, and the contrast note in section 3 is why we are
+# here. This gate is fed the `bin/` and `libexec/` the recipes produced, which
+# is what bin/patch.sh stages into the payload.
 #
 # s6 has its own prefix baked in at compile time, so it can only be unpacked
 # where it was configured to live: /usr/data/anvil, the mod's prefix root.

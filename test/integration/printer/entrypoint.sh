@@ -44,9 +44,9 @@ fi
 /opt/printer/assemble.sh
 
 # A real /usr/prog, if we were given one. It goes in before anything else so
-# that nothing -- the stock installer included -- can silently shadow a
-# genuine file. (There are no stubs any more: seed-prog.sh hard-fails rather
-# than substituting anything.)
+# that nothing -- the stock installer included -- can silently shadow a genuine
+# file. There are no stubs: seed-prog.sh hard-fails rather than substituting
+# anything.
 if [ -n "${PROG_DUMP:-}" ] && [ -e "$PROG_DUMP" ]; then
     # A dump may be a whole-filesystem factory image rooted at usr/prog/... ,
     # or hold the contents of /usr/prog directly. Decide by what is actually

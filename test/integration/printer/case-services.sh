@@ -1,21 +1,17 @@
 #!/bin/sh
 # Do our init.d services all behave like the same kind of thing?
 #
-# WHY THIS EXISTS -- the five services used to be five one-off scripts. Each
-# had grown its own way of asking "is it running" (a pidfile and kill -0, a
-# `ps | grep`, a `pgrep -f` with a ps fallback, a socket test), its own
-# spelling of the log lines, and its own `case "$1"` block with subtly
-# different verbs and exit codes. Two real bugs lived in that drift: a stop
+# WHY THIS EXISTS. anvil-service.sh makes each of these decisions once --
+# liveness, log spelling, the verb block -- and this gate is what stops the
+# services drifting apart again. Two real bugs came out of that drift: a stop
 # that returned before the process was gone, so the restart that followed saw
-# it still in the process table and declined to start anything; and a status
-# that read a socket klippy does not unlink on exit, so a dead klippy reported
-# itself running and `restart` did nothing at all.
+# it in the process table and declined to start anything; and a status that
+# read a socket klippy does not unlink on exit, so a dead klippy reported
+# itself running.
 #
-# anvil-service.sh exists to make those one decision each instead of five.
-# This gate is what stops them drifting apart again. It is deliberately NOT a
-# grep over the scripts -- that would pass on a service that cannot start
-# anything and fail on a rename. It installs the payload and RUNS every
-# service, on the printer's own busybox, and asserts on what came back.
+# Deliberately NOT a grep over the scripts -- that would pass on a service that
+# cannot start anything and fail on a rename. It installs the payload and RUNS
+# every service, on the printer's own busybox, and asserts on what came back.
 #
 # What it does NOT do is start real daemons: that is case-moonraker.sh's job
 # for the web stack, and wifi/camera/klipper need hardware the replica has

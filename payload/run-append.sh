@@ -35,21 +35,16 @@ if [ -n "$MODTAR" ]; then
         # brightness, theme, log level, touch calibration and spool assignments
         # all live in it.
         #
-        # Backed up here, before either deletion path below runs (manifest or
-        # compatibility sweep -- both remove $MODDIR/helixscreen), and restored
-        # after extraction. The tarball ships a seeded config/settings.json of
-        # its own that would otherwise land on top -- complete with
-        # "wizard_completed": false, so the printer came back asking to be set
-        # up from scratch.
+        # Backed up before either deletion path below runs (manifest or
+        # compatibility sweep -- both remove $MODDIR/helixscreen) and restored
+        # after extraction. The tarball ships a seeded settings.json of its own,
+        # with "wizard_completed": false, that would otherwise land on top.
         #
-        # The list is HelixScreen's own (HELIX_USER_CONFIG_FILES in its
-        # install.sh, which backs these up and restores them around an
-        # upgrade). The mod never runs that installer -- it extracts the
-        # release tarball directly -- so the same job has to happen here.
-        # settings.json.backup rides along because Config::init falls back to
-        # it when the live file is missing or has no config_version; carrying
-        # the settings forward but not their backup would leave a rollback
-        # pointing at factory defaults.
+        # The list is HelixScreen's own HELIX_USER_CONFIG_FILES, from the
+        # install.sh the mod never runs -- it extracts the release tarball
+        # directly -- so the same job has to happen here. settings.json.backup
+        # rides along because Config::init falls back to it when the live file
+        # is missing or has no config_version.
         HELIX_USER_FILES="settings.json settings.json.backup helixscreen.env
                           .disabled_services tool_spools.json crash_history.json"
         HELIX_KEEP=/tmp/anvil-helix-keep
@@ -62,32 +57,21 @@ if [ -n "$MODTAR" ]; then
         # Remove what the PREVIOUS payload installed -- exactly that, and
         # nothing else.
         #
-        # THE PROPERTY THIS HAS TO KEEP, which is why anything is removed at
-        # all rather than just extracted over: init.d scripts used to be
-        # overwritten in place and never removed, which was harmless only
-        # while the set of filenames never changed. It does change: S60web was
-        # split into S60nginx and S62moonraker, and on a printer that already
-        # had the mod the old S60web survived the update and sat next to both
-        # new scripts. firmwareExe runs every executable $MODDIR/init.d/S* in
-        # filename order, so nginx and moonraker would each have been started
-        # twice, by two scripts that disagree about where moonraker even
-        # lives. The installed set must end up exactly the shipped set.
+        # THE PROPERTY THIS HAS TO KEEP, and why anything is removed rather
+        # than just extracted over: the installed set must end up exactly the
+        # shipped set. Overwriting in place is harmless only while the set of
+        # filenames never changes, and it does -- S60web was split into
+        # S60nginx and S62moonraker, and the old S60web survived the update and
+        # sat next to both. firmwareExe runs every executable $MODDIR/init.d/S*
+        # in filename order, so nginx and moonraker each started twice, from
+        # two scripts that disagree about where moonraker lives.
         #
-        # HOW IT USED TO BE KEPT, and why that had to stop: this line was
-        #     rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx ... $MODDIR/init.d
-        # -- seven whole directories, wiped on every update. That is correct
-        # only while every single file under them is ours, and it stops being
-        # correct the moment anything else lives there. $MODDIR/bin is where a
-        # supervisor, and later a Python, are going to live; it is also the
-        # obvious place for someone to drop a script of their own. All of it
-        # was destroyed by the installer, silently, on every update.
-        #
-        # So bin/patch.sh now ships a manifest of every path the payload
-        # installs -- one path per line, relative to $MODDIR, files and
-        # directories both, the manifest itself included. Deleting what the
-        # LAST manifest lists keeps the property above (a script the last
-        # payload shipped and this one does not is named in that list, so it
-        # still goes) without touching one byte we did not put there.
+        # bin/patch.sh ships a manifest of every path the payload installs --
+        # one per line, relative to $MODDIR, files and directories both, itself
+        # included. Deleting what the LAST manifest lists keeps that property
+        # (a script the last payload shipped and this one does not is named in
+        # that list, so it still goes) without touching a byte we did not put
+        # there.
         MOD_MANIFEST=$MODDIR/.install-manifest
         if [ -s "$MOD_MANIFEST" ]; then
             # Work from a copy in /tmp. The manifest lists itself, so the
@@ -135,17 +119,14 @@ if [ -n "$MODTAR" ]; then
             echo "previous install removed (manifest)"
         else
             # ---- COMPATIBILITY: an install that predates the manifest ------
-            # Printers running any package built before this change have no
-            # $MODDIR/.install-manifest, and there is no way to work out after
-            # the fact which files that package installed. The only honest
-            # answer for them is the old one, so this is exactly the rm -rf
-            # that used to be here, unchanged: without it an upgrade off one
-            # of those versions would leave every renamed init script in
-            # place, which is the double-start failure described above.
+            # Those printers have no $MODDIR/.install-manifest and there is no
+            # way to work out after the fact what they installed, so the whole
+            # directory sweep is the only honest answer: without it an upgrade
+            # off one of them leaves every renamed init script in place, which
+            # is the double-start failure described above.
             #
-            # -s rather than -f on purpose: a zero-byte manifest is a broken
-            # install, not a payload that shipped nothing, and the sweep is
-            # the conservative answer to it.
+            # -s rather than -f: a zero-byte manifest is a broken install, not
+            # a payload that shipped nothing.
             #
             # DELETE THIS BRANCH once no pre-manifest install can still be
             # upgraded in the field -- it is the one piece of this installer
@@ -153,19 +134,13 @@ if [ -n "$MODTAR" ]; then
             rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen $MODDIR/config $MODDIR/moonraker $MODDIR/init.d
             echo "previous install removed (no manifest -- pre-manifest layout)"
         fi
-        # init.d GETS THIS EVEN IN THE MANIFEST BRANCH, and unconditionally --
-        # a diff against the last manifest only knows about files THAT
-        # manifest tracked, so a script from further back than the last
-        # install (planted by hand, restored from a backup, or left over from
-        # the one pre-manifest jump every printer takes exactly once) is
-        # invisible to it and survives forever. That is an acceptable gap for
-        # $MODDIR/bin or $MODDIR/config, where something that is not ours
-        # might legitimately live -- it is not acceptable here: firmwareExe
-        # runs every executable $MODDIR/init.d/S* in filename order, so an
-        # orphan does not just sit unused, it starts a second copy of
-        # whatever it launches. Nothing outside the payload has any business
-        # writing to this directory, so clearing it outright costs nothing a
-        # real install would miss.
+        # init.d GETS THIS EVEN IN THE MANIFEST BRANCH: a manifest only knows
+        # the files IT tracked, so a script from further back (planted by hand,
+        # restored from a backup, left over from the one pre-manifest jump) is
+        # invisible to it and survives forever. Tolerable in $MODDIR/bin or
+        # $MODDIR/config, where something not ours might legitimately live --
+        # not here, where firmwareExe runs every executable S* in filename
+        # order and an orphan starts a second copy of whatever it launches.
         rm -rf $MODDIR/init.d
         mkdir -p $MODDIR
         # Try xz first (FlashForge's own factory installer uses `xz -dc`, so
@@ -218,43 +193,12 @@ fi
 sync
 
 # ---- Moonraker -------------------------------------------------------------
-# Nothing to do here any more. The payload extracted above already IS the
-# installation: bin/patch.sh stages Moonraker's python package into the
-# payload, so once the tarball lands the entry point exists at
-# $MODDIR/moonraker/moonraker.py, and the init script starts the server from
-# exactly there.
-#
-# What used to sit here was a SECOND copy of that identical tree, into
-# /usr/prog/moonraker/moonraker/, and every reason for it turned out to be
-# wrong:
-#
-#   * /usr/prog is the FIRMWARE partition. The header of this very script says
-#     the payload is "Never unpacked into /usr/prog: the firmware partition has
-#     no room for ~100MB of web UI" -- and then this block copied a Moonraker
-#     tree there anyway. It was the only step of the install that could fail on
-#     disk space, and the way it failed was "this printer has no working web
-#     UI".
-#   * It bought nothing: the staged $MODDIR/moonraker was never deleted
-#     afterwards, so the printer carried two byte-identical trees -- one on the
-#     partition that has room, one on the partition that does not.
-#   * /usr/prog is what a stock FlashForge flash overwrites, while
-#     /usr/data/anvil survives one. So the copy meant that flashing stock
-#     firmware silently reverted Moonraker to FlashForge's 2022 build while the
-#     rest of the mod stayed exactly where it was -- reintroducing the "which
-#     Moonraker is this printer actually running?" ambiguity that the previous
-#     commit existed to end.
-#
-# The two things that supposedly pinned Moonraker to /usr/prog do not hold.
-# The moonraker-env virtualenv sitting beside it is unused: imports resolve
-# from /usr/prog/Python-3.8.2/lib/python3.8/site-packages -- verified by
-# running the printer's own interpreter on the real image, where moonraker-env
-# is not on sys.path at all. And moonrakerDaemon, which did exec the tree by
-# absolute path, is never invoked any more; the mod's init script starts
-# moonraker itself.
-#
-# FlashForge's tree is deliberately left where it is. Deleting it would be a
-# migration that buys nothing on a partition that is not ours; simply not
-# writing to it is the whole fix.
+# Nothing to do here. The extracted payload already IS the installation: the
+# entry point lands at $MODDIR/moonraker/moonraker.py and the init script
+# starts the server from there. Nothing is written to /usr/prog -- it is the
+# firmware partition, with no room to spare, and it is what a stock FlashForge
+# flash overwrites while /usr/data/anvil survives one. FlashForge's own tree is
+# left where it is and simply never used.
 
 # ---- klipper + moonraker configs -------------------------------------------
 # Every file here is one the mod ships (ff-*.cfg, moonraker.conf); printer.cfg
@@ -263,33 +207,25 @@ sync
 # Two rules, because the two kinds of file differ in whether the user has
 # somewhere else to put a change.
 #
-# ff-*.cfg are OURS, and are overwritten every update, no questions asked.
-# They are the mod's moving parts -- macros and sections that a release
-# rewrites -- and Klipper hands the user a better seam than editing them:
-# parsing is RawConfigParser(strict=False), so same-named sections MERGE, the
-# last value of an option wins, and a redefined [gcode_macro] replaces the
-# original. Overriding from printer.cfg AFTER the include therefore costs
-# nothing and survives every flash, while an edit here is silently reverted by
-# the next one. Each file says so in its own header. This also makes the
-# shipped set the same on every printer, which is what makes a bug report
-# mean anything.
+# ff-*.cfg are OURS and are overwritten every update, no questions asked.
+# Klipper hands the user a better seam than editing them: parsing is
+# RawConfigParser(strict=False), so same-named sections MERGE, the last value
+# of an option wins, and a redefined [gcode_macro] replaces the original.
+# Overriding from printer.cfg AFTER the include survives every flash, while an
+# edit here is reverted by the next one. Each file says so in its header.
 #
 # printer.base.cfg is on the same footing and needs no rule here: it installs
 # to /usr/prog/klipper/config with the software component, which a flash
 # replaces wholesale.
 #
-# moonraker.conf is KEPT when edited. It is not a Klipper config, there is no
-# include-and-override seam for it, and a printer that is reached through a
-# tuned trusted_clients or cors_domains block would lose that access on an
-# update. So it still gets the compare-and-.mod-new dance: a file still
-# byte-identical to the one the LAST package wrote is ours to update, one that
-# differs is the user's to keep. $MODDIR/config-installed holds that
-# last-written copy -- it is not in the rm -rf above, so it survives the
-# payload swap and is refreshed only after the comparison below.
-#
-# Without that snapshot a config we own could only ever be written once: it
-# exists on the second flash, so it would land as .mod-new forever and updates
-# would silently never reach the printer.
+# moonraker.conf is KEPT when edited. There is no include-and-override seam for
+# it, and a printer reached through a tuned trusted_clients or cors_domains
+# block would lose that access on an update. So it gets the compare-and-.mod-new
+# dance: still byte-identical to what the LAST package wrote means ours to
+# update, different means the user's to keep. $MODDIR/config-installed holds
+# that last-written copy -- it survives the payload swap and is refreshed only
+# after the comparison below. Without it a config we own could be written only
+# once, then land as .mod-new forever.
 #
 # First install after this rule arrives has no config-installed. An existing
 # file is then treated as edited -- .mod-new, the conservative answer -- UNLESS

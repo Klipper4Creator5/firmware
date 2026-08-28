@@ -10,23 +10,21 @@
 #                waited for. This machine takes its time: three of the four
 #                boards need a handshake before they answer (see
 #                bin/ff_mcu_bringup.py) and the heater board routinely costs
-#                klippy a restart or two. That wait used to happen behind a
-#                black screen with HelixScreen already up and reporting a
+#                klippy a restart or two. Without this the wait happens behind
+#                a black screen with HelixScreen up and reporting a
 #                disconnected printer, which tells an owner nothing about
 #                which board is missing.
 #
 #   FIRST BOOT   carry this unit's factory calibration from firmwareExe's JSON
 #                into Klipper, then stamp the install so it never runs again.
 #
-# WHY THIS IS ITS OWN PROGRAM. The migration used to live inside Klipper:
-# [ff_legacy] hooked klippy:ready, imported, and ran SAVE_CONFIG itself. That
-# put a Creator-5-specific one-time chore inside a general-purpose extra, on
-# the one event where the printer is least able to say whether the rest of the
-# machine is healthy -- klippy:ready fires with moonraker possibly not yet
-# listening and nginx possibly not yet serving. It is also the wrong lifetime:
-# a boot-time migration is a property of the INSTALL, not of every klippy
-# start, so it wants a stamp on disk rather than a "has anything been
-# calibrated yet" guess re-evaluated on every ready.
+# WHY THIS IS ITS OWN PROGRAM, rather than a klippy:ready hook in [ff_legacy].
+# klippy:ready is the one event where the printer is least able to say whether
+# the rest of the machine is healthy -- it fires with moonraker possibly not
+# yet listening and nginx possibly not yet serving. And a boot-time migration
+# is a property of the INSTALL, not of every klippy start, so it wants a stamp
+# on disk rather than a "has anything been calibrated yet" guess re-evaluated
+# on every ready.
 #
 # So it is a separate program, run from the firmwareExe wrapper before
 # HelixScreen:

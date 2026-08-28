@@ -368,31 +368,18 @@ def test_there_are_recipes():
 def test_a_recipe_does_not_rebuild_the_shared_parts(recipe):
     """No recipe carries its own copy of the cross-build.
 
-    This is the gate for the thing that was already going wrong before pkg/
-    existed: bin/patch.sh had the toolchain-unpack, the gcc-wrapper trick and
-    the configure/make/install dance written out three times, for s6, CPython
-    and libsodium, and the copies had drifted -- one gated its compiler wrapper
-    before trusting it and the others did not.
+    A recipe goes through pkg/lib.sh rather than spelling the
+    toolchain-unpack, the gcc-wrapper trick and the configure/make/install
+    dance again -- copies of those drift, and one that forgets to gate its
+    compiler wrapper before trusting it ships the wrong ABI. Checked by looking
+    for the shapes that mean "I wrote my own": a gcc wrapper heredoc, a bare
+    ./configure --host, an untarred toolchain.
 
-    So a recipe must go through pkg/lib.sh rather than spell those steps again.
-    Checked by looking for the shapes that mean "I wrote my own": a gcc wrapper
-    heredoc, a bare ./configure --host, an untarred toolchain. A recipe that
-    genuinely needs something pkg/lib.sh cannot express should GROW pkg/lib.sh,
-    which is the entire point.
-
-    THERE ARE NO EXCEPTIONS ANY MORE. zlib used to be one, allowed by name:
-    its configure has never accepted --host, so the recipe ran it inline with
-    CHOST in the environment. Then bzip2 arrived with no configure at all and
-    OpenSSL with a ./Configure that takes a target name, and each got a verb of
-    its own -- three mechanisms with one user apiece, which is three exceptions
-    wearing function names.
-
-    They are one verb now. pkg_build has knobs for the things projects actually
+    THE RULE IS ABSOLUTE, with no per-project exceptions: a recipe never runs a
+    configure script itself. pkg_build has knobs for what projects actually
     differ in (which configure, whether it takes --host, what to make, what to
-    install) and every recipe goes through it, zlib included. So the rule this
-    test enforces is absolute: a recipe never runs a configure script itself.
-    A project that pkg_build cannot express should GROW pkg_build, which is the
-    entire point.
+    install), and a project it cannot express should GROW pkg_build -- a verb
+    per awkward project is three mechanisms with one user each.
     """
     text = recipe.read_text()
     assert ". pkg/lib.sh" in text, (
@@ -423,8 +410,8 @@ def test_a_recipe_does_not_rebuild_the_shared_parts(recipe):
                 "with three mechanisms and one user each."
                 % (recipe, line.strip()))
 
-    # And the verbs those exceptions used to be. Named so that bringing one
-    # back is a red test rather than a quiet regression.
+    # And the verbs that preceded pkg_build, named so that bringing one back
+    # is a red test rather than a quiet regression.
     for gone in ("pkg_autotools", "pkg_make ", "pkg_dep_autotools"):
         assert gone not in body, (
             "%s calls %s, which no longer exists -- pkg_build replaced it"
@@ -458,11 +445,9 @@ def test_the_package_and_the_payload_share_one_build():
             "bin/patch.sh runs pkg/%s/build.sh and there is no such recipe"
             % recipe)
 
-    # And the reverse direction: patch.sh must not have grown its own copy of
-    # a build it delegates. A `./configure` anywhere in it would mean some
-    # component is compiled in two places again -- which is what this whole
-    # layout was written to stop, and what section 5b did for skalibs and s6
-    # until it became four recipes.
+    # And the reverse direction: patch.sh must not grow its own copy of a build
+    # it delegates. A `./configure` anywhere in it would mean some component is
+    # compiled in two places again.
     body = "\n".join(ln for ln in patch.splitlines()
                       if not ln.lstrip().startswith("#"))
     for gone in ("--enable-static-libc", "MUSL_TOOLCHAIN", "S6_STAMP"):
@@ -504,11 +489,9 @@ def test_the_archives_are_built_by_upstream():
 # --------------------------------------------------------------------------
 # One recipe, one package.
 #
-# The rule the pkg/ layout exists to enforce. It was not always true:
-# pkg/opkg/build.sh used to unpack zlib, libarchive and opkg and ship one
-# binary, so two of the three libraries in this repo's dependency graph had no
-# version, no package and no way to be reused -- which is why zlib was
-# cross-built twice, once here and once in bin/patch.sh section 5c.
+# The rule the pkg/ layout exists to enforce. A recipe that builds its
+# dependencies inline leaves them with no version, no package and no way to be
+# reused -- which is how one zlib comes to be cross-built twice.
 
 def _sh(snippet):
     """Run a snippet with bin/common.sh and pkg/lib.sh sourced, from ROOT."""

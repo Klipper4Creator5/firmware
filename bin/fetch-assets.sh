@@ -87,21 +87,15 @@ if [ "$ALL" = 1 ] || { [ "${BUILD_KLIPPER:-0}" = "fork" ] && [ ! -d "${KLIPPER_F
         "$KLIPPER_TGZ" "$KLIPPER_SHA256"
 fi
 
-# The Ingenic glibc toolchain -- ~203MB, and shared by two consumers that used
-# to be one: chelper (Klipper fork only) and, since CPython 3.13 landed in
-# patch.sh section 5c, the interpreter itself, which has no BUILD_ flag and is
-# cross-built on every checkout. Gating this fetch on BUILD_KLIPPER=fork alone
-# -- the shape it had before 5c existed -- means a BUILD_KLIPPER=stock build
-# from a clean vendor/ reaches patch.sh's Python step with sources but no
-# compiler and dies there instead of here. 
+# The Ingenic glibc toolchain -- ~203MB, with two consumers: chelper (Klipper
+# fork only) and every recipe that compiles, which no BUILD_ flag switches off.
+# Gating on BUILD_KLIPPER=fork alone would let a BUILD_KLIPPER=stock build from
+# a clean vendor/ reach patch.sh's Python step with sources but no compiler,
+# and die there instead of here.
 #
-# TWO CONDITIONS, WHERE THERE USED TO BE FOUR. The interpreter and its eighteen
-# site-packages are recipes under pkg/ now, and pkg_needs answers for every
-# recipe at once -- so the two hand-written CPython stamp comparisons that sat
-# here were the same question in a second spelling, and the second spelling is
-# the one that drifts. Asking pkg/lib.sh means the fetcher computes the cache
-# key with the code that writes it, which is exactly what went wrong with the
-# s6 stamp below.
+# The second condition is pkg_needs, which answers for every recipe at once:
+# the fetcher computes the cache key with the code that writes it rather than
+# in a second spelling that can drift.
 if [ "$ALL" = 1 ] \
    || { [ "${BUILD_KLIPPER:-0}" = "fork" ] && [ ! -d "${KLIPPER_FORK:-}/klippy" ]; } \
    || pkg_needs; then
@@ -122,14 +116,6 @@ fi
 # them, so there is no BUILD_ flag here -- these come down on every build, not
 # on request. Four tarballs, well under a megabyte between them.
 #
-# THE musl CROSS-TOOLCHAIN USED TO BE FETCHED HERE and is gone with the second
-# libc. It was ~71MB, conditional on a work/.s6 stamp this file spelled with
-# two of its three fields while patch.sh wrote all three -- so the condition
-# could never be false and it was re-hashed on every single run for months.
-# The fix at the time was to move the stamp into bin/common.sh; the fix now is
-# that there is no such stamp to spell, because all four of these are recipes
-# and the Ingenic toolchain they need is gated on pkg_needs above, which asks
-# pkg_stale rather than re-deriving anything.
 get "https://skarnet.org/software/skalibs/skalibs-$SKALIBS_VERSION.tar.gz" \
     "$SKALIBS_TGZ" "$SKALIBS_SHA256"
 get "https://skarnet.org/software/execline/execline-$EXECLINE_VERSION.tar.gz" \
@@ -264,13 +250,10 @@ say "cached  opkg-utils $OPKG_UTILS_VERSION ($OPKG_UTILS_COMMIT)"
 # with this compiler is a recipe under pkg/ now -- the interpreter, its
 # eighteen site-packages, libsodium, the s6 family and the rest.
 #
-# IT USED TO BE THREE HAND-WRITTEN COMPARISONS and each of them had gone, or was
-# going, wrong. libsodium's compared $SODIUM_VERSION against
-# work/pkg/libsodium/.version, which stopped matching the moment a recipe's key
-# grew to include its toolchain and its dependencies -- so the test was true
-# forever and nobody noticed. The two CPython ones re-derived a stamp
-# bin/patch.sh also derived, and agreed with it by luck. Asking the code that
-# WRITES the stamp is the only spelling that cannot drift.
+# A hand-written comparison here would be a second spelling of a recipe's cache
+# key -- which has to include its toolchain and its dependencies -- and the
+# second spelling is the one that drifts. Asking the code that WRITES the stamp
+# is the only spelling that cannot.
 #
 # Getting this wrong is not a slow build, it is a stopped one: patch.sh would
 # get 53MB of sdists and then halt for want of a compiler, halfway through,

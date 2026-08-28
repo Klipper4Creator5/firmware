@@ -1,16 +1,13 @@
 #!/bin/sh
 # Is nginx really supervised now, or does it just look like it?
 #
-# WHAT IS BEING PROVED. init.d/S60nginx used to start nginx and walk away. If
-# the master process fell over -- OOM, a bad config reload, a kernel that took
-# the wrong page -- the printer's only web UI was gone until somebody noticed
-# and ssh'd in, and the script could do nothing about it because a shell that
-# has returned cannot restart anything. Phase 4 hands nginx to s6, and the
-# claim being made is exactly one sentence: kill nginx and it comes back, ask
-# it to stop and it stays stopped. Both halves matter and only the second one
-# is easy to get wrong -- a `stop` the supervisor quietly undoes is the classic
-# bug of a migration like this, and it looks like a success from the outside
-# until somebody tries to stop the service and cannot.
+# WHAT IS BEING PROVED, in one sentence: kill nginx and it comes back, ask it
+# to stop and it stays stopped. A script that starts nginx and returns cannot
+# restart anything when the master process falls over, which leaves the
+# printer's only web UI gone until somebody ssh's in. Both halves matter and
+# the second is the easy one to get wrong -- a `stop` the supervisor quietly
+# undoes looks like success from the outside until somebody tries to stop the
+# service and cannot.
 #
 # NOTHING HERE READS A SHIPPED SCRIPT. Every assertion below runs the real
 # tools -- the printer's own nginx out of /usr/prog, the cross-built s6 out of

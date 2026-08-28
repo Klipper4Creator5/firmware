@@ -3,13 +3,10 @@
 # Idempotent: safe to re-run after editing config.env or assets.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
-# pkg/lib.sh for pkg_out ALONE. This file runs recipes and stages what they
-# produced, and it has to be able to name where a recipe puts its output. The
-# alternative is a $SOMETHING_BUILD variable in bin/common.sh for every recipe,
-# which is what the three legacy aliases there are and what that file's own
-# comment says not to grow: pkg_out derives the path from the recipe name, so a
-# new recipe needs no edit anywhere. Sourcing it costs nothing else -- lib.sh
-# defines functions and sets no build state until a recipe calls pkg_begin.
+# pkg/lib.sh for pkg_out ALONE: this file runs recipes and stages what they
+# produced, so it has to name where a recipe puts its output. Sourcing it costs
+# nothing else -- lib.sh defines functions and sets no build state until a
+# recipe calls pkg_begin.
 . "$ROOT/pkg/lib.sh"
 
 SOFTWARE_DIR=work/software
@@ -18,11 +15,6 @@ SOFTWARE_DIR=work/software
 say() { printf '>> %s\n' "$*"; }
 skip() { printf '   (skip) %s\n' "$*"; }
 
-# $MODDIR -- /usr/data/anvil, the one directory on the DATA partition
-# everything we add lives under -- now comes from bin/common.sh, because the
-# package recipes under pkg/ need the same value and cannot be allowed to
-# disagree with this file about it. The comment that used to be here is there.
-#
 # The mod payload is built OUTSIDE the software component on purpose. The
 # software component is extracted to /usr/prog/PROGRAM/software/<ver>/ -- the
 # firmware partition, of which the installer keeps only one version. Mainsail and
@@ -30,34 +22,20 @@ skip() { printf '   (skip) %s\n' "$*"; }
 # instead, land in /usr/data/update/ (data partition), and are moved to
 # /usr/data/anvil from there.
 MOD_PAYLOAD=work/modpayload
-rm -rf "$MOD_PAYLOAD" "$SOFTWARE_DIR/mod"   # $SOFTWARE_DIR/mod: leftover from an older layout
-# libexec/ is here because $MODDIR is a --prefix root, not a junk drawer: it
-# holds helper programs that other programs exec and users do not, which for
-# now means s6-ftrigrd. It has to be a sibling of bin/ and spelled exactly
-# this way -- s6 resolves it from the --prefix baked into its binaries at
-# compile time, so the directory name is part of the ABI, not a preference.
-# etc/ is the same idea one directory further on: a --prefix root keeps the
-# mod's own configuration in etc/, and etc/s6/ is the s6 SCANDIR -- the
-# directory s6-svscan watches, one subdirectory per supervised service. It is
-# created here rather than at runtime by payload/init.d/S40s6, and the reason
-# is the install manifest: the manifest is read off this staged tree, so a
-# directory that only ever appeared on the printer would be a path the mod
-# creates and no update can ever account for. It was empty when S40s6 first
-# landed and is not any more -- the service directories themselves are copied
-# in further down, next to init.d -- but the mkdir stays, because a payload
-# that happens to ship no services still needs somewhere for the scanner to
-# look. S40s6 still does its own
-# mkdir -p on top of this -- see the comment there -- because the manifest
-# pass runs BEFORE the new tarball is extracted, and because hand-made
-# installs exist.
+rm -rf "$MOD_PAYLOAD" "$SOFTWARE_DIR/mod"
+# libexec/ holds helper programs that other programs exec and users do not
+# (s6-ftrigrd). It has to be a sibling of bin/ and spelled exactly this way:
+# s6 resolves it from the --prefix baked into its binaries at compile time, so
+# the name is part of the ABI, not a preference. lib/ is CPython's for the same
+# reason -- --prefix puts the interpreter in bin/ and its stdlib in
+# lib/python3.13/.
 #
-# lib/ completes the prefix root and is CPython's, in the same way libexec/ is
-# s6's: `--prefix=/usr/data/anvil` puts the interpreter in bin/ and its whole
-# stdlib in lib/python3.13/, so the two directories are one install, not two
-# packages sharing a namespace. It is created here rather than only by the
-# python step below for the manifest's sake -- the same argument as etc/s6/
-# above -- so that a payload which somehow shipped without the interpreter
-# still names the directory it would have used.
+# etc/s6/ is the s6 SCANDIR, the directory s6-svscan watches, one subdirectory
+# per supervised service. These are created HERE rather than at runtime because
+# the install manifest is read off this staged tree: a directory that only ever
+# appeared on the printer would be a path the mod creates and no update can
+# account for. S40s6 still does its own mkdir -p on top -- the manifest pass
+# runs BEFORE the new tarball is extracted, and hand-made installs exist.
 mkdir -p "$MOD_PAYLOAD/bin" "$MOD_PAYLOAD/lib" "$MOD_PAYLOAD/libexec" \
          "$MOD_PAYLOAD/nginx" \
          "$MOD_PAYLOAD/www" "$MOD_PAYLOAD/config" "$MOD_PAYLOAD/etc/s6"
@@ -159,8 +137,7 @@ stock)
 esac
 
 # ----------------------------------------------------------- 2. Toolchanger
-# Lives in this repo under payload/klipper/ -- it used to be the separate
-# creator5-toolchange checkout, pointed at by TOOLCHANGE= in config.env.
+# Lives in this repo under payload/klipper/.
 if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     say "Toolchange: ff_*.py + configs"
     mkdir -p "$SOFTWARE_DIR/klipper/extras"
@@ -203,11 +180,10 @@ else
 fi
 
 # -------------------------------------------------------------- 3. Mainsail
-# THE BUILD LIVES IN pkg/mainsail/build.sh, and this section stages what it
-# produced -- the same arrangement section 5d has had since libsodium became a
-# recipe, and for the same reason: the .ipk and the tarball have to contain
-# the same bytes or they are two different Mainsails wearing one version
-# number, and no test can tell which a printer got.
+# THE BUILD LIVES IN pkg/mainsail/build.sh and this section stages what it
+# produced: the .ipk and the tarball have to contain the same bytes, or they
+# are two different Mainsails wearing one version number and no test can tell
+# which a printer got.
 if [ "${BUILD_MAINSAIL:-1}" = "1" ]; then
     bash pkg/mainsail/build.sh
     mkdir -p "$MOD_PAYLOAD/www"
@@ -216,16 +192,15 @@ if [ "${BUILD_MAINSAIL:-1}" = "1" ]; then
 else
     skip "Mainsail"
 fi
-# nginx.conf and moonraker.conf USED TO BE COPIED HERE and are shipped by
-# pkg/anvil-core now, with the rest of the configuration this repo writes.
-# Copying them here as well would put two of the same file in the payload from
-# two places, which is the arrangement this migration exists to remove.
+# nginx.conf and moonraker.conf ship in pkg/anvil-core, with the rest of the
+# configuration this repo writes; copying them here too would put the same file
+# in the payload from two places.
 #
-# moonraker-custom.conf is the exception and stays: it is a USER SEAM.
-# moonraker.conf includes it by name, and run-append.sh creates it only when
-# it is missing -- never overwrites it. A package member is overwritten on
-# every upgrade by definition, so putting this in anvil-core would destroy a
-# printer's own Moonraker settings the first time it was upgraded.
+# moonraker-custom.conf is the exception and stays here: it is a USER SEAM.
+# moonraker.conf includes it by name and run-append.sh creates it only when
+# missing, never overwrites it. A package member is overwritten on every
+# upgrade by definition, so anvil-core would destroy a printer's own Moonraker
+# settings the first time it was upgraded.
 [ -f assets/moonraker-custom.conf ] \
     && cp -f assets/moonraker-custom.conf "$MOD_PAYLOAD/config/moonraker-custom.conf"
 
@@ -248,18 +223,10 @@ fi
 # at /usr/prog/moonraker/moonraker/ is left exactly where it is; it is simply
 # never used again.
 #
-# run-append.sh used to copy this same tree over /usr/prog/moonraker as well,
-# and that copy is gone. It put a second, byte-identical Moonraker on the one
-# partition with no room to spare -- the only step of the install that could
-# fail on disk space, failing as "no working web UI" -- and because /usr/prog
-# is what a stock FlashForge flash overwrites while /usr/data/anvil survives
-# one, it made "which Moonraker is this printer running?" depend on what was
-# flashed last. The two things thought to require that location turned out not
-# to: the moonraker-env virtualenv beside it is not on sys.path at all
-# (imports resolve from /usr/prog/Python-3.8.2/lib/python3.8/site-packages --
-# checked by running the printer's own interpreter on the real image), and
-# moonrakerDaemon, the thing that did exec the tree by absolute path, is never
-# invoked.
+# Nothing is copied to /usr/prog/moonraker: the moonraker-env virtualenv there
+# is not on sys.path at all (imports resolve from
+# /usr/prog/Python-3.8.2/lib/python3.8/site-packages), and moonrakerDaemon, the
+# thing that execs that tree by absolute path, is never invoked.
 #
 # What IS reused is FlashForge's python 3.8.2 and the site-packages next to
 # it. No virtualenv is built and no wheel is compiled, because the pinned
@@ -288,8 +255,7 @@ fi
 #
 # The last release still on lmdb is v0.8.0 (Feb 2023), which predates the
 # webcam flag (Apr 2023). No release has both, so versions.env pins the newest
-# commit that does. This was not caught by reasoning about it -- v0.9.3 was
-# built, shipped and tried on the printer first, and this is what it said.
+# commit that does.
 #
 # The database is NOT converted: the pinned build uses the same lmdb store the
 # stock server uses, so Mainsail's settings carry over untouched and going
@@ -304,9 +270,8 @@ fi
 # payload IS the installation: run-append.sh has no Moonraker step left at
 # all, and nothing about getting Moonraker onto the printer can fail
 # separately from the extraction itself.
-# THE TREE IS BUILT BY pkg/moonraker/build.sh, which is where the tarball
-# shape guard and the tests/__pycache__ trims went. They did not change; they
-# moved to the one place that produces this tree, so the .ipk and the payload
+# THE TREE IS BUILT BY pkg/moonraker/build.sh, which also holds the tarball
+# shape guard and the tests/__pycache__ trims, so the .ipk and the payload
 # cannot end up containing different Moonrakers.
 if [ "${BUILD_MOONRAKER:-1}" = "1" ]; then
     bash pkg/moonraker/build.sh
@@ -319,14 +284,9 @@ fi
 
 # ----------------------------------------------------------- 5. HelixScreen
 # pkg/helixscreen/build.sh unpacks upstream's release and merges this repo's
-# printer-database entry and the optional platform hook into it, so all three
-# of those now happen once rather than here and again in the packager.
-#
-# IT IS ALSO ABI-GATED NOW, which it never was here: bin/build-packages.sh
-# runs mips_abi_gate over every package tree, and until this became a recipe
-# the three mipsel binaries in the largest thing we ship had never been
-# checked. They pass -- measured, 3 objects, nan2008/o32/mips32r2 -- so this
-# is a gate gained, not a gate that had been quietly failing.
+# printer-database entry and the optional platform hook into it. Its three
+# mipsel binaries are ABI-gated by bin/build-packages.sh like every other
+# package tree.
 if [ "${BUILD_HELIX:-1}" = "1" ]; then
     bash pkg/helixscreen/build.sh
     rm -rf "$MOD_PAYLOAD/helixscreen"
@@ -336,33 +296,14 @@ else
     skip "HelixScreen"
 fi
 
-# mips_abi_gate -- the nan2008/o32/mips32r2 check every cross-built ELF in
-# this file passes before it ships -- now lives in bin/common.sh, because
-# bin/build-packages.sh gates the same objects on the way into an .ipk and a
-# second copy of that rule is a second chance to get it wrong. The comment
-# explaining the two expected e_flags words went with it.
-
 # --------------------------------------------- 5b. s6 / execline / s6-rc
-# The supervision stack, staged from four recipes.
+# The supervision stack, staged from four recipes. One libc -- the printer's
+# own glibc 2.29, linked dynamically; the reasons sit in versions.env beside
+# the pins.
 #
-# THIS SECTION USED TO BE 235 LINES AND BUILT TWO LIBRARIES. It unpacked a
-# musl cross-toolchain, wrote its own compiler wrappers, gated their ABI,
-# cross-built skalibs into a private sysroot, cross-built s6 against it,
-# harvested thirteen binaries out of a DESTDIR and stamped a cache directory
-# that only this file and the fetcher knew the shape of. All of that is now
-# four pkg/ recipes with versions, stamps and packages of their own, and what
-# is left here is what this file is for: putting the result in the payload.
-#
-# THE TOOLCHAIN AND THE LINK MODE BOTH CHANGED, and the reasons are recorded
-# in versions.env beside the pins rather than here. Briefly: one libc, the
-# printer's own glibc 2.29, linked dynamically -- so the second toolchain in
-# this tree is gone. Measured, s6 alone is smaller this way than the static
-# musl build it replaces (696K against ~930K); the stack is larger only
-# because it now also carries execline and s6-rc, which it did not before.
-#
-# NOTHING STARTS s6-rc YET. As with s6 before it, shipping the binaries is a
-# separate change from using them -- see docs/notes/80-s6-migration.md. This
-# step only puts them in the payload.
+# NOTHING STARTS s6-rc YET: shipping the binaries is a separate change from
+# using them, see docs/notes/80-s6-migration.md. This step only puts them in
+# the payload.
 bash pkg/skalibs/build.sh   # dev-only; nothing of it reaches the payload
 bash pkg/execline/build.sh
 bash pkg/s6/build.sh
@@ -370,8 +311,8 @@ bash pkg/s6-rc/build.sh
 
 # bin/ and libexec/ from each, merged into the one prefix root they all
 # configured themselves for. cp -a of the CONTENTS and not of the directory,
-# for the same reason section 5c does it: python's interpreter and libsodium's
-# .so land in these same two directories and must survive.
+# because python's interpreter and libsodium's .so land in these same two
+# directories and must survive.
 for _p in execline s6 s6-rc; do
     cp -a "$(pkg_out "$_p")/bin/." "$MOD_PAYLOAD/bin/"
     [ -d "$(pkg_out "$_p")/libexec" ] \
@@ -379,17 +320,12 @@ for _p in execline s6 s6-rc; do
 done
 chmod +x "$MOD_PAYLOAD/bin"/s6-* "$MOD_PAYLOAD/bin"/execlineb "$MOD_PAYLOAD/libexec"/*
 
-# The gate, over the payload rather than over any one build tree, and the same
-# gate 5c and 5d use. A cross-build that silently produced a host object, or
-# one legacy-NaN object because a flag did not reach one link line, looks like
-# a clean build here and like a printer that cannot exec its own supervisor
-# there -- the kernel says ENOEXEC, or worse, execs it with the wrong FPU mode,
-# and explains neither.
-#
-# The per-binary presence checks that used to live here moved INTO the
-# recipes, next to the ship lists they check. That is strictly better: they now
-# run on `make packages` too, so a missing s6-ftrigrd fails the build that
-# produced the .ipk rather than only a full firmware build.
+# The gate, over the payload rather than over any one build tree. A cross-build
+# that silently produced a host object, or one legacy-NaN object because a flag
+# did not reach one link line, looks like a clean build here and like a printer
+# that cannot exec its own supervisor there -- the kernel says ENOEXEC, or
+# execs it with the wrong FPU mode, and explains neither. The per-binary
+# presence checks live in the recipes, next to the ship lists they check.
 S6_ELF=$(mips_abi_gate "$MOD_PAYLOAD/bin" "$MOD_PAYLOAD/libexec") || exit 1
 say "s6 + execline + s6-rc: $S6_ELF ELF objects are nan2008/o32/mips32r2 -- good"
 du -sh "$MOD_PAYLOAD/bin"     | awk '{print "   "$1"\tbin/"}'
@@ -397,11 +333,11 @@ du -sh "$MOD_PAYLOAD/libexec" | awk '{print "   "$1"\tlibexec/"}'
 
 # -------------------------------------------------- 5c. CPython 3.13 (shipped)
 # A second Python for the printer. pkg/python builds the interpreter and the
-# eighteen pkg/python-* recipes build what goes in its site-packages -- one
-# recipe and one .ipk each. This section runs them and stages what they
-# produce. Everything about HOW they are built lives with them now
-# (pkg/python/build.sh, and pkg_buildpython / pkg_pytarget / pkg_pywheel in
-# pkg/lib.sh); every reason WHY is in the pkg.conf beside each one.
+# pkg/python-* recipes build what goes in its site-packages -- one recipe and
+# one .ipk each. This section runs them and stages what they produce.
+# Everything about HOW they are built lives with them (pkg/python/build.sh, and
+# pkg_buildpython / pkg_pytarget / pkg_pywheel in pkg/lib.sh); every reason WHY
+# is in the pkg.conf beside each one.
 #
 # ############################################################################
 # # FF_PYTHON POINTS HERE. payload/anvil-env.sh names this interpreter for   #
@@ -425,16 +361,11 @@ du -sh "$MOD_PAYLOAD/libexec" | awk '{print "   "$1"\tlibexec/"}'
 # working sqlite3 (measured on the replica, create/insert/select/reopen --
 # test/integration/printer/case-python.sh), which is what eventually unpins it.
 #
-# NINETEEN RECIPES RATHER THAN THE 800-LINE SECTION THAT USED TO BE HERE, and
-# what that buys is not tidiness. It is that a package pin can move without
-# rebuilding CPython. The old arrangement had one cache directory and two
-# stamps and said so out loud: a bumped Pillow rebuilt the interpreter and all
-# eighteen packages, because a wheel could only be cross-built during the few
-# minutes when an untrimmed staging tree, a private sysroot of static libraries
-# and a throwaway x86-64 build-python all happened to exist at once. Those
-# three are now the feed's anvil-python-dev package, each recipe's own sysroot,
-# and pkg_buildpython's shared cache -- none of which is a passing moment. So
-# `make packages PKG=python-pillow` is a Pillow build, and nothing else.
+# ONE RECIPE PER PACKAGE, so a package pin can move without rebuilding
+# CPython: the untrimmed staging tree, the sysroot of static libraries and the
+# x86-64 build-python a wheel needs are the feed's anvil-python-dev package,
+# each recipe's own sysroot, and pkg_buildpython's shared cache. So
+# `make packages PKG=python-pillow` is a Pillow build and nothing else.
 say "python: CPython $PY_VERSION and $(echo $PYPKG_LIST | wc -w) packages"
 bash pkg/python/build.sh
 # PYPKG_LIST IS STILL THE LIST, and it is checked against the recipes rather
@@ -451,7 +382,7 @@ done
 # Staged into the SAME bin/ and lib/ as everything else in this prefix root,
 # which is why these copy the CONTENTS of the directories and not the
 # directories: s6's binaries are already in $MOD_PAYLOAD/bin and must stay
-# there, and eighteen packages all merge into one site-packages.
+# there, and every python package merges into one site-packages.
 cp -a "$(pkg_out python)/bin/." "$MOD_PAYLOAD/bin/"
 mkdir -p "$MOD_PAYLOAD/lib"
 cp -a "$(pkg_out python)/lib/." "$MOD_PAYLOAD/lib/"
@@ -532,23 +463,18 @@ du -sh "$PY_SP" | awk '{print "   "$1"\tlib/python'"$PY_MM"'/site-packages/"}'
 # `libsodium.so` symlink is not a development leftover to be trimmed: it is
 # the FIRST name libnacl asks for, and the only one that fallback constructs.
 #
-# THE BUILD ITSELF NOW LIVES IN pkg/libsodium/build.sh, and this is the first
-# step of the packaging migration rather than a tidy-up: the .ipk that
-# bin/build-packages.sh emits has to be built by the same configure line as the
-# copy in the tarball, or the two ship different libraries under one version
-# number and no test can tell. Moving the block out and calling it from both
-# sides is what makes that impossible. See docs/notes/85-packaging.md.
+# THE BUILD LIVES IN pkg/libsodium/build.sh and is called from both sides: the
+# .ipk bin/build-packages.sh emits has to come off the same configure line as
+# the copy in the tarball, or the two ship different libraries under one
+# version number and no test can tell.
 #
-# It is still CACHED ON THE VERSION, like s6 and unlike c_helper.so -- the
-# stamp is inside work/.sodium and the recipe checks it, so a warm cache costs
-# a process spawn. 24 seconds is not the reason for the cache; bin/fetch-assets.sh
-# is: an uncached build drags the ~203MB Ingenic toolchain download along
-# behind it on every build of a checkout that has nothing else to compile.
+# Cached on the stamp the recipe writes, which matters less for the 24 seconds
+# than for bin/fetch-assets.sh: an uncached build drags the ~203MB Ingenic
+# toolchain download behind it on a checkout with nothing else to compile.
 #
-# A SUBPROCESS AND NOT A SOURCE, deliberately. The recipe exports a
-# cross-compiler PATH and half a dozen build variables, and this file goes on
-# to build nine more things after it; the process boundary is the same
-# guarantee the 5b/5c/5d subshells were already buying, made explicit.
+# A SUBPROCESS AND NOT A SOURCE: the recipe exports a cross-compiler PATH and
+# half a dozen build variables, and this file builds nine more things after
+# it.
 bash pkg/libsodium/build.sh
 
 # Staged into the prefix's shared lib/, beside lib/python3.13 -- one prefix,
@@ -561,17 +487,14 @@ cp -a "$SODIUM_BUILD/lib/"libsodium.so* "$MOD_PAYLOAD/lib/"
 [ -L "$MOD_PAYLOAD/lib/libsodium.so" ] \
     || { echo "   !! libsodium: lib/libsodium.so is not a symlink -- libnacl's" >&2
          echo "      dlopen fallback asks for that exact name." >&2; exit 1; }
-# The gate, over the payload, with the same rule and the same function 5c
-# uses: this is a DYN, so 0x70001407, and a legacy-NaN or big-endian libsodium
-# would import perfectly on a build host and fail only inside libnacl's
-# ctypes call on the printer -- which surfaces as Moonraker's authorization
-# component failing to load, three layers away from anything that says MIPS.
+# The gate, over the payload: a legacy-NaN or big-endian libsodium imports
+# perfectly on a build host and fails only inside libnacl's ctypes call on the
+# printer, surfacing as Moonraker's authorization component failing to load --
+# three layers from anything that says MIPS.
 #
-# Aimed at the resolved object rather than at $MOD_PAYLOAD/lib, which would
-# be the tidier-looking line: lib/ is also where the interpreter's whole
-# stdlib lives and 5c has just walked all of it, and re-walking two thousand
-# files to reach one is a gate that gets deleted the first time somebody times
-# a build.
+# Aimed at the resolved object rather than at $MOD_PAYLOAD/lib, because lib/
+# also holds the interpreter's whole stdlib and re-walking two thousand files
+# to reach one is a gate somebody deletes the first time they time a build.
 SODIUM_SO=$(readlink -f "$MOD_PAYLOAD/lib/libsodium.so")
 SODIUM_ELF=$(mips_abi_gate "$SODIUM_SO") || exit 1
 say "libsodium: $SODIUM_VERSION staged into lib/ --" \
@@ -635,20 +558,16 @@ cp -f payload/firmwareExe "$SOFTWARE_DIR/firmwareExe"
 chmod +x "$SOFTWARE_DIR/firmwareExe"
 
 # ----------------------------------------------------- 10. mod service dir
-# THE MOD'S OWN FILES COME FROM pkg/anvil-core NOW: the shared environment and
-# service libraries every init script sources, the init scripts themselves,
-# the helper programs, the nginx and Moonraker config, the toolchanger's
-# Klipper includes, and the s6 scandir. What used to be eight copies and three
-# chmods here is one copy of a tree that a recipe assembled and checked -- and
-# because bin/build-packages.sh packages the same tree, what a printer gets
-# from the tarball and what it would get from `opkg install anvil-core` cannot
-# drift apart.
+# THE MOD'S OWN FILES COME FROM pkg/anvil-core: the shared environment and
+# service libraries every init script sources, the init scripts, the helper
+# programs, the nginx and Moonraker config, the toolchanger's Klipper includes
+# and the s6 scandir. bin/build-packages.sh packages the same tree, so what a
+# printer gets from the tarball and what it would get from
+# `opkg install anvil-core` cannot drift apart.
 #
-# ANVIL.CONF IS NOT IN THAT PACKAGE and is still written below. It is
-# templated from config.env and then preserved across updates by
-# run-append.sh, which makes it user state rather than a package member: a
-# package would overwrite a printer's settings on the first upgrade. See the
-# header of pkg/anvil-core/build.sh.
+# ANVIL.CONF IS NOT IN THAT PACKAGE and is written below: it is templated from
+# config.env and preserved across updates by run-append.sh, which makes it user
+# state rather than a package member. See pkg/anvil-core/build.sh.
 bash pkg/anvil-core/build.sh
 cp -a "$(pkg_out anvil-core)/." "$MOD_PAYLOAD/"
 rm -f "$MOD_PAYLOAD/.version"
@@ -665,25 +584,19 @@ sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
 # The list of every path this payload installs, shipped inside the payload
 # itself so that the NEXT update can delete exactly what this one left behind.
 #
-# What it replaces: run-append.sh used to `rm -rf` seven whole directories --
-# bin, www, nginx, helixscreen, config, moonraker, init.d -- before
-# extracting. That is correct only while every single file under them is
-# ours, and it stops being correct the moment anything else lives there. A
-# supervisor binary in $MODDIR/bin, a Python, anything a user put there by
-# hand: all of it was destroyed on every update, silently, by the installer.
+# Deleting whole directories before extracting would be correct only while
+# every file under them is ours -- a supervisor binary in $MODDIR/bin, a
+# Python, anything a user put there by hand would go with them. The manifest
+# still gives the property that mattered: the installed set ends up exactly the
+# shipped set, because a file the last payload shipped and this one does not is
+# still named in the list the last payload wrote. Without that a RENAMED init
+# script leaves a stale twin behind and firmwareExe runs both -- see
+# payload/run-append.sh.
 #
-# It has to keep the property the rm -rf was written for, though. The
-# installed set must end up exactly the shipped set, or a RENAMED init script
-# leaves a stale twin behind and firmwareExe runs both -- see the comment in
-# payload/run-append.sh, which is where that bill came due. A manifest gives
-# that property for free: a file the last payload shipped and this one does
-# not is still named in the list the last payload wrote, so it still goes.
-#
-# GENERATED, never hand-maintained. A hand-written list is wrong one release
-# after somebody adds a directory, and wrong here means either a file that
-# never goes away or a file that should have stayed. So it is read off the
-# staged tree, at the last moment before bin/pack.sh turns that tree into
-# anvil.tar.xz -- everything above this line has finished staging.
+# GENERATED, never hand-maintained: wrong here means either a file that never
+# goes away or a file that should have stayed. Read off the staged tree at the
+# last moment before bin/pack.sh turns it into anvil.tar.xz -- everything above
+# this line has finished staging.
 #
 # Format: one path per line, relative to $MODDIR, directories listed as well
 # as files so the emptied ones can be rmdir'd afterwards. Sorted, so a diff

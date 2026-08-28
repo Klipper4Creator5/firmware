@@ -5,22 +5,13 @@
 #     . $MODDIR/anvil-service.sh
 #     SVC_NAME=moonraker
 #
-# WHY THIS FILE EXISTS. The five scripts in init.d/ were written one at a time,
-# months apart, each solving the same four problems as it hit them: how to say
-# something in the boot log, how to tell whether the daemon is still there, how
-# to stop it without leaving a stale pidfile, and how to wait on hardware
-# without holding up the boot. They arrived at four different answers to the
-# liveness question alone -- a pidfile and `kill -0`, two spellings of
-# `ps | grep`, `pgrep -f` with a ps fallback, and a socket test -- and at two
-# different answers to `restart`. None of those differences were decisions;
-# they were the order the scripts got written in. This file is the shared
-# answer, so that fixing one of these problems fixes it everywhere instead of
-# in whichever script the bug was noticed in.
-#
-# It is deliberately small. Nothing here does anything a service script could
-# not do in three lines; what it buys is that all of them now do it the same
-# way, and that the busybox corrections below (see svc_stop_daemon) live in one
-# place where the comment explaining them cannot drift away from the code.
+# WHY THIS FILE EXISTS. Every script in init.d/ has the same four problems: how
+# to say something in the boot log, how to tell whether the daemon is still
+# there, how to stop it without leaving a stale pidfile, and how to wait on
+# hardware without holding up the boot. This is the shared answer, so fixing one
+# of them fixes it everywhere rather than in whichever script the bug was
+# noticed in -- and so the busybox corrections below (see svc_stop_daemon) live
+# in one place where the comment cannot drift away from the code.
 #
 # THE API, in full:
 #
@@ -61,15 +52,12 @@
 
 # ---- saying things ---------------------------------------------------------
 #
-# Every line any of these scripts has ever printed is "name: something", because
-# firmwareExe runs all five into the same boot log and a bare "started" tells
-# nobody which of them started. Repeating the name in every echo is how one of
-# them ended up printing "web: stopped" from a script that by then also owned
-# the camera. Name it once, at the top, in SVC_NAME.
+# Every line these scripts print is "name: something", because firmwareExe runs
+# them all into one boot log and a bare "started" says nothing about which
+# started. Name it once, at the top, in SVC_NAME.
 #
-# The "!!" on svc_warn is not decoration: it is what somebody greps for when a
-# printer boots wrong, and it already means "this is why your printer is not
-# working" everywhere else in the mod (firmwareExe and start.sh both use it).
+# The "!!" on svc_warn is what somebody greps for when a printer boots wrong,
+# and means the same everywhere else in the mod (firmwareExe and start.sh).
 svc_say() {
     echo "${SVC_NAME:-service}: $*"
 }
@@ -82,14 +70,11 @@ svc_warn() {
 #
 # Two answers, because there are genuinely two situations.
 #
-# svc_pid_alive is for a daemon WE started through start-stop-daemon, so we
-# know its pid exactly. It is the better of the two and should be preferred:
-# it cannot be confused by a second copy, by a grep matching its own pipeline,
-# or by an unrelated process with a similar name.
-#
-# The pidfile can still lie -- a pid gets recycled -- which is the whole reason
-# svc_stop_daemon below removes it. A stale pidfile plus this check is how
-# `status` came to report a dead moonraker as running.
+# svc_pid_alive is for a daemon WE started through start-stop-daemon, so the
+# pid is known exactly. Prefer it: it cannot be confused by a second copy, by a
+# grep matching its own pipeline, or by an unrelated process with a similar
+# name. The pidfile can still lie -- pids get recycled -- which is why
+# svc_stop_daemon below removes it.
 svc_pid_alive() {
     [ -f "$1" ] || return 1
     kill -0 "`cat "$1" 2>/dev/null`" 2>/dev/null
@@ -121,28 +106,22 @@ svc_proc_alive() {
 # The pidfile is the point: without one there is no way to stop the daemon
 # except by name, and by-name is how you kill the wrong python.
 #
-# The caller announces success itself, because "started" is worth saying with
-# the path or the port that makes it useful. Failure is announced here, with
-# the exit code, because there is exactly one thing to say about it and it went
-# unsaid for a long time: busybox start-stop-daemon exits non-zero when a
-# process matching the pidfile is ALREADY running, which after a `restart`
-# means the old one outlived the wait in stop(). Either way nothing new was
-# started, and a script that prints nothing at that moment looks like it worked.
+# The caller announces success itself, with the path or port that makes it
+# useful. Failure is announced here with the exit code: busybox
+# start-stop-daemon exits non-zero when a process matching the pidfile is
+# ALREADY running, which after a `restart` means the old one outlived the wait
+# in stop(). Either way nothing new started, and a script that prints nothing
+# at that moment looks like it worked.
 #
-# SVC_NICE, when the caller sets it to a non-empty non-zero number, becomes
-# start-stop-daemon's -N: the daemon starts at that nice value. It exists
-# because klippy shares two cores with everything else the mod added, and
-# Klipper reports a host that misses its step deadlines as an MCU "Timer too
-# close" shutdown -- so the services around it should yield to it rather than
-# compete on equal terms. Only CPU: busybox 1.31.1 on this printer has no
-# ionice applet (checked in the replica, not assumed), so eMMC contention has
-# no equivalent knob and is not addressed here.
+# SVC_NICE, non-empty and non-zero, becomes start-stop-daemon's -N. klippy
+# shares two cores with everything the mod added, and Klipper reports a host
+# that misses its step deadlines as an MCU "Timer too close" shutdown, so the
+# services around it should yield to it. CPU only: this busybox has no ionice
+# applet, so eMMC contention has no equivalent knob.
 #
-# Why -N and not a `nice -n` wrapper: --exec is what start-stop-daemon matches
-# and records, and wrapping would make that the nice binary rather than the
-# program itself. -N keeps the exec path real. Both were verified to produce
-# the wanted nice value on the printer's own busybox; -N is the one that keeps
-# the pidfile honest.
+# -N rather than a `nice -n` wrapper because --exec is what start-stop-daemon
+# matches and records, and wrapping would make that the nice binary rather than
+# the program.
 svc_start_daemon() {
     _svc_pidfile=$1
     shift
@@ -162,8 +141,7 @@ svc_start_daemon() {
 }
 
 # The correction busybox needs. Its start-stop-daemon -K sends the signal and
-# returns immediately, and it does not remove the pidfile. Both of those are
-# wrong for us, in ways that took a while to read as bugs:
+# returns immediately, and does not remove the pidfile. Both are wrong here:
 #
 #   * Not waiting makes `restart` race its own start. stop() returns, start()
 #     runs start-stop-daemon -S, the old process is still holding the pidfile,
@@ -172,11 +150,10 @@ svc_start_daemon() {
 #     kernel is free to hand to something else, so `status` eventually reports
 #     an unrelated process as a running service.
 #
-# So: signal, then wait for it to actually be gone, then remove the file. The
-# bound is 15 seconds because that is long enough for moonraker to finish
-# writing its database and short enough that a stuck process does not hold a
-# boot open; a process still there at the end gets said out loud rather than
-# silently abandoned, because the next start is about to fail and this is the
+# So: signal, wait for it to actually be gone, then remove the file. 15 seconds
+# is long enough for moonraker to finish writing its database and short enough
+# that a stuck process does not hold a boot open. A process still there at the
+# end is said out loud, because the next start is about to fail and this is the
 # line that explains why.
 svc_stop_daemon() {
     [ -f "$1" ] || return 0
@@ -203,18 +180,15 @@ svc_stop_daemon() {
 # network, no camera or no heater board, which is the machine somebody needs to
 # ssh into to find out why.
 #
-# The rule firmwareExe already states for a service that FAILS, applied to one
-# that is merely slow: the waiting happens detached and start() returns at
-# once. The cost is that the detached lines arrive in the boot log after the
-# later services' lines, out of order. That is the trade, and it is the right
-# way round.
+# So the waiting happens detached and start() returns at once. The cost is that
+# the detached lines arrive in the boot log out of order, after the later
+# services'.
 #
-# It returns 0 unconditionally: nothing is going to read the exit status of a
-# background job, and letting `func &` be the last statement of start() would
-# hand the caller the shell's opinion of a fork rather than a verdict on the
-# service. SVC_BG_PID is there for a supervisor that has to be killable --
-# S65camera writes it to a pidfile, because killing only the streamer it
-# supervises gets the streamer restarted three seconds later.
+# It returns 0 unconditionally: letting `func &` be the last statement of
+# start() would hand the caller the shell's opinion of a fork rather than a
+# verdict on the service. SVC_BG_PID is for a supervisor that has to be
+# killable -- S65camera writes it to a pidfile, because killing only the
+# streamer it supervises gets the streamer restarted three seconds later.
 svc_detach() {
     "$@" &
     SVC_BG_PID=$!
@@ -223,25 +197,20 @@ svc_detach() {
 
 # ---- talking to s6 ---------------------------------------------------------
 #
-# Everything above this line is the hand-rolled supervisor: a liveness test we
-# wrote, a stop-and-wait we wrote, and -- in S65camera -- a respawn loop we
-# wrote. Everything below is how a service asks the real one instead. Both
-# sets exist at once and will for a while: S40s6 starts the scanner, and the
-# six services move into it ONE AT A TIME, each keeping its S* script as the
-# interface people already type. A service that has not moved uses the
-# functions above and does not know these exist.
+# Everything above is the hand-rolled supervisor; everything below is how a
+# service asks the real one instead. Both sets exist at once: S40s6 starts the
+# scanner and the services move into it ONE AT A TIME, each keeping its S*
+# script as the interface people already type. A service that has not moved
+# uses the functions above and does not know these exist.
 #
-# WHERE THE PATHS COME FROM, and why they are here rather than in each script.
-# s6 bakes its own prefix in at COMPILE time -- its waiting verbs exec
-# s6-svlisten, which spawns s6-ftrigrd out of the libexecdir chosen by
-# ./configure, so the binaries only work from the prefix they were built for
-# (/usr/data/anvil; see tools/supervisor/README.md, where shipping them
-# elsewhere made every waiting verb fail while status and respawn kept
-# working, i.e. it failed late and partially). The scandir is a second thing
-# every one of these scripts has to agree about with S40s6, and the way to
-# make several scripts agree is to say it once, in the file they all source.
-# Both are overridable so a test can point at a scandir of its own without
-# reinstalling the payload.
+# WHERE THE PATHS COME FROM. s6 bakes its own prefix in at COMPILE time -- its
+# waiting verbs exec s6-svlisten, which spawns s6-ftrigrd out of the libexecdir
+# chosen by ./configure -- so the binaries only work from the prefix they were
+# built for (/usr/data/anvil; see tools/supervisor/README.md, where shipping
+# them elsewhere made every waiting verb fail while status and respawn kept
+# working). The scandir is the second thing every script has to agree about
+# with S40s6. Both are overridable so a test can point at its own scandir
+# without reinstalling the payload.
 SVC_S6_BIN=${SVC_S6_BIN:-${MODDIR:-/usr/data/anvil}/bin}
 # Not written as one ${MODDIR:-/usr/data/anvil} expression ending in etc/s6:
 # test_paths.py's absolute-path regex reads the closing brace immediately
@@ -256,16 +225,12 @@ _s6_default_scandir=$_s6_default_scandir/etc/s6
 SVC_S6_SCANDIR=${SVC_S6_SCANDIR:-$_s6_default_scandir}
 unset _s6_default_scandir
 
-# Is the SCANNER there? Not "is there a process called s6-svscan" -- this is
-# asked BY BEHAVIOUR, which is the rule the rest of this file was rewritten to
-# follow. `s6-svscanctl -a` is the request to rescan the scandir: harmless,
-# idempotent, and it travels down $SCANDIR/.s6-svscan/control, a FIFO opened
-# non-blocking. If nothing is reading that FIFO the open fails with ENXIO and
-# s6-svscanctl exits 100 saying "supervisor not listening" -- measured on the
-# replica, both ways round. A dead scanner leaves the FIFO on disk, so this is
-# a distinction `ps | grep` genuinely cannot make, and it is the same class of
-# lie as the stale pidfile and the stale klippy socket that this file already
-# has two comments about.
+# Is the SCANNER there? Asked by BEHAVIOUR, not by process name.
+# `s6-svscanctl -a` is the request to rescan the scandir: harmless, idempotent,
+# and it travels down $SCANDIR/.s6-svscan/control, a FIFO opened non-blocking.
+# With nothing reading that FIFO the open fails with ENXIO and s6-svscanctl
+# exits 100, "supervisor not listening". A dead scanner leaves the FIFO on
+# disk, so this is a distinction `ps | grep` cannot make.
 #
 # It answers false rather than exploding when s6 is not installed at all,
 # because that is a real state on a printer half-way through an update.
@@ -288,18 +253,11 @@ svc_s6_svc() {
     return $_svc_s6_rc
 }
 
-# Up and down, each WAITING for the thing it asked for -- which is the entire
-# reason for preferring a supervisor to start-stop-daemon. -wu/-wD mean "do
-# not return until the service is really up / really down", and -T is a bound
-# in MILLISECONDS so that a service which never comes down cannot hold a boot
-# or an ssh session open for ever. The default is 15 seconds, the same bound
-# and the same reasoning as svc_stop_daemon: long enough for moonraker to
-# finish writing its database, short enough not to hang a boot.
-#
-# This pair is what deletes the busybox correction at the top of this file.
-# start-stop-daemon -K returns before the process is dead, which is how
-# `restart` came to race its own start; s6-svc -wD returns when it is dead,
-# and it is C rather than a `while ... sleep 1` we maintain.
+# Up and down, each WAITING for what it asked for, which is the reason to
+# prefer a supervisor to start-stop-daemon. -wu/-wD do not return until the
+# service is really up or really down, and -T bounds that in MILLISECONDS so a
+# service that never comes down cannot hold a boot or an ssh session open. The
+# 15-second default is svc_stop_daemon's bound and reasoning.
 svc_s6_up() {
     svc_s6_svc "$1" -wu -T "$(( ${2:-15} * 1000 ))" -u
 }
@@ -308,46 +266,37 @@ svc_s6_down() {
     svc_s6_svc "$1" -wD -T "$(( ${2:-15} * 1000 ))" -d
 }
 
-# One line about a service, on stdout, for a status() to print. s6-svstat's
-# own output is already the right shape -- "up (pid 1234) 71 seconds" or
-# "down 5 seconds, normally up" -- so it is passed through rather than
-# paraphrased, exactly as S50wifi passes ifconfig through: it is the answer
-# you came for, in the shape you would have typed the command to get.
-# 2>&1 because "unable to open supervise/status" is also an answer.
+# One line about a service, on stdout, for a status() to print. s6-svstat's own
+# output is already the right shape -- "up (pid 1234) 71 seconds" -- so it is
+# passed through rather than paraphrased. 2>&1 because "unable to open
+# supervise/status" is also an answer.
 svc_s6_stat() {
     "$SVC_S6_BIN/s6-svstat" "$SVC_S6_SCANDIR/$1" 2>&1
 }
 
-# READINESS -- the reason this is s6 and not runit, and the one thing here
-# that no amount of shell could have provided. A service that writes to its
-# notification-fd is telling the supervisor it is USABLE, not merely forked,
-# and s6-svwait -U blocks until it does. runit's `sv start` returns when the
-# process has been forked, which says nothing at all.
+# READINESS -- the reason this is s6 and not runit. A service that writes to
+# its notification-fd is telling the supervisor it is USABLE, not merely
+# forked, and s6-svwait -U blocks until it does; runit's `sv start` returns on
+# the fork, which says nothing.
 #
-# It is unused today and that is expected: it is the seam phase 4 is aimed at.
-# S65camera currently polls /dev/video0 for up to 30 seconds and S70klipper
+# Unused today: S65camera polls /dev/video0 for up to 30 seconds and S70klipper
 # retries an MCU handshake for up to 90, both inside their own scripts, and
-# both of those become "declare ready when the device is there" plus a caller
-# that waits here. Timeout in seconds, converted to the milliseconds s6 wants;
-# non-zero if it ran out, so a caller can carry on degraded rather than block.
+# both become "declare ready when the device is there" plus a caller that waits
+# here. Timeout in seconds, converted to the milliseconds s6 wants; non-zero if
+# it ran out, so a caller can carry on degraded rather than block.
 svc_s6_ready() {
     "$SVC_S6_BIN/s6-svwait" -U -t "$(( ${2:-30} * 1000 ))" "$SVC_S6_SCANDIR/$1"
 }
 
 # ---- the verb block --------------------------------------------------------
 #
-# Every one of these scripts ends in the same case statement, and they had
-# drifted: two spellings of the usage line, and `restart` implemented twice --
-# `stop; start` in one, `stop; sleep 2; start` in the others.
+# Every one of these scripts ends in the same case statement, spelled once here.
 #
-# THE SLEEP IS GONE, on purpose. It was standing in for a wait that nobody was
-# doing: busybox start-stop-daemon -K returns before the process is dead, so
-# something had to pass before the start could succeed, and two seconds was a
-# guess that happened to be enough most of the time. svc_stop_daemon now waits
-# for the process to actually be gone, which is the thing the sleep was
-# approximating -- and does it correctly, for as long as it genuinely takes. A
-# stop() that waits makes the sleep redundant; a stop() that does not is a bug
-# to fix in stop(), because the sleep only ever hid it for two seconds.
+# `restart` has NO sleep between stop and start. A sleep there stands in for a
+# wait nobody is doing -- busybox start-stop-daemon -K returns before the
+# process is dead -- and svc_stop_daemon waits for the process to actually be
+# gone, for as long as it takes. A stop() that does not wait is a bug to fix in
+# stop(); a sleep only hides it for two seconds.
 #
 # EXTRA VERBS. S70klipper has `force-start`, which overrides its hand-off to
 # ff-startup.py. A script with a verb of its own handles it first and hands the

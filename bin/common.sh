@@ -20,13 +20,9 @@ fi
 # forked Klipper with toolchanger support, Mainsail/Moonraker, ssh, and
 # HelixScreen driving the touchscreen in place of FlashForge's UI.
 #
-# These used to live in profiles/*.env, chosen by a PROFILE variable, back
-# when a second "changes nothing, writes a report" package existed alongside
-# this one. With one build left the indirection bought nothing but a layer to
-# read through, so the flags are plain defaults here and config.env -- sourced
-# above -- still overrides any of them. Not an exhaustive list: MOD_CAM and
-# MOD_WIFI are defaulted where they are used, in bin/patch.sh, and only
-# appear here if config.env sets them.
+# Plain defaults, overridable from config.env, which is sourced above. Not an
+# exhaustive list: MOD_CAM and MOD_WIFI are defaulted where they are used, in
+# bin/patch.sh, and appear here only if config.env sets them.
 #
 # FlashForge's firmwareExe is REPLACED, not kept: HelixScreen is the only UI.
 # If it will not start, set MOD_UI=0 in /usr/data/anvil/anvil.conf to boot
@@ -48,38 +44,31 @@ MOD_UI="${MOD_UI:-1}"
 # partition, so a FlashForge OTA cannot delete it. It is a --prefix root and
 # not a junk drawer: bin/, lib/, libexec/, etc/ mean what they mean anywhere
 # else, and s6 and CPython are both CONFIGURED with this path, so it is baked
-# into shipped binaries and moving it means rebuilding them.
-#
-# It lives here rather than in bin/patch.sh -- which is where it was, and where
-# it was the only definition -- because a package recipe under pkg/ needs the
-# same answer and must not be free to give a different one. Two prefixes is a
-# payload whose halves disagree about where the payload is.
+# into shipped binaries and moving it means rebuilding them. Defined here
+# because the recipes under pkg/ need the same answer and must not be free to
+# give a different one.
 MODDIR="${MODDIR:-/usr/data/anvil}"
 
 # The Ingenic GLIBC cross-toolchain and its tool prefix: gcc 7.2.0 / glibc
-# 2.29 for the X2000, the one that produces this printer's ABI. Used by
-# bin/patch.sh section 5c (CPython and its extensions) and by the libsodium
-# recipe under pkg/, which is the other reason these moved out of patch.sh --
-# see MODDIR above. MIPS_TOOLCHAIN_TGZ below is the tarball it is unpacked
-# from; this is where it lands.
+# 2.29 for the X2000, the one that produces this printer's ABI. Used by every
+# recipe that compiles (pkg_toolchain) and by bin/patch.sh for Klipper's
+# c_helper.so. MIPS_TOOLCHAIN_TGZ below is the tarball it is unpacked from;
+# this is where it lands.
 PY_HOST="${PY_HOST:-mips-linux-gnu}"
 PY_TOOLCHAIN_DIR="${PY_TOOLCHAIN_DIR:-work/.mips-toolchain/mips-gcc720-glibc229}"
 
 # The architecture string stamped into every .ipk this repo builds, and into
 # the feed index beside them. See docs/notes/85-packaging.md.
 #
-# IT IS DELIBERATELY NOT AN OpenWrt NAME, and that is the whole point of
-# choosing it by hand. OpenWrt's nearest label for this silicon is
-# `mipsel_24kc`, which is the same ISA and the same o32 ABI -- and musl. Every
-# OpenWrt feed in the world is full of mipsel_24kc packages that would satisfy
-# an opkg dependency here, install without complaint, and then fail to load
-# against the printer's glibc 2.29. A name no public feed uses makes that
-# category of mistake impossible to make quietly: an OpenWrt .ipk offered to
-# our opkg is refused on architecture, before it is unpacked.
+# DELIBERATELY NOT AN OpenWrt NAME. OpenWrt's nearest label for this silicon
+# is `mipsel_24kc` -- same ISA, same o32 ABI, but musl. Those packages would
+# satisfy an opkg dependency here, install without complaint and fail to load
+# against the printer's glibc 2.29. A name no public feed uses makes an
+# OpenWrt .ipk get refused on architecture, before it is unpacked.
 #
-# xburst2 is Ingenic's name for the X2000's core. What the string actually
-# promises is the ABI bin/patch.sh's mips_abi_gate checks -- o32, nan2008,
-# mips32r2 -- linked against the Ingenic glibc.
+# xburst2 is Ingenic's name for the X2000's core. What the string promises is
+# the ABI mips_abi_gate checks -- o32, nan2008, mips32r2 -- linked against the
+# Ingenic glibc.
 IPK_ARCH="${IPK_ARCH:-mipsel_xburst2}"
 export MODDIR PY_HOST PY_TOOLCHAIN_DIR IPK_ARCH
 
@@ -106,58 +95,25 @@ MIPS_TOOLCHAIN_TGZ="${MIPS_TOOLCHAIN_TGZ:-$ROOT/vendor/${MIPS_TOOLCHAIN_FILE:-mi
 # unlike the Klipper pieces there is no flag that switches them off -- see
 # versions.env for why the build is the way it is.
 #
-# FOUR TARBALLS AND NO CACHE VARIABLE. There used to be an S6_BUILD here
-# naming work/.s6, because patch.sh cross-built s6 itself and the fetcher had
-# to know whether that tree was stale. All four are recipes under pkg/ now, so
-# the output path is pkg_out's business and staleness is pkg_stale's -- the
-# fetcher asks pkg_needs, which asks the code that writes the stamp instead of
-# a second copy of it. That is the whole of what S6_STAMP existed to get wrong.
+# Four tarballs and no cache variable: all four are recipes under pkg/, so the
+# output path is pkg_out's business and staleness is pkg_stale's.
 SKALIBS_TGZ="${SKALIBS_TGZ:-$ROOT/vendor/skalibs-${SKALIBS_VERSION:-unpinned}.tar.gz}"
 S6_TGZ="${S6_TGZ:-$ROOT/vendor/s6-${S6_VERSION:-unpinned}.tar.gz}"
 EXECLINE_TGZ="${EXECLINE_TGZ:-$ROOT/vendor/execline-${EXECLINE_VERSION:-unpinned}.tar.gz}"
 S6RC_TGZ="${S6RC_TGZ:-$ROOT/vendor/s6-rc-${S6RC_VERSION:-unpinned}.tar.gz}"
 
-# S6_STAMP USED TO BE DEFINED HERE, and the reason it is not any more is worth
-# keeping, because the bug it was written to fix is the reason pkg_stamp exists.
-#
-# It was the cache key for work/.s6, and it had to be spelled once because two
-# files read it: patch.sh stamped the tree with it, and fetch-assets.sh tested
-# it to decide whether the 71MB musl toolchain had to come down. They did not
-# agree. patch.sh wrote three fields ("$SKALIBS_VERSION $S6_VERSION
-# $MUSL_TOOLCHAIN_FILE") and the fetcher compared against two, so the `!=`
-# could never be false: every run re-hashed 71MB on a warm vendor/, and the
-# comment above that condition described a fast path that had never once been
-# taken. Two spellings of one string is not duplication that costs style
-# points; it is a condition that silently inverts.
-#
-# Moving the definition here fixed that instance. Making s6 a recipe removes
-# the class: pkg_stamp computes the key from pkg.conf, pkg_stale compares it,
-# and fetch-assets.sh calls pkg_needs rather than re-deriving anything. There
-# is no second spelling left to drift. The toolchain filename is still in the
-# key, for the reason it always was -- the compiler determines the ABI as much
-# as the sources do -- but now it is in there once, in pkg_stamp.
-
 export MAINSAIL_ZIP HELIX_TGZ MOONRAKER_TGZ KLIPPER_TGZ MIPS_TOOLCHAIN_TGZ
 export SKALIBS_TGZ S6_TGZ EXECLINE_TGZ S6RC_TGZ
 
-# CPython and the seven C libraries it is linked against, all pinned in
-# versions.env and all cross-built by bin/patch.sh section 5c. Eight tarballs
-# and not one, because there is no such thing as a "CPython with batteries"
-# source drop: sqlite, openssl, libffi, xz, bzip2, zlib and expat are separate
-# projects the interpreter merely knows how to use, and on this printer NONE
-# of them can be borrowed from the rootfs -- which is the whole reason the
-# stock 3.8.2 has no sqlite3 module to begin with.
+# CPython and the seven C libraries it links against, each pinned here and
+# built by its own recipe under pkg/. Eight tarballs and not one, because
+# sqlite, openssl, libffi, xz, bzip2, zlib and expat are separate projects the
+# interpreter merely knows how to use, and none of them can be borrowed from
+# this printer's rootfs -- which is why the stock 3.8.2 has no sqlite3 module.
 #
-# The compiler is MIPS_TOOLCHAIN_TGZ above, the Ingenic GLIBC one, and not the
-# musl toolchain s6 is built with. That is not a preference: a musl-linked
-# interpreter cannot dlopen a glibc c_helper.so, and dlopen is exactly how
-# klippy loads it. See tools/python/README.md.
-#
-# THERE IS NO PY_BUILD ANY MORE, and its absence is the point. It named
-# work/.py313, patch.sh's private cache of a cross-built interpreter, and it
-# went the way S6_BUILD went: CPython is pkg/python and its eighteen packages
-# are pkg/python-*, so the cache is work/pkg/<recipe> and pkg_out derives that
-# name from the recipe. Nothing has to be spelled here for a script to find it.
+# The compiler is MIPS_TOOLCHAIN_TGZ above, the Ingenic GLIBC one: a
+# musl-linked interpreter cannot dlopen a glibc c_helper.so, and dlopen is
+# exactly how klippy loads it. See tools/python/README.md.
 PY_TGZ="${PY_TGZ:-$ROOT/vendor/Python-${PY_VERSION:-unpinned}.tgz}"
 OPENSSL_TGZ="${OPENSSL_TGZ:-$ROOT/vendor/openssl-${OPENSSL_VERSION:-unpinned}.tar.gz}"
 SQLITE_TGZ="${SQLITE_TGZ:-$ROOT/vendor/sqlite-autoconf-${SQLITE_VERSION:-unpinned}.tar.gz}"
@@ -168,42 +124,23 @@ BZIP2_TGZ="${BZIP2_TGZ:-$ROOT/vendor/bzip2-${BZIP2_VERSION:-unpinned}.tar.gz}"
 EXPAT_TGZ="${EXPAT_TGZ:-$ROOT/vendor/expat-${EXPAT_VERSION:-unpinned}.tar.gz}"
 
 # The ABI series CPython names its own directories and binaries after --
-# bin/python3.13, lib/python3.13/, config-3.13-mipsel-linux-gnu. It is spelled
-# out rather than sed'd out of PY_VERSION because it is not a substring of it
-# in any interesting sense, and a 3.14 bump has to be a deliberate edit.
-#
-# HERE rather than in bin/patch.sh, where it used to live, because pkg/python
-# and the eighteen pkg/python-* recipes all name these directories too. A
-# constant that three scripts need is not patch.sh's local variable.
+# bin/python3.13, lib/python3.13/, config-3.13-mipsel-linux-gnu. Spelled out
+# rather than sed'd out of PY_VERSION so that a 3.14 bump is a deliberate
+# edit.
 PY_MM="${PY_MM:-3.13}"
 export PY_MM
 
-# THE CACHE KEY FOR CPYTHON IS GONE FROM THIS FILE TOO, and that is the end of
-# a bug that took three tries to kill. PY_STAMP was "$PY_VERSION plus the seven
-# library versions", written by bin/patch.sh and derived AGAIN, twice, in
-# bin/fetch-assets.sh to decide whether the 203MB Ingenic toolchain had to come
-# down. All three happened to agree, which is luck: the next person to add an
-# eighth library would have had to find all three.
-#
-# pkg_stamp derives a recipe's key from its dependency graph, so "openssl,
-# sqlite, zlib, libffi, xz, bzip2 and expat" is PKG_BUILD_DEPENDS in
-# pkg/python/pkg.conf and nothing computes it a second time. bin/fetch-assets.sh
-# asks pkg_needs, which is the same code the recipes cache on.
 export PY_TGZ OPENSSL_TGZ SQLITE_TGZ ZLIB_TGZ LIBFFI_TGZ XZ_TGZ BZIP2_TGZ
 export EXPAT_TGZ
 
 # The third-party python packages that become the interpreter's
 # site-packages, and libsodium, which libnacl dlopens out of $MODDIR/lib.
 #
-# There are eighteen of the former and the list moves, so they are NOT one
-# variable per tarball the way everything above is: versions.env carries
-# PYPKG_LIST plus a FILE/SHA256 pair per entry, and the three helpers below
-# are how both bin/fetch-assets.sh and bin/patch.sh read that table. They live
-# here rather than being written twice because a package the fetcher and the
-# builder disagree about is a build that downloads one file and compiles
-# another -- and because the CACHE KEY has to be computed identically in both
-# places or the ~203MB Ingenic toolchain is skipped by the fetcher on exactly
-# the build that needs it.
+# The list moves, so these are not one variable per tarball the way everything
+# above is: versions.env carries PYPKG_LIST plus a FILE/SHA256 pair per entry,
+# and the three helpers below are how both bin/fetch-assets.sh and bin/patch.sh
+# read that table. Written once, because a package the fetcher and the builder
+# disagree about is a build that downloads one file and compiles another.
 #
 # pypkg_var takes the list entry (`streaming-form-data`) and a suffix and
 # returns the variable versions.env spells for it
@@ -218,15 +155,11 @@ pypkg_var() {
 # The sdist as bin/fetch-assets.sh leaves it in vendor/.
 pypkg_tgz() { printf '%s/vendor/%s' "$ROOT" "$(pypkg_var "$1" FILE)"; }
 # The version, READ OUT OF THE PINNED FILE NAME rather than pinned a second
-# time beside it. Every sdist on PyPI is <name>-<version>.tar.gz and the
-# version is the part after the LAST dash, which is what makes this safe for
-# the entries whose file name is not their list name: inotify_simple-1.3.5,
+# time beside it -- a package whose .ipk claims a version it does not contain
+# is what a second pin buys. Every sdist on PyPI is <name>-<version>.tar.gz and
+# the version is the part after the LAST dash, which is what makes this safe
+# for the entries whose file name is not their list name: inotify_simple-1.3.5,
 # streaming_form_data-1.19.1, pyserial-asyncio-0.6.
-#
-# A PYPKG_<NAME>_VERSION line per package would be eighteen more strings to
-# keep in agreement with eighteen FILE lines, and the failure when they
-# disagreed would be a package whose .ipk claims a version it does not
-# contain. One pin, read two ways.
 pypkg_version() {
     local _f
     _f="$(pypkg_var "$1" FILE)"
@@ -235,21 +168,16 @@ pypkg_version() {
 }
 # The sources every recipe under pkg/ builds from. ZLIB_TGZ is NOT repeated
 # here: it is pinned thirty lines up for CPython, and pkg/zlib builds that same
-# tarball once for everybody. One pin, one build, two consumers -- which is the
-# whole point of the packaging work and the reason zlib stopped being an
-# invisible detail of two other builds.
+# tarball once for everybody.
 SODIUM_TGZ="${SODIUM_TGZ:-$ROOT/vendor/libsodium-${SODIUM_VERSION:-unpinned}.tar.gz}"
 OPKG_TGZ="${OPKG_TGZ:-$ROOT/vendor/opkg-${OPKG_VERSION:-unpinned}.tar.gz}"
 LIBARCHIVE_TGZ="${LIBARCHIVE_TGZ:-$ROOT/vendor/libarchive-${LIBARCHIVE_VERSION:-unpinned}.tar.gz}"
 export SODIUM_TGZ OPKG_TGZ LIBARCHIVE_TGZ
 
-# WHERE A RECIPE'S OUTPUT LIVES IS DERIVED, NOT NAMED. pkg/lib.sh's pkg_out
+# WHERE A RECIPE'S OUTPUT LIVES IS DERIVED, NOT NAMED: pkg/lib.sh's pkg_out
 # spells work/pkg/<recipe>, so adding a package is one directory under pkg/ and
-# no edit to this file. These three names remain because bin/patch.sh and
-# bin/fetch-assets.sh refer to them, and one alias here is cheaper than the
-# same path spelled in four scripts -- but nothing new should be added below.
-# There were three schemes for this (work/.sodium named by hand, work/.pkg-$id
-# and work/.ipk-$name each derived differently) all describing one recipe.
+# no edit to this file. These three aliases remain only because bin/patch.sh
+# and bin/fetch-assets.sh refer to them. Nothing new should be added below.
 SODIUM_BUILD="${SODIUM_BUILD:-$ROOT/work/pkg/libsodium}"
 OPKG_BUILD="${OPKG_BUILD:-$ROOT/work/pkg/opkg}"
 ZLIB_BUILD="${ZLIB_BUILD:-$ROOT/work/pkg/zlib}"
@@ -334,30 +262,18 @@ export TARGET_MACHINE TARGET_PID STOCK_TGZ PROG_DUMP
 # extension module in the tree. s6's own binaries are static EXECs, so they
 # want 0x70001405 like the interpreter does.
 #
-# A FUNCTION, AND POINTED AT THE PAYLOAD. It used to walk $PY_BUILD/bin and
-# $PY_BUILD/lib -- the build cache. That was the whole tree while the
-# interpreter was the only thing this toolchain produced, and it stopped being
-# so the moment site-packages and libsodium arrived: a .so staged into
-# $MOD_PAYLOAD by a path the gate did not know about ships ungated, and the
-# first machine to notice is a printer. So the rule did not change (it already
-# covers a DYN correctly) -- the REACH did, to the staged payload, which is
-# the only tree that is by definition everything that ships.
+# A FUNCTION, AND POINTED AT THE PAYLOAD rather than at any one build tree: a
+# .so staged into $MOD_PAYLOAD by a path the gate did not know about ships
+# ungated, and the first machine to notice is a printer. The payload is by
+# definition everything that ships.
 #
-# s6 is IN this gate now, not exempt from it. It used to be built by a plain
-# mips32r1 musl toolchain and read e_flags=0x1007 (mips1, legacy NaN) -- a
-# choice defended here as "no floating point, so the NaN encoding cannot
-# matter" for exactly as long as nobody checked what the printer's own kernel
-# does with that flag at exec() rather than at runtime. It matters at exec():
-# a MIPS kernel built nan2008-only can refuse to run a legacy-NaN binary
-# outright, or silently misconfigure its FPU mode, neither of which shows up
-# under qemu-mipsel-static -- user-mode emulation does not enforce the same
-# ABI check a real kernel's binfmt loader does, which is exactly how s6
-# shipped in this state and every replica gate still passed. Section 5b now
-# cross-builds with Bootlin's mips32r5el-musl toolchain, whose crt/libc
-# objects are nan2008 by construction (mips32r5 has no legacy-NaN silicon to
-# be compatible with), restricted to mips32r2 codegen with the same
-# gcc-wrapper discipline 5c uses -- so s6 gets exactly the ABI everything else
-# on this printer already had to have, checked the same way.
+# NOTHING IS EXEMPT, s6 included. A legacy-NaN binary (e_flags 0x1007, from a
+# mips32r1 build) looks harmless if you assume the NaN encoding only matters to
+# floating point -- but it matters at exec(): a MIPS kernel built nan2008-only
+# can refuse to run it outright, or silently misconfigure its FPU mode. Neither
+# shows up under qemu-mipsel-static, because user-mode emulation does not
+# enforce the ABI check a real kernel's binfmt loader does, which is exactly
+# how such a binary once shipped with every replica gate still passing.
 mips_abi_gate() {
     local n=0 f hdr counts total good
     while IFS= read -r f; do
@@ -372,12 +288,11 @@ mips_abi_gate() {
         hdr=$(readelf -h "$f" 2>/dev/null) || continue
         # ONE HEADER PER MEMBER, NOT ONE PER FILE. readelf -h on a static
         # archive prints a full ELF header for every object inside it --
-        # measured: 11 for an 11-member .a, 298 for a host libgcc.a. The
-        # version of this loop that read a single `Flags:` line therefore
-        # handed a multi-line string to a `case` expecting one word, and every
-        # .a failed the gate with an error naming a value nobody could parse.
-        # That went unnoticed while no package shipped an archive; pkg/zlib and
-        # pkg/skalibs are the recipes that ship one.
+        # measured: 11 for an 11-member .a, 298 for a host libgcc.a. Reading a
+        # single `Flags:` line would hand a multi-line string to a `case`
+        # expecting one word, and every .a would fail the gate with an error
+        # naming a value nobody could parse. pkg/zlib and pkg/skalibs are the
+        # recipes that ship an archive.
         #
         # So every header is checked and every header has to conform. Both
         # conditions live on the same awk line because readelf prints them
@@ -393,15 +308,11 @@ mips_abi_gate() {
         # EF_MIPS_CPIC (0x4), none of which says anything about whether the
         # printer's kernel will exec the file.
         #
-        # This used to accept exactly 0x70001405 and 0x70001407, and those two
-        # values were measured from linked BINARIES -- where crt startup
-        # objects happen to set NOREORDER, so every executable and every shared
-        # object in the tree read one or the other. Object files need not:
-        # libarchive's xxhash.o comes out 0x70001406, identical ABI, no
-        # NOREORDER, and the old whitelist called it a wrong-ABI object. The
-        # pair was always a proxy for the mask, and it only looked exact while
-        # nothing but whole binaries went through here. Packaging a .a is what
-        # exposed the difference.
+        # A MASK, NOT THE PAIR 0x70001405/0x70001407. Those two are what
+        # linked BINARIES read, because crt startup objects happen to set
+        # NOREORDER; object files need not. libarchive's xxhash.o comes out
+        # 0x70001406 -- identical ABI, no NOREORDER -- and an exact whitelist
+        # calls it a wrong-ABI object.
         counts=$(awk '
             /Flags:/ {
                 total++

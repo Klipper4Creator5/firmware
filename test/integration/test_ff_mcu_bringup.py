@@ -33,9 +33,9 @@ PORTS = ("/dev/ttyS4", "/dev/ttyS5", "/dev/ttyS7")
 
 
 def test_it_owns_every_board_that_needs_a_handover(tmp_path):
-    # ttyS5 is in here because checkEboard no longer runs: start.sh dropped
-    # it, so a bring-up that quietly stopped covering ttyS5 would strand the
-    # eboard with nothing left to notice.
+    # ttyS5 is in here because nothing else covers it -- start.sh does not call
+    # checkEboard -- so a bring-up that quietly stopped covering ttyS5 would
+    # strand the eboard with nothing left to notice.
     assert bringup.DEFAULT_PORTS == PORTS
 
 
@@ -53,9 +53,8 @@ def test_no_callback_is_fine(tmp_path):
 
 
 def test_the_status_file_is_gone():
-    # It existed to carry this across a process boundary that no longer
-    # exists. Leaving it would mean two ways to learn the same thing, one of
-    # them stale.
+    # There is no process boundary left to carry this across, and keeping it
+    # would mean two ways to learn the same thing, one of them stale.
     assert not hasattr(bringup, "publish")
     assert not hasattr(bringup, "STATUS_FILE")
 
