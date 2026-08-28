@@ -542,6 +542,116 @@ pkg_buildpython() {
     pkg_say "$PKG_ID: build-python ready ($("$HOSTPY" -V 2>&1))"
 }
 
+# ------------------------------------------------------------ pkg_buildopkg
+#
+# Build an x86-64 opkg and leave it at work/.opkg-host. This is the tool
+# bin/patch.sh assembles the payload with: it installs the feed into a staging
+# root, and what lands there is what ships.
+#
+# WHY A REAL opkg AND NOT pkgs/ipk-install. ipk-install exists because the
+# PRINTER has no opkg and no `ar` -- measured, not assumed; see its header.
+# Neither constraint is true in this container. What it does not do is resolve
+# Depends, enforce Conflicts, read Provides or handle conffiles, and every one
+# of those is part of deciding what a payload should contain. Assembling with
+# the real client means the payload's own metadata is checked by the code that
+# defines what checking it means, and the database it writes is written by the
+# program that will later read it on the printer. ipk-install keeps its job,
+# which is repairing a machine by hand; it just is not this job.
+#
+# THE PREFIX IS PART OF THE ABI HERE, exactly as it is for the cross build --
+# pkgs/3rdparty/opkg/build.sh spells out why, from measurements taken on both
+# sides, and it names an x86-64 opkg as one of them. opkg BAKES ITS STATE
+# DIRECTORY IN AT COMPILE TIME: configured anywhere but $MODDIR it looks for
+# its status file somewhere else no matter what --offline-root it is handed,
+# comes up believing nothing is installed, and cheerfully reinstalls the
+# world. So this configures --prefix=$MODDIR and installs with DESTDIR, which
+# is why the binary is at $PKG_HOSTOPKG_ROOT$MODDIR/bin/opkg and not at
+# $PKG_HOSTOPKG_ROOT/bin/opkg. The path looks redundant and is load-bearing.
+#
+# ONE CACHE, keyed on the pinned version and its sha256, at work/.opkg-host so
+# nothing under $PKG_WORK deletes it -- the same shape as pkg_buildpython
+# above, and this function is deliberately its twin so that "build a host tool
+# from the pinned source" means one thing in this file.
+#
+# --disable-curl / --disable-ssl-curl / --disable-gpg follow the cross recipe
+# for the same reason it gives: nothing here fetches over a network, every
+# .ipk it installs is a local file, and phase 3 of
+# docs/notes/85-packaging.md is where that changes.
+pkg_buildopkg() {
+    PKG_HOSTOPKG_ROOT="$PWD/work/.opkg-host"
+    HOSTOPKG="$PKG_HOSTOPKG_ROOT$MODDIR/bin/opkg"
+    export HOSTOPKG
+
+    _hostamp="$OPKG_VERSION $OPKG_SHA256 $MODDIR"
+    if [ "$(cat "$PKG_HOSTOPKG_ROOT/.version" 2>/dev/null || true)" = "$_hostamp" ]; then
+        pkg_skip "build-opkg $OPKG_VERSION is already at work/.opkg-host"
+        return 0
+    fi
+
+    [ -f "${OPKG_TGZ:-}" ] || pkg_die \
+        "the host opkg needs the opkg source and '${OPKG_TGZ:-}' is missing. Run ./bin/fetch-assets.sh."
+    command -v gcc >/dev/null || pkg_die \
+        "the host opkg needs a host gcc. Run through 'make packages' or 'make build'."
+    pkg-config --exists libarchive || pkg_die \
+        "the host opkg needs libarchive (opkg's configure.ac says 'Require libarchive'). Install libarchive-dev in docker/Dockerfile.build."
+
+    pkg_say "building the x86-64 build-opkg $OPKG_VERSION (once, then cached)"
+    rm -rf "$PKG_HOSTOPKG_ROOT" work/.opkg-hostsrc
+    mkdir -p work/.opkg-hostsrc "$PKG_HOSTOPKG_ROOT"
+    tar -xf "$OPKG_TGZ" -C work/.opkg-hostsrc \
+        || pkg_die "could not untar $OPKG_TGZ"
+
+    # The log lives beside the cache and not under $PKG_WORK: this verb is
+    # called from bin/patch.sh, which runs no recipe and so has neither
+    # PKG_LOG nor PKG_ID.
+    _holog="$PKG_HOSTOPKG_ROOT/build.log"
+    (
+        set -e
+        # THE CROSS ENVIRONMENT IS REMOVED, NOT AVOIDED BY CALLING ORDER --
+        # the same argument pkg_buildpython makes, and it applies harder here
+        # because a caller may have run a whole cross build first. A configure
+        # inheriting CC and a mipsel sysroot builds an opkg this machine
+        # cannot execute, and finds out at the first install.
+        unset CC CXX AR RANLIB STRIP NM OBJCOPY OBJDUMP LD
+        unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS LIBS CONFIG_SITE
+        unset PKG_CONFIG_LIBDIR PKG_CONFIG_PATH PKG_CONFIG_SYSROOT_DIR
+        cd "work/.opkg-hostsrc/opkg-$OPKG_VERSION"
+        # --disable-shared is not a size decision, it is the only way this
+        # binary runs. --prefix=$MODDIR bakes /usr/data/anvil into the
+        # LIBRARY as well, so a shared build produces a bin/opkg that looks
+        # for libopkg.so.1 at a path which exists on the printer and not
+        # here. Statically linked, the prefix and the code that reads it are
+        # in the one file DESTDIR relocated.
+        ./configure --prefix="$MODDIR" \
+            --disable-curl --disable-ssl-curl --disable-gpg \
+            --disable-shared --enable-static \
+            --disable-dependency-tracking
+        make -j"$(nproc 2>/dev/null || echo 4)"
+        make install DESTDIR="$PKG_HOSTOPKG_ROOT"
+    ) > "$_holog" 2>&1 || pkg_die "the host opkg failed to build -- see $_holog"
+
+    [ -x "$HOSTOPKG" ] || pkg_die \
+        "the host opkg built but is not at $HOSTOPKG -- check --prefix and DESTDIR; see $_holog"
+
+    # THE BAKED-IN PATH, ASSERTED RATHER THAN ASSUMED. This is the one thing
+    # about this build that fails silently: a wrongly-prefixed opkg runs
+    # perfectly, writes its database somewhere nobody looks, and hands back a
+    # payload the printer's opkg reads as empty. libopkg/Makefile.am compiles
+    # in -DVARDIR="@localstatedir@", so the prefix is a literal string inside
+    # the binary and the question can be put to the file itself rather than
+    # to the configure line that was meant to produce it.
+    grep -q -- "$MODDIR/var" "$HOSTOPKG" || pkg_die \
+        "the host opkg has no '$MODDIR/var' baked in -- it was configured with the wrong --prefix and would keep its database somewhere the printer never reads. See $_holog."
+    "$HOSTOPKG" print-architecture >/dev/null 2>&1 || pkg_die \
+        "the host opkg built but cannot run -- see $_holog"
+
+    rm -rf work/.opkg-hostsrc
+    # Written LAST, so an interrupted build leaves a cache that is stale
+    # rather than one that lies.
+    echo "$_hostamp" > "$PKG_HOSTOPKG_ROOT/.version"
+    pkg_say "build-opkg ready ($("$HOSTOPKG" --version 2>&1 | head -n1))"
+}
+
 # ----------------------------------------------------------------- pkg_deps
 #
 # Fill the recipe's sysroot from the feed: every recipe named in

@@ -33,6 +33,16 @@
 # The alternative was a container of its own, the way tools/supervisor and
 # tools/python build for measurement. The build lane deliberately gets no
 # docker socket (only the test lane does), so there is no daemon to ask.
+#
+# libarchive-dev IS DEBIAN'S, DELIBERATELY, AND IS THE ONE EXCEPTION TO
+# versions.env. pkgs/lib.sh's pkg_buildopkg builds an x86-64 opkg from the
+# pinned opkg tarball to assemble the payload, and opkg requires libarchive
+# (configure.ac: "Require libarchive"). That opkg is a BUILD TOOL: it runs
+# here, in this container, and never leaves it. The pin-and-hash rule governs
+# what reaches the printer, and the printer's opkg is a different binary --
+# pkgs/3rdparty/opkg, cross-compiled against the libarchive OUR feed built.
+# Taking Debian's for the host tool is the same call already made for gcc,
+# which pkg_buildpython uses to build the x86-64 build-python.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -44,6 +54,7 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
       binutils file findutils grep sed gawk make git diffutils patch procps \
       squashfs-tools qemu-user-static docker.io shellcheck \
       gcc g++ libc6-dev zlib1g-dev pkg-config perl \
+      libarchive-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
