@@ -59,18 +59,31 @@ not_in_nav: |
 nav:
   - Home: index.md
 
+  # Ordered by what the reader is doing, not by subsystem: someone whose
+  # printer will not boot should not have to know which subsystem owns the
+  # symptom table.
   - Using Reforge:
-      - After the flash: hardware-testing.md
-      - Toolchanges: toolchange.md
+      - Is this for you: is-this-for-you.md
+      - Installing: installing.md
+      - After the flash: after-the-flash.md
+      - Your first print: first-print.md
       - Nozzle-offset calibration: calibration.md
-      - How it works: how-it-works.md
-      - Error codes: notes/70-error-codes.md
+      - Printing: printing.md
+      - Upgrading, and your files: upgrading.md
+      - When something goes wrong: troubleshooting.md
+      - Reference:
+          - Error codes: error-codes.md
+          - Versions: versions.md
+          - How it works: how-it-works.md
 
+  # Not yet redesigned -- these are the pages as they stand, regrouped.
   - For contributors:
       - Building packages: building.md
       - Testing: testing.md
       - The printer replica: printer-replica.md
+      - Validating a build on hardware: hardware-testing.md
       - Internals:
+          - The toolchanger mod: toolchange.md
           - Overview: notes/00-overview.md
           - Hardware and MCU topology: notes/10-hardware.md
           - The FlashForge Klipper fork: notes/20-klipper-fork.md
