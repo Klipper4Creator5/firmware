@@ -15,6 +15,25 @@ set -euo pipefail
 SOFTWARE_DIR=work/software
 [ -d "$SOFTWARE_DIR" ] || { echo "run bin/unpack.sh first" >&2; exit 1; }
 
+# THE FEED IS A PREREQUISITE OF THIS SCRIPT, AND HAS BEEN FOR LONGER THAN IT
+# HAS BEEN SAID OUT LOUD. Section 5c runs pkgs/3rdparty/python/build.sh, whose
+# PKG_BUILD_DEPENDS is "openssl sqlite zlib libffi xz bzip2 expat" -- and this
+# file builds none of those seven. pkg_deps fills that recipe's sysroot by
+# unpacking their .ipk files out of $PKG_FEED and dies if they are not there.
+# So a cold checkout has never been able to run bin/patch.sh; it just failed
+# two hundred lines further down, inside a recipe, naming a file rather than
+# the command that makes it.
+#
+# Checked here so the failure names the fix, and checked by counting .ipk
+# rather than by testing for the directory: a $PKG_FEED that exists and is
+# empty is the state a cleaned tree is in, and it is the one that used to
+# produce the confusing error.
+if [ -z "$(ls "$PKG_FEED"/*.ipk 2>/dev/null)" ]; then
+    echo "no package feed at $PKG_FEED" >&2
+    echo "  the recipes this script runs build against it -- run 'make packages' first." >&2
+    exit 1
+fi
+
 say() { printf '>> %s\n' "$*"; }
 skip() { printf '   (skip) %s\n' "$*"; }
 

@@ -254,9 +254,10 @@ reads a flag must not itself sit behind a second, different flag.
 **Builds it** — host-side, never installed:
 
 ```
-bin/            fetch-assets -> unpack -> patch -> pack, plus verify
-                build-packages.sh is the packaging lane below -- not part of
-                the four-step build
+bin/            fetch-assets -> unpack -> patch -> pack, plus verify.
+                build-packages.sh is the packaging lane below, and the four
+                steps need it to have run: patch.sh checks for the feed and
+                refuses without one
 versions.env    pinned Mainsail / HelixScreen / Moonraker versions + sha256
 vendor/         where fetch-assets.sh caches them (gitignored), plus the
                 opkg-utils checkout -- the one entry pinned by git commit
@@ -267,9 +268,9 @@ pkgs/           package recipes: one directory per component, each a
                 build.sh producing a $MODDIR-relative tree and a pkg.conf
                 naming it, plus whatever files of ours that component ships.
                 `make packages` builds them into .ipk files in work/packages/
-                with a feed index, using upstream's opkg-build. A PROOF OF
-                CONCEPT -- nothing on the release path reads it yet, and the
-                tarball `make build` produces is unchanged.
+                with a feed index, using upstream's opkg-build. The release
+                path depends on this: recipes resolve their build
+                dependencies out of the feed, so `make packages` comes first.
                 See docs/notes/85-packaging.md.
   3rdparty/       the recipes that build a pinned tarball and carry no files
                   of this repo -- thirty-four of the thirty-eight. They are

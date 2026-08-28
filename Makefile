@@ -201,12 +201,17 @@ build: image config.env
 # recipe under pkgs/ into work/packages/ as .ipk files plus the feed index that
 # makes that directory an opkg repository.
 #
-# NOTHING ON THE RELEASE PATH DEPENDS ON THIS. `make build` is unchanged and
-# still ships one anvil.tar.xz; this target exists so the packages can be built
-# and gated beside it while the migration is decided. It also, unlike `build`,
-# needs NO stock FlashForge package -- which is most of the point: packaging
-# has to be runnable in CI on a bare checkout, or the gate only runs where the
-# proprietary firmware is and stops being a gate.
+# THE RELEASE PATH IS BUILT ON THIS. It used to say the opposite -- "nothing
+# on the release path depends on this" -- and that was already false when it
+# was written: pkgs/3rdparty/python declares seven build dependencies, pkg_deps
+# resolves them by unpacking their .ipk out of work/packages, and bin/patch.sh
+# builds none of the seven. `make build` on a cold checkout has never worked
+# without this target; it failed deep inside a recipe instead of saying so.
+# bin/patch.sh now checks for the feed up front and names this command.
+#
+# It still, unlike `build`, needs NO stock FlashForge package -- which is most
+# of the point: packaging has to be runnable in CI on a bare checkout, or the
+# gate only runs where the proprietary firmware is and stops being a gate.
 packages: image config.env
 	@$(RUN) ./bin/build-packages.sh $(PKG)
 
