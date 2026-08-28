@@ -176,7 +176,7 @@ simply "both E moves completed". `fd_ex<n>` is not re-read.
 twice (status poll / flush, no G-code); posts `setLoadComplete` -> `showResultWidget` (error dialog text if
 `err != 0`, re-enables the page, refreshes tool buttons from `getFilamentDetectionInfo`/`getExtruderGrabStatus`).
 Error codes are whatever `changeExtruderManager` / `errorMessageIndex` return (endstop / probe / timeout
-/ tool-change E-codes, see [`error-codes.md`](../error-codes.md)); the load page adds no E0xxx of its own.
+/ tool-change E-codes, see [`70-error-codes.md`](70-error-codes.md)); the load page adds no E0xxx of its own.
 
 **Post-load state writes: none to filament.json / extruder.json.** Only `setNoFilamentFlag(n,0)` (RAM) and the
 optional `SDCARD_SET_GCODE_EX_USED_CHANGED` gcode. Material type/colour are edited separately by the page's

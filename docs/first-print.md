@@ -1,40 +1,43 @@
 # Your first print
 
-**Prints refuse to start on an uncalibrated toolchanger — by design.** The
-gate runs before anything heats, homes or grabs, and it is there because a
-toolchanger that does not know where its nozzles are drives one of them into
-the plate.
+**If your printer was printing before you flashed, it will print now.** The
+factory numbers came across on the first boot, a bed mesh is loaded at the
+start of every print, and the mod is built to run the same files the stock
+firmware ran. There is nothing you have to set up first.
 
-This page is the order of the first run: calibrate, prove the offset is
-really being applied, then two files that exercise the machine before a real
-model does.
+What follows is what is worth doing anyway, the first time, before you leave
+a long print unattended. None of it is mandatory. All of it is quicker than
+scraping a failed first layer off the plate.
 
 ---
 
-## 1. Calibrate
+## Where everything is
 
-Your unit's factory numbers imported themselves on the first boot. That is a
-starting point, not a calibration: measure the nozzles.
+Everything is on the printer's own address:
 
-**Take the PEI sheet off first** — the calibration station sits below the bed
-plane — then home and calibrate:
+| | |
+|---|---|
+| `http://<printer-ip>/` | Mainsail |
+| `http://<printer-ip>:7125` | Moonraker's API — what slicers upload to |
+| `http://<printer-ip>/webcam/` | the camera stream (mjpg-streamer on `:8080`) |
+| `ssh root@<printer-ip>` | the shell — password from `anvil-password.txt` |
 
-```gcode
-G28
-CALIBRATE_TOOL_OFFSETS
-SAVE_CONFIG
+```
+/usr/data/anvil-install.log      what the installer did
+/usr/data/logs/anvil-boot.log    services + UI choice at each boot
+/usr/data/logs/printer.log       klipper
+/usr/data/logs/helixscreen.log   helixscreen
 ```
 
-Step by step, with every message it can refuse with, and what each refusal
-means: [Nozzle-offset calibration](calibration.md).
-
-Afterwards, `TOOLCHANGE_STATUS` and `TOOL_OFFSET_STATUS` should show a nozzle
-triple and a dock position for every tool, and nothing should say
-`NOT CALIBRATED`.
+They are the first thing to read when something is wrong, and the first thing
+to quote when you ask on [the Discord](https://discord.gg/ggJyfgVA4v).
 
 ---
 
-## 2. Prove the offset is applied
+## Check the offsets are applied
+
+**Recommended.** Not because it is likely to be wrong, but because this is
+the one thing that damages the machine when it is, and it costs two minutes.
 
 Before moving anything:
 
@@ -72,87 +75,67 @@ Before moving anything:
   it cannot tell that term from your babystep, so it would take both.
 
 A touchscreen recalibration no longer affects this module. Recalibrate from
-Klipper instead — [Nozzle-offset calibration](calibration.md) — or repeat the
+Klipper instead — [XYZ tool calibration](calibration.md) — or repeat the
 import step if you really want the touchscreen's numbers.
 
 ---
 
-## 3. The two verification files
+## If something looks off, calibrate
 
-`gcode/` holds them. They are hand-maintained G-code, not generated: send them
-to the printer the way you send any print — Mainsail's upload, or OrcaSlicer's
-Klipper/Moonraker target. Each one's own header repeats everything below, so
-whoever is standing at the machine has it in front of them.
+Only if you need it — a machine that measures correctly above does not need
+this. Run it when the check disagrees with reality, when a tool has been
+refitted or dropped, or when one tool prints at a different height from the
+rest.
 
-### First: `creator5-safe-moves.gcode`
+Re-measuring replaces the factory numbers with your own; it does not repair
+anything else, and it is not a routine step. Background:
+[Calibration](calibration-overview.md).
 
-The feature print with the heat and the filament taken out. Once homed, no move
-in it goes below Z50; nothing extrudes and no heater is given a target. It
-answers three questions — does the `G28` wrapper home safely, docking a mounted
-tool first; does a tool change latch and release; do the fans, the chamber gate
-and `END_PRINT` do what they claim — and it answers them before a nozzle can
-reach the plate.
+**Take the PEI sheet off first** — the calibration station sits below the bed
+plane — then home and calibrate:
 
-It names no tool as a bare `Tn` and carries no `M104`/`M140`, so `ff_print`
-derives nothing from it and the implicit prepare has nothing to heat or purge.
-That makes it safe whether `FF_BEFORE_PRINT_START.prepare` is 0 or 1.
-
-Two refusals it may produce are the gates working, not faults: the calibration
-refusal from Mainsail's print entry point (override deliberately with
-`SET_GCODE_VARIABLE MACRO=_FF_JOB VARIABLE=allow_uncalibrated VALUE=1`), and
-"Refusing to home Z: cannot tell whether a tool is mounted", which means the
-dock switches disagree — run `TOOLCHANGE_STATUS` and find the one that is lying.
-
-### Then: `creator5-feature-test.gcode`
-
-Not a model. One file that drives every macro the mod adds, in the order a real
-print drives them, and leaves something on the plate you can measure:
-
-| Phase | What it proves |
-|---|---|
-| start block | `START_PRINT` with `TOOLS=`: the preflight gate, then one purge + wipe per tool at the chute while the bed heats |
-| 0 | `TOOLCHANGE_STATUS` / `TOOL_OFFSET_STATUS` dumped into `printer.log` alongside the print itself |
-| 1 | nested squares, one ring per tool, 2 mm apart. Cold, the gap on left vs right is that tool's X offset error; front vs back its Y |
-| 2 | a solid single first layer — squish is the verdict on `TOOLCHANGE_SET_PRINT_OFFSET` |
-| 3 | the `M106 P<n>` fan map, one target at a time with a dwell |
-| 4 | `M141`: a Pro heats, a plain Creator 5 says so and prints on. An abort here is a real failure |
-| 5 | a tower with one tool change per layer, hot, mid-print |
-| 6 | `END_PRINT` via the machine end block |
-
-Two things it deliberately does **not** do. It never calibrates —
-`TOOL_CALIBRATE_TOOL_OFFSET` and `TOOL_LOCATE_SENSOR` need the build plate
-off, which a print does not have, so the file only reads the geometry.
-And it contains no
-`PAUSE`: press Pause in Mainsail during the tower and then Resume, which is the
-one check that wants a human at the machine.
-
-Unlike the safe file, this one **needs** the implicit prepare turned off — it
-is the deliberate exception, because it carries its own `START_PRINT` with the
-`TOOLS=` list the automatic path cannot derive. For this print only:
-
-```
-SET_GCODE_VARIABLE MACRO=FF_BEFORE_PRINT_START VARIABLE=prepare VALUE=0
+```gcode
+G28
+CALIBRATE_TOOL_OFFSETS
+SAVE_CONFIG
 ```
 
-and put it back afterwards, with `VALUE=1` or simply a `RESTART`.
+Step by step, with every message it can refuse with, and what each refusal
+means: [XYZ tool calibration](calibration.md).
 
-Preparing twice misplaces nothing, but it re-homes and re-purges every tool for
-no reason.
-
-**Do not persist the 0** by editing `variable_prepare`. Every ordinary file
-printed here relies on the automatic path: the stock Orca profile calls no
-`START_PRINT` and carries no `G28`, so with prepare off nothing homes or heats
-the bed and the profile's first move — `G1 Z5 F2400` — runs on unhomed axes.
-
-It is set up for T0 and T1 at 220 °C on a 60 °C bed. To exercise different
-tools, edit the `TOOLS=` list in `START_PRINT` and the `T<n>` lines in the body
-to match — `make test-py` will tell you if the two disagree, which is the one
-mistake that costs a print.
+Afterwards, `TOOLCHANGE_STATUS` and `TOOL_OFFSET_STATUS` should show a nozzle
+triple and a dock position for every tool, and nothing should say
+`NOT CALIBRATED`.
 
 ---
 
-## 4. A real print
+## The two verification files
+
+Two G-code files live in [`gcode/`](../gcode/) in the repository. They are
+not models: they exercise the things a real print depends on, in the order a
+real print uses them, so a mistake shows up on a bare plate rather than
+halfway through a job.
+
+Send them the way you send any print — Mainsail's upload, or your slicer's
+Moonraker target.
+
+| File | What it does |
+|---|---|
+| [`creator5-safe-moves.gcode`](../gcode/creator5-safe-moves.gcode) | The whole sequence with the heat and the filament taken out. Nothing extrudes, no heater is given a target, and after homing nothing moves below Z50. It answers whether homing, tool changes and the end sequence behave — before a nozzle can reach the plate. |
+| [`creator5-feature-test.gcode`](../gcode/creator5-feature-test.gcode) | The real thing, hot, with two tools: one ring per tool to read XY offsets off the plate, a solid first layer to judge squish, the fan map, a chamber-heater check, and a tower with a tool change on every layer. |
+
+Run the safe one first. Each file's own header repeats what it does, so
+whoever is standing at the machine has it in front of them.
+
+Two refusals are the gates working rather than faults: a complaint that the
+machine is not calibrated, and "Refusing to home Z: cannot tell whether a
+tool is mounted", which means the dock switches disagree — run
+`TOOLCHANGE_STATUS` and find the one that is lying.
+
+---
+
+## A real print
 
 Now slice something small and print it the way you will print everything
-else — see [Printing](printing.md) for the slicer side. Stay at the machine
-for the first one.
+else: the stock FlashForge profile, uploaded through Mainsail or your
+slicer's Moonraker target. Stay at the machine for the first one.

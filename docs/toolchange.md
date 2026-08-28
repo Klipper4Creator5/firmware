@@ -11,10 +11,9 @@ stock `firmwareExe` binary (addresses referenced in the source comments),
 with some behaviour improved along the way — deliberate divergences are
 documented in the file headers.
 
-> **This is the design side.** How to use the toolchanger — slicer setup,
-> filament, runout, the checks before a first print — is
-> [Printing](printing.md) and [Your first print](first-print.md). What is on
-> this page is what the extras do and why, for someone changing them.
+> **This is the design side.** The checks to run before a first print are in
+> [Your first print](first-print.md). What is on this page is what the extras
+> do and why, for someone changing them.
 
 ## What's in here
 

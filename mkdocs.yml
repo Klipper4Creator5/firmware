@@ -14,6 +14,7 @@ theme:
   name: material
   features:
     - navigation.sections   # the public/contributor split, always visible
+    - navigation.indexes   # a section can have a page of its own
     - navigation.top
     - content.code.copy
     - search.suggest
@@ -43,7 +44,7 @@ markdown_extensions:
   - pymdownx.details
   - pymdownx.superfences
   # The status checkboxes on the front page, and the checklists in
-  # is-this-for-you.md and after-the-flash.md.
+  # is-this-for-you.md and first-print.md.
   - pymdownx.tasklist:
       custom_checkbox: true
 
@@ -56,6 +57,8 @@ hooks:
 # by one entry per tag.
 not_in_nav: |
   releases/*
+  printing.md
+  upgrading.md
 
 # Two audiences, and a reader should never fall from one into the other. The
 # first section is for someone who owns the printer; the second is for someone
@@ -69,16 +72,19 @@ nav:
   - Using Reforge:
       - Is this for you: is-this-for-you.md
       - Installing: installing.md
-      - After the flash: after-the-flash.md
       - Your first print: first-print.md
-      - Nozzle-offset calibration: calibration.md
-      - Printing: printing.md
-      - Upgrading, and your files: upgrading.md
-      - When something goes wrong: troubleshooting.md
-      - Reference:
-          - Error codes: error-codes.md
-          - Versions: versions.md
-          - How it works: how-it-works.md
+      - Calibration:
+          - Read first: calibration-overview.md
+          - XYZ tool calibration: calibration.md
+          - Bed mesh: bed-mesh.md
+      - Support: support.md
+      - Versions: versions.md
+
+  # Past the manual, short of the build system: how the machine behaves and
+  # how to change it, for someone who already knows Klipper.
+  - For experienced users:
+      - How a print runs: how-a-print-runs.md
+      - How calibration works: how-calibration-works.md
 
   # Not yet redesigned -- these are the pages as they stand, regrouped.
   - For contributors:
@@ -86,8 +92,11 @@ nav:
       - Testing: testing.md
       - The printer replica: printer-replica.md
       - Validating a build on hardware: hardware-testing.md
+      - How it works: how-it-works.md
       - Internals:
           - The toolchanger mod: toolchange.md
+          - The print pipeline: print-pipeline.md
+          - Error code table: notes/70-error-codes.md
           - Overview: notes/00-overview.md
           - Hardware and MCU topology: notes/10-hardware.md
           - The FlashForge Klipper fork: notes/20-klipper-fork.md

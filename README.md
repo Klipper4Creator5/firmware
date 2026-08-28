@@ -47,7 +47,7 @@ A checked box happened on that machine; an empty one has not, yet.
 - [ ] **Going back to stock** — proven on the printer replica, not yet
   needed on the machine. The stock package restores everything it carries;
   Moonraker is not in it, so the mod's build stays and keeps working — see
-  [When something goes wrong](docs/troubleshooting.md)
+  [Support](docs/support.md)
 
 **For the tinkerer:**
 
@@ -62,9 +62,14 @@ A checked box happened on that machine; an empty one has not, yet.
 FlashForge's application is one binary, and replacing it takes everything
 that lived inside it: **the network API on `:8898`**, and with it FlashPrint,
 Orca's FlashForge profile and the mobile app. Moonraker's API takes over.
-Flashing the stock package brings them back. The longer version, with the
-risks and what to have ready, is
-[Is this for you](docs/is-this-for-you.md).
+Flashing the stock package brings them back.
+
+If your prints already come out the way you want and you like the printer's
+own screen, this mod is not for you. It trades FlashForge's polish for
+Klipper's reach, and it expects you to be comfortable with a Klipper config
+and an ssh session when something breaks —
+[Is this for you](docs/is-this-for-you.md) is the honest version of that
+question.
 
 ---
 
@@ -79,8 +84,8 @@ nothing". Yours is in Settings → About.
 | Creator 5 | `Creator5-anvil-<date>.tgz` |
 | Creator 5 Pro | `Creator5Pro-anvil-<date>.tgz` |
 
-Have the stock FlashForge package for your model on a second stick before you
-begin. That stick is the undo button.
+Download the stock FlashForge package for your model before you begin. It is
+the undo button: flashing it back puts the printer as it was.
 
 ---
 
@@ -88,18 +93,16 @@ begin. That stick is the undo button.
 
 | | |
 |---|---|
-| [Is this for you](docs/is-this-for-you.md) | What stops working, what can go wrong, what to have ready |
+| [Is this for you](docs/is-this-for-you.md) | Who should flash this, who should stay on stock, and what it asks of you |
 | [Installing](docs/installing.md) | The flash, the first boot, your root password |
-| [After the flash](docs/after-the-flash.md) | Where everything is, and the go/no-go checks in order |
-| [Your first print](docs/first-print.md) | Calibrate, prove the offset, then the two verification files |
-| [Printing](docs/printing.md) | Slicer setup, filament, runout and clogs |
-| [When something goes wrong](docs/troubleshooting.md) | Symptoms, logs, and the way back to stock |
+| [Your first print](docs/first-print.md) | The go/no-go checks, calibration, and the two verification files |
+| [Support](docs/support.md) | The logs, and the way back to stock |
 
 The full manual is at
-[reforge.readthedocs.io](https://reforge.readthedocs.io/). How the mod hooks
-in — one file, `firmwareExe`, with the stock boot scripts, updater and
-recovery path left untouched — is
-[How it works](docs/how-it-works.md).
+[reforge.readthedocs.io](https://reforge.readthedocs.io/). If you want the
+insides — one file, `firmwareExe`, with the stock boot scripts, updater and
+recovery path left untouched — [How it works](docs/how-it-works.md) is under
+*For contributors*.
 
 ---
 

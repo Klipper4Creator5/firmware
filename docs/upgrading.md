@@ -73,4 +73,4 @@ installs the same way, and it restores every file the mod touches. The one
 thing it cannot bring back is FlashForge's Moonraker, which the stock package
 does not carry: the mod's build stays, it works, and Mainsail is happy with
 it. The details, and the ladder below it, are in
-[When something goes wrong](troubleshooting.md).
+[Support](support.md).

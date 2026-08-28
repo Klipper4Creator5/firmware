@@ -77,9 +77,8 @@ them rather than repeated here:
 | | |
 |---|---|
 | [Installing](installing.md) | the flash itself, the first boot, the root password |
-| [After the flash](after-the-flash.md) | the go/no-go checks, in order, and what means stop |
-| [Your first print](first-print.md) | calibration, the offset check, and the two files under `gcode/` |
-| [When something goes wrong](troubleshooting.md) | symptoms, logs, and the way back to stock |
+| [Your first print](first-print.md) | the go/no-go checks, calibration, and the two files under `gcode/` |
+| [Support](support.md) | the logs, and the way back to stock |
 
 What follows is the part that is ours rather than theirs: keeping those two
 verification files honest as the macros change.

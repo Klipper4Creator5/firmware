@@ -3,9 +3,25 @@
 The printer's own updater does the work: one file on a FAT32 stick, plugged
 in at power-on. No jailbreak, no soldering, no opening the case, no ssh.
 
-Have the things in [Is this for you](is-this-for-you.md#what-to-have-ready)
-ready before you start — above all the stock package for your model, on a
-second stick.
+---
+
+## What to have ready
+
+Before you flash anything:
+
+- [ ] **The stock FlashForge package for your model, downloaded and to
+      hand.** It is the undo button: copy it to a stick and flash it, and the
+      printer is back to how it was. That is the only recovery step needing
+      nothing but a USB port — no ssh, no screen. The stock packages are
+      published at [ghzserg/FF](https://github.com/ghzserg/FF/releases).
+- [ ] **Your printer's model**, from Settings → About. A package for the
+      other model is refused, and it is not a valid recovery image either.
+- [ ] **The printer's IP address**, and a machine that can reach it.
+- [ ] Time to stand at the machine. The first print after a flash is not
+      something to start and walk away from.
+
+Whatever stick you use: FAT32, with the package at the **root** of it, not
+in a folder.
 
 ---
 
@@ -32,9 +48,17 @@ Not sure which you have? On the printer: **Settings → About**.
    Leave the name exactly as it is — the printer looks for that pattern.
 3. **Power the printer off.**
 4. **Plug the stick in and power the printer on.** It finds the package by
-   itself, shows the update screen and installs. This takes a few minutes.
-5. **Wait for it to reboot on its own**, then pull the stick — your root
-   password is on it, in `anvil-password.txt`.
+   itself and starts installing. The screen tells you to wait while it works;
+   this takes a few minutes. Do not cut the power.
+5. **Wait for the beep.** The printer sounds when the install has finished and
+   the screen then offers to reboot. Accept it.
+6. **Pull the stick** once it has rebooted — your root password is on it, in
+   `anvil-password.txt`.
+
+The boot after that one is the long one, and it is the mod's rather than
+FlashForge's: a progress bar on a plain screen, for a minute or two, before
+HelixScreen appears. [What the first boot does](#what-the-first-boot-does)
+says what is happening behind it.
 
 ---
 
@@ -44,56 +68,44 @@ The first boot after a flash is longer than the ones after it, and the screen
 shows a progress bar rather than HelixScreen for most of it. Two things happen
 that happen only once:
 
-* **Your unit's factory calibration imports itself.** `[ff_legacy]` reads
-  firmwareExe's per-unit JSON — the dock and nozzle numbers measured for your
-  machine at the factory — and persists them into `printer.cfg` with its own
-  `SAVE_CONFIG`. Klipper restarts once because of it, before the screen is up.
+* **Your machine's factory calibration comes across.** The dock and nozzle
+  positions measured for your printer at the factory are copied into Klipper's
+  own configuration, so it starts from its own numbers rather than from
+  nothing. You do not have to do anything for this.
 * **A root password is chosen**, and written to the stick. See below.
 
-Do not cut the power during the first boot. A power cut in the middle of that
-`SAVE_CONFIG` is the one moment where the calibration import can be lost.
+Do not cut the power during the first boot. While that copy is being saved is
+the one moment where an interrupted boot can cost you the factory numbers.
 
 ---
 
 ## Your root password
 
-Every package — the official releases included — picks a random root password
-on the printer during the **first** install, sets it, and writes it to
-`anvil-password.txt` on the USB stick you flashed from. Pull the stick after
-the flash and read it, then save the password somewhere safe and delete the
-file.
+The first install picks a random root password for your printer and writes it
+to `anvil-password.txt` on the stick you flashed from. Read it, save it
+somewhere safe, and delete the file from the stick.
 
-* If the stick is not writable, no password is set at all, and the install
-  log says so.
-* Updates keep whatever root password the printer already has — including one
-  you set yourself with `passwd` — so the stick gets a password exactly once.
-* Only a package built with `ROOT_PW_HASH` set carries one baked in instead;
-  that is a build-time option, described in
-  [Building packages](building.md).
+* If the stick is not writable, no password is set at all — the install log
+  says so.
+* Later updates keep whatever password the printer already has, including one
+  you have changed yourself. The stick gets a password exactly once.
 
-ssh works because the stock rootfs already ships `/usr/sbin/dropbear` and an
-enabled `/etc/init.d/S50dropbear` — port 22 is already open on a stock
-printer, there is simply no published password. That shell is your recovery
-channel, so confirm it works before you touch anything else.
+Check that `ssh root@<printer-ip>` works before you go any further. That shell
+is how you get in when the screen is dark, and it is worth confirming while
+everything is still fine.
 
 ---
 
-## What the package touches, and what it does not
+## What it changes on the printer
 
-A package needs no config editing at all. It ships:
+Nothing you have to configure. The package brings its own Klipper additions
+and config files with it and wires them up itself, so the printer comes up
+working.
 
-* the `ff_*.py` Klipper extras, into the Klipper tree it flashes
-* the `ff-*.cfg` config files, to `/usr/data/config/`, keeping any you edited
-  and leaving the new one beside it as `.mod-new`
-* the `[include]` lines for all seven, at the end of `printer.base.cfg` —
-  which the stock installer force-copies to `/usr/data/config/` on every flash
+**Your `printer.cfg` is never touched** — not by this flash and not by any
+update. It is your file, it is where your own settings go, and leaving it
+alone is also part of why flashing back to stock works cleanly.
 
-`printer.cfg` is never touched by any of that, by design: it is your file.
-That is also why the includes live in `printer.base.cfg` and not there — and
-it is what makes the undo button work, since flashing the stock FlashForge
-package restores its own `printer.base.cfg` and the includes go with it.
-Which files are yours and which the mod overwrites is
-[Upgrading, and your files](upgrading.md).
-
-Then go through the checks in [After the flash](after-the-flash.md), in
-order, with the emergency stop within reach.
+Then work through [Your first print](first-print.md), in order, with the
+emergency stop within reach: it starts with the checks that say whether the
+flash went well.

@@ -8,7 +8,10 @@ filament runs out or clogs.
 
 ## Slicer setup
 
-**Leave the profile stock.** An untouched FlashForge Orca profile works as
+**Leave the profile stock.** The mod is built to print the files the stock
+firmware printed, so there is nothing to add and nothing to re-slice; if you
+want to drive the sequence yourself instead,
+[How a print runs](how-a-print-runs.md) is the page for that. An untouched FlashForge Orca profile works as
 shipped: nothing to paste into Machine start or end G-code, and files sliced
 before the mod keep printing. `[ff_print]` wraps `SDCARD_PRINT_FILE`/`M23`,
 reads the bed, nozzle, initial tool and first-layer height out of the file
