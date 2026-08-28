@@ -80,31 +80,29 @@ if [ "$ALL" = 1 ] || [ "${BUILD_HELIX:-0}" = "1" ]; then
         "$HELIX_TGZ" "$HELIX_SHA256"
 fi
 
-# The Klipper fork sources. Skipped when config.env points KLIPPER_FORK at a
-# local checkout: that path brings its own tree.
-if [ "$ALL" = 1 ] || { [ "${BUILD_KLIPPER:-0}" = "fork" ] && [ ! -d "${KLIPPER_FORK:-}/klippy" ]; }; then
+# The Klipper fork sources. There is one source now: KLIPPER_FORK -- the
+# config.env knob that pointed the build at a local checkout instead -- is
+# gone, because pkg/klipper is a recipe and a recipe names its source exactly
+# once. A checkout is no longer a second way in; re-pin KLIPPER_VERSION and
+# KLIPPER_SHA256 at your own tarball to build something else.
+if [ "$ALL" = 1 ] || [ "${BUILD_KLIPPER:-0}" = "fork" ]; then
     get "https://github.com/Klipper4FlashForge/klipper/archive/$KLIPPER_VERSION.tar.gz" \
         "$KLIPPER_TGZ" "$KLIPPER_SHA256"
 fi
 
-# The Ingenic glibc toolchain -- ~203MB, and shared by two consumers that used
-# to be one: chelper (Klipper fork only) and, since CPython 3.13 landed in
-# patch.sh section 5c, the interpreter itself, which has no BUILD_ flag and is
-# cross-built on every checkout. Gating this fetch on BUILD_KLIPPER=fork alone
-# -- the shape it had before 5c existed -- means a BUILD_KLIPPER=stock build
-# from a clean vendor/ reaches patch.sh's Python step with sources but no
-# compiler and dies there instead of here. 
+# The Ingenic glibc toolchain -- ~203MB, and shared by every recipe that
+# compiles: the interpreter and its seven libraries, the supervision stack,
+# libsodium, opkg, and chelper.
 #
-# TWO CONDITIONS, WHERE THERE USED TO BE FOUR. The interpreter and its eighteen
-# site-packages are recipes under pkg/ now, and pkg_needs answers for every
-# recipe at once -- so the two hand-written CPython stamp comparisons that sat
-# here were the same question in a second spelling, and the second spelling is
-# the one that drifts. Asking pkg/lib.sh means the fetcher computes the cache
-# key with the code that writes it, which is exactly what went wrong with the
-# s6 stamp below.
-if [ "$ALL" = 1 ] \
-   || { [ "${BUILD_KLIPPER:-0}" = "fork" ] && [ ! -d "${KLIPPER_FORK:-}/klippy" ]; } \
-   || pkg_needs; then
+# ONE CONDITION, WHERE THERE USED TO BE FOUR. The hand-written stamp
+# comparisons that sat here were the same question in a second spelling, and
+# the second spelling is the one that drifts. pkg_needs answers for every
+# recipe at once, so the fetcher computes the cache key with the code that
+# writes it -- which is exactly what went wrong with the s6 stamp below. The
+# separate Klipper clause went with them: chelper is pkg/klipper now, so
+# pkg_needs already covers it, and the clause would have been the fourth place
+# in this file that knew what BUILD_KLIPPER means.
+if [ "$ALL" = 1 ] || pkg_needs; then
     get "https://github.com/ballaswag/k1-discovery/releases/download/$MIPS_TOOLCHAIN_VERSION/$MIPS_TOOLCHAIN_FILE" \
         "$MIPS_TOOLCHAIN_TGZ" "$MIPS_TOOLCHAIN_SHA256"
 fi

@@ -39,15 +39,19 @@ when `pa_enable == 1` (479-487). `ff_toolchange.py` used to issue
 
 ### `c_helper.so` is built from the tree it ships with
 
-`patch.sh` cross-compiles the .so from the chelper sources of the tree being
-shipped (pinned tarball or `KLIPPER_FORK` checkout) whenever it is missing or
-older than those sources, using the Ingenic toolchain pinned in
-`versions.env`, and gates the result on both the ELF flags
-(MIPS32r2/nan2008/o32) and `test/test-chelper.py`'s symbol check.
+`pkg/klipper` cross-compiles the .so from the chelper sources of the tree
+being shipped, using the Ingenic toolchain pinned in `versions.env`, and gates
+the result on both the ELF flags (MIPS32r2/nan2008/o32) and
+`test/test-chelper.py`'s symbol check. There is one source: the commit pinned
+in `versions.env`. `KLIPPER_FORK` — the `config.env` knob that pointed the
+build at a local checkout instead — is gone with the move to `pkg/`, because a
+recipe names its source exactly once and the second source is precisely what
+went wrong below.
 
 The symbol check was dropped on 2026-08-24 as "the fork path winds down" —
 and the very next release, v20260824-nova-kakhovka, shipped the OPPOSITE
-failure: CI set `KLIPPER_FORK=""`, `patch.sh` silently kept the stock tree,
+failure: CI set `KLIPPER_FORK=""` (it still existed then), `patch.sh`
+silently kept the stock tree,
 and the stock 0.12-era klippy overlay half-overwrote the fork on modded
 printers. klippy then died at connect with a cffi **arg-count** error
 (`expects 4 arguments, got 3` — upstream c84d78f3f widened
@@ -55,7 +59,8 @@ printers. klippy then died at connect with a cffi **arg-count** error
 arg-count TypeError is Python-vs-Python — a mixed klippy tree — because the
 cdef and the caller both live in the tree; a stale .so shows up as a missing
 symbol (`AttributeError`) instead, since cffi resolves symbols lazily.
-`patch.sh` now refuses a fork build with no fork tree, `verify.sh` fails a
+There is now no fork build with no fork tree to refuse: `pkg/klipper` has one
+source and `pkg_unpack` fails on a missing tarball. `verify.sh` still fails a
 fork package that lacks the klippy tree or `chelper.tar`, and the compile-
 from-shipped-sources rule makes a stale .so unrepresentable in a release.
 

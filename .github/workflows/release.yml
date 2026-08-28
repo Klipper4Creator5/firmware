@@ -96,12 +96,11 @@ jobs:
           STOCK_TGZ_CREATOR5PRO="$PWD/stock/Creator5Pro-stock.tgz"
           STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
           STOCK_TGZ=""
-          # KLIPPER_FORK is deliberately NOT set: with no local checkout,
-          # patch.sh builds from the commit pinned in versions.env and
-          # cross-compiles c_helper.so from those same sources. Setting it to
-          # "" here is what made v20260824 ship the stock 0.12-era klippy --
-          # patch.sh now hard-fails on a fork build without a fork instead of
-          # skipping, so that cannot recur silently.
+          # No Klipper source knob any more: pkg/klipper builds from the
+          # commit pinned in versions.env and cross-compiles c_helper.so from
+          # those same sources. KLIPPER_FORK used to be settable here, and
+          # setting it to "" is what made v20260824 ship the stock 0.12-era
+          # klippy; a recipe names one source, so that cannot recur.
           # The secret is INTENTIONALLY unset: a hash baked in here would be
           # the same root password in every public release. Empty means each
           # printer picks a random one on its first install and writes it to

@@ -321,14 +321,14 @@ on this.
 Turn the rest of `bin/patch.sh`'s builds into recipes, the way libsodium
 became one —
 
-    klipper-fork  toolchange-config
+    klipper ✔  toolchange-config
     python ✔  python-<18 packages> ✔
     openssl ✔  libffi ✔  sqlite ✔  xz ✔  expat ✔  bzip2 ✔
     zlib ✔  libarchive ✔  libsodium ✔  opkg ✔
     skalibs ✔  execline ✔  s6 ✔  s6-rc ✔
     mainsail ✔  moonraker ✔  helixscreen ✔  anvil-core ✔
 
-**Everything except Klipper is done: 38 recipes producing 40 packages.**
+**Done: 38 recipes producing 41 packages.**
 Section 5b — the last place where one script built two libraries — is four
 recipes (`skalibs`, `execline`, `s6`, `s6-rc`), and moving them off the musl
 toolchain removed the second libc from this tree entirely. Section 5c, which
@@ -350,8 +350,31 @@ upstream version into the index, `anvil-moonraker` declares the thirteen it
 imports, and a printer that does not want gcode thumbnails can leave the 500KB
 of Pillow uninstalled — a decision that could not previously be expressed.
 
-Klipper is what remains, and `docs/notes/80-s6-migration.md` phase 7 makes it
-reachable only after CPython, which is now behind us.
+**Klipper was the last one, and it needed one new knob.** `klippy/chelper` has
+no Makefile and never has: on a machine with a compiler klippy builds
+`c_helper.so` at first run from the argument list in
+`klippy/chelper/__init__.py`, and this printer has no compiler. So the build
+system for that `.so` genuinely is one `gcc` line, which `pkg_build` could not
+express — it always ran `make`. `PKG_CC_SHARED` is that line, appended to
+`$CC -shared -fPIC`: the recipe states Klipper's own `COMPILE_ARGS` and
+`pkg_build` keeps ownership of the compiler, so the ABI flags stay spelled in
+exactly one place. A knob, not a verb, for the reason the header of
+`pkg_build` gives about the three mechanisms with one user each.
+
+Two things the recipe took with it. `KLIPPER_FORK` — the `config.env` knob
+that pointed the build at a local checkout instead of the pin — is **gone**: a
+recipe names its source exactly once, a checkout beside a pinned tarball is
+the second source that rule forbids, and it is the *same* variable that let
+v20260824 ship a klippy tree nobody had built. And `test/test-chelper.py` no
+longer falls back to reading `KLIPPER_FORK` out of `config.env` when given no
+argument — that fallback printed `SKIP: no KLIPPER_FORK configured`, a green
+line for a check that had not run.
+
+The package installs the tree under `$MODDIR/klipper`, where nothing reads it
+yet: klippy is still started by the stock `/usr/prog/klipper/klipperDaemon`,
+so `bin/patch.sh` stages the recipe's output into the SOFTWARE component as
+before. Phase 7 of `docs/notes/80-s6-migration.md` is what makes the installed
+copy the live one.
 
 `patch.sh` keeps staging the payload from those same trees, so the shipped
 tarball does not change. The work is mechanical; the risk is in the two builds
@@ -427,6 +450,12 @@ Klipper tree, the toolchanger configs, the root password, `start.sh`,
 filesystem, not packages of ours, and they stay in `patch.sh` until phase 7 of
 `docs/notes/80-s6-migration.md` moves Klipper under `$MODDIR` and leaves
 `firmwareExe` as the only file placed outside `/usr/data`.
+
+Section 1 is now the *staging* half of that: the Klipper BUILD is
+`pkg/klipper` and `anvil-klipper` installs the tree under `$MODDIR/klipper`
+like every other package, so what is left in `patch.sh` is a `cp -a` into
+`/usr/prog` plus the `chelper.tar` the stock installer's `run.sh` extracts.
+Phase 7 deletes those lines rather than moving a build.
 
 **The CPython blocker is gone.** It read: "section 5c is 800 lines and builds
 the interpreter, seven static libraries and eighteen cross-built wheels; until

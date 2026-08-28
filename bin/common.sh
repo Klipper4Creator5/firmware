@@ -97,8 +97,7 @@ MAINSAIL_ZIP="${MAINSAIL_ZIP:-$ROOT/vendor/mainsail-${MAINSAIL_VERSION:-unpinned
 HELIX_TGZ="${HELIX_TGZ:-$ROOT/vendor/${HELIX_FILE:-helixscreen.tar.gz}}"
 MOONRAKER_TGZ="${MOONRAKER_TGZ:-$ROOT/vendor/moonraker-${MOONRAKER_VERSION:-unpinned}.tar.gz}"
 # The Klipper fork tarball and the MIPS toolchain that compiles its chelper.
-# Only consumed when KLIPPER_FORK does not point at a local checkout -- see
-# versions.env for why the pin exists.
+# Both are consumed by pkg/klipper; see versions.env for why the pin exists.
 KLIPPER_TGZ="${KLIPPER_TGZ:-$ROOT/vendor/klipper-${KLIPPER_VERSION:-unpinned}.tar.gz}"
 MIPS_TOOLCHAIN_TGZ="${MIPS_TOOLCHAIN_TGZ:-$ROOT/vendor/${MIPS_TOOLCHAIN_FILE:-mips-toolchain.tar.gz}}"
 # The supervision stack: skalibs (s6's own C library), execline (which s6-rc

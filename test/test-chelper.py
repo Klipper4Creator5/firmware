@@ -12,17 +12,22 @@ extruder_stepper_free shipped and bricked klippy startup on hardware. The .so
 is a build artifact and is not committed, so nothing else forces it to be
 rebuilt when the sources move.
 
-    ./test/test-chelper.py [path/to/klipper/fork]
+    ./test/test-chelper.py <path/to/klipper>
 
 Reads the cdef blocks out of klippy/chelper/__init__.py and checks each
 declared function against the .so's dynamic symbol table.
+
+THE PATH IS REQUIRED. It used to be optional, falling back to KLIPPER_FORK in
+config.env -- and the fallback was the failure mode: an unset KLIPPER_FORK
+turned this into "SKIP: no KLIPPER_FORK configured", a green line for a check
+that had not run. Both callers pass a path (pkg/klipper/build.sh over the
+package it just built, bin/verify.sh over the finished one) and KLIPPER_FORK
+no longer exists, so a missing argument is a caller bug and says so.
 """
 import os
 import re
 import subprocess
 import sys
-
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # C keywords and cffi type words that can be followed by "(" without being a
 # function being declared.
@@ -31,19 +36,6 @@ if while for switch return sizeof struct union enum typedef const void char int
 long short unsigned signed float double static inline extern volatile restrict
 uint8_t uint16_t uint32_t uint64_t int8_t int16_t int32_t int64_t size_t
 """.split())
-
-
-def fork_path():
-    if len(sys.argv) > 1:
-        return sys.argv[1]
-    cfg = os.path.join(ROOT, "config.env")
-    if os.path.exists(cfg):
-        for line in open(cfg, encoding="utf-8", errors="replace"):
-            m = re.match(r'\s*KLIPPER_FORK=["\']?([^"\'#\n]+)', line)
-            if m:
-                return os.path.expandvars(m.group(1).strip()).replace(
-                    "$HOME", os.path.expanduser("~"))
-    return ""
 
 
 def declared_functions(init_py):
@@ -83,12 +75,14 @@ def exported_symbols(so):
 
 
 def main():
-    fork = fork_path()
-    if not fork:
-        print("  SKIP: no KLIPPER_FORK configured")
-        return 0
+    if len(sys.argv) < 2:
+        print("usage: test-chelper.py <path/to/klipper>", file=sys.stderr)
+        return 2
+    fork = sys.argv[1]
     so = os.path.join(fork, "klippy", "chelper", "c_helper.so")
     init_py = os.path.join(fork, "klippy", "chelper", "__init__.py")
+    # Still a skip rather than a failure: bin/verify.sh runs this over a
+    # BUILD_KLIPPER=stock package too, where there is no fork tree to check.
     if not os.path.exists(so) or not os.path.exists(init_py):
         print("  SKIP: no c_helper.so / __init__.py under %s" % fork)
         return 0

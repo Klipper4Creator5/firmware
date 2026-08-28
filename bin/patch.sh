@@ -71,83 +71,61 @@ mkdir -p "$MOD_PAYLOAD/bin" "$MOD_PAYLOAD/lib" "$MOD_PAYLOAD/libexec" \
 # v0.13 tree on already-modded printers. klippy died at connect with
 # "'void(*)(struct stepper_kinematics *, double, double, double)' expects 4
 # arguments, got 3": a v0.12 extruder.py calling the v0.13 chelper cdef
-# (upstream c84d78f3f widened extruder_set_pressure_advance).
+# (upstream c84d78f3f widened extruder_set_pressure_advance). KLIPPER_FORK is
+# gone -- the local-checkout seam it named would have been a second source for
+# a recipe that is allowed exactly one -- so "fork" now means the commit
+# pinned in versions.env and nothing else, and there is no configuration under
+# which this section can produce a tree it did not build.
+#
+# THE BUILD LIVES IN pkg/klipper NOW, and this section stages what it
+# produced -- the arrangement sections 3, 4, 5 and 5d have had since each
+# became a recipe, and for the same reason: the .ipk and the tarball have to
+# contain the same klippy tree and the same c_helper.so, or they are two
+# different Klippers wearing one version number and no test can tell which a
+# printer got. What was here -- an unpacked toolchain, a hand-written gcc
+# line, an mtime cache and two gates -- is in pkg/klipper/build.sh, where
+# `make packages` runs it too.
 case "${BUILD_KLIPPER:-fork}" in
 fork)
-    if [ -d "${KLIPPER_FORK:-}/klippy" ]; then
-        # A local checkout, for working on the fork itself.
-        FORK="$KLIPPER_FORK"
-        say "Klipper: fork tree from local checkout $FORK"
-    else
-        # No checkout: the commit pinned in versions.env, fetched into
-        # vendor/ by bin/fetch-assets.sh. This is the path releases take.
-        [ -f "${KLIPPER_TGZ:-}" ] || {
-            echo "   !! BUILD_KLIPPER=fork but no fork tree:" >&2
-            echo "      KLIPPER_FORK is not a checkout and $KLIPPER_TGZ is missing." >&2
-            echo "      Run ./bin/fetch-assets.sh (or set KLIPPER_FORK in config.env)." >&2
-            exit 1; }
-        FORK=work/klipper-fork
-        if [ ! -f "$FORK/.version" ] \
-           || [ "$(cat "$FORK/.version")" != "$KLIPPER_VERSION" ]; then
-            rm -rf "$FORK"
-            mkdir -p "$FORK"
-            tar -xzf "$KLIPPER_TGZ" -C "$FORK" --strip-components=1
-            echo "$KLIPPER_VERSION" > "$FORK/.version"
-        fi
-        say "Klipper: fork tree from pinned commit ${KLIPPER_VERSION:0:8}"
-    fi
+    bash pkg/klipper/build.sh
+    _kl="$(pkg_out klipper)/klipper"
 
-    # c_helper.so is built HERE, from the same sources that ship, whenever it
-    # is missing or older than any chelper source. A prebuilt .so that merely
-    # exists is not trusted with the tree's freshness: one that outlived its
-    # sources is how a v0.12-generation binary once shipped under a v0.13
-    # klippy (see test/test-chelper.py's docstring).
-    CHELPER="$FORK/klippy/chelper/c_helper.so"
-    if [ ! -f "$CHELPER" ] || [ -n "$(find "$FORK/klippy/chelper" \
-           \( -name '*.c' -o -name '*.h' \) -newer "$CHELPER" -print -quit)" ]; then
-        GCC="work/.mips-toolchain/mips-gcc720-glibc229/bin/mips-linux-gnu-gcc"
-        if [ ! -x "$GCC" ]; then
-            [ -f "${MIPS_TOOLCHAIN_TGZ:-}" ] || {
-                echo "   !! c_helper.so needs (re)building and there is no toolchain:" >&2
-                echo "      $MIPS_TOOLCHAIN_TGZ is missing. Run ./bin/fetch-assets.sh." >&2
-                exit 1; }
-            say "Klipper: unpacking the Ingenic MIPS toolchain"
-            mkdir -p work/.mips-toolchain
-            tar -xzf "$MIPS_TOOLCHAIN_TGZ" -C work/.mips-toolchain
-        fi
-        say "Klipper: cross-compiling c_helper.so from the fork's sources"
-        # Flags mirror COMPILE_ARGS in klippy/chelper/__init__.py: what the
-        # printer would use if it could compile, which it cannot.
-        "$GCC" -Wall -g -O2 -shared -fPIC \
-            -flto -fwhole-program -fno-use-linker-plugin \
-            -o "$CHELPER" "$FORK"/klippy/chelper/*.c
-    fi
-
-    # The gates. ABI: the kernel refuses anything but MIPS32r2/nan2008/o32.
-    # Symbols: cffi resolves lazily, so a stale .so dies at connect on the
-    # printer instead of at import in the build -- catch it here.
-    if ! readelf -h "$CHELPER" 2>/dev/null | grep -q nan2008; then
-        echo "   !! c_helper.so is NOT nan2008 -- the kernel will refuse it" >&2
-        exit 1
-    fi
-    say "Klipper: c_helper.so is nan2008 MIPS32r2 -- good"
-    python3 test/test-chelper.py "$FORK" || exit 1
-
+    # THE FORK GOES TO THE SOFTWARE COMPONENT, not to $MODDIR, and that is why
+    # this is a copy rather than a line in the payload loop below. klippy is
+    # started by the stock /usr/prog/klipper/klipperDaemon, so it has to be
+    # where that binary looks. The package installs the same tree under
+    # $MODDIR/klipper, which is inert until phase 7 of
+    # docs/notes/80-s6-migration.md moves Klipper there and this mod starts it
+    # itself; see pkg/klipper/pkg.conf.
+    #
     # Stock ships only a handful of klippy files as an overlay; the fork is a
-    # different Klipper generation (v0.13 vs v0.12), so ship the WHOLE tree.
+    # different Klipper generation, so the WHOLE tree replaces it.
     rm -rf "$SOFTWARE_DIR/klipper/klippy"
-    mkdir -p "$SOFTWARE_DIR/klipper/klippy"
-    ( cd "$FORK/klippy" && tar -cf - \
-        --exclude='__pycache__' --exclude='*.pyc' --exclude='chelper/*.o' . ) \
-      | tar -xf - -C "$SOFTWARE_DIR/klipper/klippy"
+    mkdir -p "$SOFTWARE_DIR/klipper"
+    cp -a "$_kl/klippy" "$SOFTWARE_DIR/klipper/klippy"
+
+    # chelper.tar IS THE STOCK INSTALLER'S VEHICLE, not a second build. The
+    # software component's run.sh ends with
+    # `tar -xf $WORK_DIR/klipper/chelper.tar -C /usr/prog/klipper/klippy/`
+    # (see test/integration/make-stock-fixture.sh), so a package without it
+    # extracts nothing over the .so already inside klippy/ -- harmless today,
+    # and a missing file the moment FlashForge's installer stops copying
+    # klippy/ wholesale. bin/verify.sh fails a fork package that lacks it.
+    # Packing it here rather than in the recipe keeps it out of the .ipk,
+    # where a tarball of a file the package already contains would be 30KB of
+    # the same object under a second name.
+    rm -rf work/.chelper
     mkdir -p work/.chelper/chelper
-    cp -f "$CHELPER" work/.chelper/chelper/c_helper.so
+    cp -f "$_kl/klippy/chelper/c_helper.so" work/.chelper/chelper/c_helper.so
     tar -cf "$SOFTWARE_DIR/klipper/chelper.tar" -C work/.chelper chelper
     rm -rf work/.chelper
+
     # klippy/ now contains the fork's own extras+kinematics, so the stock
     # overlay dirs would only re-inject 0.12-era files on top. Drop them.
+    # extras/ is recreated empty because section 2 puts ff_*.py in it.
     rm -rf "$SOFTWARE_DIR/klipper/extras" "$SOFTWARE_DIR/klipper/kinematics"
     mkdir -p "$SOFTWARE_DIR/klipper/extras"
+    say "Klipper: fork tree from pinned commit ${KLIPPER_VERSION:0:8}"
     ;;
 stock)
     skip "Klipper: keeping stock tree (BUILD_KLIPPER=stock)"

@@ -96,6 +96,7 @@ Set these before calling it. Do not run a configure script yourself.
 | `PKG_MAKE_ARGS` | — | `LDLIBS=-lpthread` (s6) |
 | `PKG_STRIP_ARGS` | `--strip-unneeded` | `""` to strip executables fully |
 | `PKG_PY_SETUP_ARGS` | — | drive `setup.py build_ext` instead of pip (pillow) |
+| `PKG_CC_SHARED` | — | the whole link line, after `$CC -shared -fPIC`, for a project with no build system at all (klipper's chelper). Skips configure and make |
 
 `pkg_build` returns non-zero rather than dying, so `if ! pkg_build ...` can
 retry with different flags. See `pkg/openssl/build.sh`.
@@ -125,6 +126,7 @@ retry with different flags. See `pkg/openssl/build.sh`.
 - no compiler, just files — `pkg/moonraker`
 - from this repo, not a download — `pkg/anvil-core`
 - awkward build — `pkg/openssl`, `pkg/bzip2`, `pkg/zlib`
+- no build system, one link line — `pkg/klipper`
 - a python package — `pkg/python-distro` (pure), `pkg/python-cffi` (native)
 
 ## Adding a python package

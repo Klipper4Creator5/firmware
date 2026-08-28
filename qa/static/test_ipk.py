@@ -448,7 +448,8 @@ def test_the_package_and_the_payload_share_one_build():
     # decided each of these ships both ways -- a list read off patch.sh would
     # agree with patch.sh by construction and assert nothing.
     staged = ("libsodium", "mainsail", "moonraker", "helixscreen",
-              "skalibs", "execline", "s6", "s6-rc", "anvil-core", "python")
+              "skalibs", "execline", "s6", "s6-rc", "anvil-core", "python",
+              "klipper")
     for recipe in staged:
         assert "bash pkg/%s/build.sh" % recipe in patch, (
             "bin/patch.sh does not run pkg/%s/build.sh -- the payload's copy "

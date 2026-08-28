@@ -270,7 +270,7 @@ pkg_begin() {
     # only spells what is unusual about its project. See pkg_build.
     PKG_CONFIGURE='./configure'; PKG_CONFIGURE_AUTO=1
     PKG_MAKE_TARGET=''; PKG_INSTALL_TARGET='install'; PKG_MAKE_ARGS=''
-    PKG_PY_SETUP_ARGS=''
+    PKG_PY_SETUP_ARGS=''; PKG_CC_SHARED=''
     return 0
 }
 
@@ -646,6 +646,24 @@ pkg_stage() {
 #                       'none' means the recipe places the files itself,
 #                       because the project has no install target worth using.
 #   PKG_MAKE_ARGS       extra variables for make (LDLIBS=-lpthread for s6).
+#   PKG_CC_SHARED       the whole link line for a project that has NO BUILD
+#                       SYSTEM AT ALL, appended to `$CC -shared -fPIC`. When
+#                       it is set there is nothing to configure and nothing to
+#                       make, so both steps are skipped and this is the build.
+#
+# PKG_CC_SHARED EXISTS FOR KLIPPER AND SAYS SO. klippy/chelper has no
+# Makefile and never has: on a normal machine klippy compiles c_helper.so at
+# first run, from the argument list in klippy/chelper/__init__.py, using
+# whatever cc the printer has -- and this printer has none. So the "build
+# system" for that .so genuinely is one gcc line, and the recipe's job is to
+# state Klipper's own COMPILE_ARGS rather than to invent a link.
+#
+# WHY IT IS A KNOB HERE AND NOT A gcc LINE IN THE RECIPE. $CC is the wrapper
+# pkg_toolchain wrote and gated, which is where -EL -mnan=2008 live. A recipe
+# that ran a compiler itself would be free to reach past that -- and the ABI
+# flags being spelled in exactly one place is the property
+# test_a_recipe_does_not_rebuild_the_shared_parts exists to hold. The recipe
+# says WHAT to link; this says HOW, the same split every other knob has.
 #
 # The prefix is always $MODDIR and the DESTDIR is always the recipe's staging
 # tree -- every call site passed exactly those two values, so they were two
@@ -664,6 +682,17 @@ pkg_build() {
     (
         set -e
         cd "$PKG_WORK/src/$_dir"
+
+        # No build system: link the sources named by the recipe and stop.
+        # -shared -fPIC and $CC are pkg_build's, so a recipe cannot get the
+        # ABI or the output kind wrong; everything else is Klipper's own
+        # COMPILE_ARGS, spelled in the recipe where a reader can compare it
+        # against klippy/chelper/__init__.py.
+        if [ -n "${PKG_CC_SHARED:-}" ]; then
+            # shellcheck disable=SC2086
+            $CC -shared -fPIC $PKG_CC_SHARED > "$PKG_LOG/$_tag-cc.log" 2>&1
+            exit 0
+        fi
 
         # THE TRAILING ARGUMENTS GO TO WHICHEVER STEP CONSUMES THEM: to
         # configure when there is one, to make when there is not. bzip2 is why
@@ -693,7 +722,7 @@ pkg_build() {
         fi
     ) || {
         printf '   !! %s: building %s failed -- see %s\n' \
-            "$PKG_ID" "$_tag" "$PKG_WORK/$_tag-{configure,make}.log" >&2
+            "$PKG_ID" "$_tag" "$PKG_WORK/$_tag-{configure,make,cc}.log" >&2
         return 1
     }
     pkg_say "$PKG_ID: built $_tag"

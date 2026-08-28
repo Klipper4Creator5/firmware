@@ -266,9 +266,10 @@ jobs:
           STOCK_TGZ_CREATOR5PRO="$PWD/stock/Creator5Pro-stock.tgz"
           STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
           STOCK_TGZ=""
-          # KLIPPER_FORK deliberately unset: patch.sh builds from the commit
-          # pinned in versions.env, exactly as a release does. KLIPPER_FORK=""
-          # here is what let v20260824 ship the stock klippy tree.
+          # No Klipper source knob any more: pkg/klipper builds from the
+          # commit pinned in versions.env and nothing else. The variable that
+          # used to live here, KLIPPER_FORK, is what let v20260824 ship the
+          # stock klippy tree by being set to "" in this very file.
           ROOT_PW_HASH='\$6\$ci\$abcdefghijklmnopqrstuvwxyz'
           FF_KEY='FFP0331&*%root'
           CFG

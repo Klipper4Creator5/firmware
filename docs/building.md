@@ -293,18 +293,18 @@ package contains any file byte-identical to one in `bin/`, `test/` or
 ## Rebuilding chelper
 
 `klippy/chelper/c_helper.so` must be MIPS32r2 / nan2008 / o32 or klippy dies on
-import — `patch.sh` refuses to build a package with anything else, and
+import — `pkg/klipper` refuses to seal a package with anything else, and
 `test-install` checks the copy that lands on the machine. Debian's
 cross-compilers cannot produce one (big-endian or legacy-nan); the Ingenic
 gcc 7.2.0 / glibc 2.29 toolchain for the X2000 can, and it is pinned by
 sha256 in `versions.env` and fetched into `vendor/` like every other asset.
 
-You do not rebuild it by hand any more. `patch.sh` compiles the .so from the
-chelper sources of the very tree it is about to ship — the pinned fork
-tarball, or your `KLIPPER_FORK` checkout — whenever the .so is missing or
-older than any `chelper/*.c`/`*.h` beside it. Two gates then run before
-anything is packaged: the ELF-flag check above, and `test/test-chelper.py`,
-which checks every function the klippy tree cdefs against the .so's dynamic
+You do not rebuild it by hand any more. `pkg/klipper` compiles the .so from
+the chelper sources of the very tree it is about to ship — the fork tarball
+pinned in `versions.env`, which since the recipe landed is the only source
+there is. Two gates then run inside the recipe, so `make packages` enforces
+them as well as a firmware build: the ELF-flag check above, and
+`test/test-chelper.py`, which checks every function the klippy tree cdefs against the .so's dynamic
 symbol table. The symbol gate exists because cffi resolves lazily: a stale
 .so imports cleanly and dies only at `Internal error during connect` on the
 printer, with a traceback that names cffi and not the build. Both a stale
