@@ -64,7 +64,7 @@ endif
 RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
 
 .DEFAULT_GOAL := help
-.PHONY: help image shell passwd build vendor \
+.PHONY: help image shell passwd build vendor packages \
         rootfs verify test test-py test-install \
         printer-image printer-image-push \
         test-recovery test-mcu test-boot-screen test-moonraker test-services \
@@ -82,6 +82,9 @@ help:
 	@echo '  make build        the firmware  Klipper fork, toolchanger, Mainsail,'
 	@echo '                                  ssh and HelixScreen'
 	@echo '  make release      build BOTH models into dist/'
+	@echo '  make packages     .ipk packages + feed index into work/packages/'
+	@echo '                    (proof of concept -- docs/notes/85-packaging.md;'
+	@echo '                     needs no stock package, ships nothing)'
 	@echo
 	@echo 'Models: packages are model-specific and refuse to install on the'
 	@echo 'other one. MODEL=Creator5 make build  builds the non-Pro variant.'
@@ -176,6 +179,19 @@ vendor: image config.env
 
 build: image config.env
 	@$(RUN) ./bin/build.sh $(PACKARGS)
+
+# The packaging proof-of-concept (docs/notes/85-packaging.md). Builds every
+# recipe under pkg/ into work/packages/ as .ipk files plus the feed index that
+# makes that directory an opkg repository.
+#
+# NOTHING ON THE RELEASE PATH DEPENDS ON THIS. `make build` is unchanged and
+# still ships one anvil.tar.xz; this target exists so the packages can be built
+# and gated beside it while the migration is decided. It also, unlike `build`,
+# needs NO stock FlashForge package -- which is most of the point: packaging
+# has to be runnable in CI on a bare checkout, or the gate only runs where the
+# proprietary firmware is and stops being a gate.
+packages: image config.env
+	@$(RUN) ./bin/build-packages.sh $(PKG)
 
 # One package per model, collected in dist/. They cannot share content: the
 # two stock packages ship different firmwareExe binaries.

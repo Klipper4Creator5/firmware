@@ -79,3 +79,5 @@ Files ending `-recovered` are reconstructions of the stock app's behaviour; the 
 - `50a-nozzle-clean-recovered.md` / `50b-nozzle-clean-port.md` — the pre-print nozzle clean
 - `60-background.md` — filament system, calibration flows, config keys (background context)
 - `70-error-codes.md` — full E-code table (behavioral spec)
+- `80-s6-migration.md` — the prefix root and s6 supervision plan
+- `85-packaging.md` — apk vs opkg, why opkg won, and the .ipk proof of concept

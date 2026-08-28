@@ -43,7 +43,8 @@ pytestmark = pytest.mark.static
 # and a file that does not parse under either is broken beyond dialect.
 SYNTAX_GLOBS = ("bin/*.sh", "payload/*.sh", "payload/init.d/S*",
                 "payload/firmwareExe", "test/integration/printer/*.sh",
-                "qa/replica/actions/*.sh")
+                "qa/replica/actions/*.sh",
+                "pkg/*/build.sh", "pkg/ipk-install")
 
 # The subset executed by the printer's busybox ash. bin/ and test/ are
 # deliberately absent: they run on the build image, where bash is the shell and
@@ -55,8 +56,14 @@ SYNTAX_GLOBS = ("bin/*.sh", "payload/*.sh", "payload/init.d/S*",
 # hold.sh would fail at container start and read as "the replica is broken on
 # this machine" -- a harness failure wearing a machine failure's clothes, which
 # is the hardest kind to diagnose.
+# pkg/ipk-install is here and pkg/*/build.sh is deliberately not. The recipes
+# are build-host bash, like everything in bin/; the installer is the one file
+# under pkg/ that the PRINTER runs, so it is as exposed to busybox ash as
+# anything under payload/ -- and it is not under payload/ only because the PoC
+# does not ship it yet (docs/notes/85-packaging.md, phase 2). A bashism in it
+# would be found by the printer rather than by this lane.
 ASH_GLOBS = ("payload/*.sh", "payload/init.d/S*", "payload/firmwareExe",
-             "qa/replica/actions/*.sh")
+             "qa/replica/actions/*.sh", "pkg/ipk-install")
 
 PY_GLOBS = ("bin/*.py", "payload/*.py", "payload/bin/*.py",
             "payload/klipper/extras/*.py", "test/*.py", "test/ffsim/*.py",

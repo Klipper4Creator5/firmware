@@ -10,9 +10,11 @@ SOFTWARE_DIR=work/software
 say() { printf '>> %s\n' "$*"; }
 skip() { printf '   (skip) %s\n' "$*"; }
 
-# Everything we add to the printer lives under this one directory on the DATA
-# partition, so a FlashForge OTA cannot delete it.
-MODDIR=/usr/data/anvil
+# $MODDIR -- /usr/data/anvil, the one directory on the DATA partition
+# everything we add lives under -- now comes from bin/common.sh, because the
+# package recipes under pkg/ need the same value and cannot be allowed to
+# disagree with this file about it. The comment that used to be here is there.
+#
 # The mod payload is built OUTSIDE the software component on purpose. The
 # software component is extracted to /usr/prog/PROGRAM/software/<ver>/ -- the
 # firmware partition, of which the installer keeps only one version. Mainsail and
@@ -327,81 +329,11 @@ else
     skip "HelixScreen"
 fi
 
-# ABI, over every ELF this build cross-compiles: s6 in 5b below, the
-# interpreter and its extensions in 5c, libsodium in 5d. The printer's kernel
-# wants nan2008/o32/mips32r2 and says ENOEXEC to anything else, and a
-# cross-build that quietly emitted one host object -- or one legacy-NaN
-# object, because a flag did not reach one link line -- looks like a clean
-# build here. Defined once, up here, because 5b needs it before 5c exists to
-# borrow it from.
-#
-# TWO expected words, not one. 0x70001405 is the measured value for an
-# EXECUTABLE; a shared object additionally carries EF_MIPS_PIC (0x2) and so
-# reads 0x70001407. That is correct and unavoidable for a DYN -- klippy's own
-# c_helper.so has it too -- so a gate that pinned one word would fail on every
-# extension module in the tree. s6's own binaries are static EXECs, so they
-# want 0x70001405 like the interpreter does.
-#
-# A FUNCTION, AND POINTED AT THE PAYLOAD. It used to walk $PY_BUILD/bin and
-# $PY_BUILD/lib -- the build cache. That was the whole tree while the
-# interpreter was the only thing this toolchain produced, and it stopped being
-# so the moment site-packages and libsodium arrived: a .so staged into
-# $MOD_PAYLOAD by a path the gate did not know about ships ungated, and the
-# first machine to notice is a printer. So the rule did not change (it already
-# covers a DYN correctly) -- the REACH did, to the staged payload, which is
-# the only tree that is by definition everything that ships.
-#
-# s6 is IN this gate now, not exempt from it. It used to be built by a plain
-# mips32r1 musl toolchain and read e_flags=0x1007 (mips1, legacy NaN) -- a
-# choice defended here as "no floating point, so the NaN encoding cannot
-# matter" for exactly as long as nobody checked what the printer's own kernel
-# does with that flag at exec() rather than at runtime. It matters at exec():
-# a MIPS kernel built nan2008-only can refuse to run a legacy-NaN binary
-# outright, or silently misconfigure its FPU mode, neither of which shows up
-# under qemu-mipsel-static -- user-mode emulation does not enforce the same
-# ABI check a real kernel's binfmt loader does, which is exactly how s6
-# shipped in this state and every replica gate still passed. Section 5b now
-# cross-builds with Bootlin's mips32r5el-musl toolchain, whose crt/libc
-# objects are nan2008 by construction (mips32r5 has no legacy-NaN silicon to
-# be compatible with), restricted to mips32r2 codegen with the same
-# gcc-wrapper discipline 5c uses -- so s6 gets exactly the ABI everything else
-# on this printer already had to have, checked the same way.
-mips_abi_gate() {
-    local n=0 f hdr flags want
-    while IFS= read -r f; do
-        # readelf itself is the ELF test, rather than comparing the first four
-        # bytes to \177ELF: that comparison was a command substitution over
-        # arbitrary binary content, and every data file in site-packages that
-        # happens to start with a NUL made bash print "warning: command
-        # substitution: ignored null byte in input" -- eight lines of noise
-        # across a clean build, from the gate that is supposed to be the quiet
-        # one. readelf exits non-zero on anything that is not an ELF, which is
-        # the same question asked of the tool that has to answer it anyway.
-        hdr=$(readelf -h "$f" 2>/dev/null) || continue
-        case "$hdr" in
-            *nan2008*o32*mips32r2*) ;;
-            *) echo "   !! $f is not nan2008/o32/mips32r2" >&2
-               readelf -h "$f" 2>&1 | sed 's/^/      /' >&2; return 1 ;;
-        esac
-        # 0x70001405 or 0x70001407, not "whichever the Type says": that was
-        # true of the Ingenic-glibc objects alone, where EF_MIPS_PIC only
-        # ever showed up on a genuine DYN. s6's musl toolchain bakes
-        # EF_MIPS_PIC into its crt startup objects unconditionally -- no
-        # combination of -static/-no-pie/-fno-PIC removes it, measured -- so
-        # a plain static EXEC from that toolchain carries the bit too and
-        # still reads 0x70001407. Both values already mean the same thing
-        # (nan2008/o32/mips32r2, matched above); which one shows up is a
-        # property of the toolchain, not a sign of anything wrong.
-        flags=$(awk '/Flags:/{print $2}' <<<"$hdr" | tr -d ,)
-        case "$flags" in
-            0x70001405|0x70001407) ;;
-            *) echo "   !! $f has e_flags=$flags, want 0x70001405 or 0x70001407" >&2
-               return 1 ;;
-        esac
-        n=$((n + 1))
-    done < <(find "$@" -type f 2>/dev/null)
-    printf '%s' "$n"
-}
+# mips_abi_gate -- the nan2008/o32/mips32r2 check every cross-built ELF in
+# this file passes before it ships -- now lives in bin/common.sh, because
+# bin/build-packages.sh gates the same objects on the way into an .ipk and a
+# second copy of that rule is a second chance to get it wrong. The comment
+# explaining the two expected e_flags words went with it.
 
 # ------------------------------------------------------- 5b. s6 supervision
 # The process supervisor, cross-compiled here from the sources pinned in
@@ -699,8 +631,9 @@ du -sh "$S6_BUILD/libexec" | awk '{print "   "$1"\tlibexec/"}'
 # be a deliberate edit of both lines.
 PY_MM="3.13"
 PY_PREFIX="$MODDIR"
-PY_HOST=mips-linux-gnu
-PY_TOOLCHAIN_DIR=work/.mips-toolchain/mips-gcc720-glibc229
+# PY_HOST and PY_TOOLCHAIN_DIR come from bin/common.sh for the same reason
+# MODDIR does -- pkg/libsodium/build.sh compiles with the same toolchain and
+# must not carry its own spelling of where it is.
 # The cache key is every version that goes into the tree, not just CPython's:
 # a bumped OpenSSL with an unchanged PY_VERSION has to rebuild, and the failure
 # if it does not is an interpreter linked against a library nobody can name.
@@ -1454,81 +1387,24 @@ du -sh "$PY_SP" | awk '{print "   "$1"\tlib/python'"$PY_MM"'/site-packages/"}'
 # `libsodium.so` symlink is not a development leftover to be trimmed: it is
 # the FIRST name libnacl asks for, and the only one that fallback constructs.
 #
-# CACHED ON THE VERSION, like s6 and unlike c_helper.so. 24 seconds is not the
-# reason -- the reason is bin/fetch-assets.sh: an uncached build of this drags
-# the ~203MB Ingenic toolchain download along behind it on every build of a
-# checkout that has nothing else to compile. The stamp is what lets the
-# fetcher skip it, so the stamp is what makes it free.
-SODIUM_XW=work/.sodium-xw
-if [ "$(cat "$SODIUM_BUILD/.version" 2>/dev/null || true)" != "$SODIUM_VERSION" ]; then
-    if [ ! -x "$PY_TOOLCHAIN_DIR/bin/$PY_HOST-gcc" ]; then
-        [ -f "${MIPS_TOOLCHAIN_TGZ:-}" ] || {
-            echo "   !! libsodium needs (re)building and there is no toolchain:" >&2
-            echo "      $MIPS_TOOLCHAIN_TGZ is missing. Run ./bin/fetch-assets.sh." >&2
-            exit 1; }
-        say "libsodium: unpacking the Ingenic MIPS toolchain"
-        mkdir -p work/.mips-toolchain
-        tar -xzf "$MIPS_TOOLCHAIN_TGZ" -C work/.mips-toolchain
-    fi
-    [ -f "${SODIUM_TGZ:-}" ] || {
-        echo "   !! no libsodium source at '$SODIUM_TGZ' -- run ./bin/fetch-assets.sh" >&2
-        exit 1; }
-    say "libsodium: cross-compiling $SODIUM_VERSION for $MODDIR/lib"
-    rm -rf work/.sodium-src work/.sodium-stage "$SODIUM_XW" "$SODIUM_BUILD"
-    mkdir -p work/.sodium-src "$SODIUM_XW/bin"
-    tar -xzf "$SODIUM_TGZ" -C work/.sodium-src
-    (
-        set -e
-        # A subshell, as in 5b and 5c, so the cross-compiler cannot leak.
-        TC="$PWD/$PY_TOOLCHAIN_DIR"
-        XW="$PWD/$SODIUM_XW"
-        STAGE="$PWD/work/.sodium-stage"
-        LOG="$PWD/work"
-        # The same wrapper trick, rebuilt here rather than shared with 5c:
-        # 5c deletes work/.py-xw when its build succeeds, and this step has to
-        # work on a run where 5c did nothing at all because its cache was
-        # warm. -EL -mnan=2008 in the driver, where libsodium's libtool link
-        # lines cannot drop them.
-        for t in gcc g++ cpp; do
-            printf '#!/bin/sh\nexec %s/bin/%s-%s -EL -mnan=2008 "$@"\n' \
-                "$TC" "$PY_HOST" "$t" > "$XW/bin/$PY_HOST-$t"
-            chmod +x "$XW/bin/$PY_HOST-$t"
-        done
-        for t in ar as ld nm objcopy objdump ranlib readelf strip strings size; do
-            ln -sf "$TC/bin/$PY_HOST-$t" "$XW/bin/$PY_HOST-$t"
-        done
-        export PATH="$XW/bin:$PATH"
-        cd "$PWD/work/.sodium-src/libsodium-$SODIUM_VERSION"
-        # --disable-static: nothing links this statically and a .a would only
-        #   be deleted again below.
-        # --host is what makes autoconf reach for the mips-linux-gnu- prefixed
-        #   tools in the wrapper directory, which is the entire point of them.
-        # libsodium's runtime feature probes are AC_RUN_IFELSE with cross
-        #   defaults supplied, so nothing here needs qemu.
-        ./configure --host="$PY_HOST" --prefix="$MODDIR" \
-            --disable-static --enable-shared --with-pic \
-            CFLAGS="-O2 -fPIC" >"$LOG/.sodium-configure.log" 2>&1
-        make -j"$(nproc 2>/dev/null || echo 4)" >"$LOG/.sodium-make.log" 2>&1
-        make install DESTDIR="$STAGE" >>"$LOG/.sodium-make.log" 2>&1
-    ) || { echo "   !! the libsodium cross-build failed -- work/.sodium-configure.log" >&2
-           echo "      and work/.sodium-make.log; the source tree is still in" >&2
-           echo "      work/.sodium-src." >&2
-           exit 1; }
-    # lib/ ONLY. include/ and lib/pkgconfig exist to BUILD against libsodium,
-    # which happens on a developer's machine and not on a printer -- and
-    # pkgconfig would otherwise drop a .pc file describing this build into the
-    # prefix's shared lib/, next to the interpreter's stdlib. The .la file goes
-    # for the same reason plus one more: it names absolute build-machine paths.
-    mkdir -p "$SODIUM_BUILD/lib"
-    cp -a "work/.sodium-stage$MODDIR/lib/"libsodium.so* "$SODIUM_BUILD/lib/"
-    rm -f "$SODIUM_BUILD/lib/"*.la
-    find "$SODIUM_BUILD/lib" -type f -name 'libsodium.so*' \
-        -exec "$PY_TOOLCHAIN_DIR/bin/$PY_HOST-strip" --strip-unneeded {} +
-    rm -rf work/.sodium-src work/.sodium-stage "$SODIUM_XW"
-    echo "$SODIUM_VERSION" > "$SODIUM_BUILD/.version"
-else
-    skip "libsodium: work/.sodium already holds $SODIUM_VERSION"
-fi
+# THE BUILD ITSELF NOW LIVES IN pkg/libsodium/build.sh, and this is the first
+# step of the packaging migration rather than a tidy-up: the .ipk that
+# bin/build-packages.sh emits has to be built by the same configure line as the
+# copy in the tarball, or the two ship different libraries under one version
+# number and no test can tell. Moving the block out and calling it from both
+# sides is what makes that impossible. See docs/notes/85-packaging.md.
+#
+# It is still CACHED ON THE VERSION, like s6 and unlike c_helper.so -- the
+# stamp is inside work/.sodium and the recipe checks it, so a warm cache costs
+# a process spawn. 24 seconds is not the reason for the cache; bin/fetch-assets.sh
+# is: an uncached build drags the ~203MB Ingenic toolchain download along
+# behind it on every build of a checkout that has nothing else to compile.
+#
+# A SUBPROCESS AND NOT A SOURCE, deliberately. The recipe exports a
+# cross-compiler PATH and half a dozen build variables, and this file goes on
+# to build nine more things after it; the process boundary is the same
+# guarantee the 5b/5c/5d subshells were already buying, made explicit.
+bash pkg/libsodium/build.sh
 
 # Staged into the prefix's shared lib/, beside lib/python3.13 -- one prefix,
 # one library directory. cp -a and not cp: two of these three names are

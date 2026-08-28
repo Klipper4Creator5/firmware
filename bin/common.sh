@@ -44,6 +44,45 @@ MOD_SSH="${MOD_SSH:-1}"
 MOD_WEB="${MOD_WEB:-1}"
 MOD_UI="${MOD_UI:-1}"
 
+# Everything we add to the printer lives under this one directory on the DATA
+# partition, so a FlashForge OTA cannot delete it. It is a --prefix root and
+# not a junk drawer: bin/, lib/, libexec/, etc/ mean what they mean anywhere
+# else, and s6 and CPython are both CONFIGURED with this path, so it is baked
+# into shipped binaries and moving it means rebuilding them.
+#
+# It lives here rather than in bin/patch.sh -- which is where it was, and where
+# it was the only definition -- because a package recipe under pkg/ needs the
+# same answer and must not be free to give a different one. Two prefixes is a
+# payload whose halves disagree about where the payload is.
+MODDIR="${MODDIR:-/usr/data/anvil}"
+
+# The Ingenic GLIBC cross-toolchain and its tool prefix: gcc 7.2.0 / glibc
+# 2.29 for the X2000, the one that produces this printer's ABI. Used by
+# bin/patch.sh section 5c (CPython and its extensions) and by the libsodium
+# recipe under pkg/, which is the other reason these moved out of patch.sh --
+# see MODDIR above. MIPS_TOOLCHAIN_TGZ below is the tarball it is unpacked
+# from; this is where it lands.
+PY_HOST="${PY_HOST:-mips-linux-gnu}"
+PY_TOOLCHAIN_DIR="${PY_TOOLCHAIN_DIR:-work/.mips-toolchain/mips-gcc720-glibc229}"
+
+# The architecture string stamped into every .ipk this repo builds, and into
+# the feed index beside them. See docs/notes/85-packaging.md.
+#
+# IT IS DELIBERATELY NOT AN OpenWrt NAME, and that is the whole point of
+# choosing it by hand. OpenWrt's nearest label for this silicon is
+# `mipsel_24kc`, which is the same ISA and the same o32 ABI -- and musl. Every
+# OpenWrt feed in the world is full of mipsel_24kc packages that would satisfy
+# an opkg dependency here, install without complaint, and then fail to load
+# against the printer's glibc 2.29. A name no public feed uses makes that
+# category of mistake impossible to make quietly: an OpenWrt .ipk offered to
+# our opkg is refused on architecture, before it is unpacked.
+#
+# xburst2 is Ingenic's name for the X2000's core. What the string actually
+# promises is the ABI bin/patch.sh's mips_abi_gate checks -- o32, nan2008,
+# mips32r2 -- linked against the Ingenic glibc.
+IPK_ARCH="${IPK_ARCH:-mipsel_xburst2}"
+export MODDIR PY_HOST PY_TOOLCHAIN_DIR IPK_ARCH
+
 # Third-party payload pieces (Mainsail, HelixScreen, Moonraker). They are
 # downloaded on demand rather than vendored, so the repo carries no binaries
 # and no binary history. versions.env pins the version and the sha256;
@@ -187,3 +226,85 @@ fi
 # model-specific file it contains.
 export TARGET_MACHINE TARGET_PID STOCK_TGZ PROG_DUMP
 
+# ---------------------------------------------------------------- the ABI gate
+# Moved here from bin/patch.sh, which was its only caller until the packaging
+# lane arrived. bin/build-packages.sh can produce an .ipk without patch.sh ever
+# running -- that is the point of `make packages` -- so the gate has to be
+# reachable from both or the packaged copy of a library ships unchecked while
+# the tarball's copy does not. Same rule, same two words, one definition.
+#
+# ABI, over every ELF this build cross-compiles: s6 in 5b below, the
+# interpreter and its extensions in 5c, libsodium in 5d. The printer's kernel
+# wants nan2008/o32/mips32r2 and says ENOEXEC to anything else, and a
+# cross-build that quietly emitted one host object -- or one legacy-NaN
+# object, because a flag did not reach one link line -- looks like a clean
+# build here. Defined once, up here, because 5b needs it before 5c exists to
+# borrow it from.
+#
+# TWO expected words, not one. 0x70001405 is the measured value for an
+# EXECUTABLE; a shared object additionally carries EF_MIPS_PIC (0x2) and so
+# reads 0x70001407. That is correct and unavoidable for a DYN -- klippy's own
+# c_helper.so has it too -- so a gate that pinned one word would fail on every
+# extension module in the tree. s6's own binaries are static EXECs, so they
+# want 0x70001405 like the interpreter does.
+#
+# A FUNCTION, AND POINTED AT THE PAYLOAD. It used to walk $PY_BUILD/bin and
+# $PY_BUILD/lib -- the build cache. That was the whole tree while the
+# interpreter was the only thing this toolchain produced, and it stopped being
+# so the moment site-packages and libsodium arrived: a .so staged into
+# $MOD_PAYLOAD by a path the gate did not know about ships ungated, and the
+# first machine to notice is a printer. So the rule did not change (it already
+# covers a DYN correctly) -- the REACH did, to the staged payload, which is
+# the only tree that is by definition everything that ships.
+#
+# s6 is IN this gate now, not exempt from it. It used to be built by a plain
+# mips32r1 musl toolchain and read e_flags=0x1007 (mips1, legacy NaN) -- a
+# choice defended here as "no floating point, so the NaN encoding cannot
+# matter" for exactly as long as nobody checked what the printer's own kernel
+# does with that flag at exec() rather than at runtime. It matters at exec():
+# a MIPS kernel built nan2008-only can refuse to run a legacy-NaN binary
+# outright, or silently misconfigure its FPU mode, neither of which shows up
+# under qemu-mipsel-static -- user-mode emulation does not enforce the same
+# ABI check a real kernel's binfmt loader does, which is exactly how s6
+# shipped in this state and every replica gate still passed. Section 5b now
+# cross-builds with Bootlin's mips32r5el-musl toolchain, whose crt/libc
+# objects are nan2008 by construction (mips32r5 has no legacy-NaN silicon to
+# be compatible with), restricted to mips32r2 codegen with the same
+# gcc-wrapper discipline 5c uses -- so s6 gets exactly the ABI everything else
+# on this printer already had to have, checked the same way.
+mips_abi_gate() {
+    local n=0 f hdr flags want
+    while IFS= read -r f; do
+        # readelf itself is the ELF test, rather than comparing the first four
+        # bytes to \177ELF: that comparison was a command substitution over
+        # arbitrary binary content, and every data file in site-packages that
+        # happens to start with a NUL made bash print "warning: command
+        # substitution: ignored null byte in input" -- eight lines of noise
+        # across a clean build, from the gate that is supposed to be the quiet
+        # one. readelf exits non-zero on anything that is not an ELF, which is
+        # the same question asked of the tool that has to answer it anyway.
+        hdr=$(readelf -h "$f" 2>/dev/null) || continue
+        case "$hdr" in
+            *nan2008*o32*mips32r2*) ;;
+            *) echo "   !! $f is not nan2008/o32/mips32r2" >&2
+               readelf -h "$f" 2>&1 | sed 's/^/      /' >&2; return 1 ;;
+        esac
+        # 0x70001405 or 0x70001407, not "whichever the Type says": that was
+        # true of the Ingenic-glibc objects alone, where EF_MIPS_PIC only
+        # ever showed up on a genuine DYN. s6's musl toolchain bakes
+        # EF_MIPS_PIC into its crt startup objects unconditionally -- no
+        # combination of -static/-no-pie/-fno-PIC removes it, measured -- so
+        # a plain static EXEC from that toolchain carries the bit too and
+        # still reads 0x70001407. Both values already mean the same thing
+        # (nan2008/o32/mips32r2, matched above); which one shows up is a
+        # property of the toolchain, not a sign of anything wrong.
+        flags=$(awk '/Flags:/{print $2}' <<<"$hdr" | tr -d ,)
+        case "$flags" in
+            0x70001405|0x70001407) ;;
+            *) echo "   !! $f has e_flags=$flags, want 0x70001405 or 0x70001407" >&2
+               return 1 ;;
+        esac
+        n=$((n + 1))
+    done < <(find "$@" -type f 2>/dev/null)
+    printf '%s' "$n"
+}

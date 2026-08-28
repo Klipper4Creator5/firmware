@@ -216,10 +216,23 @@ assets/         nginx.conf, moonraker.conf, moonraker-custom.conf
 
 ```
 bin/            fetch-assets -> unpack -> patch -> pack, plus verify
+                mkipk.sh + build-packages.sh are the packaging lane below --
+                they are not part of the four-step build
 versions.env    pinned Mainsail / HelixScreen / Moonraker versions + sha256
 vendor/         where fetch-assets.sh caches them (gitignored)
 config.env      your paths, the root password hash, the model
 docker/         Dockerfile.build -- the container every target runs in
+pkg/            package recipes: one directory per cross-build, each a
+                build.sh producing a $MODDIR-relative tree and a pkg.conf
+                naming it. `make packages` turns them into .ipk files in
+                work/packages/ with a feed index. A PROOF OF CONCEPT --
+                nothing on the release path reads it yet, and the tarball
+                `make build` produces is unchanged. libsodium is the one
+                recipe that exists, and bin/patch.sh runs it so the payload's
+                copy and the packaged copy are the same build.
+                See docs/notes/85-packaging.md.
+  ipk-install     the exception in here: POSIX sh, runs ON the printer.
+                  Not under payload/ because it does not ship yet.
 ```
 
 **Tests it** — never ships, and never touched by a build:
