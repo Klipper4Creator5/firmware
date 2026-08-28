@@ -212,6 +212,14 @@ for r in "${RECIPES[@]}"; do
         # be unindented, and an unindented line is where the next stanza begins.
         emit() {
             _lay=$1; _nm=$2; _sect=$3; _dep=$4; _desc=$5
+            # ONE LINE, WHATEVER THE RECIPE WROTE. A Depends list of thirteen
+            # packages does not fit on one line of a pkg.conf anybody wants to
+            # read, so anvil-moonraker's is wrapped -- and a raw newline inside
+            # a control field is a new stanza to some parsers and a folded
+            # continuation to others. Unquoted, so the shell splits on every
+            # run of whitespace and rejoins with single spaces.
+            # shellcheck disable=SC2086
+            _dep=$(echo $_dep)
             {
                 printf 'Package: %s\n' "$_nm"
                 printf 'Version: %s-%s\n' "$PKG_VERSION" "$PKG_RELEASE"

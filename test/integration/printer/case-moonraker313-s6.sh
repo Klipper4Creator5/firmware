@@ -63,7 +63,7 @@
 # in payload/ -- they are build outputs, exactly as work/.s6 is:
 #
 #     sup.tgz     work/.s6            bin/ + libexec/, the cross-built s6
-#     pref.tgz    work/.py313 +       bin/python3.13, lib/python3.13 (stdlib
+#     pref.tgz    work/pkg/python* +   bin/python3.13, lib/python3.13 (stdlib
 #                 work/.sodium        AND site-packages) and libsodium.so*.
 #                                     One tarball because it is one prefix:
 #                                     bin/patch.sh sections 5c and 5d put both

@@ -153,10 +153,11 @@ export SKALIBS_TGZ S6_TGZ EXECLINE_TGZ S6RC_TGZ
 # interpreter cannot dlopen a glibc c_helper.so, and dlopen is exactly how
 # klippy loads it. See tools/python/README.md.
 #
-# PY_BUILD is patch.sh's cache of the cross-built, trimmed tree -- the same
-# thing S6_BUILD is for s6, and named here for the same reason: it is what
-# decides whether anything has to be compiled at all, and both patch.sh and
-# fetch-assets.sh need that answer.
+# THERE IS NO PY_BUILD ANY MORE, and its absence is the point. It named
+# work/.py313, patch.sh's private cache of a cross-built interpreter, and it
+# went the way S6_BUILD went: CPython is pkg/python and its eighteen packages
+# are pkg/python-*, so the cache is work/pkg/<recipe> and pkg_out derives that
+# name from the recipe. Nothing has to be spelled here for a script to find it.
 PY_TGZ="${PY_TGZ:-$ROOT/vendor/Python-${PY_VERSION:-unpinned}.tgz}"
 OPENSSL_TGZ="${OPENSSL_TGZ:-$ROOT/vendor/openssl-${OPENSSL_VERSION:-unpinned}.tar.gz}"
 SQLITE_TGZ="${SQLITE_TGZ:-$ROOT/vendor/sqlite-autoconf-${SQLITE_VERSION:-unpinned}.tar.gz}"
@@ -165,26 +166,31 @@ LIBFFI_TGZ="${LIBFFI_TGZ:-$ROOT/vendor/libffi-${LIBFFI_VERSION:-unpinned}.tar.gz
 XZ_TGZ="${XZ_TGZ:-$ROOT/vendor/xz-${XZ_VERSION:-unpinned}.tar.gz}"
 BZIP2_TGZ="${BZIP2_TGZ:-$ROOT/vendor/bzip2-${BZIP2_VERSION:-unpinned}.tar.gz}"
 EXPAT_TGZ="${EXPAT_TGZ:-$ROOT/vendor/expat-${EXPAT_VERSION:-unpinned}.tar.gz}"
-PY_BUILD="${PY_BUILD:-$ROOT/work/.py313}"
 
-# The cache key for work/.py313, spelled ONCE, here, for exactly the reason
-# S6_STAMP had to be and then stopped needing to be -- see the note above.
+# The ABI series CPython names its own directories and binaries after --
+# bin/python3.13, lib/python3.13/, config-3.13-mipsel-linux-gnu. It is spelled
+# out rather than sed'd out of PY_VERSION because it is not a substring of it
+# in any interesting sense, and a 3.14 bump has to be a deliberate edit.
 #
-# It was spelled THREE times: bin/patch.sh section 5c wrote it, and
-# bin/fetch-assets.sh derived it twice, in two different places, to decide
-# whether the 203MB Ingenic toolchain had to come down. All three happened to
-# agree, which is luck rather than design: the eight fields are the eight
-# source pins of the interpreter and its static libraries, and the next person
-# to add a ninth would have had to find all three. That is the same shape as
-# the s6 stamp bug, caught before it inverted rather than after.
+# HERE rather than in bin/patch.sh, where it used to live, because pkg/python
+# and the eighteen pkg/python-* recipes all name these directories too. A
+# constant that three scripts need is not patch.sh's local variable.
+PY_MM="${PY_MM:-3.13}"
+export PY_MM
+
+# THE CACHE KEY FOR CPYTHON IS GONE FROM THIS FILE TOO, and that is the end of
+# a bug that took three tries to kill. PY_STAMP was "$PY_VERSION plus the seven
+# library versions", written by bin/patch.sh and derived AGAIN, twice, in
+# bin/fetch-assets.sh to decide whether the 203MB Ingenic toolchain had to come
+# down. All three happened to agree, which is luck: the next person to add an
+# eighth library would have had to find all three.
 #
-# It goes away entirely when CPython becomes a recipe: pkg_stamp derives a key
-# from the dependency graph, so "openssl, sqlite, zlib, libffi, xz, bzip2 and
-# expat" stops being a list anybody maintains and becomes PKG_BUILD_DEPENDS.
-PY_STAMP="$PY_VERSION $OPENSSL_VERSION $SQLITE_VERSION $ZLIB_VERSION $LIBFFI_VERSION $XZ_VERSION $BZIP2_VERSION $EXPAT_VERSION"
-export PY_STAMP
+# pkg_stamp derives a recipe's key from its dependency graph, so "openssl,
+# sqlite, zlib, libffi, xz, bzip2 and expat" is PKG_BUILD_DEPENDS in
+# pkg/python/pkg.conf and nothing computes it a second time. bin/fetch-assets.sh
+# asks pkg_needs, which is the same code the recipes cache on.
 export PY_TGZ OPENSSL_TGZ SQLITE_TGZ ZLIB_TGZ LIBFFI_TGZ XZ_TGZ BZIP2_TGZ
-export EXPAT_TGZ PY_BUILD
+export EXPAT_TGZ
 
 # The third-party python packages that become the interpreter's
 # site-packages, and libsodium, which libnacl dlopens out of $MODDIR/lib.
@@ -211,15 +217,21 @@ pypkg_var() {
 }
 # The sdist as bin/fetch-assets.sh leaves it in vendor/.
 pypkg_tgz() { printf '%s/vendor/%s' "$ROOT" "$(pypkg_var "$1" FILE)"; }
-# The cache key for the whole package set: every file name (which carries the
-# version) beside its hash, so a bumped pin AND a re-released upstream
-# tarball both invalidate. Compared as a whole string, not hashed, so
-# work/.py313/.pkg-version stays readable -- a diff of it is the changelog.
-pypkg_stamp() {
-    local _p
-    for _p in $PYPKG_LIST $PYPKG_HOST_LIST; do
-        printf '%s %s\n' "$(pypkg_var "$_p" FILE)" "$(pypkg_var "$_p" SHA256)"
-    done
+# The version, READ OUT OF THE PINNED FILE NAME rather than pinned a second
+# time beside it. Every sdist on PyPI is <name>-<version>.tar.gz and the
+# version is the part after the LAST dash, which is what makes this safe for
+# the entries whose file name is not their list name: inotify_simple-1.3.5,
+# streaming_form_data-1.19.1, pyserial-asyncio-0.6.
+#
+# A PYPKG_<NAME>_VERSION line per package would be eighteen more strings to
+# keep in agreement with eighteen FILE lines, and the failure when they
+# disagreed would be a package whose .ipk claims a version it does not
+# contain. One pin, read two ways.
+pypkg_version() {
+    local _f
+    _f="$(pypkg_var "$1" FILE)"
+    _f=${_f%.tar.gz}; _f=${_f%.tgz}; _f=${_f%.zip}
+    printf '%s' "${_f##*-}"
 }
 # The sources every recipe under pkg/ builds from. ZLIB_TGZ is NOT repeated
 # here: it is pinned thirty lines up for CPython, and pkg/zlib builds that same

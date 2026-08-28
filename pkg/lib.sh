@@ -270,6 +270,7 @@ pkg_begin() {
     # only spells what is unusual about its project. See pkg_build.
     PKG_CONFIGURE='./configure'; PKG_CONFIGURE_AUTO=1
     PKG_MAKE_TARGET=''; PKG_INSTALL_TARGET='install'; PKG_MAKE_ARGS=''
+    PKG_PY_SETUP_ARGS=''
     return 0
 }
 
@@ -356,6 +357,123 @@ pkg_toolchain() {
         *) pkg_die "the $PKG_ID compiler wrapper produces e_flags=$_abi, want 0x70001405 or 0x70001407" ;;
     esac
     pkg_say "$PKG_ID: toolchain ready ($PKG_HOST, e_flags=$_abi)"
+}
+
+# ---------------------------------------------------------- pkg_buildpython
+#
+#     pkg_buildpython
+#
+# Provide an x86-64 CPython of exactly $PY_VERSION and export $HOSTPY.
+#
+# IT SITS BESIDE pkg_toolchain BECAUSE IT IS THE SAME KIND OF THING: a
+# compiler for the build machine, not a file for the printer. pkg_toolchain
+# unpacks one and this one compiles it, which is an implementation detail of
+# the same sentence -- nothing either of them produces is ever shipped, and no
+# recipe should be spelling out how to get one.
+#
+# WHY THE VERSIONS MUST MATCH EXACTLY. Cross-compiling CPython needs a
+# build-python OF THE SAME VERSION: the Makefile runs it to freeze modules,
+# generate the deepfreeze sources and byte-compile the stdlib, and configure
+# hard-errors when the version does not match. The build image's own python3
+# cannot stand in. And the eighteen pkg/python-* recipes need it for a second
+# reason -- it is the interpreter that runs pip and setuptools while
+# _PYTHON_SYSCONFIGDATA_NAME makes them answer for mipsel (see pkg_pytarget),
+# and an extension module compiled against 3.13 headers by a 3.14 setuptools
+# is an import-time crash on the printer and nowhere else.
+#
+# ONE CACHE, SHARED BY NINETEEN RECIPES. It lives at work/.py-host rather than
+# inside $PKG_WORK, so pkg_end does not delete it and the second recipe to ask
+# gets it for the price of reading a stamp. That stamp is $PY_VERSION plus the
+# PEP 517 backend sdists installed into it, because a backend bump has to
+# rebuild the thing the backends live in.
+#
+# --with-ensurepip=install, where the CROSS build has --without-ensurepip and
+# must keep it. The two are opposite answers to opposite questions: on a
+# printer pip would need a network and a compiler and has neither, while HERE
+# pip is what builds every wheel -- and it comes out of the pinned tarball
+# rather than off bootstrap.pypa.io, which is the difference between a build
+# machine that downloads and runs an unpinned get-pip.py and one that does not
+# talk to anybody.
+pkg_buildpython() {
+    PKG_HOSTPY_ROOT="$PWD/work/.py-host"
+    HOSTPY="$PKG_HOSTPY_ROOT/bin/python$PY_MM"
+    export HOSTPY
+
+    _hpstamp="$PY_VERSION"
+    for _p in setuptools $PYPKG_HOST_LIST; do
+        _hpstamp="$_hpstamp $(pypkg_var "$_p" FILE)"
+    done
+    if [ "$(cat "$PKG_HOSTPY_ROOT/.version" 2>/dev/null || true)" = "$_hpstamp" ]; then
+        pkg_skip "$PKG_ID: build-python $PY_VERSION is already at work/.py-host"
+        return 0
+    fi
+
+    [ -f "${PY_TGZ:-}" ] || pkg_die \
+        "$PKG_ID needs the CPython source and '${PY_TGZ:-}' is missing. Run ./bin/fetch-assets.sh."
+    command -v gcc >/dev/null || pkg_die \
+        "$PKG_ID needs a host gcc to build the build-python. Run through 'make packages'."
+
+    pkg_say "$PKG_ID: building the x86-64 build-python $PY_VERSION (once, then cached)"
+    rm -rf "$PKG_HOSTPY_ROOT" work/.py-hostsrc
+    mkdir -p work/.py-hostsrc
+    tar -xf "$PY_TGZ" -C work/.py-hostsrc \
+        || pkg_die "$PKG_ID: could not untar $PY_TGZ"
+    _hplog="$PKG_LOG/buildpython.log"
+    (
+        set -e
+        # THE CROSS ENVIRONMENT IS REMOVED, NOT AVOIDED BY CALLING ORDER. A
+        # recipe is free to call pkg_toolchain and pkg_deps before this, and
+        # both export CC, CFLAGS and a sysroot that describe the PRINTER. A
+        # configure run inheriting those builds an x86-64 interpreter with
+        # mipsel flags and fails somewhere unrecognisable. Unsetting them here
+        # means this verb means the same thing wherever it appears in a recipe.
+        unset CC CXX AR RANLIB STRIP NM OBJCOPY OBJDUMP LD
+        unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS LIBS CONFIG_SITE
+        unset PKG_CONFIG_LIBDIR PKG_CONFIG_PATH PKG_CONFIG_SYSROOT_DIR
+        unset _PYTHON_SYSCONFIGDATA_NAME PYTHONPATH
+        cd "work/.py-hostsrc/Python-$PY_VERSION"
+        ./configure --prefix="$PKG_HOSTPY_ROOT" --with-ensurepip=install
+        make -j"$(nproc 2>/dev/null || echo 4)"
+        make install
+    ) > "$_hplog" 2>&1 || pkg_die "$PKG_ID: the build-python failed to build -- see $_hplog"
+
+    # zlib, ASSERTED RATHER THAN ASSUMED, because CPython's answer to a missing
+    # library is to record the module as absent and carry on. Every wheel is a
+    # zip and so is pip: ensurepip installs it out of a bundled .whl, and
+    # without zlib that fails with "can't decompress data" INSIDE a make
+    # install that reports success. The symptom then arrives three steps later
+    # as "No module named pip", nowhere near the cause. zlib1g-dev in
+    # docker/Dockerfile.build is the fix, and this is the sentence that says so.
+    "$HOSTPY" -c 'import zlib' 2>/dev/null || pkg_die \
+        "the build-python has no zlib module, so it cannot unpack a single wheel. Install zlib1g-dev in docker/Dockerfile.build and delete work/.py-host."
+    "$HOSTPY" -m pip --version >> "$_hplog" 2>&1 || pkg_die \
+        "the build-python has no pip -- ensurepip failed inside 'make install'; its traceback is in $_hplog"
+
+    # The PEP 517 backends, into the build-python rather than into an isolated
+    # environment per wheel: --no-build-isolation is what keeps
+    # _PYTHON_SYSCONFIGDATA_NAME reaching setup.py, and with isolation off the
+    # backends have to already be here. All three bootstrap themselves through
+    # backend-path, so --no-index proves nothing outside vendor/ is needed.
+    for _p in setuptools $PYPKG_HOST_LIST; do
+        _sd=$(pypkg_tgz "$_p")
+        [ -f "$_sd" ] || pkg_die \
+            "no sdist for the build backend $_p at '$_sd' -- run ./bin/fetch-assets.sh"
+        (
+            set -e
+            unset CC CXX AR RANLIB STRIP NM OBJCOPY OBJDUMP LD
+            unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS LIBS CONFIG_SITE
+            unset _PYTHON_SYSCONFIGDATA_NAME PYTHONPATH
+            "$HOSTPY" -m pip install --quiet --no-index --no-cache-dir \
+                --no-build-isolation --no-deps "$_sd"
+        ) >> "$_hplog" 2>&1 || pkg_die \
+            "$PKG_ID: could not install the build backend $_p -- see $_hplog"
+    done
+
+    rm -rf work/.py-hostsrc
+    # Written LAST, so an interrupted build leaves a cache that is stale rather
+    # than one that lies.
+    echo "$_hpstamp" > "$PKG_HOSTPY_ROOT/.version"
+    pkg_say "$PKG_ID: build-python ready ($("$HOSTPY" -V 2>&1))"
 }
 
 # ----------------------------------------------------------------- pkg_deps
@@ -579,6 +697,215 @@ pkg_build() {
         return 1
     }
     pkg_say "$PKG_ID: built $_tag"
+}
+
+# ------------------------------------------------------------- pkg_pytarget
+#
+#     pkg_pytarget
+#
+# Point the build-python's sysconfig at the TARGET interpreter in the sysroot,
+# so that pip and setuptools -- running on x86-64 -- answer every question
+# about mipsel. Call it after pkg_toolchain, pkg_deps and pkg_buildpython.
+#
+# THE CROSS TRICK, AND THERE IS NO crossenv IN IT. anvil-python ships
+# lib/python3.13/_sysconfigdata__linux_mipsel-linux-gnu.py, which records the
+# cross CC, LDSHARED, EXT_SUFFIX (.cpython-313-mipsel-linux-gnu.so) and
+# INCLUDEPY for the TARGET. Point _PYTHON_SYSCONFIGDATA_NAME at it from an
+# x86-64 CPython of the same version and sysconfig -- and therefore
+# setuptools' build_ext -- builds for mipsel while running on x86-64.
+#
+# WHY THE MODULE IS REWRITTEN RATHER THAN USED AS IT SHIPS. Every path in it
+# is /usr/data/anvil/..., which is where those files live ON THE PRINTER and
+# nowhere on this machine; INCLUDEPY in particular has to name a directory
+# that exists or every C extension fails to find Python.h. The spike solved
+# that with a container and a bind mount. Here the whole module is rewritten
+# with $MODDIR replaced by the sysroot that pkg_deps just filled -- a blanket
+# substitution over every string value rather than a list of the variables
+# that matter, because the list of variables that matter is exactly the thing
+# nobody gets right by hand: INCLUDEPY fails loudly, LIBDIR and LIBPL fail
+# quietly, and a future setuptools is free to ask for another.
+#
+# It goes first on PYTHONPATH, is read only by the build, and never ships.
+#
+# THE PURE-PYTHON RECIPES CALL THIS TOO, and there is nothing for it to
+# cross-compile in them. That is deliberate: sysconfig is what a wheel build
+# asks for its tags and its paths whether or not there is any C in the package,
+# so running the same five verbs in all eighteen recipes means none of them has
+# to decide which kind it is -- and a package that grows a C accelerator in
+# some future release does not need its recipe rewritten to notice.
+pkg_pytarget() {
+    [ -n "${HOSTPY:-}" ] || pkg_die \
+        "$PKG_ID: pkg_pytarget needs the build-python -- call pkg_buildpython first"
+    [ -n "${PKG_HOST:-}" ] || pkg_die \
+        "$PKG_ID: pkg_pytarget needs the cross toolchain -- call pkg_toolchain first"
+
+    PKG_PYROOT="$PKG_SYSROOT$MODDIR"
+    PKG_PYINC="$PKG_PYROOT/include/python$PY_MM"
+    _sc="_sysconfigdata__linux_mipsel-linux-gnu"
+    _scsrc="$PKG_PYROOT/lib/python$PY_MM/$_sc.py"
+    [ -f "$_scsrc" ] || pkg_die \
+        "$PKG_ID: no $_sc in the sysroot -- is 'python' in PKG_BUILD_DEPENDS?"
+    [ -d "$PKG_PYINC" ] || pkg_die \
+        "$PKG_ID: no target headers at $PKG_PYINC -- anvil-python-dev is what carries them"
+
+    _xsys="$PWD/$PKG_WORK/xsysconfig"
+    rm -rf "$_xsys"; mkdir -p "$_xsys"
+    "$HOSTPY" - "$_scsrc" "$_xsys/$_sc.py" "$MODDIR" "$PKG_PYROOT" <<'PYEOF' \
+        || pkg_die "$PKG_ID: could not rewrite $_sc for the sysroot"
+import sys
+src, dst, prefix, sysroot = sys.argv[1:5]
+ns = {}
+exec(compile(open(src).read(), src, "exec"), ns)
+out = {k: (v.replace(prefix, sysroot) if isinstance(v, str) else v)
+       for k, v in ns["build_time_vars"].items()}
+with open(dst, "w") as fh:
+    fh.write("# Generated by pkg/lib.sh: %s with the build-time prefix rewritten\n"
+             "# to this recipe's sysroot. Build-time only; never ships.\n"
+             "build_time_vars = %r\n" % (src, out))
+PYEOF
+
+    export _PYTHON_SYSCONFIGDATA_NAME="$_sc"
+    # ONLY the rewritten module -- deliberately NOT the target's stdlib as
+    # well, which is what the spike put here. They are the same CPython, so it
+    # did no harm, but it also means the host interpreter importing the
+    # TARGET's os.py by accident is one path-ordering mistake away, and the
+    # only thing that has to be importable is this.
+    export PYTHONPATH="$_xsys"
+    export PYTHONDONTWRITEBYTECODE=1
+    export PIP_DISABLE_PIP_VERSION_CHECK=1
+    # setuptools does NOT forward CFLAGS to its link lines, which is why the
+    # -EL -mnan=2008 that decide this printer's ABI are baked into the gcc
+    # wrapper pkg_toolchain wrote and not passed here. What is passed here is
+    # only what a compile needs to find headers.
+    export LDSHARED="$PKG_HOST-gcc -shared -L$PKG_PYROOT/lib"
+    export CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64 -I$PKG_PYROOT/include -I$PKG_PYINC"
+    export CXXFLAGS="$CFLAGS"
+
+    # Where every wheel is unpacked: the recipe's own staging tree, at the
+    # path site-packages has on the printer. pkg_ship reads from here.
+    PKG_PYSP="$PWD/$PKG_WORK/stage$MODDIR/lib/python$PY_MM/site-packages"
+    mkdir -p "$PKG_PYSP"
+
+    # GATED BEFORE ANYTHING IS BUILT ON IT. If _PYTHON_SYSCONFIGDATA_NAME has
+    # not taken, every question sysconfig is asked below is answered for
+    # x86-64 -- and the answer is a tree of host objects that builds
+    # perfectly, passes every test here and imports nowhere.
+    "$HOSTPY" - "$PKG_PYINC" ".cpython-$(printf '%s' "$PY_MM" | tr -d .)-mipsel-linux-gnu.so" <<'PYEOF' \
+        || pkg_die "$PKG_ID: the sysconfig cross trick did not take"
+import os, sys, sysconfig
+inc_want, suffix_want = sys.argv[1:3]
+suffix = sysconfig.get_config_var("EXT_SUFFIX")
+inc = sysconfig.get_config_var("INCLUDEPY")
+if suffix != suffix_want:
+    raise SystemExit("   !! sysconfig is answering for the HOST (EXT_SUFFIX=%s,"
+                     " wanted %s) -- _PYTHON_SYSCONFIGDATA_NAME did not take"
+                     % (suffix, suffix_want))
+if inc != inc_want:
+    raise SystemExit("   !! INCLUDEPY is %s, expected %s" % (inc, inc_want))
+if not os.path.isdir(inc):
+    raise SystemExit("   !! INCLUDEPY %s does not exist" % inc)
+PYEOF
+    pkg_say "$PKG_ID: sysconfig answers for mipsel, headers at $PKG_PYINC"
+}
+
+# ---------------------------------------------------------------- pkg_pysrc
+#
+#     pkg_pysrc <list-entry>
+#
+# Where this package's sdist unpacked to. Every sdist on PyPI unpacks to a
+# directory named after the file with .tar.gz removed, and pkg_unpack put it
+# under $PKG_WORK/src -- so this is that path, spelled once instead of in
+# eighteen recipes.
+pkg_pysrc() {
+    _f=$(pypkg_var "$1" FILE)
+    printf '%s/src/%s' "$PKG_WORK" "${_f%.tar.gz}"
+}
+
+# -------------------------------------------------------------- pkg_pywheel
+#
+#     pkg_pywheel <list-entry> [VAR=VAL ...]
+#
+# Build one wheel for the target out of the source pkg_unpack just extracted,
+# and unpack it into the staging site-packages. Trailing VAR=VAL pairs are
+# environment for that build alone (lmdb needs one).
+#
+# IT TAKES THE PACKAGE NAME AND NOT A PATH so that every recipe reads the same
+# way and none of them spells $PKG_WORK. It builds from the UNPACKED
+# DIRECTORY rather than from the sdist for the same reason: greenlet has to
+# patch its sources before they compile and pillow has to be driven through
+# setup.py, and if those two took a directory while the other sixteen took a
+# tarball then two thirds of the recipes would differ in shape for no reason a
+# reader could see. pip builds a directory exactly as it builds an sdist.
+#
+# NOTHING HERE TALKS TO A NETWORK. pip runs --no-index against a tree that came
+# out of an archive bin/fetch-assets.sh already checked the sha256 of, which is
+# the strong form of the rule that --no-binary :all: is the weak form of: pip
+# cannot download a wheel it cannot reach. Both are kept, because the day
+# someone adds an index URL for one awkward package the second one is what
+# stops three x86-64 .so files from sailing into the tree -- which is not
+# hypothetical, it is what happened on the spike's first run.
+#
+#   PKG_PY_SETUP_ARGS   drive setup.py build_ext with these options and then
+#                       bdist_wheel, instead of calling pip. PEP 517 offers no
+#                       way to pass build_ext options, and pillow's --disable-*
+#                       are build_ext options.
+#
+# UNZIPPED RATHER THAN pip-installed, because `pip install` insists on
+# installing FOR the interpreter running it -- and that one is x86-64. A wheel
+# is a zip whose layout is already the layout of site-packages, so unzipping it
+# is the whole of what an install does here.
+#
+# .dist-info GOES: nothing on the printer resolves a dependency, asks for a
+# version or runs an entry point, and it is metadata describing a build machine
+# to nobody. The .data directories and the scripts in them go for a stronger
+# reason -- their console-script shebangs name the BUILD-PYTHON's path, so
+# shipping them would put files on the printer that reference work/.py-host.
+pkg_pywheel() {
+    _pw=$1; shift
+    _wdir=$(pkg_pysrc "$_pw")
+    [ -d "$_wdir" ] || pkg_die \
+        "$PKG_ID: $(pypkg_var "$_pw" FILE) did not unpack to $(basename "$_wdir")"
+    [ -n "${PKG_PYSP:-}" ] || pkg_die \
+        "$PKG_ID: pkg_pywheel needs the target environment -- call pkg_pytarget first"
+    _wheels="$PWD/$PKG_WORK/wheels"
+    rm -rf "$_wheels"; mkdir -p "$_wheels"
+    _wlog="$PKG_LOG/wheel-$_pw.log"
+
+    if [ -n "${PKG_PY_SETUP_ARGS:-}" ]; then
+        (
+            set -e
+            cd "$_wdir"
+            # Deliberately unquoted: PKG_PY_SETUP_ARGS is a list of options.
+            # shellcheck disable=SC2086
+            env "$@" "$HOSTPY" setup.py build_ext $PKG_PY_SETUP_ARGS bdist_wheel
+        ) > "$_wlog" 2>&1 || {
+            printf '   !! %s: %s failed to build -- see %s\n' "$PKG_ID" "$_pw" "$_wlog" >&2
+            tail -25 "$_wlog" | sed 's/^/      /' >&2
+            return 1; }
+        cp -a "$_wdir"/dist/*.whl "$_wheels/" \
+            || pkg_die "$PKG_ID: $_pw's setup.py produced no wheel -- see $_wlog"
+    else
+        env "$@" "$HOSTPY" -m pip wheel --no-deps --no-build-isolation \
+            --no-index --no-binary :all: --no-cache-dir -w "$_wheels" "$_wdir" \
+            > "$_wlog" 2>&1 || {
+            printf '   !! %s: %s failed to build -- see %s\n' "$PKG_ID" "$_pw" "$_wlog" >&2
+            tail -25 "$_wlog" | sed 's/^/      /' >&2
+            return 1; }
+    fi
+
+    _nw=0
+    for _w in "$_wheels"/*.whl; do
+        [ -f "$_w" ] || continue
+        "$HOSTPY" -m zipfile -e "$_w" "$PKG_PYSP" \
+            || pkg_die "$PKG_ID: could not unpack $(basename "$_w") into site-packages"
+        pkg_say "$PKG_ID: $(basename "$_w")"
+        _nw=$((_nw + 1))
+    done
+    [ "$_nw" -gt 0 ] || pkg_die "$PKG_ID: no wheel came out of $_pw -- see $_wlog"
+
+    find "$PKG_PYSP" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
+    find "$PKG_PYSP" -maxdepth 1 -name '*.dist-info' -prune -exec rm -rf {} + 2>/dev/null || true
+    rm -rf "${PKG_PYSP:?}"/bin "${PKG_PYSP:?}"/*.data
 }
 
 # --------------------------------------------------------------- pkg_ship

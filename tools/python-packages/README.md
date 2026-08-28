@@ -1,9 +1,8 @@
 # The Python packages Moonraker and klippy need, cross-built for mipsel
 
 The second half of phase 6. `tools/python/` builds the interpreter;
-this builds what runs on it. **Now wired into `bin/patch.sh` section 5c,
-step 4** -- see "What is left" at the bottom for what that did and did not
-settle. `build.sh` is the measurement harness, preserved here because it is
+this builds what runs on it. **Now a recipe apiece: `pkg/python-<name>`, one
+`.ipk` each** -- see "What is left" at the bottom for the history. `build.sh` is the measurement harness, preserved here because it is
 where the findings live, exactly as `tools/supervisor/` is for s6; it is not
 what a release runs any more, and the two have drifted on purpose (patch.sh
 builds offline from `vendor/` and needs no docker, because the build lane has
@@ -173,16 +172,31 @@ same one-line `FF_PYTHON` switch, since 3.8's libnacl still needs it.
 Capability was settled first -- Moonraker serves, the database works,
 libsodium is ours -- and packaging and integration followed:
 
-1. ~~**Wire into `bin/patch.sh`.**~~ **Done.** The package build runs inside
-   5c against the untrimmed stage, BEFORE the trim, which was the
-   recommendation here and is still the only place all three things it needs
-   exist at once: the headers `INCLUDEPY` points at, the static C libraries in
-   `work/.py-dep` (pillow's zlib, cffi's libffi) and the x86-64 build-python.
-   The consequence is that `work/.py313` has **two stamps** -- `.version` for
-   the interpreter and `.pkg-version` for the packages -- and a package bump
-   rebuilds CPython too, which is the price of not caching a second untrimmed
-   tree. libsodium is its own section, 5d, cached separately in
-   `work/.sodium`. Every pin is in `versions.env` with a sha256 and
+1. ~~**Wire into `bin/patch.sh`.**~~ ~~**Done.**~~ **Superseded: each package
+   is its own recipe.** The step below describes the arrangement that replaced
+   it, and the arrangement that then replaced *that*, because the second
+   correction is the interesting one.
+
+   Wiring into section 5c meant building the packages against the untrimmed
+   stage, BEFORE the trim -- the only moment all three things they need
+   existed at once: the headers `INCLUDEPY` points at, the static C libraries
+   in `work/.py-dep` (pillow's zlib, cffi's libffi) and the x86-64
+   build-python. All three were scratch directories deleted at the end of the
+   section, so `work/.py313` needed **two stamps** -- `.version` for the
+   interpreter and `.pkg-version` for the packages -- and a package bump
+   rebuilt CPython too, which was the price of not caching a second untrimmed
+   tree.
+
+   **That price is what the recipes removed.** The three passing moments are
+   durable things now: the untrimmed stage is the feed's `anvil-python-dev`
+   package, the static C libraries are each recipe's own sysroot filled by
+   `pkg_deps`, and the build-python is `pkg_buildpython`'s shared cache under
+   `work/.py-host`. So there is no second stamp and no coupled rebuild --
+   `make packages PKG=python-pillow` builds Pillow. Each package also carries
+   its upstream version into the feed index, which the single site-packages
+   tree could not express.
+
+   libsodium is its own recipe. Every pin is in `versions.env` with a sha256 and
    `bin/fetch-assets.sh` fetches them, so **patch.sh no longer talks to a
    network**: no `get-pip.py`, no PyPI, `pip --no-index` against hashed
    sdists. The build-python gets its pip from `--with-ensurepip=install` out

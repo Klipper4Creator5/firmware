@@ -448,7 +448,7 @@ def test_the_package_and_the_payload_share_one_build():
     # decided each of these ships both ways -- a list read off patch.sh would
     # agree with patch.sh by construction and assert nothing.
     staged = ("libsodium", "mainsail", "moonraker", "helixscreen",
-              "skalibs", "execline", "s6", "s6-rc", "anvil-core")
+              "skalibs", "execline", "s6", "s6-rc", "anvil-core", "python")
     for recipe in staged:
         assert "bash pkg/%s/build.sh" % recipe in patch, (
             "bin/patch.sh does not run pkg/%s/build.sh -- the payload's copy "
@@ -855,8 +855,9 @@ def test_no_cache_stamp_is_spelled_in_two_places():
         assert '"$SKALIBS_VERSION $S6_VERSION' not in text, (
             "bin/%s spells the s6 stamp out by hand" % name)
         assert '"$PY_VERSION $OPENSSL_VERSION' not in text, (
-            "bin/%s spells the CPython stamp out instead of using $PY_STAMP "
-            "from bin/common.sh" % name)
+            "bin/%s spells the CPython stamp out by hand -- CPython is "
+            "pkg/python and pkg_stamp derives its key from PKG_BUILD_DEPENDS"
+            % name)
 
     # The fetcher must ask the recipes rather than compare a string it wrote
     # itself. This is what makes the whole class impossible for anything under
@@ -865,3 +866,100 @@ def test_no_cache_stamp_is_spelled_in_two_places():
     assert "pkg_needs" in fetch, (
         "bin/fetch-assets.sh no longer asks pkg_needs -- it is back to "
         "deciding whether a recipe is stale by a rule of its own")
+
+def test_the_python_package_list_and_the_recipes_agree():
+    """PYPKG_LIST and pkg/python-* are one list, and it is checked.
+
+    versions.env carries the pin for each third-party python package and
+    bin/fetch-assets.sh downloads from that list, while what actually BUILDS
+    each one is a recipe directory. Those are two spellings of one set, and the
+    failure when they disagree is quiet in both directions: an entry added to
+    versions.env alone is fetched, hashed and never built, and a recipe added
+    alone has no source to build from.
+
+    bin/patch.sh checks the first direction at build time, one entry at a time.
+    This checks both, all at once, without building anything.
+    """
+    listed = set(_sh('printf "%s" "$PYPKG_LIST"').split())
+    recipes = {d.name[len("python-"):] for d in (ROOT / "pkg").glob("python-*")
+               if d.is_dir()}
+    assert listed == recipes, (
+        "PYPKG_LIST and the pkg/python-* recipes disagree.\n"
+        "  in versions.env only: %s\n"
+        "  in pkg/ only:         %s"
+        % (sorted(listed - recipes) or "none", sorted(recipes - listed) or "none"))
+
+
+def test_a_python_package_does_not_pin_its_version_twice():
+    """The version comes out of the pinned file name, never written again.
+
+    Every sdist is <name>-<version>.tar.gz and versions.env pins the FILE, so
+    the version is already there. A PKG_VERSION written out by hand in the
+    pkg.conf would be a second copy of a string nobody would think to update
+    together with the first -- and the result is a .ipk that claims a version
+    it does not contain, which nothing downstream can detect.
+    """
+    for conf in sorted((ROOT / "pkg").glob("python-*/pkg.conf")):
+        name = conf.parent.name[len("python-"):]
+        text = conf.read_text()
+        want = 'PKG_VERSION="$(pypkg_version %s)"' % name
+        assert want in text, (
+            "%s does not read its version from the pin: expected\n  %s\n"
+            "so that versions.env stays the only place the version is written"
+            % (conf.relative_to(ROOT), want))
+
+
+def test_bin_patch_builds_every_python_package():
+    """The eighteen recipes are run by patch.sh, in a loop over the same list.
+
+    The other staged recipes appear in bin/patch.sh by name, and
+    test_the_package_and_the_payload_share_one_build checks each of those. The
+    python packages are too many for that and are driven from PYPKG_LIST
+    instead -- so what is checked here is that the loop exists and reaches the
+    recipe directory, rather than eighteen literal lines.
+    """
+    patch = (ROOT / "bin" / "patch.sh").read_text()
+    assert 'for p in $PYPKG_LIST; do' in patch, (
+        "bin/patch.sh no longer iterates PYPKG_LIST -- the python packages "
+        "are either not built or built from a list of their own")
+    assert 'bash "pkg/python-$p/build.sh"' in patch, (
+        "bin/patch.sh iterates PYPKG_LIST but does not run pkg/python-$p/"
+        "build.sh, so the payload's copy and the packaged one are built by "
+        "different code")
+
+def test_every_declared_dependency_is_a_package_this_feed_builds():
+    """A Depends the feed cannot satisfy is an install that refuses itself.
+
+    opkg resolves Depends before it unpacks anything, so a package naming one
+    that does not exist does not install PARTIALLY -- it does not install at
+    all, and the error names the missing dependency rather than the recipe that
+    asked for it. Nothing in a build catches this: bin/build-packages.sh writes
+    whatever PKG_DEPENDS says into the control file, opkg-make-index copies it
+    into the index, and the first thing to notice is a printer.
+
+    Checked from the pkg.conf files rather than from a built feed, so it runs
+    on a bare checkout. Names ending -dev are matched against the recipes that
+    set PKG_DEV_FILES, because that is what makes the second archive exist.
+
+    Dependencies on the STOCK ROOTFS are a different thing and are deliberately
+    absent everywhere: anvil-python needs libatomic.so.1 and does not say so,
+    because opkg has no idea what FlashForge installed and would refuse a
+    package for want of a library that is already there.
+    """
+    provided = set()
+    for conf in RECIPES:
+        recipe = conf.parent.name
+        name = _conf(recipe, "PKG_NAME")
+        provided.add(name)
+        if _conf(recipe, "PKG_DEV_FILES"):
+            provided.add(name + "-dev")
+
+    for conf in RECIPES:
+        recipe = conf.parent.name
+        depends = _conf(recipe, "PKG_DEPENDS")
+        for dep in [d.strip().split()[0] for d in depends.split(",") if d.strip()]:
+            assert dep in provided, (
+                "pkg/%s depends on '%s' and no recipe under pkg/ produces it. "
+                "opkg refuses the whole install rather than part of it, so "
+                "this is a package that cannot be installed at all."
+                % (recipe, dep))

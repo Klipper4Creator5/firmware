@@ -93,21 +93,17 @@ fi
 # cross-built on every checkout. Gating this fetch on BUILD_KLIPPER=fork alone
 # -- the shape it had before 5c existed -- means a BUILD_KLIPPER=stock build
 # from a clean vendor/ reaches patch.sh's Python step with sources but no
-# compiler and dies there instead of here. Checked against patch.sh's own
-# work/.py313 stamp, so a checkout with a current cross-built interpreter
-# never pulls this compiler either.
+# compiler and dies there instead of here. 
 #
-# THE RECIPES UNDER pkg/ ARE THE THIRD CONSUMER, and pkg_needs is how they are
-# asked. Every one of them cross-compiles with this toolchain, so a checkout
-# with a stale work/pkg/zlib needs the compiler even when the interpreter and
-# the Klipper fork are both current. Asking pkg/lib.sh rather than comparing a
-# stamp string here is the point: the recipe and the fetcher then compute the
-# cache key with the same code instead of two spellings that can drift -- which
-# is exactly what went wrong with the s6 stamp below.
+# TWO CONDITIONS, WHERE THERE USED TO BE FOUR. The interpreter and its eighteen
+# site-packages are recipes under pkg/ now, and pkg_needs answers for every
+# recipe at once -- so the two hand-written CPython stamp comparisons that sat
+# here were the same question in a second spelling, and the second spelling is
+# the one that drifts. Asking pkg/lib.sh means the fetcher computes the cache
+# key with the code that writes it, which is exactly what went wrong with the
+# s6 stamp below.
 if [ "$ALL" = 1 ] \
    || { [ "${BUILD_KLIPPER:-0}" = "fork" ] && [ ! -d "${KLIPPER_FORK:-}/klippy" ]; } \
-   || [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ] \
-   || [ "$(cat "$PY_BUILD/.pkg-version" 2>/dev/null || true)" != "$(pypkg_stamp)" ] \
    || pkg_needs; then
     get "https://github.com/ballaswag/k1-discovery/releases/download/$MIPS_TOOLCHAIN_VERSION/$MIPS_TOOLCHAIN_FILE" \
         "$MIPS_TOOLCHAIN_TGZ" "$MIPS_TOOLCHAIN_SHA256"
@@ -264,28 +260,22 @@ fi
 say "cached  opkg-utils $OPKG_UTILS_VERSION ($OPKG_UTILS_COMMIT)"
 
 # The Ingenic toolchain, on the condition that decides whether patch.sh has to
-# compile at all. THREE stamps and not one, because three separate things are
-# built with this one compiler and any of them going stale means the download
-# is needed: the interpreter (work/.py313/.version), the packages that go into
-# its site-packages (work/.py313/.pkg-version -- same cache directory, its own
-# key, because a package bump forces a full interpreter rebuild; see the
-# comment in bin/patch.sh) and every recipe under pkg/, which pkg_needs answers
-# for all of them at once.
+# compile at all. ONE question, asked of pkg_needs, because everything built
+# with this compiler is a recipe under pkg/ now -- the interpreter, its
+# eighteen site-packages, libsodium, the s6 family and the rest.
 #
-# libsodium USED TO BE SPELLED OUT HERE, as a comparison against
-# $SODIUM_VERSION. It is one of the recipes pkg_needs covers now, and the
-# comparison had already gone subtly wrong: a recipe's cache key includes the
-# toolchain and its dependencies, so a bare version string stopped being the
-# thing written into work/pkg/libsodium/.version and the test would have been
-# true forever. Asking the code that writes the stamp is the only spelling that
-# cannot drift -- which is the same lesson as the s6 stamp above.
+# IT USED TO BE THREE HAND-WRITTEN COMPARISONS and each of them had gone, or was
+# going, wrong. libsodium's compared $SODIUM_VERSION against
+# work/pkg/libsodium/.version, which stopped matching the moment a recipe's key
+# grew to include its toolchain and its dependencies -- so the test was true
+# forever and nobody noticed. The two CPython ones re-derived a stamp
+# bin/patch.sh also derived, and agreed with it by luck. Asking the code that
+# WRITES the stamp is the only spelling that cannot drift.
 #
 # Getting this wrong is not a slow build, it is a stopped one: patch.sh would
 # get 53MB of sdists and then halt for want of a compiler, halfway through,
 # rather than here where the fix is one command.
 if [ "$ALL" = 1 ] \
-   || [ "$(cat "$PY_BUILD/.version" 2>/dev/null || true)" != "$PY_STAMP" ] \
-   || [ "$(cat "$PY_BUILD/.pkg-version" 2>/dev/null || true)" != "$(pypkg_stamp)" ] \
    || pkg_needs; then
     get "https://github.com/ballaswag/k1-discovery/releases/download/$MIPS_TOOLCHAIN_VERSION/$MIPS_TOOLCHAIN_FILE" \
         "$MIPS_TOOLCHAIN_TGZ" "$MIPS_TOOLCHAIN_SHA256"

@@ -9,7 +9,7 @@ Everything below was measured on the printer replica (real `rootfs.squashfs`
 under qemu-mipsel) or read out of the objects with `readelf`, not off a
 project page. `build.sh` beside this file rebuilds the whole thing in a
 throwaway container and is where the numbers came from;
-`bin/patch.sh` section 5c is the same build wired into the real build lane,
+`pkg/python` is the same build wired into the real build lane,
 and `test/integration/printer/case-python.sh` is the gate that proves the
 result works on the printer's own kernel.
 
@@ -275,9 +275,11 @@ the extensions is the actual work in adopting this; not the interpreter.
 
 That is how the numbers above were measured, and it is kept here for the
 record and for trying a version bump before it becomes a pin. It is not how
-the shipped interpreter is built: `bin/patch.sh` section 5c compiles it in
-place inside the repo's own build image, from the sha256-pinned tarballs, and
-caches it in `work/.py313`.
+the shipped interpreter is built: `pkg/python` compiles it inside the repo's
+own build image, from the sha256-pinned tarballs, against the seven static
+libraries the feed builds as their own `-dev` packages, and caches it in
+`work/pkg/python`. `bin/patch.sh` section 5c runs that recipe and stages what
+it produced; it no longer contains a compiler invocation of its own.
 
 The gate, against the tree the build actually produced:
 

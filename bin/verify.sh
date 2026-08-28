@@ -165,7 +165,7 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
     # interpreter can be present and perfectly runnable while _sqlite3 is
     # absent, because a dropped -lm makes configure's link probe fail and
     # CPython records the module as "missing" rather than stopping -- see the
-    # LIBS comment in patch.sh. sqlite3 is the entire reason this interpreter
+    # LIBS comment in pkg/python/build.sh. sqlite3 is the entire reason this interpreter
     # is built (it is what eventually unpins MOONRAKER_VERSION), so a tree
     # without it is a 30MB payload that bought nothing. Build bugs both: a
     # package that ships neither cannot be fixed on the printer.
@@ -174,7 +174,7 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
         || bad "no bin/python3.13 in the payload -- bin/patch.sh did not stage the cross-build"
     grep -q 'lib-dynload/_sqlite3' <<<"$LIST" \
         && ok "python3.13 carries _sqlite3 (the module FlashForge's 3.8.2 has not got)" \
-        || bad "python3.13 ships WITHOUT _sqlite3 -- the one module it exists for; check LIBS/LIBSQLITE3_LIBS in patch.sh"
+        || bad "python3.13 ships WITHOUT _sqlite3 -- the one module it exists for; check LIBS/LIBSQLITE3_LIBS in pkg/python/build.sh"
     # And the other half of the same decision: the interpreter goes into the
     # prefix root's bin/ like everything else, but WITHOUT the `python3`
     # symlink CPython installs beside it. $MODDIR/bin is prepended to PATH by
@@ -204,10 +204,23 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
     # itself cpython-313-x86_64-linux-gnu.so, so the name is the architecture.
     grep -q 'site-packages/lmdb/cpython.cpython-313-mipsel-linux-gnu\.so' <<<"$LIST" \
         && ok "lmdb's mipsel CPython extension present (Moonraker's database at this pin)" \
-        || bad "no mipsel lmdb extension in site-packages -- Moonraker cannot open its database; check bin/patch.sh section 5c step 4"
+        || bad "no mipsel lmdb extension in site-packages -- Moonraker cannot open its database; check work/.pkg-python-lmdb/wheel-lmdb.log"
     grep -q 'site-packages/_cffi_backend.cpython-313-mipsel-linux-gnu\.so' <<<"$LIST" \
         && ok "cffi's mipsel extension present (klippy's route to c_helper.so)" \
         || bad "no mipsel _cffi_backend in site-packages -- klippy could not load chelper on 3.13"
+    # THE DEV HALF MUST NOT BE HERE. anvil-python and anvil-python-dev are one
+    # build split in two, and only the first is something a printer installs:
+    # the headers, lib/pkgconfig and config-3.13-* exist so that the eighteen
+    # pkg/python-* recipes can compile extension modules on a BUILD machine.
+    # bin/patch.sh prunes them from the payload by reading PKG_DEV_FILES out of
+    # pkg/python/pkg.conf, and this is the check that the pruning happened --
+    # it is three megabytes of files nothing on a printer can open, and it
+    # would ship silently, because a payload with extra files in it works.
+    if grep -qE '(^|/)(include/python3\.13/|lib/pkgconfig/|config-3\.13-)' <<<"$LIST"; then
+        bad "payload carries CPython's dev files (headers/pkgconfig/config-3.13-*) -- anvil-python-dev's half was not pruned"
+    else
+        ok "no CPython dev files in the payload (headers and build config stay in anvil-python-dev)"
+    fi
     # libsodium is the one library of ours that ships as a .so, because libnacl
     # dlopens it -- and the bare `libsodium.so` name is not decoration, it is
     # the exact name libnacl's path fallback constructs. A payload with the

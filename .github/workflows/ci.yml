@@ -79,9 +79,9 @@ jobs:
       # (see bin/fetch-assets.sh) -- so this job builds them for real rather
       # than stubbing around them the way it stubs Mainsail, HelixScreen and
       # the Klipper fork. Cached on versions.env: an unchanged pin never
-      # re-fetches the ~203MB Ingenic toolchain, and
-      # never recompiles either tree. work/.py313 carries its own version
-      # stamp; s6 is four recipes under work/pkg and carries pkg_stamp's.
+      # re-fetches the ~203MB Ingenic toolchain and never recompiles either
+      # tree. Both are recipes under work/pkg now -- four for s6, nineteen for
+      # CPython and its site-packages -- and every one carries pkg_stamp's key.
       #
       # work/pkg is every recipe under pkg/ at once -- one cache entry instead
       # of one per package, because pkg/lib.sh derives the output directory
@@ -93,7 +93,6 @@ jobs:
         with:
           path: |
             vendor
-            work/.py313
             work/pkg
           key: fixture-py-${{ hashFiles('versions.env') }}
 

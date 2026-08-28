@@ -32,7 +32,7 @@ PY=$MOD/bin/python3.13
 
 mkdir -p $MOD/bin
 # The interpreter FF_PYTHON resolves to. Not part of /tmp/payload -- it is a
-# BUILD OUTPUT (bin/patch.sh section 5c, cached in work/.py313), so gates.py
+# BUILD OUTPUT (bin/patch.sh section 5c, cached under work/pkg), so gates.py
 # hands it over as py.tgz the same way case-python.sh receives one, and this
 # is a hard failure rather than a Skip if it is missing: gates.py's
 # mcu_bringup() already Skips the whole case when nothing has built it, so

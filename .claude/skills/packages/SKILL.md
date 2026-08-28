@@ -73,6 +73,14 @@ pkg_end
 | `pkg_ship <glob>...` | copy from staging into the package; globs are relative to the prefix |
 | `pkg_end` | seal the cache |
 
+Three more exist only for python packages:
+
+| verb | what it does |
+| --- | --- |
+| `pkg_buildpython` | build (once, cached) an x86-64 CPython of the same version and export `$HOSTPY` |
+| `pkg_pytarget` | make that interpreter's sysconfig answer for mipsel, using the headers `pkg_deps` unpacked |
+| `pkg_pywheel <name>` | build one wheel and unpack it into the staging site-packages |
+
 Exactly one source verb per recipe — `pkg_unpack` **or** `pkg_intree`.
 
 ## When `pkg_build` needs help
@@ -87,6 +95,7 @@ Set these before calling it. Do not run a configure script yourself.
 | `PKG_INSTALL_TARGET` | `install` | `install_sw`, or `none` to place files yourself |
 | `PKG_MAKE_ARGS` | — | `LDLIBS=-lpthread` (s6) |
 | `PKG_STRIP_ARGS` | `--strip-unneeded` | `""` to strip executables fully |
+| `PKG_PY_SETUP_ARGS` | — | drive `setup.py build_ext` instead of pip (pillow) |
 
 `pkg_build` returns non-zero rather than dying, so `if ! pkg_build ...` can
 retry with different flags. See `pkg/openssl/build.sh`.
@@ -116,6 +125,23 @@ retry with different flags. See `pkg/openssl/build.sh`.
 - no compiler, just files — `pkg/moonraker`
 - from this repo, not a download — `pkg/anvil-core`
 - awkward build — `pkg/openssl`, `pkg/bzip2`, `pkg/zlib`
+- a python package — `pkg/python-distro` (pure), `pkg/python-cffi` (native)
+
+## Adding a python package
+
+Four steps, and the first two are not in `pkg/`:
+
+1. `PYPKG_<NAME>_FILE` and `_SHA256` in `versions.env`, and the name on
+   `PYPKG_LIST`. The version is read out of the file name.
+2. `./bin/fetch-assets.sh` to download it.
+3. `pkg/python-<name>/`, copied from `pkg/python-distro`. Name any other
+   package it imports in `PKG_DEPENDS`; add `PKG_ARCH=all` if it compiles
+   nothing.
+4. `make packages PKG=python-<name>`.
+
+The list in `versions.env` and the recipe directories are checked against each
+other by `qa/static`, so a half-done addition fails there rather than on a
+printer.
 
 ## Checking
 

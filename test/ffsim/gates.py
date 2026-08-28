@@ -95,14 +95,14 @@ def mcu_bringup(config, on_output=None):
 
     FF_PYTHON is our own cross-built CPython 3.13 now (payload/anvil-env.sh),
     not FlashForge's 3.8.2, so the interpreter under test is a build output --
-    work/.py313 -- handed over as py.tgz exactly as case-python.sh receives
+    work/pkg/python* -- handed over as py.tgz exactly as case-python.sh receives
     one. Skips rather than degrading: there is no fallback interpreter worth
     testing this against, since nothing on the printer still launches
     ff_mcu_bringup.py on FlashForge's 3.8.2.
     """
     tree = _python_tarball(config)
     if not tree:
-        raise Skip("nothing in work/.py313 -- run ./bin/patch.sh first")
+        raise Skip("nothing in work/pkg/python -- run ./bin/patch.sh first")
     replica = Replica.start(config, want_output=on_output)
     replica.run_case(_case(config, "case-mcu-bringup.sh"),
                      packages={"py.tgz": tree}, on_output=on_output)
@@ -112,13 +112,13 @@ def boot_screen(config, on_output=None):
     """Does the first-boot screen draw, on FF_PYTHON and its fb0?
 
     Hand-packed pixels and an interpreter FF_PYTHON resolves to -- since the
-    switch, our own cross-built CPython 3.13 (work/.py313), handed over as
+    switch, our own cross-built CPython 3.13 (work/pkg/python*), handed over as
     py.tgz. Skips rather than degrading, for the same reason as mcu_bringup
     above: FlashForge's 3.8.2 is not what draws this screen any more.
     """
     tree = _python_tarball(config)
     if not tree:
-        raise Skip("nothing in work/.py313 -- run ./bin/patch.sh first")
+        raise Skip("nothing in work/pkg/python -- run ./bin/patch.sh first")
     replica = Replica.start(config, want_output=on_output)
     replica.run_case(_case(config, "case-boot-screen.sh"),
                      packages={"py.tgz": tree}, on_output=on_output)
@@ -167,7 +167,7 @@ def moonraker(config, on_output=None):
     """
     prefix = _prefix_tarball(config)
     if not prefix:
-        raise Skip("nothing in work/.py313 or work/.sodium -- run ./bin/patch.sh first")
+        raise Skip("nothing in work/pkg/python or work/.sodium -- run ./bin/patch.sh first")
     packages = {"pref.tgz": prefix}
     s6 = _s6_tarball(config)
     if s6:
@@ -256,7 +256,7 @@ def moonraker313_s6(config, on_output=None):
         raise Skip("nothing in work/pkg/s6 -- run ./bin/patch.sh first")
     prefix = _prefix_tarball(config)
     if not prefix:
-        raise Skip("nothing in work/.py313 or work/.sodium -- run ./bin/patch.sh first")
+        raise Skip("nothing in work/pkg/python or work/.sodium -- run ./bin/patch.sh first")
     tree = _moonraker_tarball(config)
     if not tree:
         raise Skip("no Moonraker tarball in vendor/ -- run ./bin/fetch-assets.sh first")
@@ -271,28 +271,28 @@ def _prefix_tarball(config):
     """The mod's own /usr/data/anvil prefix: interpreter, stdlib, packages and
     libsodium, in one tarball because it is one prefix.
 
-    _python_tarball below packs work/.py313 alone, which is right for
-    case-python.sh -- that case is about the interpreter and deliberately has
-    no third-party anything in it. A Moonraker needs the other half too, and
-    bin/patch.sh puts both halves under the same $MODDIR: section 5c writes
-    bin/python3.13 and lib/python3.13 (stdlib AND site-packages), section 5d
-    writes lib/libsodium.so*. Two caches, one destination, so one tarball --
-    which also means the case unpacks it exactly once and every file lands
-    where it was compiled to expect itself.
+    bin/patch.sh puts every one of these under the same $MODDIR: section 5c
+    writes bin/python3.13 and lib/python3.13 (stdlib AND site-packages) out of
+    pkg/python and the eighteen pkg/python-* recipes, and section 5d writes
+    lib/libsodium.so* out of pkg/libsodium. Many recipe outputs, one
+    destination, so one tarball -- which also means the case unpacks it exactly
+    once and every file lands where it was compiled to expect itself.
 
-    Returns None when either cache is missing, which for this gate is a Skip:
+    Returns None when either half is missing, which for this gate is a Skip:
     see the docstring above for why there is no useful fallback.
     """
-    py = config.root / "work" / ".py313"
+    trees = _python_trees(config)
     sodium = config.root / "work" / ".sodium"
-    if not (py / "bin" / "python3.13").is_file():
+    if not (trees[0] / "bin" / "python3.13").is_file():
         return None
     if not list(sodium.glob("lib/libsodium.so*")):
         return None
     out = config.root / "work" / ".pref-gate.tgz"
     with tarfile.open(str(out), "w:gz") as tar:
-        for sub in ("bin", "lib"):
-            tar.add(str(py / sub), arcname=sub)
+        for tree in trees:
+            for sub in ("bin", "lib"):
+                if (tree / sub).is_dir():
+                    tar.add(str(tree / sub), arcname=sub)
         for so in sorted(sodium.glob("lib/libsodium.so*")):
             tar.add(str(so), arcname="lib/" + so.name)
     return str(out)
@@ -367,25 +367,59 @@ def supervisor(config, on_output=None):
                      packages={"sup.tgz": s6}, on_output=on_output)
 
 
+def _python_trees(config):
+    """Every recipe output that makes up the printer's python prefix.
+
+    NINETEEN TREES, NOT ONE, for the same reason _s6_tarball reads three. This
+    used to be work/.py313, the single directory bin/patch.sh cross-built the
+    interpreter and its site-packages into together. CPython is pkg/python now
+    and each of the eighteen third-party packages is a pkg/python-* of its own,
+    so what a printer sees is the union of their bin/ and lib/ -- which is
+    exactly what bin/patch.sh section 5c stages, in this order.
+
+    The interpreter comes first so that a half-built checkout fails on the
+    thing the caller actually needs rather than on a package that depends on it.
+    """
+    pkg = config.root / "work" / "pkg"
+    return [pkg / "python"] + sorted(d for d in pkg.glob("python-*") if d.is_dir())
+
+
 def _python_tarball(config):
     """The cross-built CPython 3.13 tree, packed the way a printer sees it.
 
-    bin/patch.sh leaves it in work/.py313 as bin/ + lib/ -- the same shape
-    work/.s6 holds for s6, because it is the same prefix: the interpreter is
-    configured --prefix=/usr/data/anvil and its stdlib lives in
-    lib/python3.13/. So a tarball made from here unpacks straight into $MODDIR
-    and every file lands where it was compiled to expect itself. Returns None
-    when nothing has built it yet; the same shape as _s6_tarball above, and
-    for the same reason: whether that is a Skip or a fallback is the caller's
-    question.
+    The interpreter is configured --prefix=/usr/data/anvil and its stdlib lives
+    in lib/python3.13/, so a tarball of the merged bin/ + lib/ unpacks straight
+    into $MODDIR and every file lands where it was compiled to expect itself.
+    Returns None when nothing has built it yet; the same shape as _s6_tarball
+    above, and for the same reason: whether that is a Skip or a fallback is the
+    caller's question.
+
+    THE DEV HALF RIDES ALONG and is deliberately not filtered out. work/pkg/python
+    holds the whole build -- headers, lib/pkgconfig and config-3.13-* included --
+    because the split into anvil-python and anvil-python-dev happens where the
+    .ipk files are made. Which paths those are is pkg/python/pkg.conf's business,
+    and repeating the list here would be a second spelling that goes stale
+    silently. This is a test fixture unpacked into a simulator, not something a
+    printer installs: 3MB of headers it will never open costs nothing, and the
+    package boundary is gated where it is made.
     """
-    built = config.root / "work" / ".py313"
-    if not (built / "bin" / "python3.13").is_file():
+    trees = _python_trees(config)
+    if not (trees[0] / "bin" / "python3.13").is_file():
         return None
+    staged = config.root / "work" / ".py-gate"
+    if staged.is_dir():
+        shutil.rmtree(str(staged))
+    for tree in trees:
+        for sub in ("bin", "lib"):
+            src = tree / sub
+            if src.is_dir():
+                shutil.copytree(str(src), str(staged / sub), dirs_exist_ok=True,
+                                symlinks=True)
     out = config.root / "work" / ".py-gate.tgz"
     with tarfile.open(str(out), "w:gz") as tar:
         for sub in ("bin", "lib"):
-            tar.add(str(built / sub), arcname=sub)
+            if (staged / sub).is_dir():
+                tar.add(str(staged / sub), arcname=sub)
     return str(out)
 
 
@@ -408,7 +442,7 @@ def python(config, on_output=None):
     """
     tree = _python_tarball(config)
     if not tree:
-        raise Skip("nothing in work/.py313 -- run ./bin/patch.sh first")
+        raise Skip("nothing in work/pkg/python -- run ./bin/patch.sh first")
     replica = Replica.start(config, want_output=on_output)
     replica.run_case(_case(config, "case-python.sh"),
                      packages={"py.tgz": tree}, on_output=on_output)

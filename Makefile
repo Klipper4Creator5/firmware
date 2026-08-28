@@ -357,19 +357,35 @@ test-nginx: image work/.s6-gate.tgz
 test-camera: image work/.s6-gate.tgz
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-camera.sh sup.tgz=work/.s6-gate.tgz
 
+# NINETEEN RECIPE OUTPUTS, MERGED, exactly as work/.s6-gate.tgz merges three.
+# This used to be `tar -czf -C work/.py313 bin lib`: one directory, because
+# bin/patch.sh cross-built the interpreter and its site-packages into one
+# cache. CPython is pkg/python now and each third-party package is a
+# pkg/python-* of its own, so what a printer sees is the union of their bin/
+# and lib/ -- which is what bin/patch.sh section 5c stages and what
+# test/ffsim/gates.py packs for the suite.
+work/.py-gate.tgz: FORCE
+	@rm -rf work/.py-gate && mkdir -p work/.py-gate
+	@[ -d work/pkg/python ] || { echo "!! work/pkg/python is missing -- run ./bin/patch.sh first" >&2; exit 1; }
+	@for t in work/pkg/python work/pkg/python-*; do \
+		[ -d $$t ] || continue; \
+		cp -a $$t/. work/.py-gate/; \
+	done
+	@rm -f work/.py-gate/.version
+	@tar -czf $@ -C work/.py-gate bin lib
+
 # The CPython 3.13 the build cross-compiles, on the printer's own kernel.
-# Needs work/.py313, which bin/patch.sh fills -- the same relationship
-# test-supervisor has to work/.s6. Nothing on the printer RUNS this
-# interpreter yet, which is exactly why it has a gate of its own: see the
-# header of case-python.sh.
-test-python: image
-	@tar -czf work/.py-gate.tgz -C work/.py313 bin lib
+# Needs the recipe outputs under work/pkg, which bin/patch.sh fills -- the same
+# relationship test-supervisor has to work/pkg/s6. See the header of
+# case-python.sh for why this has a gate of its own.
+test-python: image work/.py-gate.tgz
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-python.sh py.tgz=work/.py-gate.tgz
 
 # The real Moonraker, on the 3.13 we built, under the s6 we built, started by
 # init.d/S62moonraker. Three build outputs and no stand-ins, which is why it
-# needs three tarballs where every other target needs one or none: work/.s6,
-# work/.py313 + work/.sodium, and the pinned Moonraker sdist in vendor/. Two of
+# needs three tarballs where every other target needs one or none: the s6
+# recipes, the python recipes + work/.sodium, and the pinned Moonraker sdist in
+# vendor/. Two of
 # the three are assembled by test/ffsim/gates.py rather than by a `tar -czf`
 # here, so this runs the gate through a thin wrapper instead of calling
 # printer-exec.py -- see sim-moonraker313.py for that argument written out.

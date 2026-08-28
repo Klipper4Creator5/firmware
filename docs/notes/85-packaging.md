@@ -319,21 +319,39 @@ on this.
 ## Phase 1 — a recipe per cross-build  *(~3–5 days)*
 
 Turn the rest of `bin/patch.sh`'s builds into recipes, the way libsodium
-became one. Roughly ten packages —
+became one —
 
     klipper-fork  toolchange-config
-    python3  python3-site-packages
-    openssl  libffi  sqlite  xz  expat  bzip2
+    python ✔  python-<18 packages> ✔
+    openssl ✔  libffi ✔  sqlite ✔  xz ✔  expat ✔  bzip2 ✔
     zlib ✔  libarchive ✔  libsodium ✔  opkg ✔
     skalibs ✔  execline ✔  s6 ✔  s6-rc ✔
     mainsail ✔  moonraker ✔  helixscreen ✔  anvil-core ✔
 
-Twelve of the nineteen are done. Section 5b — the last place where one script
-built two libraries — is four recipes now (`skalibs`, `execline`, `s6`,
-`s6-rc`), and moving them off the musl toolchain removed the second libc from
-this tree entirely. What is left is CPython and the six static libraries under
-it, and then Klipper, which `docs/notes/80-s6-migration.md` phase 7 makes
-reachable only after CPython.
+**Everything except Klipper is done: 38 recipes producing 40 packages.**
+Section 5b — the last place where one script built two libraries — is four
+recipes (`skalibs`, `execline`, `s6`, `s6-rc`), and moving them off the musl
+toolchain removed the second libc from this tree entirely. Section 5c, which
+was 825 lines, is `pkg/python` plus eighteen `pkg/python-*` and 115 lines of
+staging.
+
+**What splitting CPython actually bought.** Not tidiness. The old section had
+one cache and two stamps, and its own comment explained that a bumped Pillow
+rebuilt the interpreter and all eighteen packages — because a wheel could only
+be cross-built during the few minutes when an untrimmed staging tree, a private
+sysroot of static libraries and a throwaway x86-64 build-python happened to
+exist at once. Those are now, respectively: the feed's `anvil-python-dev`
+package, each recipe's own sysroot, and `pkg_buildpython`'s shared cache. None
+of them is a passing moment, so `make packages PKG=python-pillow` is a Pillow
+build and nothing else.
+
+It also made eighteen invisible things visible. Each package now carries its
+upstream version into the index, `anvil-moonraker` declares the thirteen it
+imports, and a printer that does not want gcode thumbnails can leave the 500KB
+of Pillow uninstalled — a decision that could not previously be expressed.
+
+Klipper is what remains, and `docs/notes/80-s6-migration.md` phase 7 makes it
+reachable only after CPython, which is now behind us.
 
 `patch.sh` keeps staging the payload from those same trees, so the shipped
 tarball does not change. The work is mechanical; the risk is in the two builds
@@ -356,8 +374,10 @@ real regression from an expected difference:
 What is checked instead: the staged `work/modpayload` **tree** — file list,
 modes and content hashes — is unchanged except for the components a change
 deliberately rebuilt. The `.ipk` files themselves ARE byte-reproducible and
-that is checked directly: two cold `make packages` runs produce twelve
-identical archives.
+that is checked directly: two cold `make packages` runs produce identical
+archives. Measured over all 40 with `work/pkg`, the shared build-python and
+the unpacked toolchain all deleted in between — so the x86-64 interpreter that
+generates every mipsel extension module is itself rebuilt rather than reused.
 
 ## Phase 2 — install packages on the printer  *(~1–2 days)*
 
@@ -408,11 +428,18 @@ filesystem, not packages of ours, and they stay in `patch.sh` until phase 7 of
 `docs/notes/80-s6-migration.md` moves Klipper under `$MODDIR` and leaves
 `firmwareExe` as the only file placed outside `/usr/data`.
 
-**The blocker is CPython.** `patch.sh` section 5c is 800 lines and builds the
-interpreter, seven static libraries and eighteen cross-built wheels; until
+**The CPython blocker is gone.** It read: "section 5c is 800 lines and builds
+the interpreter, seven static libraries and eighteen cross-built wheels; until
 that is a set of recipes there is no feed that contains everything the payload
-needs, so the loop above would produce a tree with no Python in it. That is
-the next chunk of work, and it is the last one before this becomes possible.
+needs." It is a set of recipes now — 40 packages, and the loop above would
+produce a tree with Python in it. Every recipe the payload needs exists.
+
+**What blocks it now is smaller and different.** `pkg/ipk-install` has to run
+against a staging root rather than a live one, `bin/pack.sh` has to take its
+tree from there, and section 10b's generated `.install-manifest` has to give
+way to opkg's own `.list` files — which `pkg/ipk-install` already writes, and
+already notes is what makes the hand-rolled manifest redundant. None of that
+needs a compiler.
 
 **Gate:** a replica install driven by packages leaves the same tree the
 tarball leaves, and an upgrade removes exactly what the previous version

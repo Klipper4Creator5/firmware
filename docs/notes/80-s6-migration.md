@@ -225,6 +225,14 @@ moonraker runs from `/usr/data` on the printer's own Python.
 
 ## Phase 6 -- own the Python environment (separate project)
 
+**DONE, by 6b: CPython is built here.** `pkg/python` cross-compiles 3.13.7
+against the seven static libraries this feed already builds, and each of the
+eighteen third-party packages is a `pkg/python-*` recipe with its own version
+and its own `.ipk`. `anvil-env.sh` points `FF_PYTHON` at it. What is written
+below is the scoping that produced that decision, kept because the premises it
+corrects are still the ones somebody would reach for -- in particular why musl
+was never an option here, which is the paragraph that decided phase 7 too.
+
 Scoped, in the replica, before starting. The scoping changed the shape of this
 phase and corrected a premise, so read this before writing any of it.
 
@@ -299,7 +307,11 @@ has to catch that class of failure.
 
 ## Phase 7 -- own Klipper
 
-Only reachable after phase 6. Ship the klippy tree into `$MODDIR` instead of
+**Now reachable: phase 6 is done.** The interpreter it needs is `pkg/python`,
+built with the Ingenic glibc toolchain -- the requirement the paragraph above
+calls fatal if got wrong, since klippy `dlopen`s a glibc `c_helper.so`.
+
+Ship the klippy tree into `$MODDIR` instead of
 handing it to FlashForge's `run.sh`; replace `klipperDaemon` with an s6 `run`
 script (the command line is quoted above); turn `S70klipper`'s retry loop into
 an s6 restart policy plus readiness. `checkEboard`, `libmcu-bare.bin` and

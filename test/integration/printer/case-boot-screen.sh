@@ -43,7 +43,7 @@ H=800
 BPP=32
 
 mkdir -p $MOD/bin
-# The interpreter FF_PYTHON resolves to -- a BUILD OUTPUT (work/.py313), not
+# The interpreter FF_PYTHON resolves to -- a BUILD OUTPUT (work/pkg/python), not
 # part of /tmp/payload, handed over as py.tgz. gates.py's boot_screen() Skips
 # the whole case when nothing has built it, so reaching here without one is a
 # harness bug, not an absent feature.

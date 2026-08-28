@@ -2,10 +2,10 @@
 # ---------------------------------------------------------------------------
 # Cross-build CPython 3.13 for the FlashForge Creator 5 Pro (Ingenic mipsel).
 #
-# THIS IS THE MEASUREMENT HARNESS, NOT THE BUILD. bin/patch.sh section 5c is
-# what produces the interpreter a package ships: it compiles in place, inside
-# the repo's own build image, from the tarballs pinned in versions.env, and
-# caches the result in work/.py313. The two are the same build -- same flags,
+# THIS IS THE MEASUREMENT HARNESS, NOT THE BUILD. pkg/python is what produces
+# the interpreter a package ships: it compiles inside the repo's own build
+# image, from the tarballs pinned in versions.env, and caches the result in
+# work/pkg/python. The two are the same build -- same flags,
 # same wrappers, same gates -- but this one re-execs itself inside a
 # throwaway debian:bookworm, which is how every number in README.md beside it
 # was measured, and which is the fastest way to try a change to the recipe
