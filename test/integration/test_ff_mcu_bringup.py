@@ -19,7 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 
 def _load():
-    path = os.path.join(ROOT, "pkg", "anvil-core", "payload", "bin", "ff_mcu_bringup.py")
+    path = os.path.join(ROOT, "pkgs", "anvil-core", "payload", "bin", "ff_mcu_bringup.py")
     spec = importlib.util.spec_from_file_location("ff_mcu_bringup", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -64,7 +64,7 @@ def test_what_it_reports_is_what_the_startup_program_names(tmp_path):
     # The two halves checked against each other rather than against a copy of
     # the port list written down twice.
     spec = importlib.util.spec_from_file_location(
-        "ff_startup", os.path.join(ROOT, "pkg", "anvil-core", "payload", "bin", "ff-startup.py"))
+        "ff_startup", os.path.join(ROOT, "pkgs", "anvil-core", "payload", "bin", "ff-startup.py"))
     startup = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(startup)
     for dev in bringup.DEFAULT_PORTS:

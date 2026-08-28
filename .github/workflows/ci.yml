@@ -70,10 +70,10 @@ jobs:
           # Errors are a gate. These used to end in `|| true`, which meant
           # shellcheck could report anything it liked and the job stayed green.
           # payload scripts run under busybox ash on the printer.
-          shellcheck -s sh   -S error pkg/*/payload/*.sh pkg/*/payload/init.d/S* pkg/*/prog/*.sh pkg/*/prog/firmwareExe installer/*.sh
+          shellcheck -s sh   -S error pkgs/*/payload/*.sh pkgs/*/payload/init.d/S* pkgs/*/prog/*.sh pkgs/*/prog/firmwareExe installer/*.sh
           shellcheck -s bash -S error bin/*.sh test/integration/*.sh
           # Warnings are advisory: printed, not enforced.
-          shellcheck -s sh -S warning pkg/*/payload/*.sh pkg/*/payload/init.d/S* pkg/*/prog/*.sh pkg/*/prog/firmwareExe installer/*.sh || true
+          shellcheck -s sh -S warning pkgs/*/payload/*.sh pkgs/*/payload/init.d/S* pkgs/*/prog/*.sh pkgs/*/prog/firmwareExe installer/*.sh || true
 
       # s6 and CPython 3.13 have no BUILD_ flag -- every package ships them
       # (see bin/fetch-assets.sh) -- so this job builds them for real rather
@@ -83,8 +83,8 @@ jobs:
       # tree. Both are recipes under work/pkg now -- four for s6, nineteen for
       # CPython and its site-packages -- and every one carries pkg_stamp's key.
       #
-      # work/pkg is every recipe under pkg/ at once -- one cache entry instead
-      # of one per package, because pkg/lib.sh derives the output directory
+      # work/pkg is every recipe under pkgs/ at once -- one cache entry instead
+      # of one per package, because pkgs/lib.sh derives the output directory
       # from the recipe name rather than naming each one in bin/common.sh. A
       # new recipe therefore needs no edit here, which is the same property
       # that makes adding a package one directory.
@@ -266,7 +266,7 @@ jobs:
           STOCK_TGZ_CREATOR5PRO="$PWD/stock/Creator5Pro-stock.tgz"
           STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
           STOCK_TGZ=""
-          # No Klipper source knob any more: pkg/klipper builds from the
+          # No Klipper source knob any more: pkgs/klipper builds from the
           # commit pinned in versions.env and nothing else. The variable that
           # used to live here, KLIPPER_FORK, is what let v20260824 ship the
           # stock klippy tree by being set to "" in this very file.

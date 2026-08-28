@@ -13,7 +13,7 @@ It must NOT carry the banner, or the banner starts lying.
 
 Adding a config to either recipe's config directory therefore forces a
 decision here, which is the point. There are two of them now -- the ff-*.cfg
-are anvil-core's, printer.base.cfg is pkg/klipper's -- and the `cfgdir`
+are anvil-core's, printer.base.cfg is pkgs/klipper's -- and the `cfgdir`
 fixture merges them the way the printer does.
 """
 import os
@@ -45,7 +45,7 @@ def shipped(cfgdir):
 
     Read from the recipes rather than a built tree so this needs no package:
     ff-*.cfg and moonraker.conf are anvil-core's, printer.base.cfg is
-    pkg/klipper's, and the cfgdir fixture is the one directory they land in.
+    pkgs/klipper's, and the cfgdir fixture is the one directory they land in.
     """
     return cfgdir, config_files(cfgdir)
 

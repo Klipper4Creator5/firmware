@@ -51,7 +51,7 @@ own `/usr/prog/app_startup.sh`, off a genuine FAT filesystem on `/dev/sda1`,
 exactly as a user installs it from a USB stick.
 
 An earlier version of this tree had `install-payload.sh`, which copied
-`payload/*.sh` and `pkg/anvil-core/payload/init.d/S*` into `$MODDIR` by hand — the same shape
+`payload/*.sh` and `pkgs/anvil-core/payload/init.d/S*` into `$MODDIR` by hand — the same shape
 `case-services.sh` uses today. Two things are wrong with it:
 
 - It is a **second implementation of the install**, so everything downstream
@@ -224,7 +224,7 @@ That last row is the point of the exercise. The equivalent in the old suite is
 afterwards.
 
 Checked by injecting a real regression — deleting `SVC_EXTRA_VERBS="|force-start"`
-from `pkg/anvil-core/payload/init.d/S70klipper`, which is the drift `case-services.sh` was
+from `pkgs/anvil-core/payload/init.d/S70klipper`, which is the drift `case-services.sh` was
 written to catch. One named test failed
 (`test_klipper_advertises_force_start`), the assertion printed the usage line
 that actually came back, the other 41 still reported, and re-running just that

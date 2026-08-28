@@ -68,7 +68,7 @@ def defined(root, cfgdir):
             m = MACRO.match(section)
             if m:
                 names.add(m.group(1).upper())
-    extras = os.path.join(root, "pkg", "klipper", "prog", "klippy", "extras")
+    extras = os.path.join(root, "pkgs", "klipper", "prog", "klippy", "extras")
     for py in sorted(os.listdir(extras)):
         if py.endswith(".py"):
             src = open(os.path.join(extras, py), encoding="utf-8").read()

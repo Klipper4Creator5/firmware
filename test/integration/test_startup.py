@@ -47,7 +47,7 @@ def _load():
     # imports ffscreen and ff_mcu_bringup by plain name on the strength of
     # it. Loading it here without that would test a program whose siblings
     # are missing -- which is a real failure mode, but not the usual one.
-    path = os.path.join(ROOT, "pkg", "anvil-core", "payload", "bin")
+    path = os.path.join(ROOT, "pkgs", "anvil-core", "payload", "bin")
     if path not in sys.path:
         sys.path.insert(0, path)
     spec = importlib.util.spec_from_file_location(
@@ -511,7 +511,7 @@ def test_every_reason_is_drawable(tmp_path):
     # as a gap exactly where the explanation is.
     import importlib.util
     spec = importlib.util.spec_from_file_location(
-        "ffscreen", os.path.join(ROOT, "pkg", "anvil-core", "payload", "bin", "ffscreen.py"))
+        "ffscreen", os.path.join(ROOT, "pkgs", "anvil-core", "payload", "bin", "ffscreen.py"))
     ffscreen = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ffscreen)
     reasons = [
@@ -626,7 +626,7 @@ def test_every_port_the_bringup_owns_has_a_name():
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "ff_mcu_bringup",
-        os.path.join(ROOT, "pkg", "anvil-core", "payload", "bin", "ff_mcu_bringup.py"))
+        os.path.join(ROOT, "pkgs", "anvil-core", "payload", "bin", "ff_mcu_bringup.py"))
     real = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(real)
     for dev in real.DEFAULT_PORTS:
@@ -827,7 +827,7 @@ def test_run_by_path_from_elsewhere_finds_its_siblings(tmp_path):
     # directory on sys.path, not the caller's. Run it from somewhere else
     # entirely and the imports must still resolve.
     import subprocess
-    script = os.path.join(ROOT, "pkg", "anvil-core", "payload", "bin", "ff-startup.py")
+    script = os.path.join(ROOT, "pkgs", "anvil-core", "payload", "bin", "ff-startup.py")
     out = subprocess.run([sys.executable, script, "--selftest"],
                          cwd=str(tmp_path), capture_output=True, text=True)
     assert out.returncode == 0, out.stdout + out.stderr

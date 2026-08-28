@@ -59,9 +59,9 @@ def check_shell_syntax(reporter):
     """One line per check, not one per file: 25 green lines saying "syntax ok"
     hide the two that matter."""
     targets = []
-    for pattern in ("bin/*.sh", "pkg/*/payload/*.sh",
-                    "pkg/*/payload/init.d/S*", "pkg/*/prog/*.sh",
-                    "pkg/*/prog/firmwareExe", "installer/*.sh",
+    for pattern in ("bin/*.sh", "pkgs/*/payload/*.sh",
+                    "pkgs/*/payload/init.d/S*", "pkgs/*/prog/*.sh",
+                    "pkgs/*/prog/firmwareExe", "installer/*.sh",
                     "test/integration/printer/*.sh"):
         targets += sorted(ROOT.glob(pattern))
     broken = []
@@ -90,10 +90,10 @@ def check_no_bashisms(reporter):
     if not shutil.which("shellcheck"):
         raise Fail("shellcheck not installed (the build image has it -- run "
                    "through 'make test')")
-    targets = (sorted(ROOT.glob("pkg/*/payload/*.sh"))
-               + sorted(ROOT.glob("pkg/*/payload/init.d/S*"))
-               + sorted(ROOT.glob("pkg/*/prog/*.sh"))
-               + sorted(ROOT.glob("pkg/*/prog/firmwareExe"))
+    targets = (sorted(ROOT.glob("pkgs/*/payload/*.sh"))
+               + sorted(ROOT.glob("pkgs/*/payload/init.d/S*"))
+               + sorted(ROOT.glob("pkgs/*/prog/*.sh"))
+               + sorted(ROOT.glob("pkgs/*/prog/firmwareExe"))
                + sorted(ROOT.glob("installer/*.sh")))
     targets = [str(t) for t in targets if t.is_file()]
     # With no targets shellcheck writes usage to stderr and exits 1, leaving
@@ -142,8 +142,8 @@ def check_undefined_names(reporter):
         raise Fail("pyflakes not installed (the build image has it -- run "
                    "through 'make test')")
     targets = []
-    for pattern in ("bin/*.py", "pkg/*/payload/bin/*.py",
-                    "pkg/*/prog/klippy/extras/*.py", "test/*.py",
+    for pattern in ("bin/*.py", "pkgs/*/payload/bin/*.py",
+                    "pkgs/*/prog/klippy/extras/*.py", "test/*.py",
                     "test/ffsim/*.py", "test/integration/*.py"):
         targets += sorted(ROOT.glob(pattern))
     targets = [str(t) for t in targets if t.is_file()]

@@ -5,7 +5,7 @@ which is upstream's tool and upstream's problem -- these tests do not re-derive
 the format, they check the things that are OURS and that upstream cannot know
 about: that the layout we hand it puts every path under $MODDIR, that the
 architecture string is one no public feed can satisfy, that a package is
-reproducible, and that pkg/ipk-install can install and remove what comes out.
+reproducible, and that pkgs/ipk-install can install and remove what comes out.
 Plus one structural gate per worry that has already cost time once -- a recipe
 growing its own copy of the cross-build, or a package escaping the ABI check.
 
@@ -43,10 +43,10 @@ pytestmark = pytest.mark.static
 
 OPKG_UTILS = ROOT / "vendor" / "opkg-utils"
 OPKG_BUILD = OPKG_UTILS / "opkg-build"
-INSTALLER = ROOT / "pkg" / "ipk-install"
+INSTALLER = ROOT / "pkgs" / "ipk-install"
 
 # The prefix every package this repo builds installs into, and the one
-# pkg/ipk-install hardcodes. Spelled out rather than read out of common.sh
+# pkgs/ipk-install hardcodes. Spelled out rather than read out of common.sh
 # because a test that derives its expectation from the thing under test cannot
 # fail when the thing under test changes.
 MODDIR = "/usr/data/anvil"
@@ -116,7 +116,7 @@ def ipk(tmp_path):
 def _ar_members(path):
     """(name, bytes) per member, walking the 60-byte ASCII headers.
 
-    Written out here rather than shelled out to `ar t` because pkg/ipk-install
+    Written out here rather than shelled out to `ar t` because pkgs/ipk-install
     walks the same headers by hand -- the printer's busybox has no ar applet to
     bet on -- and a test that used the real ar would not notice if the two
     disagreed about where a member starts.
@@ -295,11 +295,11 @@ def test_reinstall_leaves_one_stanza(tmp_path, ipk):
 def test_the_database_is_where_opkg_looks_for_it(tmp_path, ipk):
     """$MODDIR/var/lib/opkg, with opkg's own file names.
 
-    Not a homage: it is what makes pkg/opkg a swap rather than a migration.
+    Not a homage: it is what makes pkgs/3rdparty/opkg a swap rather than a migration.
     Verified from the other side too -- our cross-built opkg, run under qemu,
     puts its status file at exactly this path, because it was configured
     --prefix=/usr/data/anvil. opkg resolves that directory from its COMPILE
-    TIME prefix and not from --offline-root, which is the trap pkg/opkg/build.sh
+    TIME prefix and not from --offline-root, which is the trap pkgs/3rdparty/opkg/build.sh
     exists to document.
     """
     root = tmp_path / "root"
@@ -309,7 +309,7 @@ def test_the_database_is_where_opkg_looks_for_it(tmp_path, ipk):
     assert (db / "info" / "libtest.control").is_file()
     listed = (db / "info" / "libtest.list").read_text().split()
     assert MODDIR + "/lib/libtest.so.1.2.3" in listed
-    # Absolute, every one of them: pkg/ipk-install refuses a relative entry
+    # Absolute, every one of them: pkgs/ipk-install refuses a relative entry
     # rather than pasting $ROOT onto the front of it and finding out.
     assert all(p.startswith("/") for p in listed)
 
@@ -356,11 +356,24 @@ def test_the_installer_needs_no_ar(tmp_path, ipk):
 
 # ------------------------------------------------- the recipes and the payload
 
-RECIPES = sorted((ROOT / "pkg").glob("*/build.sh"))
+# Both levels. pkgs/<name>/ is a recipe carrying files of this repo;
+# pkgs/3rdparty/<name>/ builds a pinned tarball and carries none. The split is
+# for people reading `ls pkgs/`; nothing about a package depends on which side
+# a recipe sits, so every test here treats them as one set.
+RECIPES = sorted(list((ROOT / "pkgs").glob("*/build.sh"))
+                 + list((ROOT / "pkgs" / "3rdparty").glob("*/build.sh")))
+
+
+def recipe_dir(name):
+    """Where a recipe lives -- the python half of pkgs/lib.sh's pkg_dir."""
+    for c in (ROOT / "pkgs" / name, ROOT / "pkgs" / "3rdparty" / name):
+        if (c / "pkg.conf").is_file():
+            return c
+    return None
 
 
 def test_there_are_recipes():
-    assert RECIPES, "no recipes under pkg/ -- has the layout moved?"
+    assert RECIPES, "no recipes under pkgs/ -- has the layout moved?"
 
 
 @pytest.mark.parametrize("recipe", RECIPES,
@@ -368,16 +381,16 @@ def test_there_are_recipes():
 def test_a_recipe_does_not_rebuild_the_shared_parts(recipe):
     """No recipe carries its own copy of the cross-build.
 
-    This is the gate for the thing that was already going wrong before pkg/
+    This is the gate for the thing that was already going wrong before pkgs/
     existed: bin/patch.sh had the toolchain-unpack, the gcc-wrapper trick and
     the configure/make/install dance written out three times, for s6, CPython
     and libsodium, and the copies had drifted -- one gated its compiler wrapper
     before trusting it and the others did not.
 
-    So a recipe must go through pkg/lib.sh rather than spell those steps again.
+    So a recipe must go through pkgs/lib.sh rather than spell those steps again.
     Checked by looking for the shapes that mean "I wrote my own": a gcc wrapper
     heredoc, a bare ./configure --host, an untarred toolchain. A recipe that
-    genuinely needs something pkg/lib.sh cannot express should GROW pkg/lib.sh,
+    genuinely needs something pkgs/lib.sh cannot express should GROW pkgs/lib.sh,
     which is the entire point.
 
     THERE ARE NO EXCEPTIONS ANY MORE. zlib used to be one, allowed by name:
@@ -395,8 +408,8 @@ def test_a_recipe_does_not_rebuild_the_shared_parts(recipe):
     entire point.
     """
     text = recipe.read_text()
-    assert ". pkg/lib.sh" in text, (
-        "%s does not source pkg/lib.sh, so whatever it does instead is a "
+    assert ". pkgs/lib.sh" in text, (
+        "%s does not source pkgs/lib.sh, so whatever it does instead is a "
         "second copy of the cross-build" % recipe)
 
     body = "\n".join(ln for ln in text.splitlines()
@@ -434,9 +447,9 @@ def test_a_recipe_does_not_rebuild_the_shared_parts(recipe):
 def test_the_package_and_the_payload_share_one_build():
     """libsodium is compiled once, whichever vehicle it ships in.
 
-    bin/patch.sh stages $SODIUM_BUILD into the payload and pkg/libsodium
+    bin/patch.sh stages $SODIUM_BUILD into the payload and pkgs/3rdparty/libsodium
     packages $SODIUM_BUILD, and both get there by running
-    pkg/libsodium/build.sh. While that is true the tarball's copy and the
+    pkgs/3rdparty/libsodium/build.sh. While that is true the tarball's copy and the
     package's copy cannot be different libraries wearing one version number.
     It stops being true the moment somebody gives either side its own configure
     line, which is a one-line edit and would be invisible in review.
@@ -451,13 +464,17 @@ def test_the_package_and_the_payload_share_one_build():
               "skalibs", "execline", "s6", "s6-rc", "anvil-core", "python",
               "klipper")
     for recipe in staged:
-        assert "bash pkg/%s/build.sh" % recipe in patch, (
-            "bin/patch.sh does not run pkg/%s/build.sh -- the payload's copy "
+        d = recipe_dir(recipe)
+        assert d is not None, (
+            "bin/patch.sh is expected to run the %s recipe and there is no "
+            "such recipe" % recipe)
+        rel = d.relative_to(ROOT)
+        assert "bash %s/build.sh" % rel in patch, (
+            "bin/patch.sh does not run %s/build.sh -- the payload's copy "
             "and the packaged one are built by different code, and nothing "
-            "downstream can tell which a printer got" % recipe)
-        assert (ROOT / "pkg" / recipe / "build.sh").is_file(), (
-            "bin/patch.sh runs pkg/%s/build.sh and there is no such recipe"
-            % recipe)
+            "downstream can tell which a printer got" % rel)
+        assert (d / "build.sh").is_file(), (
+            "bin/patch.sh runs %s/build.sh and there is no such file" % rel)
 
     # And the reverse direction: patch.sh must not have grown its own copy of
     # a build it delegates. A `./configure` anywhere in it would mean some
@@ -468,7 +485,7 @@ def test_the_package_and_the_payload_share_one_build():
                       if not ln.lstrip().startswith("#"))
     for gone in ("--enable-static-libc", "MUSL_TOOLCHAIN", "S6_STAMP"):
         assert gone not in body, (
-            "bin/patch.sh still mentions %s -- the s6 build moved to pkg/ and "
+            "bin/patch.sh still mentions %s -- the s6 build moved to pkgs/ and "
             "the musl toolchain was deleted with it" % gone)
 
 
@@ -505,16 +522,16 @@ def test_the_archives_are_built_by_upstream():
 # --------------------------------------------------------------------------
 # One recipe, one package.
 #
-# The rule the pkg/ layout exists to enforce. It was not always true:
-# pkg/opkg/build.sh used to unpack zlib, libarchive and opkg and ship one
+# The rule the pkgs/ layout exists to enforce. It was not always true:
+# pkgs/3rdparty/opkg/build.sh used to unpack zlib, libarchive and opkg and ship one
 # binary, so two of the three libraries in this repo's dependency graph had no
 # version, no package and no way to be reused -- which is why zlib was
 # cross-built twice, once here and once in bin/patch.sh section 5c.
 
 def _sh(snippet):
-    """Run a snippet with bin/common.sh and pkg/lib.sh sourced, from ROOT."""
+    """Run a snippet with bin/common.sh and pkgs/lib.sh sourced, from ROOT."""
     out = subprocess.run(
-        ["bash", "-c", ". bin/common.sh; . pkg/lib.sh; %s" % snippet],
+        ["bash", "-c", ". bin/common.sh; . pkgs/lib.sh; %s" % snippet],
         cwd=ROOT, capture_output=True, text=True)
     assert out.returncode == 0, (
         "shell helper failed:\n%s\n%s" % (out.stdout, out.stderr))
@@ -534,7 +551,7 @@ def test_one_recipe_builds_one_package(recipe):
     <name>-dev, holding the headers and static library a printer has no use
     for; that is PKG_DEV_FILES and it is a partition of one build, checked by
     test_a_dev_split_partitions_the_build. What this test forbids is a recipe
-    building several different upstream projects, which is what pkg/opkg did
+    building several different upstream projects, which is what pkgs/3rdparty/opkg did
     with zlib and libarchive until each became a recipe of its own.
 
     Counting the source verbs is the cheap structural expression of the rule:
@@ -572,7 +589,7 @@ def test_an_arch_all_package_has_no_native_code():
 
     Three packages claim it -- anvil-mainsail, anvil-moonraker and anvil-core
     -- on the grounds that they are JavaScript, Python and shell. The claim
-    matters because pkg/ipk-install accepts `all` on any printer without
+    matters because pkgs/ipk-install accepts `all` on any printer without
     consulting the ABI, so an ELF object that slipped into one of them would
     be the one path into $MODDIR that nothing checks. mips_abi_gate passes a
     tree with no ELF in it by returning zero, which is correct and is also
@@ -595,7 +612,7 @@ def test_an_arch_all_package_has_no_native_code():
                 if fh.read(4) == b"\x7fELF":
                     elves.append(str(f.relative_to(out)))
         assert not elves, (
-            "pkg/%s declares Architecture: all and its tree contains ELF "
+            "recipe %s declares Architecture: all and its tree contains ELF "
             "objects: %s. An `all` package installs on any printer without an "
             "architecture check." % (recipe, ", ".join(sorted(elves)[:5])))
 
@@ -677,7 +694,7 @@ def test_every_recipe_has_metadata():
 def test_build_order_is_topological():
     """pkg_order puts a dependency before the recipe that needs it.
 
-    Alphabetical order -- what iterating pkg/*/ gives you, and what this used
+    Alphabetical order -- what iterating pkgs/*/ gives you, and what this used
     to do -- is wrong the moment there are two recipes: libarchive sorts before
     the zlib it builds against. The failure is not subtle (configure cannot
     find zlib.h) but it is a build that worked yesterday failing today because
@@ -742,13 +759,13 @@ def test_a_dev_package_ships_what_its_dependents_need():
     next recipe's configure. Asserted on the ship list so it is checked without
     a toolchain, on a bare checkout, in CI.
     """
-    zlib = (ROOT / "pkg" / "zlib" / "build.sh").read_text()
+    zlib = (ROOT / "pkgs" / "3rdparty" / "zlib" / "build.sh").read_text()
     for want in ("include/zlib.h", "lib/libz.a", "lib/pkgconfig/zlib.pc"):
-        assert want in zlib, "pkg/zlib does not ship %s" % want
-    arch = (ROOT / "pkg" / "libarchive" / "build.sh").read_text()
+        assert want in zlib, "pkgs/3rdparty/zlib does not ship %s" % want
+    arch = (ROOT / "pkgs" / "3rdparty" / "libarchive" / "build.sh").read_text()
     for want in ("include/archive.h", "lib/libarchive.a",
                  "lib/pkgconfig/libarchive.pc"):
-        assert want in arch, "pkg/libarchive does not ship %s" % want
+        assert want in arch, "pkgs/3rdparty/libarchive does not ship %s" % want
 
     # skalibs is the interesting one, and the reason this test is not just
     # "headers and an archive". lib/skalibs is a directory of CROSS-COMPILE
@@ -759,9 +776,9 @@ def test_a_dev_package_ships_what_its_dependents_need():
     # without it, naming a missing FILE rather than a missing flag. It is not a
     # header, not an archive and not a .pc, so a rule written around those
     # three would have let it be dropped.
-    ska = (ROOT / "pkg" / "skalibs" / "build.sh").read_text()
+    ska = (ROOT / "pkgs" / "3rdparty" / "skalibs" / "build.sh").read_text()
     for want in ("include/skalibs", "lib/libskarnet.a", "lib/skalibs"):
-        assert want in ska, "pkg/skalibs does not ship %s" % want
+        assert want in ska, "pkgs/3rdparty/skalibs does not ship %s" % want
 
 
 def test_dependencies_are_unpacked_by_upstream():
@@ -772,15 +789,15 @@ def test_dependencies_are_unpacked_by_upstream():
     what makes opkg an ordinary recipe rather than a bootstrap stage, since
     nothing needs a working opkg in order to build packages.
     """
-    lib = (ROOT / "pkg" / "lib.sh").read_text()
+    lib = (ROOT / "pkgs" / "lib.sh").read_text()
     assert "OPKG_UNBUILD_BIN" in lib, (
-        "pkg/lib.sh no longer uses opkg-unbuild to fill a build sysroot")
+        "pkgs/lib.sh no longer uses opkg-unbuild to fill a build sysroot")
     assert (OPKG_UTILS / "opkg-unbuild").is_file(), (
         "vendor/opkg-utils has no opkg-unbuild -- check the pinned commit")
     body = "\n".join(ln for ln in lib.splitlines()
                      if not ln.lstrip().startswith("#"))
     assert "ar x" not in body and "debian-binary" not in body, (
-        "pkg/lib.sh is taking .ipk files apart itself again")
+        "pkgs/lib.sh is taking .ipk files apart itself again")
 
 
 def test_the_abi_gate_reads_every_member_of_an_archive():
@@ -790,7 +807,7 @@ def test_the_abi_gate_reads_every_member_of_an_archive():
     libarchive.a. The gate used to read a single `Flags:` line, so it handed a
     multi-line string to a comparison expecting one word and every archive
     failed with an unreadable error. Nothing caught it because no package had
-    ever shipped a .a until pkg/zlib did.
+    ever shipped a .a until pkgs/3rdparty/zlib did.
 
     Built here rather than mocked: a two-member x86 archive must be REFUSED
     (wrong ABI) and the refusal must say it looked at both members, which is
@@ -857,19 +874,19 @@ def test_no_cache_stamp_is_spelled_in_two_places():
             "bin/%s spells the s6 stamp out by hand" % name)
         assert '"$PY_VERSION $OPENSSL_VERSION' not in text, (
             "bin/%s spells the CPython stamp out by hand -- CPython is "
-            "pkg/python and pkg_stamp derives its key from PKG_BUILD_DEPENDS"
+            "pkgs/3rdparty/python and pkg_stamp derives its key from PKG_BUILD_DEPENDS"
             % name)
 
     # The fetcher must ask the recipes rather than compare a string it wrote
     # itself. This is what makes the whole class impossible for anything under
-    # pkg/: one implementation computes the key and one reads it.
+    # pkgs/: one implementation computes the key and one reads it.
     fetch = (ROOT / "bin" / "fetch-assets.sh").read_text()
     assert "pkg_needs" in fetch, (
         "bin/fetch-assets.sh no longer asks pkg_needs -- it is back to "
         "deciding whether a recipe is stale by a rule of its own")
 
 def test_the_python_package_list_and_the_recipes_agree():
-    """PYPKG_LIST and pkg/python-* are one list, and it is checked.
+    """PYPKG_LIST and pkgs/3rdparty/python-* are one list, and it is checked.
 
     versions.env carries the pin for each third-party python package and
     bin/fetch-assets.sh downloads from that list, while what actually BUILDS
@@ -882,12 +899,12 @@ def test_the_python_package_list_and_the_recipes_agree():
     This checks both, all at once, without building anything.
     """
     listed = set(_sh('printf "%s" "$PYPKG_LIST"').split())
-    recipes = {d.name[len("python-"):] for d in (ROOT / "pkg").glob("python-*")
+    recipes = {d.name[len("python-"):] for d in (ROOT / "pkgs" / "3rdparty").glob("python-*")
                if d.is_dir()}
     assert listed == recipes, (
-        "PYPKG_LIST and the pkg/python-* recipes disagree.\n"
+        "PYPKG_LIST and the pkgs/3rdparty/python-* recipes disagree.\n"
         "  in versions.env only: %s\n"
-        "  in pkg/ only:         %s"
+        "  in pkgs/ only:         %s"
         % (sorted(listed - recipes) or "none", sorted(recipes - listed) or "none"))
 
 
@@ -900,7 +917,7 @@ def test_a_python_package_does_not_pin_its_version_twice():
     together with the first -- and the result is a .ipk that claims a version
     it does not contain, which nothing downstream can detect.
     """
-    for conf in sorted((ROOT / "pkg").glob("python-*/pkg.conf")):
+    for conf in sorted((ROOT / "pkgs" / "3rdparty").glob("python-*/pkg.conf")):
         name = conf.parent.name[len("python-"):]
         text = conf.read_text()
         want = 'PKG_VERSION="$(pypkg_version %s)"' % name
@@ -923,8 +940,8 @@ def test_bin_patch_builds_every_python_package():
     assert 'for p in $PYPKG_LIST; do' in patch, (
         "bin/patch.sh no longer iterates PYPKG_LIST -- the python packages "
         "are either not built or built from a list of their own")
-    assert 'bash "pkg/python-$p/build.sh"' in patch, (
-        "bin/patch.sh iterates PYPKG_LIST but does not run pkg/python-$p/"
+    assert 'bash "pkgs/3rdparty/python-$p/build.sh"' in patch, (
+        "bin/patch.sh iterates PYPKG_LIST but does not run pkgs/3rdparty/python-$p/"
         "build.sh, so the payload's copy and the packaged one are built by "
         "different code")
 
@@ -960,7 +977,7 @@ def test_every_declared_dependency_is_a_package_this_feed_builds():
         depends = _conf(recipe, "PKG_DEPENDS")
         for dep in [d.strip().split()[0] for d in depends.split(",") if d.strip()]:
             assert dep in provided, (
-                "pkg/%s depends on '%s' and no recipe under pkg/ produces it. "
+                "recipe %s depends on '%s' and no recipe under pkgs/ produces it. "
                 "opkg refuses the whole install rather than part of it, so "
                 "this is a package that cannot be installed at all."
                 % (recipe, dep))

@@ -43,15 +43,22 @@ pytestmark = pytest.mark.static
 # too, and a file that does not parse under either is broken beyond dialect.
 #
 # THE PRINTER'S SCRIPTS ARE ADDRESSED BY THE SHAPE OF A RECIPE, not by a
-# top-level directory: pkg/<recipe>/payload/ is what that recipe installs
-# under $MODDIR and pkg/<recipe>/prog/ is what bin/patch.sh places on
+# top-level directory: pkgs/<recipe>/payload/ is what that recipe installs
+# under $MODDIR and pkgs/<recipe>/prog/ is what bin/patch.sh places on
 # /usr/prog. Both run on the printer; neither is named recipe by recipe here,
 # so a new recipe with scripts in it is covered the day it lands.
-SYNTAX_GLOBS = ("bin/*.sh", "pkg/*/payload/*.sh", "pkg/*/payload/init.d/S*",
-                "pkg/*/prog/*.sh", "pkg/*/prog/firmwareExe", "installer/*.sh",
+SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh", "pkgs/*/payload/init.d/S*",
+                "pkgs/*/prog/*.sh", "pkgs/*/prog/firmwareExe", "installer/*.sh",
                 "test/integration/printer/*.sh",
                 "qa/replica/actions/*.sh",
-                "pkg/*.sh", "pkg/*/build.sh", "pkg/ipk-install")
+                # BOTH RECIPE LEVELS. pkgs/*/build.sh alone silently
+                # stopped covering thirty-four of the thirty-eight the day
+                # they moved under 3rdparty/ -- a glob that matches fewer
+                # files does not fail, it just checks less. _files() now
+                # refuses a pattern that matches nothing, so the next one
+                # fails instead of quietly shrinking.
+                "pkgs/*.sh", "pkgs/*/build.sh", "pkgs/3rdparty/*/build.sh",
+                "pkgs/ipk-install")
 
 # The subset executed by the printer's busybox ash. bin/ and test/ are
 # deliberately absent: they run on the build image, where bash is the shell and
@@ -63,9 +70,9 @@ SYNTAX_GLOBS = ("bin/*.sh", "pkg/*/payload/*.sh", "pkg/*/payload/init.d/S*",
 # hold.sh would fail at container start and read as "the replica is broken on
 # this machine" -- a harness failure wearing a machine failure's clothes, which
 # is the hardest kind to diagnose.
-# pkg/ipk-install is here and pkg/*/build.sh is deliberately not. The recipes
+# pkgs/ipk-install is here and pkgs/*/build.sh is deliberately not. The recipes
 # are build-host bash, like everything in bin/; the installer is the one file
-# under pkg/ that the PRINTER runs, so it is as exposed to busybox ash as
+# under pkgs/ that the PRINTER runs, so it is as exposed to busybox ash as
 # anything a recipe ships -- and it is not under a recipe's payload/ only
 # because the PoC does not ship it yet (docs/notes/85-packaging.md, phase 2).
 # A bashism in it would be found by the printer rather than by this lane.
@@ -75,24 +82,42 @@ SYNTAX_GLOBS = ("bin/*.sh", "pkg/*/payload/*.sh", "pkg/*/payload/init.d/S*",
 # which is the same busybox.
 #
 # NOT here, and it is a real gap rather than a decision:
-# pkg/*/payload/bin/*.sh. wifi-action.sh runs on the printer and no lane
+# pkgs/*/payload/bin/*.sh. wifi-action.sh runs on the printer and no lane
 # checks its dialect. It was not covered before the recipe layout either --
 # the old glob was payload/*.sh, one level up from it -- so adding it belongs
 # with the fix, not with a move.
-ASH_GLOBS = ("pkg/*/payload/*.sh", "pkg/*/payload/init.d/S*",
-             "pkg/*/prog/*.sh", "pkg/*/prog/firmwareExe", "installer/*.sh",
-             "qa/replica/actions/*.sh", "pkg/ipk-install")
+ASH_GLOBS = ("pkgs/*/payload/*.sh", "pkgs/*/payload/init.d/S*",
+             "pkgs/*/prog/*.sh", "pkgs/*/prog/firmwareExe", "installer/*.sh",
+             "qa/replica/actions/*.sh", "pkgs/ipk-install")
 
-PY_GLOBS = ("bin/*.py", "pkg/*/payload/bin/*.py",
-            "pkg/*/prog/klippy/extras/*.py", "test/*.py", "test/ffsim/*.py",
+PY_GLOBS = ("bin/*.py", "pkgs/*/payload/bin/*.py",
+            "pkgs/*/prog/klippy/extras/*.py", "test/*.py", "test/ffsim/*.py",
             "test/integration/*.py", "qa/*.py", "qa/lib/*.py",
             "qa/static/*.py", "qa/replica/*.py")
 
 
 def _files(globs):
+    """Expand the globs, and refuse one that matches nothing.
+
+    A glob that stops matching does not fail -- it checks less, and the lane
+    stays green while doing it. That is not hypothetical: moving thirty-four
+    recipes under pkgs/3rdparty/ left "pkgs/*/build.sh" matching the four that
+    had not moved, and the only visible sign was a test count dropping by
+    thirty-four in a run nobody was counting.
+
+    So an empty pattern is a collection error, which is as loud as this file
+    can be, and the message says the two things that cause it: a file that
+    moved, or a pattern that was never right.
+    """
     found = []
     for pattern in globs:
-        found += sorted(p for p in ROOT.glob(pattern) if p.is_file())
+        hits = sorted(p for p in ROOT.glob(pattern) if p.is_file())
+        if not hits:
+            raise AssertionError(
+                "%r matches no files -- either something moved and this "
+                "pattern did not follow it, or the pattern is wrong. Either "
+                "way this lane was checking less than it claimed." % pattern)
+        found += hits
     return found
 
 

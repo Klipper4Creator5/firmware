@@ -96,7 +96,7 @@ jobs:
           STOCK_TGZ_CREATOR5PRO="$PWD/stock/Creator5Pro-stock.tgz"
           STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
           STOCK_TGZ=""
-          # No Klipper source knob any more: pkg/klipper builds from the
+          # No Klipper source knob any more: pkgs/klipper builds from the
           # commit pinned in versions.env and cross-compiles c_helper.so from
           # those same sources. KLIPPER_FORK used to be settable here, and
           # setting it to "" is what made v20260824 ship the stock 0.12-era

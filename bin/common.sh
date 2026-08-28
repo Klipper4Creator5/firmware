@@ -51,7 +51,7 @@ MOD_UI="${MOD_UI:-1}"
 # into shipped binaries and moving it means rebuilding them.
 #
 # It lives here rather than in bin/patch.sh -- which is where it was, and where
-# it was the only definition -- because a package recipe under pkg/ needs the
+# it was the only definition -- because a package recipe under pkgs/ needs the
 # same answer and must not be free to give a different one. Two prefixes is a
 # payload whose halves disagree about where the payload is.
 MODDIR="${MODDIR:-/usr/data/anvil}"
@@ -59,7 +59,7 @@ MODDIR="${MODDIR:-/usr/data/anvil}"
 # The Ingenic GLIBC cross-toolchain and its tool prefix: gcc 7.2.0 / glibc
 # 2.29 for the X2000, the one that produces this printer's ABI. Used by
 # bin/patch.sh section 5c (CPython and its extensions) and by the libsodium
-# recipe under pkg/, which is the other reason these moved out of patch.sh --
+# recipe under pkgs/, which is the other reason these moved out of patch.sh --
 # see MODDIR above. MIPS_TOOLCHAIN_TGZ below is the tarball it is unpacked
 # from; this is where it lands.
 PY_HOST="${PY_HOST:-mips-linux-gnu}"
@@ -97,7 +97,7 @@ MAINSAIL_ZIP="${MAINSAIL_ZIP:-$ROOT/vendor/mainsail-${MAINSAIL_VERSION:-unpinned
 HELIX_TGZ="${HELIX_TGZ:-$ROOT/vendor/${HELIX_FILE:-helixscreen.tar.gz}}"
 MOONRAKER_TGZ="${MOONRAKER_TGZ:-$ROOT/vendor/moonraker-${MOONRAKER_VERSION:-unpinned}.tar.gz}"
 # The Klipper fork tarball and the MIPS toolchain that compiles its chelper.
-# Both are consumed by pkg/klipper; see versions.env for why the pin exists.
+# Both are consumed by pkgs/klipper; see versions.env for why the pin exists.
 KLIPPER_TGZ="${KLIPPER_TGZ:-$ROOT/vendor/klipper-${KLIPPER_VERSION:-unpinned}.tar.gz}"
 MIPS_TOOLCHAIN_TGZ="${MIPS_TOOLCHAIN_TGZ:-$ROOT/vendor/${MIPS_TOOLCHAIN_FILE:-mips-toolchain.tar.gz}}"
 # The supervision stack: skalibs (s6's own C library), execline (which s6-rc
@@ -107,7 +107,7 @@ MIPS_TOOLCHAIN_TGZ="${MIPS_TOOLCHAIN_TGZ:-$ROOT/vendor/${MIPS_TOOLCHAIN_FILE:-mi
 #
 # FOUR TARBALLS AND NO CACHE VARIABLE. There used to be an S6_BUILD here
 # naming work/.s6, because patch.sh cross-built s6 itself and the fetcher had
-# to know whether that tree was stale. All four are recipes under pkg/ now, so
+# to know whether that tree was stale. All four are recipes under pkgs/ now, so
 # the output path is pkg_out's business and staleness is pkg_stale's -- the
 # fetcher asks pkg_needs, which asks the code that writes the stamp instead of
 # a second copy of it. That is the whole of what S6_STAMP existed to get wrong.
@@ -154,8 +154,8 @@ export SKALIBS_TGZ S6_TGZ EXECLINE_TGZ S6RC_TGZ
 #
 # THERE IS NO PY_BUILD ANY MORE, and its absence is the point. It named
 # work/.py313, patch.sh's private cache of a cross-built interpreter, and it
-# went the way S6_BUILD went: CPython is pkg/python and its eighteen packages
-# are pkg/python-*, so the cache is work/pkg/<recipe> and pkg_out derives that
+# went the way S6_BUILD went: CPython is pkgs/3rdparty/python and its eighteen packages
+# are pkgs/3rdparty/python-*, so the cache is work/pkg/<recipe> and pkg_out derives that
 # name from the recipe. Nothing has to be spelled here for a script to find it.
 PY_TGZ="${PY_TGZ:-$ROOT/vendor/Python-${PY_VERSION:-unpinned}.tgz}"
 OPENSSL_TGZ="${OPENSSL_TGZ:-$ROOT/vendor/openssl-${OPENSSL_VERSION:-unpinned}.tar.gz}"
@@ -171,8 +171,8 @@ EXPAT_TGZ="${EXPAT_TGZ:-$ROOT/vendor/expat-${EXPAT_VERSION:-unpinned}.tar.gz}"
 # out rather than sed'd out of PY_VERSION because it is not a substring of it
 # in any interesting sense, and a 3.14 bump has to be a deliberate edit.
 #
-# HERE rather than in bin/patch.sh, where it used to live, because pkg/python
-# and the eighteen pkg/python-* recipes all name these directories too. A
+# HERE rather than in bin/patch.sh, where it used to live, because pkgs/3rdparty/python
+# and the eighteen pkgs/3rdparty/python-* recipes all name these directories too. A
 # constant that three scripts need is not patch.sh's local variable.
 PY_MM="${PY_MM:-3.13}"
 export PY_MM
@@ -186,7 +186,7 @@ export PY_MM
 #
 # pkg_stamp derives a recipe's key from its dependency graph, so "openssl,
 # sqlite, zlib, libffi, xz, bzip2 and expat" is PKG_BUILD_DEPENDS in
-# pkg/python/pkg.conf and nothing computes it a second time. bin/fetch-assets.sh
+# pkgs/3rdparty/python/pkg.conf and nothing computes it a second time. bin/fetch-assets.sh
 # asks pkg_needs, which is the same code the recipes cache on.
 export PY_TGZ OPENSSL_TGZ SQLITE_TGZ ZLIB_TGZ LIBFFI_TGZ XZ_TGZ BZIP2_TGZ
 export EXPAT_TGZ
@@ -232,8 +232,8 @@ pypkg_version() {
     _f=${_f%.tar.gz}; _f=${_f%.tgz}; _f=${_f%.zip}
     printf '%s' "${_f##*-}"
 }
-# The sources every recipe under pkg/ builds from. ZLIB_TGZ is NOT repeated
-# here: it is pinned thirty lines up for CPython, and pkg/zlib builds that same
+# The sources every recipe under pkgs/ builds from. ZLIB_TGZ is NOT repeated
+# here: it is pinned thirty lines up for CPython, and pkgs/3rdparty/zlib builds that same
 # tarball once for everybody. One pin, one build, two consumers -- which is the
 # whole point of the packaging work and the reason zlib stopped being an
 # invisible detail of two other builds.
@@ -242,8 +242,8 @@ OPKG_TGZ="${OPKG_TGZ:-$ROOT/vendor/opkg-${OPKG_VERSION:-unpinned}.tar.gz}"
 LIBARCHIVE_TGZ="${LIBARCHIVE_TGZ:-$ROOT/vendor/libarchive-${LIBARCHIVE_VERSION:-unpinned}.tar.gz}"
 export SODIUM_TGZ OPKG_TGZ LIBARCHIVE_TGZ
 
-# WHERE A RECIPE'S OUTPUT LIVES IS DERIVED, NOT NAMED. pkg/lib.sh's pkg_out
-# spells work/pkg/<recipe>, so adding a package is one directory under pkg/ and
+# WHERE A RECIPE'S OUTPUT LIVES IS DERIVED, NOT NAMED. pkgs/lib.sh's pkg_out
+# spells work/pkg/<recipe>, so adding a package is one directory under pkgs/ and
 # no edit to this file. These three names remain because bin/patch.sh and
 # bin/fetch-assets.sh refer to them, and one alias here is cheaper than the
 # same path spelled in four scripts -- but nothing new should be added below.
@@ -255,7 +255,7 @@ ZLIB_BUILD="${ZLIB_BUILD:-$ROOT/work/pkg/zlib}"
 export SODIUM_BUILD OPKG_BUILD ZLIB_BUILD
 
 # The feed: where bin/build-packages.sh writes .ipk files and the index, and
-# where pkg/lib.sh's pkg_deps reads a recipe's build dependencies back out of.
+# where pkgs/lib.sh's pkg_deps reads a recipe's build dependencies back out of.
 # It is a local opkg repository, and it is the interface between recipes --
 # which is why the path is defined once here rather than in the script that
 # happens to write it.
@@ -375,8 +375,8 @@ mips_abi_gate() {
         # version of this loop that read a single `Flags:` line therefore
         # handed a multi-line string to a `case` expecting one word, and every
         # .a failed the gate with an error naming a value nobody could parse.
-        # That went unnoticed while no package shipped an archive; pkg/zlib and
-        # pkg/skalibs are the recipes that ship one.
+        # That went unnoticed while no package shipped an archive; pkgs/3rdparty/zlib and
+        # pkgs/3rdparty/skalibs are the recipes that ship one.
         #
         # So every header is checked and every header has to conform. Both
         # conditions live on the same awk line because readelf prints them

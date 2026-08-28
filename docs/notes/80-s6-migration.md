@@ -10,7 +10,7 @@ gate is not passing.
 
 ## Why, in one paragraph
 
-`pkg/anvil-core/payload/anvil-service.sh` hand-rolls in `ash` what a supervisor does in C:
+`pkgs/anvil-core/payload/anvil-service.sh` hand-rolls in `ash` what a supervisor does in C:
 liveness, a stop that waits, a respawn loop. Two real bugs lived in that code
 before it was consolidated. s6 was measured against runit on the replica and
 won on one thing that matters here -- readiness notification: a service can
@@ -63,7 +63,7 @@ Get them wrong and the phase fails on a printer, not in CI.
 * We do **not** install Klipper. `bin/patch.sh` stages a *software component*
   and FlashForge's own stock `run.sh` copies it onto `/usr/prog/klipper`. That
   is why Klipper sits on the firmware partition -- inherited, not chosen.
-* `pkg/klipper/prog/start.sh` already **is** `/usr/prog/klipper/start.sh`; the mod
+* `pkgs/klipper/prog/start.sh` already **is** `/usr/prog/klipper/start.sh`; the mod
   replaces it. What we do not own are the FlashForge pieces it calls:
   `klipperDaemon`, `klipper_pri.sh`, `checkEboard`, `libmcu-bare.bin`.
   `cmd_mcu` is at `/usr/bin/cmd_mcu`, on the rootfs, not `/usr/prog`.
@@ -118,7 +118,7 @@ s6-rc up/down cycle with a restricted PATH rather than by reading the docs. And
 execline **is** needed -- s6-rc has no `--disable-execline`, links it
 unconditionally, and writes execline scripts into every database it compiles.
 `run` scripts are still plain `#!/bin/sh`; that was never the whole question.
-All four are recipes under `pkg/` now.
+All four are recipes under `pkgs/` now.
 
 *Files:* `versions.env`, `bin/fetch-assets.sh`, `bin/patch.sh`,
 `tools/supervisor/`.
@@ -139,8 +139,8 @@ a dead printer either way.
 `anvil-service.sh` grows `svc_s6_*` helpers so the `S*` scripts can talk to the
 scanner. It does not shrink yet.
 
-*Files:* `pkg/anvil-core/payload/init.d/S40s6` (new), `pkg/anvil-core/payload/anvil-service.sh`,
-`pkg/anvil-core/prog/firmwareExe`.
+*Files:* `pkgs/anvil-core/payload/init.d/S40s6` (new), `pkgs/anvil-core/payload/anvil-service.sh`,
+`pkgs/anvil-core/prog/firmwareExe`.
 *Gate:* extend `case-services.sh`: the scanner is running after the init
 sequence, and the init sequence still returns promptly.
 
@@ -225,9 +225,9 @@ moonraker runs from `/usr/data` on the printer's own Python.
 
 ## Phase 6 -- own the Python environment (separate project)
 
-**DONE, by 6b: CPython is built here.** `pkg/python` cross-compiles 3.13.7
+**DONE, by 6b: CPython is built here.** `pkgs/3rdparty/python` cross-compiles 3.13.7
 against the seven static libraries this feed already builds, and each of the
-eighteen third-party packages is a `pkg/python-*` recipe with its own version
+eighteen third-party packages is a `pkgs/3rdparty/python-*` recipe with its own version
 and its own `.ipk`. `anvil-env.sh` points `FF_PYTHON` at it. What is written
 below is the scoping that produced that decision, kept because the premises it
 corrects are still the ones somebody would reach for -- in particular why musl
@@ -307,7 +307,7 @@ has to catch that class of failure.
 
 ## Phase 7 -- own Klipper
 
-**Now reachable: phase 6 is done.** The interpreter it needs is `pkg/python`,
+**Now reachable: phase 6 is done.** The interpreter it needs is `pkgs/3rdparty/python`,
 built with the Ingenic glibc toolchain -- the requirement the paragraph above
 calls fatal if got wrong, since klippy `dlopen`s a glibc `c_helper.so`.
 

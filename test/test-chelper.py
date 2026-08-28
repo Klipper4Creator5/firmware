@@ -20,7 +20,7 @@ declared function against the .so's dynamic symbol table.
 THE PATH IS REQUIRED. It used to be optional, falling back to KLIPPER_FORK in
 config.env -- and the fallback was the failure mode: an unset KLIPPER_FORK
 turned this into "SKIP: no KLIPPER_FORK configured", a green line for a check
-that had not run. Both callers pass a path (pkg/klipper/build.sh over the
+that had not run. Both callers pass a path (pkgs/klipper/build.sh over the
 package it just built, bin/verify.sh over the finished one) and KLIPPER_FORK
 no longer exists, so a missing argument is a caller bug and says so.
 """

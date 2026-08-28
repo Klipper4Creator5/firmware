@@ -200,12 +200,12 @@ directory inside that recipe says how they get there. Three names, no fourth
 (`qa/static/test_recipe_layout.py` holds this):
 
 ```
-pkg/<recipe>/payload/   staged into the .ipk, laid out as it lands under
+pkgs/<recipe>/payload/   staged into the .ipk, laid out as it lands under
                         $MODDIR: payload/init.d/S60nginx installs as
                         $MODDIR/init.d/S60nginx and no recipe says so
-pkg/<recipe>/prog/      placed on /usr/prog by patch.sh -- somebody else's
+pkgs/<recipe>/prog/      placed on /usr/prog by patch.sh -- somebody else's
                         filesystem, so it cannot be in a package of ours
-pkg/<recipe>/seed/      templated or seeded user state: not a package member,
+pkgs/<recipe>/seed/      templated or seeded user state: not a package member,
                         because a member is overwritten on every upgrade
 
 installer/              run-pre.sh, run-append.sh -- never files on the
@@ -216,7 +216,7 @@ installer/              run-pre.sh, run-append.sh -- never files on the
 Which is to say:
 
 ```
-pkg/anvil-core/
+pkgs/anvil-core/
   payload/  anvil-env.sh      PATH/LD_LIBRARY_PATH/FF_PYTHON -- sourced
             anvil-service.sh  the start/stop/status/liveness shape services share
             init.d/           S40s6, S50wifi, S60nginx, S62moonraker, S65camera,
@@ -228,13 +228,13 @@ pkg/anvil-core/
             nginx/nginx.conf
   prog/     firmwareExe       the wrapper that replaces the stock binary
   seed/     anvil.conf.in     runtime switches, preserved across mod updates
-pkg/klipper/
+pkgs/klipper/
   prog/     start.sh          replaces the stock Klipper launcher
             config/           printer.base.cfg + the per-model chamber variants
             klippy/extras/    ff_*.py
-pkg/moonraker/
+pkgs/moonraker/
   seed/     moonraker-custom.conf   the user's own Moonraker settings
-pkg/helixscreen/
+pkgs/helixscreen/
   payload/  helixscreen/config/printer_database.d/
                               the entry that makes it a toolchanger
 ```
@@ -251,13 +251,22 @@ vendor/         where fetch-assets.sh caches them (gitignored), plus the
                 rather than sha256, because it has no release tarball
 config.env      your paths, the root password hash, the model
 docker/         Dockerfile.build -- the container every target runs in
-pkg/            package recipes: one directory per cross-build, each a
+pkgs/           package recipes: one directory per component, each a
                 build.sh producing a $MODDIR-relative tree and a pkg.conf
-                naming it. `make packages` builds them into .ipk files in
-                work/packages/ with a feed index, using upstream's opkg-build.
-                A PROOF OF CONCEPT -- nothing on the release path reads it
-                yet, and the tarball `make build` produces is unchanged.
+                naming it, plus whatever files of ours that component ships.
+                `make packages` builds them into .ipk files in work/packages/
+                with a feed index, using upstream's opkg-build. A PROOF OF
+                CONCEPT -- nothing on the release path reads it yet, and the
+                tarball `make build` produces is unchanged.
                 See docs/notes/85-packaging.md.
+  3rdparty/       the recipes that build a pinned tarball and carry no files
+                  of this repo -- thirty-four of the thirty-eight. They are
+                  one level down so that `ls pkgs/` is the four components a
+                  person edits rather than those four buried in the rest.
+                  The line is mechanical, not editorial: a recipe belongs up
+                  a level when it grows a payload/, prog/ or seed/, and
+                  qa/static/test_recipe_layout.py enforces it in both
+                  directions.
   lib.sh          the part of a cross-build every recipe shares: the
                   toolchains, the compiler wrappers and their ABI self-test,
                   configure/make/install, the build cache. A recipe that
@@ -320,13 +329,13 @@ file byte-identical to one in `bin/`, `test/` or `docker/`.
 ## Rebuilding chelper
 
 `klippy/chelper/c_helper.so` must be MIPS32r2 / nan2008 / o32 or klippy dies on
-import — `pkg/klipper` refuses to seal a package with anything else, and
+import — `pkgs/klipper` refuses to seal a package with anything else, and
 `test-install` checks the copy that lands on the machine. Debian's
 cross-compilers cannot produce one (big-endian or legacy-nan); the Ingenic
 gcc 7.2.0 / glibc 2.29 toolchain for the X2000 can, and it is pinned by
 sha256 in `versions.env` and fetched into `vendor/` like every other asset.
 
-You do not rebuild it by hand any more. `pkg/klipper` compiles the .so from
+You do not rebuild it by hand any more. `pkgs/klipper` compiles the .so from
 the chelper sources of the very tree it is about to ship — the fork tarball
 pinned in `versions.env`, which since the recipe landed is the only source
 there is. Two gates then run inside the recipe, so `make packages` enforces

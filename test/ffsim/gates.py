@@ -273,8 +273,8 @@ def _prefix_tarball(config):
 
     bin/patch.sh puts every one of these under the same $MODDIR: section 5c
     writes bin/python3.13 and lib/python3.13 (stdlib AND site-packages) out of
-    pkg/python and the eighteen pkg/python-* recipes, and section 5d writes
-    lib/libsodium.so* out of pkg/libsodium. Many recipe outputs, one
+    pkgs/3rdparty/python and the eighteen pkgs/3rdparty/python-* recipes, and section 5d writes
+    lib/libsodium.so* out of pkgs/3rdparty/libsodium. Many recipe outputs, one
     destination, so one tarball -- which also means the case unpacks it exactly
     once and every file lands where it was compiled to expect itself.
 
@@ -372,8 +372,8 @@ def _python_trees(config):
 
     NINETEEN TREES, NOT ONE, for the same reason _s6_tarball reads three. This
     used to be work/.py313, the single directory bin/patch.sh cross-built the
-    interpreter and its site-packages into together. CPython is pkg/python now
-    and each of the eighteen third-party packages is a pkg/python-* of its own,
+    interpreter and its site-packages into together. CPython is pkgs/3rdparty/python now
+    and each of the eighteen third-party packages is a pkgs/3rdparty/python-* of its own,
     so what a printer sees is the union of their bin/ and lib/ -- which is
     exactly what bin/patch.sh section 5c stages, in this order.
 
@@ -397,7 +397,7 @@ def _python_tarball(config):
     THE DEV HALF RIDES ALONG and is deliberately not filtered out. work/pkg/python
     holds the whole build -- headers, lib/pkgconfig and config-3.13-* included --
     because the split into anvil-python and anvil-python-dev happens where the
-    .ipk files are made. Which paths those are is pkg/python/pkg.conf's business,
+    .ipk files are made. Which paths those are is pkgs/3rdparty/python/pkg.conf's business,
     and repeating the list here would be a second spelling that goes stale
     silently. This is a test fixture unpacked into a simulator, not something a
     printer installs: 3MB of headers it will never open costs nothing, and the

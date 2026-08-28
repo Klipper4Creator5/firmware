@@ -594,9 +594,9 @@ def start(config=None, base_pkg=None, packages=None, setup_timeout=600,
         # resolving does not fail there, it copies nothing and the case runs
         # green against an empty $MODDIR. Keeping the assembled tree byte-for
         # -byte what it was means none of those copies had to be touched.
-        "-v", "%s/pkg/anvil-core/payload:/payload:ro" % ROOT,
-        "-v", "%s/pkg/anvil-core/seed:/payload-seed:ro" % ROOT,
-        "-v", "%s/pkg/klipper/prog:/payload-klipper:ro" % ROOT,
+        "-v", "%s/pkgs/anvil-core/payload:/payload:ro" % ROOT,
+        "-v", "%s/pkgs/anvil-core/seed:/payload-seed:ro" % ROOT,
+        "-v", "%s/pkgs/klipper/prog:/payload-klipper:ro" % ROOT,
         "-e", "FF_KEY=%s" % config.ff_key,
         "-e", "BASE_PKG=%s" % ("/pkgs/base.tgz" if base_pkg else ""),
         "-e", "PKGS=%s" % "".join(" %s=/pkgs/%s" % (n, n) for n in packages),

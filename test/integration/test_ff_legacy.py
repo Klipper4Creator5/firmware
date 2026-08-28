@@ -9,7 +9,7 @@ install belongs to bin/ff-startup.py (see test_startup.py),
 which drives the command from outside klippy once the whole stack is up. The
 options that used to do it here, auto_import and auto_save, are gone.
 
-These run against pkg/klipper/prog/klippy/extras/ff_legacy.py with the klippy
+These run against pkgs/klipper/prog/klippy/extras/ff_legacy.py with the klippy
 objects
 stubbed -- the extra only touches gcode, configfile and the ff_tool objects,
 all narrow enough to fake honestly. The replica lane cannot cover this:
@@ -25,7 +25,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 
 def _load_ff_legacy():
-    path = os.path.join(ROOT, "pkg", "klipper", "prog", "klippy", "extras", "ff_legacy.py")
+    path = os.path.join(ROOT, "pkgs", "klipper", "prog", "klippy", "extras", "ff_legacy.py")
     spec = importlib.util.spec_from_file_location("ff_legacy", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

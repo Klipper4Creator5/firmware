@@ -21,7 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 
 def _load():
-    path = os.path.join(ROOT, "pkg", "anvil-core", "payload", "bin", "ffscreen.py")
+    path = os.path.join(ROOT, "pkgs", "anvil-core", "payload", "bin", "ffscreen.py")
     spec = importlib.util.spec_from_file_location("ffscreen", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

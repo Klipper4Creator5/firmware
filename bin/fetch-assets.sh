@@ -11,11 +11,11 @@
 set -euo pipefail
 # shellcheck disable=SC1091
 . "$(dirname "$0")/common.sh"
-# Sourced for pkg_needs alone, which answers "is any recipe under pkg/ going to
+# Sourced for pkg_needs alone, which answers "is any recipe under pkgs/ going to
 # have to compile something?" -- the question that decides whether the ~203MB
 # toolchain is worth downloading. It defines functions and nothing else.
 # shellcheck disable=SC1091
-. "$ROOT/pkg/lib.sh"
+. "$ROOT/pkgs/lib.sh"
 say() { printf '>> %s\n' "$*"; }
 
 ALL=0
@@ -82,7 +82,7 @@ fi
 
 # The Klipper fork sources. There is one source now: KLIPPER_FORK -- the
 # config.env knob that pointed the build at a local checkout instead -- is
-# gone, because pkg/klipper is a recipe and a recipe names its source exactly
+# gone, because pkgs/klipper is a recipe and a recipe names its source exactly
 # once. A checkout is no longer a second way in; re-pin KLIPPER_VERSION and
 # KLIPPER_SHA256 at your own tarball to build something else.
 if [ "$ALL" = 1 ] || [ "${BUILD_KLIPPER:-0}" = "fork" ]; then
@@ -99,7 +99,7 @@ fi
 # the second spelling is the one that drifts. pkg_needs answers for every
 # recipe at once, so the fetcher computes the cache key with the code that
 # writes it -- which is exactly what went wrong with the s6 stamp below. The
-# separate Klipper clause went with them: chelper is pkg/klipper now, so
+# separate Klipper clause went with them: chelper is pkgs/klipper now, so
 # pkg_needs already covers it, and the clause would have been the fourth place
 # in this file that knew what BUILD_KLIPPER means.
 if [ "$ALL" = 1 ] || pkg_needs; then
@@ -218,7 +218,7 @@ get "https://github.com/jedisct1/libsodium/releases/download/$SODIUM_VERSION-REL
 # zlib is NOT fetched here: it is the same pinned tarball the CPython section
 # above already pulls (ZLIB_TGZ), and asking for it twice is how two pins that
 # are supposed to be one drift apart.
-get "https://downloads.yoctoproject.org/releases/opkg/opkg-$OPKG_VERSION.tar.gz" \
+get "https://downloads.yoctoproject.org/releases/opkgs/3rdparty/opkg-$OPKG_VERSION.tar.gz" \
     "$OPKG_TGZ" "$OPKG_SHA256"
 get "https://github.com/libarchive/libarchive/releases/download/v$LIBARCHIVE_VERSION/libarchive-$LIBARCHIVE_VERSION.tar.gz" \
     "$LIBARCHIVE_TGZ" "$LIBARCHIVE_SHA256"
@@ -259,7 +259,7 @@ say "cached  opkg-utils $OPKG_UTILS_VERSION ($OPKG_UTILS_COMMIT)"
 
 # The Ingenic toolchain, on the condition that decides whether patch.sh has to
 # compile at all. ONE question, asked of pkg_needs, because everything built
-# with this compiler is a recipe under pkg/ now -- the interpreter, its
+# with this compiler is a recipe under pkgs/ now -- the interpreter, its
 # eighteen site-packages, libsodium, the s6 family and the rest.
 #
 # IT USED TO BE THREE HAND-WRITTEN COMPARISONS and each of them had gone, or was

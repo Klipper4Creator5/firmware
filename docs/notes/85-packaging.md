@@ -144,7 +144,7 @@ Each of these was run, not assumed. They constrain the phases below.
   verifies `HEAD` against it and refuses a dirty checkout.
 * **The printer's busybox cannot be assumed to have `ar`.** It is 1.31.1 built
   small — no `timeout`, no `nc`, no `ionice`, all measured on the replica. So
-  `pkg/ipk-install` walks the ar headers itself with `tail`/`head` and needs
+  `pkgs/ipk-install` walks the ar headers itself with `tail`/`head` and needs
   only `tar` and `gzip`, which the stock FlashForge installer already proves
   are present.
 * **All four packages are reproducible.** `rm -rf work/pkg work/packages` and a
@@ -158,7 +158,7 @@ Each of these was run, not assumed. They constrain the phases below.
   uid/gid in every member header, plus another timestamp in the symbol index —
   none of which `SOURCE_DATE_EPOCH` or `opkg-build`'s `-o 0 -g 0` reaches,
   because they are *inside* a file the tarball merely contains. Measured: two
-  cold builds of `pkg/zlib` produced different sha256, every member reading
+  cold builds of `pkgs/3rdparty/zlib` produced different sha256, every member reading
   `1000/1000 Aug 28 15:10`. `objcopy -D` normalises the member headers, but the
   cross binutils is **2.27** and its `ranlib -D` writes a *fresh current*
   timestamp into the index instead of zeroing it. The index is therefore
@@ -205,19 +205,19 @@ proprietary firmware is and stops being a gate.
 
 | file | what it is |
 | ---- | ---------- |
-| `pkg/lib.sh` | the part of a cross-build that is the same for every package |
-| `pkg/zlib/` | the library that was cross-built **twice**, now built once |
-| `pkg/libarchive/` | what opkg reads `.ipk` files with; builds against `anvil-zlib` |
-| `pkg/opkg/` | opkg itself; builds against both of the above |
-| `pkg/libsodium/` | `build.sh` + `pkg.conf`. **`bin/patch.sh` section 5d's build, moved.** |
-| `pkg/ipk-install` | installs/removes `.ipk` with no opkg present, writing opkg's own database layout |
+| `pkgs/lib.sh` | the part of a cross-build that is the same for every package |
+| `pkgs/3rdparty/zlib/` | the library that was cross-built **twice**, now built once |
+| `pkgs/3rdparty/libarchive/` | what opkg reads `.ipk` files with; builds against `anvil-zlib` |
+| `pkgs/3rdparty/opkg/` | opkg itself; builds against both of the above |
+| `pkgs/3rdparty/libsodium/` | `build.sh` + `pkg.conf`. **`bin/patch.sh` section 5d's build, moved.** |
+| `pkgs/ipk-install` | installs/removes `.ipk` with no opkg present, writing opkg's own database layout |
 | `bin/build-packages.sh` | orders the recipes, lays out each tree, drives `opkg-build`, indexes the feed |
 | `qa/static/test_ipk.py` | 29 tests, no toolchain needed |
 
 ### One recipe builds one package
 
 This is the rule the layout exists to enforce, and it did not hold at first.
-`pkg/opkg/build.sh` used to unpack zlib, build it into a private sysroot,
+`pkgs/3rdparty/opkg/build.sh` used to unpack zlib, build it into a private sysroot,
 unpack libarchive, build that against it, and only then build the binary it
 shipped: one script, three libraries, one package. Section 5b still does the
 same thing with skalibs and s6.
@@ -246,10 +246,10 @@ beyond declared dependencies, and no qemu in the build path.
 
 `bin/build-packages.sh` topologically sorts the recipes and packages each one
 before the next is built, because the next one reads it out of the feed.
-Alphabetical order — what iterating `pkg/*/` gives you — puts libarchive before
+Alphabetical order — what iterating `pkgs/*/` gives you — puts libarchive before
 the zlib it needs.
 
-### The split in `pkg/lib.sh`
+### The split in `pkgs/lib.sh`
 
 * `pkg_conf` / `pkg_stamp` — a recipe's metadata and its cache key, both read
   from `pkg.conf`. The stamp includes the toolchain and, recursively, the
@@ -277,11 +277,11 @@ the zlib it needs.
   that exists to be built against ships headers, `.a` and `.pc`.
 
 `qa/static/test_ipk.py` gates this directly: a recipe that does not source
-`pkg/lib.sh`, spells its own `-mnan=2008`, unpacks its own toolchain, calls
+`pkgs/lib.sh`, spells its own `-mnan=2008`, unpacks its own toolchain, calls
 `./configure` itself, or unpacks more than one source tarball fails the suite.
 The one named exception is zlib, whose configure has never accepted `--host`.
-A recipe that needs something `pkg/lib.sh` cannot express should *grow*
-`pkg/lib.sh` — that is what the gate is for.
+A recipe that needs something `pkgs/lib.sh` cannot express should *grow*
+`pkgs/lib.sh` — that is what the gate is for.
 
 **Not yet shared:** `bin/patch.sh` section 5b (s6 and skalibs) still carries
 its own copy of all of this, and is the remaining instance of one script
@@ -290,9 +290,9 @@ building two libraries. Phase 1 is what turns it into recipes.
 ### The property everything rests on
 
 **A library is compiled once, whichever vehicle it ships in.** `bin/patch.sh`
-runs `pkg/libsodium/build.sh` and stages its output into the payload exactly as
+runs `pkgs/3rdparty/libsodium/build.sh` and stages its output into the payload exactly as
 before, and `bin/build-packages.sh` packages the same tree. Section 5c now does
-the same with zlib: it runs `pkg/zlib/build.sh` and stages the result into
+the same with zlib: it runs `pkgs/3rdparty/zlib/build.sh` and stages the result into
 CPython's dependency sysroot instead of compiling its own copy. While that
 holds, the tarball's copy and the package's copy cannot be different libraries
 wearing one version number — and
@@ -332,7 +332,7 @@ became one —
 Section 5b — the last place where one script built two libraries — is four
 recipes (`skalibs`, `execline`, `s6`, `s6-rc`), and moving them off the musl
 toolchain removed the second libc from this tree entirely. Section 5c, which
-was 825 lines, is `pkg/python` plus eighteen `pkg/python-*` and 115 lines of
+was 825 lines, is `pkgs/3rdparty/python` plus eighteen `pkgs/3rdparty/python-*` and 115 lines of
 staging.
 
 **What splitting CPython actually bought.** Not tidiness. The old section had
@@ -380,7 +380,7 @@ copy the live one.
 tarball does not change. The work is mechanical; the risk is in the two builds
 with the most measured constraints behind them (5b's s6 prefix, 5c's CPython
 cross-build), which should go last — and both are exactly the shape
-`pkg/lib.sh` already handles, since it was written from them.
+`pkgs/lib.sh` already handles, since it was written from them.
 
 **Gate, corrected.** This used to read "the `anvil.tar.xz` built after this
 phase is byte-identical to the one built before it". That cannot be the gate,
@@ -410,17 +410,27 @@ one top-level `payload/` tree organised by DESTINATION (`init.d/`, `bin/`,
 files. That was right when there was one owner. With 38 recipes it hid three
 different kinds of file behind identical-looking paths, and the only thing
 recording which package owned any of them was a thirty-line comment at the top
-of `pkg/anvil-core/build.sh`.
+of `pkgs/anvil-core/build.sh`.
 
 Files now live with the recipe that owns them, in one of three subtrees:
 
-    pkg/<recipe>/payload/   staged into the .ipk, laid out as it lands under
+    pkgs/<recipe>/payload/   staged into the .ipk, laid out as it lands under
                             $MODDIR -- payload/init.d/S60nginx installs as
                             $MODDIR/init.d/S60nginx and no recipe says so
-    pkg/<recipe>/prog/      placed on /usr/prog by bin/patch.sh
-    pkg/<recipe>/seed/      templated or seeded user state
+    pkgs/<recipe>/prog/      placed on /usr/prog by bin/patch.sh
+    pkgs/<recipe>/seed/      templated or seeded user state
 
-and `installer/` holds the two files that are never files on a printer at all:
+Recipes themselves sit at two depths, and `pkgs/lib.sh`'s `pkg_dir` is the
+only thing that knows it: `pkgs/<name>/` for a recipe that carries files of
+this repo (four), `pkgs/3rdparty/<name>/` for one that builds a pinned tarball
+and carries none (thirty-four). That is for `ls pkgs/` and nothing else — no
+package, no dependency and no stamp knows which side a recipe is on. The line
+is deliberately mechanical rather than "do we modify it", which drifts: the
+day somebody patches zlib nobody would agree on which side it belongs, whereas
+"does it carry files of ours" is a fact about the tree and a test can demand
+the move.
+
+`installer/` holds the two files that are never files on a printer at all:
 `run-pre.sh` and `run-append.sh` are spliced into FlashForge's own `run.sh`.
 `qa/static/test_recipe_layout.py` fails if a fourth kind of directory appears,
 which is the failure this layout is actually for — a misfiled file is caught
@@ -459,7 +469,7 @@ compose —
 1. The tarball payload ships `$MODDIR/bin/opkg` directly, as it ships every
    other binary today. From the second update onward opkg manages everything,
    including itself.
-2. `pkg/ipk-install` — POSIX sh, no opkg and no `ar` — installs the first
+2. `pkgs/ipk-install` — POSIX sh, no opkg and no `ar` — installs the first
    packages onto a machine that has neither. It writes opkg's own on-disk
    database (`$MODDIR/var/lib/opkg/{status,info/*.{control,list}}`), so opkg
    adopts what it installed rather than disagreeing with it.
@@ -475,7 +485,7 @@ was produced by installing the feed.**
 
     ./bin/build-packages.sh                 # the feed
     for p in work/packages/*.ipk; do        # into a staging root
-        pkg/ipk-install install "$p" --root work/modpayload-root
+        pkgs/ipk-install install "$p" --root work/modpayload-root
     done
     tar -C work/modpayload-root/usr/data/anvil ...   # the payload
 
@@ -497,7 +507,7 @@ filesystem, not packages of ours, and they stay in `patch.sh` until phase 7 of
 `firmwareExe` as the only file placed outside `/usr/data`.
 
 Section 1 is now the *staging* half of that: the Klipper BUILD is
-`pkg/klipper` and `anvil-klipper` installs the tree under `$MODDIR/klipper`
+`pkgs/klipper` and `anvil-klipper` installs the tree under `$MODDIR/klipper`
 like every other package, so what is left in `patch.sh` is a `cp -a` into
 `/usr/prog` plus the `chelper.tar` the stock installer's `run.sh` extracts.
 Phase 7 deletes those lines rather than moving a build.
@@ -508,10 +518,10 @@ that is a set of recipes there is no feed that contains everything the payload
 needs." It is a set of recipes now — 40 packages, and the loop above would
 produce a tree with Python in it. Every recipe the payload needs exists.
 
-**What blocks it now is smaller and different.** `pkg/ipk-install` has to run
+**What blocks it now is smaller and different.** `pkgs/ipk-install` has to run
 against a staging root rather than a live one, `bin/pack.sh` has to take its
 tree from there, and section 10b's generated `.install-manifest` has to give
-way to opkg's own `.list` files — which `pkg/ipk-install` already writes, and
+way to opkg's own `.list` files — which `pkgs/ipk-install` already writes, and
 already notes is what makes the hand-rolled manifest redundant. None of that
 needs a compiler.
 
@@ -535,7 +545,7 @@ whole feed rather than one per package — the index carries each package's
 sha256, so a trusted index makes untrusted packages verifiable. Same argument
 `versions.env` makes about vendored tarballs.
 
-Note that `--disable-curl` and `--disable-gpg` in `pkg/opkg/build.sh` are what
+Note that `--disable-curl` and `--disable-gpg` in `pkgs/3rdparty/opkg/build.sh` are what
 this phase turns back on; they are off now so that a static binary does not
 carry libcurl and OpenSSL for a capability nothing uses yet.
 

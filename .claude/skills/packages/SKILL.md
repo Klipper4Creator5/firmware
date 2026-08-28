@@ -1,11 +1,11 @@
 ---
 name: packages
-description: Build the .ipk feed, or add a new package recipe under pkg/. Use when asked to package something, add a library or component to the feed, bump a pinned version, or debug a recipe or the build environment.
+description: Build the .ipk feed, or add a new package recipe under pkgs/. Use when asked to package something, add a library or component to the feed, bump a pinned version, or debug a recipe or the build environment.
 ---
 
 # Packages
 
-`pkg/<id>/` is one recipe. It builds one source and produces one or two
+`pkgs/<id>/` is one recipe. It builds one source and produces one or two
 `.ipk` files into `work/packages/`, which is a local opkg feed.
 
 ## Building
@@ -26,7 +26,7 @@ A warm recipe is skipped. To force one, `rm -rf work/pkg/<id>`.
 
 Two files. No other file in the repo needs editing.
 
-`pkg/<id>/pkg.conf` — what the package is:
+`pkgs/<id>/pkg.conf` — what the package is:
 
 ```sh
 PKG_NAME=anvil-<id>
@@ -39,13 +39,13 @@ PKG_BUILD_DEPENDS=""            # other recipe ids, by directory name
 PKG_DESCRIPTION="One sentence."
 ```
 
-`pkg/<id>/build.sh` — how to build it:
+`pkgs/<id>/build.sh` — how to build it:
 
 ```sh
 #!/usr/bin/env bash
 set -euo pipefail
 . "$(dirname "$0")/../../bin/common.sh"
-. pkg/lib.sh
+. pkgs/lib.sh
 
 pkg_begin <id> || exit 0
 pkg_toolchain                   # omit if nothing is compiled
@@ -100,7 +100,7 @@ Set these before calling it. Do not run a configure script yourself.
 | `PKG_CC_SHARED` | — | the whole link line, after `$CC -shared -fPIC`, for a project with no build system at all (klipper's chelper). Skips configure and make |
 
 `pkg_build` returns non-zero rather than dying, so `if ! pkg_build ...` can
-retry with different flags. See `pkg/openssl/build.sh`.
+retry with different flags. See `pkgs/3rdparty/openssl/build.sh`.
 
 ## Optional pkg.conf fields
 
@@ -109,7 +109,7 @@ retry with different flags. See `pkg/openssl/build.sh`.
 | `PKG_ARCH=all` | nothing in the package is compiled |
 | `PKG_DEV_FILES="include lib"` | split headers and `.a` into `<name>-dev`, which no printer installs |
 | `PKG_WHEN='[ "${BUILD_X:-1}" = "1" ]'` | recipe only exists when a flag is on |
-| `PKG_STAMP_EXTRA` | cache key for sources with no version (see `pkg/anvil-core`) |
+| `PKG_STAMP_EXTRA` | cache key for sources with no version (see `pkgs/anvil-core`) |
 
 ## Rules
 
@@ -136,23 +136,23 @@ retry with different flags. See `pkg/openssl/build.sh`.
 
 ## Copy from
 
-- plain autotools — `pkg/libffi`
-- builds against another package — `pkg/s6`
-- no compiler, just files — `pkg/moonraker`
-- from this repo, not a download — `pkg/anvil-core`
-- a download plus files of ours — `pkg/helixscreen`
-- awkward build — `pkg/openssl`, `pkg/bzip2`, `pkg/zlib`
-- no build system, one link line — `pkg/klipper`
-- a python package — `pkg/python-distro` (pure), `pkg/python-cffi` (native)
+- plain autotools — `pkgs/3rdparty/libffi`
+- builds against another package — `pkgs/3rdparty/s6`
+- no compiler, just files — `pkgs/moonraker`
+- from this repo, not a download — `pkgs/anvil-core`
+- a download plus files of ours — `pkgs/helixscreen`
+- awkward build — `pkgs/3rdparty/openssl`, `pkgs/3rdparty/bzip2`, `pkgs/3rdparty/zlib`
+- no build system, one link line — `pkgs/klipper`
+- a python package — `pkgs/3rdparty/python-distro` (pure), `pkgs/3rdparty/python-cffi` (native)
 
 ## Adding a python package
 
-Four steps, and the first two are not in `pkg/`:
+Four steps, and the first two are not in `pkgs/`:
 
 1. `PYPKG_<NAME>_FILE` and `_SHA256` in `versions.env`, and the name on
    `PYPKG_LIST`. The version is read out of the file name.
 2. `./bin/fetch-assets.sh` to download it.
-3. `pkg/python-<name>/`, copied from `pkg/python-distro`. Name any other
+3. `pkgs/3rdparty/python-<name>/`, copied from `pkgs/3rdparty/python-distro`. Name any other
    package it imports in `PKG_DEPENDS`; add `PKG_ARCH=all` if it compiles
    nothing.
 4. `make packages PKG=python-<name>`.

@@ -38,12 +38,12 @@ def payload_scripts(root):
     Two subtrees per recipe and one directory beside them: payload/ is what
     the recipe installs under $MODDIR, prog/ is what bin/patch.sh places on
     /usr/prog, and installer/ is the text spliced into FlashForge's run.sh.
-    Deliberately NOT the whole of pkg/ -- build.sh and pkg.conf are build-host
+    Deliberately NOT the whole of pkgs/ -- build.sh and pkg.conf are build-host
     bash that never leaves the container, and rootfs-absolute paths in them
     are not a defect.
     """
     roots = [os.path.join(root, "installer")]
-    pkgdir = os.path.join(root, "pkg")
+    pkgdir = os.path.join(root, "pkgs")
     for name in sorted(os.listdir(pkgdir)):
         for sub in ("payload", "prog"):
             d = os.path.join(pkgdir, name, sub)

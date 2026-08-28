@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build every recipe under pkg/ into the feed, in dependency order, and index
+# Build every recipe under pkgs/ into the feed, in dependency order, and index
 # it.
 #
 #     ./bin/build-packages.sh              all recipes
@@ -13,13 +13,13 @@
 # ONE RECIPE PRODUCES ONE PACKAGE, and a recipe that needs a library names it
 # in PKG_BUILD_DEPENDS and gets it out of this feed. That is why the loop below
 # packages each recipe before it moves to the next one rather than building
-# everything and packaging afterwards: pkg/libarchive's configure reads zlib's
+# everything and packaging afterwards: pkgs/3rdparty/libarchive's configure reads zlib's
 # headers out of anvil-zlib_1.3.1-1_mipsel_xburst2.ipk, so that file has to
 # exist by the time libarchive is built. The feed is not an output of this
 # script so much as the medium it works in.
 #
 # THE ARCHIVES ARE BUILT BY UPSTREAM'S OWN TOOLS, not by this file. opkg-build
-# and opkg-make-index -- and opkg-unbuild, which pkg/lib.sh uses to take them
+# and opkg-make-index -- and opkg-unbuild, which pkgs/lib.sh uses to take them
 # apart again -- come from opkg-utils, pinned by commit in versions.env. An
 # earlier revision of this work carried a hand-written ar-and-two-tarballs
 # script instead, which was 120 lines of this repo re-deriving a format
@@ -35,7 +35,7 @@
 # gate only runs where the secrets are and stops being a gate.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
-. "$ROOT/pkg/lib.sh"
+. "$ROOT/pkgs/lib.sh"
 
 say() { printf '>> %s\n' "$*"; }
 
@@ -64,7 +64,8 @@ done
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1}"
 
 # The recipes to build, expanded to include everything they build against and
-# sorted so a dependency always precedes its dependent. Iterating pkg/*/ and
+# sorted so a dependency always precedes its dependent. Iterating the recipe
+# directories and
 # taking the order the shell gives is wrong the moment there are two recipes:
 # alphabetically, libarchive comes before the zlib it needs.
 if [ $# -gt 0 ]; then
@@ -72,18 +73,20 @@ if [ $# -gt 0 ]; then
 else
     mapfile -t REQUESTED < <(pkg_recipes)
 fi
-[ ${#REQUESTED[@]} -gt 0 ] || { echo "no recipes under pkg/" >&2; exit 1; }
+[ ${#REQUESTED[@]} -gt 0 ] || { echo "no recipes under pkgs/" >&2; exit 1; }
 read -r -a RECIPES <<< "$(pkg_order "${REQUESTED[@]}")"
 
 say "order: ${RECIPES[*]}"
 mkdir -p "$PKG_FEED"
 
 for r in "${RECIPES[@]}"; do
-    [ -f "$ROOT/pkg/$r/build.sh" ] || { echo "!! pkg/$r has no build.sh" >&2; exit 1; }
+    _d=$(pkg_dir "$r") \
+        || { echo "!! no recipe named '$r'" >&2; exit 1; }
+    [ -f "$_d/build.sh" ] || { echo "!! $_d has no build.sh" >&2; exit 1; }
 
-    # Every recipe caches on its own stamp -- pkg/lib.sh's pkg_begin is that
+    # Every recipe caches on its own stamp -- pkgs/lib.sh's pkg_begin is that
     # check -- so this is a no-op on a warm tree and costs a process spawn.
-    bash "$ROOT/pkg/$r/build.sh"
+    bash "$_d/build.sh"
 
     # Sourced in a subshell, one recipe at a time. PKG_DEPENDS from one recipe
     # leaking into the next is precisely the bug that makes a package declare a
@@ -92,10 +95,10 @@ for r in "${RECIPES[@]}"; do
         pkg_conf "$r"
 
         for v in PKG_NAME PKG_VERSION PKG_ROOT PKG_DESCRIPTION; do
-            [ -n "${!v}" ] || { echo "!! pkg/$r/pkg.conf leaves $v empty" >&2; exit 1; }
+            [ -n "${!v}" ] || { echo "!! $r's pkg.conf leaves $v empty" >&2; exit 1; }
         done
         [ -d "$PKG_ROOT" ] || {
-            echo "!! pkg/$r: PKG_ROOT '$PKG_ROOT' does not exist -- did build.sh run?" >&2
+            echo "!! $r: PKG_ROOT '$PKG_ROOT' does not exist -- did build.sh run?" >&2
             exit 1; }
 
         # THE ABI GATE, AT THE PACKAGE BOUNDARY. bin/patch.sh runs the same
@@ -134,7 +137,7 @@ for r in "${RECIPES[@]}"; do
             find "$LAYOUT$MODDIR" -name "$p" -exec rm -rf {} + 2>/dev/null || true
         done
         [ -n "$(find "$LAYOUT$MODDIR" \( -type f -o -type l \) -print -quit)" ] \
-            || { echo "!! pkg/$r staged nothing -- empty package refused" >&2; exit 1; }
+            || { echo "!! $r staged nothing -- empty package refused" >&2; exit 1; }
 
         # ------------------------------------------- the runtime/dev split
         #
@@ -169,7 +172,7 @@ for r in "${RECIPES[@]}"; do
                 done
             done
             [ -n "$(find "$DEVLAYOUT$MODDIR" \( -type f -o -type l \) -print -quit)" ] \
-                || { echo "!! pkg/$r sets PKG_DEV_FILES and none of it matched" >&2; exit 1; }
+                || { echo "!! $r sets PKG_DEV_FILES and none of it matched" >&2; exit 1; }
             # Directories the move emptied. Left behind they would be shipped
             # as an empty include/ on every printer -- harmless, and exactly
             # the sort of harmless that accumulates.
@@ -281,7 +284,7 @@ done
 # ------------------------------------------------------------------ the prune
 #
 # A FULL BUILD OWNS THE FEED. Every .ipk here should be one some recipe under
-# pkg/ produces right now; anything else is an orphan, and an orphan in a feed
+# pkgs/ produces right now; anything else is an orphan, and an orphan in a feed
 # is worse than a stray file because opkg-make-index puts it in the index and
 # a printer can then install it.
 #

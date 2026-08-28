@@ -37,12 +37,12 @@ def root():
 
 # The mod's Klipper config comes out of two recipes now. The ff-*.cfg
 # includes are anvil-core's and install to $MODDIR/config; printer.base.cfg
-# and the per-model chamber variants are pkg/klipper's and are placed on the
+# and the per-model chamber variants are pkgs/klipper's and are placed on the
 # firmware partition by bin/patch.sh, which is why they sit in prog/ rather
 # than payload/.
 CFG_SOURCES = (
-    os.path.join(ROOT, "pkg", "anvil-core", "payload", "config"),
-    os.path.join(ROOT, "pkg", "klipper", "prog", "config"),
+    os.path.join(ROOT, "pkgs", "anvil-core", "payload", "config"),
+    os.path.join(ROOT, "pkgs", "klipper", "prog", "config"),
 )
 
 

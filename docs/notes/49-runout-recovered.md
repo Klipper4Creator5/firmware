@@ -72,7 +72,7 @@ The load pages (`FilamentLoad`, `LoadFilamentPrint`) never touch the sensors.
 
 ## Port
 
-`pkg/klipper/prog/klippy/extras/ff_toolchange.py` (`[ff_toolchange] runout_switch_prefix: fd_ex`,
+`pkgs/klipper/prog/klippy/extras/ff_toolchange.py` (`[ff_toolchange] runout_switch_prefix: fd_ex`,
 `runout_motion_prefix: fm_ex`; empty or absent sections = that kind off, partial = config
 error):
 
@@ -87,7 +87,7 @@ error):
 * `FF_RUNOUT_ARM [TOOL=]` / `FF_RUNOUT_DISARM`; status `runout_armed` (tool or −1),
   `runout_sensors` (object names); `TOOLCHANGE_STATUS` prints the same.
 
-`pkg/anvil-core/payload/config/ff-runout.cfg` (include after `printer.base.cfg`; Klipper merges repeated sections,
+`pkgs/anvil-core/payload/config/ff-runout.cfg` (include after `printer.base.cfg`; Klipper merges repeated sections,
 later options win — the stock `printer.filament.cfg` is left untouched):
 
 * the eight sections get `runout_gcode: _FF_RUNOUT TOOL=n KIND=switch|motion` and

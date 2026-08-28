@@ -198,7 +198,7 @@ build: image config.env
 	@$(RUN) ./bin/build.sh $(PACKARGS)
 
 # The packaging proof-of-concept (docs/notes/85-packaging.md). Builds every
-# recipe under pkg/ into work/packages/ as .ipk files plus the feed index that
+# recipe under pkgs/ into work/packages/ as .ipk files plus the feed index that
 # makes that directory an opkg repository.
 #
 # NOTHING ON THE RELEASE PATH DEPENDS ON THIS. `make build` is unchanged and
@@ -360,8 +360,8 @@ test-camera: image work/.s6-gate.tgz
 # NINETEEN RECIPE OUTPUTS, MERGED, exactly as work/.s6-gate.tgz merges three.
 # This used to be `tar -czf -C work/.py313 bin lib`: one directory, because
 # bin/patch.sh cross-built the interpreter and its site-packages into one
-# cache. CPython is pkg/python now and each third-party package is a
-# pkg/python-* of its own, so what a printer sees is the union of their bin/
+# cache. CPython is pkgs/3rdparty/python now and each third-party package is a
+# pkgs/3rdparty/python-* of its own, so what a printer sees is the union of their bin/
 # and lib/ -- which is what bin/patch.sh section 5c stages and what
 # test/ffsim/gates.py packs for the suite.
 work/.py-gate.tgz: FORCE

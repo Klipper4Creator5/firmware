@@ -120,8 +120,8 @@ never invoked — `S62moonraker` starts the server itself.
 
 **FlashForge's python 3.8.2 is not what this runs on any more.** `FF_PYTHON`
 in `anvil-env.sh` names a CPython 3.13 of our own, cross-built for mipsel by
-`pkg/python`, with every third-party C extension Moonraker needs beside it in
-`$MODDIR/lib/python3.13/site-packages` — eighteen packages, one `pkg/python-*`
+`pkgs/3rdparty/python`, with every third-party C extension Moonraker needs beside it in
+`$MODDIR/lib/python3.13/site-packages` — eighteen packages, one `pkgs/3rdparty/python-*`
 recipe and one `.ipk` each — and libsodium in `$MODDIR/lib`; none of it
 borrowed from `/usr/prog`. Measured through the
 real boot path (S40s6's scandir, `S62moonraker`, readiness gating on `:7125`
