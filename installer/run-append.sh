@@ -345,6 +345,17 @@ sync
 
 # Stale bytecode from the previous Klipper generation is a silent import-time
 # landmine; the stock run.sh only clears four of the __pycache__ dirs.
+#
+# $MODDIR, NOT /usr/prog: the klipper s6-rc service execs
+# $MODDIR/klipper/klippy, so that is the tree whose .pyc files get imported.
+# It also needs the sweep MORE than /usr/prog ever did -- klippy WRITES those
+# directories at runtime on a writable /usr/data, and a path created after
+# install is in no .install-manifest, so the manifest delete above walks past
+# it and leaves last release's bytecode beside this release's source.
+find $MODDIR/klipper/klippy -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
+# The stock tree is swept too, and only because it costs one line: nothing
+# imports it any more, but a machine that has been through several releases
+# has bytecode there from when something did.
 find /usr/prog/klipper/klippy -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
 sync
 

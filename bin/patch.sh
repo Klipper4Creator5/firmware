@@ -56,14 +56,20 @@ say "payload: installing the feed with the printer's own opkg"
 # flag restated in this file. A missing DEPENDENCY is still an error, and opkg
 # raises it.
 #
-# The four loose python packages are Recommends, which opkg has no field for:
-# pillow and preprocess-cancellation are Moonraker's thumbnail path
-# (pkgs/moonraker argues them out of Depends), greenlet and cffi are klippy's,
-# which pkgs/klipper cannot declare while klippy still runs under
-# FlashForge's interpreter.
+# The two loose python packages are Recommends, which opkg has no field for:
+# pillow and preprocess-cancellation are Moonraker's thumbnail path, and
+# pkgs/moonraker argues them out of Depends because a Moonraker without them
+# serves every other endpoint.
+#
+# GREENLET AND CFFI WERE HERE TOO, for klippy, with a comment saying
+# pkgs/klipper could not declare them "while klippy still runs under
+# FlashForge's interpreter". It does not: the klipper service execs
+# $FF_PYTHON, so they are ordinary Depends of anvil-klipper now and this list
+# does not name them. That is the difference that matters -- listed here they
+# were installed by every build and by no `opkg install anvil-klipper`, which
+# is the one command that has to work on a printer.
 MOD_ROOTS="anvil-core anvil-opkg anvil-s6-rc anvil-klipper
            anvil-moonraker anvil-python-pillow anvil-python-preprocess-cancellation
-           anvil-python-greenlet anvil-python-cffi
            anvil-mainsail anvil-helixscreen anvil-busybox"
 
 # Named, not versioned: opkg reads the index and picks. The one version that
@@ -91,95 +97,44 @@ done
 say "payload: $(grep -c '^Package:' "$PAYLOAD_DIR/var/lib/opkg/status") packages installed (both chamber configs; the printer picks)"
 
 # ---------------------------------------------------------------- 1. Klipper
-# THE BUILD LIVES IN pkgs/klipper, and this section copies what it produced --
-# the arrangement sections 3, 4, 5 and 5d have had since each became a recipe,
-# and for the same reason: the .ipk and the tarball have to contain the same
-# klippy tree and the same c_helper.so, or they are two different Klippers
-# wearing one version number and no test can tell which a printer got.
+# NOTHING IS STAGED HERE ANY MORE. anvil-klipper installs the whole klippy
+# tree at $MODDIR/klipper/klippy and the klipper s6-rc service execs it there,
+# on our own $FF_PYTHON -- so the package is not merely the source of the
+# printer's Klipper, it IS the printer's Klipper.
 #
-# THERE IS NO STOCK PATH. BUILD_KLIPPER=stock kept FlashForge's v0.12 tree and
-# it is gone -- everything else the mod ships is written against the fork. The
-# flag's own history is why it went rather than gaining another guard: a
-# "fork" build silently falling back to stock is exactly what shipped as
-# v20260824-nova-kakhovka, where the 0.12-era overlay half-overwrote the v0.13
-# tree and klippy died at connect with "expects 4 arguments, got 3" -- a v0.12
-# extruder.py calling the v0.13 chelper cdef.
+# WHAT THIS SECTION USED TO BE, because the shape is worth not rebuilding: a
+# `cp -a` of the payload's klippy tree into the software component, a
+# chelper.tar wrapped around a c_helper.so the package already contained, an
+# `rm -rf` of the stock extras/ and kinematics/ the fork replaces, and a copy
+# of the ff_*.py toolchanger extras beside them. All four existed for one
+# reason -- klippy was started from /usr/prog/klipper/klippy by FlashForge's
+# klipperDaemon, so the tree had to be on the firmware partition, which meant
+# shipping a second copy of it in the software component and hoping the two
+# agreed. They are one copy now. See etc/s6-rc/source/klipper/run.
 #
-# THE TREE COMES OUT OF THE PAYLOAD, which is to say out of the installed
-# anvil-klipper package, not out of the recipe's build directory. That was the
-# last place this script reached into work/pkg, and removing it is what makes
-# "the tarball and the .ipk contain the same klippy" true by construction
-# rather than by two copies of one cp -a agreeing.
-_kl="$PAYLOAD_DIR/klipper"
-[ -d "$_kl/klippy" ] || pkg_die \
+# WHAT IS LEFT AT /usr/prog/klipper: FlashForge's own stock klippy, untouched
+# and unread. A stock flash restores it, which also replaces firmwareExe and
+# takes the mod down whatever else survived -- so it was never the fallback it
+# looked like. klipper_pri.sh and klipperDaemon are still read there: the
+# first is FlashForge's SCHED_FIFO helper, the second is our shim, and the
+# service greps KLIPPER_NICENESS out of it.
+#
+# THE ASSERTION STAYS. It is the whole of what this section still does, and it
+# is cheap: an anvil-klipper that did not install is a printer with no Klipper
+# at all now, with no component copy to mask it.
+[ -d "$PAYLOAD_DIR/klipper/klippy" ] || pkg_die \
     "the payload has no $MODDIR/klipper/klippy -- anvil-klipper did not install"
-
-# THE FORK GOES TO THE SOFTWARE COMPONENT, not to $MODDIR, and that is why
-# this is a copy rather than a line in the payload loop below. klippy is
-# started by the stock /usr/prog/klipper/klipperDaemon, so it has to be
-# where that binary looks. The package installs the same tree under
-# $MODDIR/klipper, which is inert until phase 7 of
-# docs/notes/80-s6-migration.md moves Klipper there and this mod starts it
-# itself; see pkgs/klipper/pkg.conf.
-#
-# Stock ships only a handful of klippy files as an overlay; the fork is a
-# different Klipper generation, so the WHOLE tree replaces it.
-rm -rf "$SOFTWARE_DIR/klipper/klippy"
-mkdir -p "$SOFTWARE_DIR/klipper"
-cp -a "$_kl/klippy" "$SOFTWARE_DIR/klipper/klippy"
-
-# chelper.tar IS THE STOCK INSTALLER'S VEHICLE, not a second build. The
-# software component's run.sh ends with
-# `tar -xf $WORK_DIR/klipper/chelper.tar -C /usr/prog/klipper/klippy/`
-# -- read out of a real stock package, so a package without it
-# extracts nothing over the .so already inside klippy/ -- harmless today,
-# and a missing file the moment FlashForge's installer stops copying
-# klippy/ wholesale. bin/verify.sh fails a fork package that lacks it.
-# Packing it here rather than in the recipe keeps it out of the .ipk,
-# where a tarball of a file the package already contains would be 30KB of
-# the same object under a second name.
-rm -rf work/.chelper
-mkdir -p work/.chelper/chelper
-cp -f "$_kl/klippy/chelper/c_helper.so" work/.chelper/chelper/c_helper.so
-tar -cf "$SOFTWARE_DIR/klipper/chelper.tar" -C work/.chelper chelper
-rm -rf work/.chelper
-
-# klippy/ now contains the fork's own extras+kinematics, so the stock
-# overlay dirs would only re-inject 0.12-era files on top. Drop them.
-# extras/ is recreated empty because section 2 puts ff_*.py in it.
-rm -rf "$SOFTWARE_DIR/klipper/extras" "$SOFTWARE_DIR/klipper/kinematics"
-mkdir -p "$SOFTWARE_DIR/klipper/extras"
-say "Klipper: fork tree from pinned commit ${KLIPPER_VERSION:0:8}"
+[ -f "$PAYLOAD_DIR/klipper/klippy/chelper/c_helper.so" ] || pkg_die \
+    "the payload has no $MODDIR/klipper/klippy/chelper/c_helper.so -- klippy cannot connect to an MCU without it"
+say "Klipper: fork tree from pinned commit ${KLIPPER_VERSION:0:8} (payload only)"
 
 # ----------------------------------------------------------- 2. Toolchanger
-# The configs are three packages, installed by section 0: anvil-klipper-config
-# for the ff-*.cfg and one of the two model packages for printer.chamber.cfg.
-# What is left here is the residue that cannot be a package -- klippy's extras
-# and printer.base.cfg go to /usr/prog, beside FlashForge's own Klipper tree,
-# and every path in a package of ours lands under $MODDIR.
-if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
-    say "Toolchange: ff_*.py + configs"
-    # OUT OF THE PAYLOAD, like section 1's klippy tree and for the same
-    # reason: anvil-klipper carries these now, so copying them from the
-    # recipe directory would be a second source for a file a package holds.
-    _ffx="$PAYLOAD_DIR/klipper/klippy/extras"
-    mkdir -p "$SOFTWARE_DIR/klipper/extras"
-    # Named by the recipe, not globbed out of the payload: the fork ships an
-    # ff_eddy.py of its own and `ff_*.py` cannot tell it from ours. It rides
-    # the klippy tree section 1 copied either way, so sweeping it up here
-    # would put the same file in the component twice.
-    for _f in pkgs/klipper/payload/klipper/klippy/extras/ff_*.py; do
-        cp -f "$_ffx/$(basename "$_f")" "$SOFTWARE_DIR/klipper/extras/"
-    done
-
-    # NO .cfg IS WRITTEN HERE: the software component's klipper/config is left
-    # exactly as FlashForge shipped it. anvil-klipper-config carries every
-    # config the mod owns and anvil-link-prog.sh symlinks them into
-    # /usr/data/config, which is where the stock run.sh puts that directory
-    # anyway. The ff_*.py above are what is left that cannot be a package.
-else
-    skip "Toolchange"
-fi
+# GONE, with section 1. The ff_*.py extras ride the klippy tree anvil-klipper
+# installs, and the ff-*.cfg are anvil-klipper-config's -- anvil-link-prog.sh
+# symlinks them into /usr/data/config, which is where printer.cfg looks. There
+# is no longer any part of the toolchanger that cannot be a package, so
+# BUILD_TOOLCHANGE is answered entirely by pkgs/klipper-config's PKG_WHEN and
+# this script does not restate it.
 
 # ------------------------------------------------------- 3. the user's seams
 # What is in the payload and in NO package, because being a package member

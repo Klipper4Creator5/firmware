@@ -11,18 +11,32 @@
 # here as well would hand the same serial ports to two processes at once.
 MODDIR=/usr/data/anvil
 
-# klippy is FlashForge's Python 3.8.2 on the firmware partition, linked against
-# libraries in four directories nothing on the base rootfs knows about.
-# s6-supervise hands this script the scanner's environment, which is already
-# correct on the boot path -- but a service must not work only because the
-# shell that started the tree happened to be set up right.
+# anvil-env.sh names the interpreter ($FF_PYTHON) and puts the mod's four
+# library directories on LD_LIBRARY_PATH. s6-supervise hands this script the
+# scanner's environment, which is already correct on the boot path -- but a
+# service must not work only because the shell that started the tree happened
+# to be set up right.
 if [ -f $MODDIR/anvil-env.sh ]; then
     . $MODDIR/anvil-env.sh
 else
     echo "klipper/run: !! no $MODDIR/anvil-env.sh -- klippy will not find its libraries"
 fi
 
-KLIPPY=/usr/prog/klipper/klippy/klippy.py
+# BOTH HALVES ARE OURS AND BOTH ARE UNDER $MODDIR: the klippy tree anvil-klipper
+# installs, on the CPython 3.13 anvil-python installs. There is no /usr/prog in
+# this command line any more.
+#
+# The tree used to be read from /usr/prog/klipper/klippy -- a copy bin/patch.sh
+# staged into the software component out of this very package, so that
+# FlashForge's run.sh would place it on the firmware partition. Two copies of
+# one tree, and the one that ran was the one a stock flash could overwrite.
+# anvil-klipper is the only source now, which is also what lets this package
+# declare the interpreter it actually needs: see pkgs/klipper/pkg.conf.
+#
+# THE INTERPRETER IS NOT FLASHFORGE'S 3.8.2 and has not been since $FF_PYTHON
+# moved to 3.13. klippy reaches c_helper.so through _cffi_backend, which is why
+# pkgs/3rdparty/python is a glibc build and not a musl one.
+KLIPPY=$MODDIR/klipper/klippy/klippy.py
 PRINTER_CFG=/usr/data/config/printer.cfg
 PRINTER_LOG=/usr/data/logs/printer.log
 UDS=/tmp/uds

@@ -67,7 +67,7 @@ whose subject had become the fake it was built on, or whose failure the printer
 reports loudly the first time. What is kept is the mistakes that RUN
 PERFECTLY and are wrong.
 
-`test/test-chelper.py` sits outside both suites: `bin/patch.sh` and
+`test/test-chelper.py` sits outside both suites: `pkgs/klipper/build.sh` and
 `bin/verify.sh` call it directly at build time.
 
 ## The replica is a tool, not a test

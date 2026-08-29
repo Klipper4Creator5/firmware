@@ -321,7 +321,8 @@ test/           28 host-side unit tests over our own Python, and the two
   ffcfg.py        Klipper config parsing, as klippy's own parser sees it
   integration/    test_startup.py, test_tool_transform.py, test_ffscreen.py,
                   test_chamber.py, test_gcode.py -- see docs/testing.md
-  test-chelper.py in neither suite: bin/patch.sh and bin/verify.sh call it
+  test-chelper.py in neither suite: pkgs/klipper/build.sh and
+                  bin/verify.sh call it
 tools/replica/  THE REPLICA, which is a build tool as much as a test one --
                 bin/patch.sh assembles the payload inside it
   printer/        the machine: binfmt, the mount layout, its two Dockerfiles

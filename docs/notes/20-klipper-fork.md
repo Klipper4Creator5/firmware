@@ -61,8 +61,13 @@ cdef and the caller both live in the tree; a stale .so shows up as a missing
 symbol (`AttributeError`) instead, since cffi resolves symbols lazily.
 There is now no fork build with no fork tree to refuse: `pkgs/klipper` has one
 source and `pkg_unpack` fails on a missing tarball. `verify.sh` still fails a
-fork package that lacks the klippy tree or `chelper.tar`, and the compile-
-from-shipped-sources rule makes a stale .so unrepresentable in a release.
+fork package that lacks the klippy tree or its `c_helper.so`, and the
+compile-from-shipped-sources rule makes a stale .so unrepresentable in a
+release. Both are read out of the PAYLOAD now: the klippy tree moved to
+`$MODDIR/klipper/klippy` — the `klipper` s6-rc service execs it there, on our
+own CPython 3.13 — so the software-component copy and the `chelper.tar` that
+carried its .so onto the firmware partition are both gone. One tree, in one
+package.
 
 ## Custom commands (by area)
 

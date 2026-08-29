@@ -318,14 +318,33 @@ has to catch that class of failure.
 
 ## Phase 7 -- own Klipper
 
-**Now reachable: phase 6 is done.** The interpreter it needs is `pkgs/3rdparty/python`,
-built with the Ingenic glibc toolchain -- the requirement the paragraph above
-calls fatal if got wrong, since klippy `dlopen`s a glibc `c_helper.so`.
+**DONE.** The interpreter it needed is `pkgs/3rdparty/python`, built with the
+Ingenic glibc toolchain -- the requirement the paragraph above calls fatal if
+got wrong, since klippy `dlopen`s a glibc `c_helper.so`.
 
-Ship the klippy tree into `$MODDIR` instead of
-handing it to FlashForge's `run.sh`; replace `klipperDaemon` with an s6 `run`
-script (the command line is quoted above); turn `S70klipper`'s retry loop into
-an s6 restart policy plus readiness. `checkEboard`, `libmcu-bare.bin` and
+It landed in two halves and the gap between them is the part worth recording.
+The `klipperDaemon` replacement, the s6 `run` script and the move onto
+`$FF_PYTHON` went in together; the klippy TREE stayed at
+`/usr/prog/klipper/klippy` for a while afterwards, staged there by
+`bin/patch.sh` out of the very `anvil-klipper` package that also installed it
+under `$MODDIR`. So the printer ran our Klipper, on our Python, out of a copy
+on the firmware partition that a stock flash could overwrite -- and because
+nothing declared it, `anvil-klipper` carried no dependency on the interpreter
+it had already moved to. `KLIPPY=$MODDIR/klipper/klippy/klippy.py` closed
+both: it deleted sections 1 and 2 of `bin/patch.sh` (~85 lines, the software
+component's whole `klipper/` directory and the `chelper.tar` that fed stock
+`run.sh`) and let `pkgs/klipper` declare `anvil-python`, `-cffi`, `-greenlet`,
+`-pyserial` and `-jinja2` for real. Until then `cffi` and `greenlet` reached
+the printer only via a hardcoded list in `patch.sh`, and `pyserial` and
+`jinja2` only as `anvil-moonraker`'s Depends -- so a `BUILD_MOONRAKER=0` build
+shipped a klippy that dies the first time it opens an MCU.
+
+**The lesson, stated once:** moving what a program RUNS ON without moving what
+it RUNS leaves the dependency graph lying, and nothing fails until a
+configuration nobody builds gets built.
+
+Still open: `S70klipper`'s retry loop is not yet an s6 restart policy plus
+readiness. `checkEboard`, `libmcu-bare.bin` and
 `cmd_mcu` stay where they are -- they are version-matched to the firmware and
 reading them from the firmware partition is correct.
 

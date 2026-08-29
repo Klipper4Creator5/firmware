@@ -82,22 +82,37 @@ if [ -f "$WORK/sw/app_startup.sh" ]; then
 fi
 
 # 7 ------------------------------------------------- MIPS ABI of any binaries
+# THE KLIPPY TREE IS IN THE PAYLOAD, NOT IN THE SOFTWARE COMPONENT. It used to
+# be checked at $WORK/sw/klipper -- a copy bin/patch.sh staged for FlashForge's
+# run.sh to place on the firmware partition, back when klipperDaemon started
+# klippy from there. The klipper s6-rc service execs $MODDIR/klipper/klippy on
+# $FF_PYTHON now, so the component copy and the chelper.tar that carried its
+# .so are both gone and this is where the one remaining tree lives.
+#
 # A package that ships no fork is a broken package, not an optional check: the
 # v20260824 release passed here precisely because everything below was
 # conditional on files that the broken build simply did not contain. It is
 # unconditional now for a second reason as well -- BUILD_KLIPPER is gone, so
 # there is no configuration in which a package legitimately has no klippy.
-if [ -f "$WORK/sw/klipper/klippy/chelper/__init__.py" ]; then
-    ok "package carries the fork klippy tree"
-else
-    bad "no klippy tree in the package -- this is the stock-overlay build that shipped as v20260824"
+# ./klipper alone, not the whole payload: the rest is Mainsail, HelixScreen
+# and a 30MB interpreter, and section 8 answers everything it needs from a
+# listing. The paths carry a leading ./ because bin/pack.sh tars `.` from
+# inside $PAYLOAD_DIR.
+PAYLOAD_TAR=$(ls -1 "$WORK"/anvil.tar.xz 2>/dev/null | head -n1)
+if [ -n "$PAYLOAD_TAR" ]; then
+    mkdir -p "$WORK/pl"
+    xz -dc "$PAYLOAD_TAR" 2>/dev/null | tar -xf - -C "$WORK/pl" ./klipper 2>/dev/null \
+        || tar -xf "$PAYLOAD_TAR" -C "$WORK/pl" ./klipper 2>/dev/null
 fi
-[ -f "$WORK/sw/klipper/chelper.tar" ] \
-    || bad "no chelper.tar in the package"
-if [ -f "$WORK/sw/klipper/chelper.tar" ]; then
-    mkdir -p "$WORK/ch" && tar -xf "$WORK/sw/klipper/chelper.tar" -C "$WORK/ch"
-    CHELPER=$(find "$WORK/ch" -name 'c_helper.so' | head -n1)
-    if [ -n "$CHELPER" ] && ! head -c 4 "$CHELPER" | grep -q ELF; then
+if [ -f "$WORK/pl/klipper/klippy/chelper/__init__.py" ]; then
+    ok "payload carries the fork klippy tree"
+else
+    bad "no klippy tree in the payload -- anvil-klipper did not install; this is the stock-overlay build that shipped as v20260824"
+fi
+CHELPER="$WORK/pl/klipper/klippy/chelper/c_helper.so"
+[ -f "$CHELPER" ] || bad "no c_helper.so in the payload klippy tree -- klippy cannot talk to an MCU"
+if [ -f "$CHELPER" ]; then
+    if ! head -c 4 "$CHELPER" | grep -q ELF; then
         warn "c_helper.so is not an ELF (synthetic fixture) -- ABI check skipped"
         CHELPER=""
     fi
@@ -110,15 +125,19 @@ if [ -f "$WORK/sw/klipper/chelper.tar" ]; then
         # The failure mode that reached a printer: a .so from older sources
         # than the klippy tree beside it. cffi resolves lazily, so only a
         # symbol-table check catches it before the machine does.
-        if [ -f "$WORK/sw/klipper/klippy/chelper/__init__.py" ]; then
-            if python3 "$ROOT/test/test-chelper.py" "$WORK/sw/klipper" >/dev/null 2>&1; then
-                ok "c_helper.so exports everything the shipped klippy declares"
-            else
-                bad "c_helper.so does not match the shipped klippy tree (stale build)"
-            fi
+        if python3 "$ROOT/test/test-chelper.py" "$WORK/pl/klipper" >/dev/null 2>&1; then
+            ok "c_helper.so exports everything the shipped klippy declares"
+        else
+            bad "c_helper.so does not match the shipped klippy tree (stale build)"
         fi
     fi
 fi
+# THE COMPONENT MUST NOT CARRY ONE. Two klippy trees under one version number
+# is the arrangement this release removed, and a stray one would be the copy a
+# stock flash leaves running.
+[ -e "$WORK/sw/klipper/klippy" ] \
+    && bad "the software component still carries a klippy tree -- bin/patch.sh section 1 is staging one again" \
+    || ok "no klippy tree in the software component (the payload is the only one)"
 
 # 8 ------------------------------------------------------------ mod payload
 if [ -f "$WORK/anvil.tar.xz" ]; then
@@ -188,11 +207,11 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
                                           || bad "no s6 in the payload -- bin/patch.sh did not stage the cross-build"
     grep -q 'libexec/s6-ftrigrd' <<<"$LIST" && ok "s6-ftrigrd present in libexec (the waiting verbs can spawn it)" \
                                           || bad "no libexec/s6-ftrigrd -- s6-svwait and s6-svc -w will fail on the printer"
-    # CPython 3.13. anvil-env.sh points FF_PYTHON here -- Moonraker,
+    # CPython 3.13. anvil-env.sh points FF_PYTHON here -- Moonraker, klippy,
     # ff-startup.py, ffscreen.py and ff_mcu_bringup.py all run on it -- so a
-    # package missing it breaks the boot, not just a future release. klippy is
-    # not among FF_PYTHON's callers: it stays on FlashForge's 3.8.2, started by
-    # the klipper s6-rc service independently.
+    # package missing it breaks the boot, not just a future release. klippy IS
+    # among FF_PYTHON's callers: the klipper s6-rc service execs $FF_PYTHON
+    # against $MODDIR/klipper/klippy, and anvil-klipper declares it.
     #
     # Two checks, not one, and the second is the one worth having. The
     # interpreter can be present and perfectly runnable while _sqlite3 is
@@ -213,11 +232,9 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
     # symlink CPython installs beside it. $MODDIR/bin is prepended to PATH by
     # anvil-env.sh (s6 needs that), so shipping one would silently put our
     # interpreter ahead of FlashForge's for every process that says `python3`
-    # -- an accidental switch, on a printer whose klippy still needs 3.8's
-    # site-packages (it is started separately, by FlashForge's own
-    # start.sh, and never goes through FF_PYTHON). Reads the way round it
-    # does for the same reason the dropbear check below does: its presence is
-    # the bug.
+    # -- an accidental switch, and the mod's own callers do not need it: every
+    # one of them names $FF_PYTHON. Reads the way round it does for the same
+    # reason the dropbear check below does: its presence is the bug.
     grep -qE '(^|/)bin/python3$' <<<"$LIST" \
         && bad "payload ships bin/python3 -- it would shadow FlashForge's interpreter on PATH" \
         || ok "no bin/python3 symlink (nothing shadows FlashForge's python3 on PATH)"

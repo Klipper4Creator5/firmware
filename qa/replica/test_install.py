@@ -58,7 +58,11 @@ FE = "/usr/prog/PROGRAM/software/firmwareExe"
 APP = "/usr/prog/app_startup.sh"
 SOURCE = MODDIR + "/etc/s6-rc/source"
 DB = MODDIR + "/etc/s6-rc/compiled/current"
-CHELPER = "/usr/prog/klipper/klippy/chelper/c_helper.so"
+# The klipper s6-rc service execs $FF_PYTHON against $MODDIR/klipper/klippy,
+# so this is the .so that actually gets dlopened. /usr/prog/klipper/klippy
+# still holds FlashForge's stock tree; nothing reads it.
+KLIPPY_DIR = MODDIR + "/klipper/klippy"
+CHELPER = KLIPPY_DIR + "/chelper/c_helper.so"
 INSTALL_LOG = "/usr/data/anvil-install.log"
 
 
@@ -194,8 +198,45 @@ def test_klipper_depends_on_the_mcu_bringup(box):
 # --------------------------------------------------------------- klippy itself
 
 def test_klippy_is_present(box):
-    assert box.file("/usr/prog/klipper/klippy/klippy.py").exists, (
-        "klippy.py missing -- there is nothing to start")
+    """In the payload, which is the only copy: anvil-klipper installs it and
+    the s6 service execs it there. There is no component copy to fall back
+    on any more, so this failing means the printer has no Klipper at all."""
+    assert box.file(KLIPPY_DIR + "/klippy.py").exists, (
+        "%s/klippy.py missing -- anvil-klipper did not install and there is "
+        "nothing to start" % KLIPPY_DIR)
+
+
+def test_the_klipper_service_runs_the_payload_tree_on_our_python(box):
+    """The regression that would silently restore the old arrangement: a run
+    script pointing back at /usr/prog gets its klippy from a stock flash, not
+    from the package, and no other test here would notice."""
+    # The compiled servicedir is what s6-supervise actually execs; the source
+    # tree is the fallback so this still says something useful on a machine
+    # where the database did not compile.
+    body = box.file(DB + "/servicedirs/klipper/run").text \
+        or box.file(SOURCE + "/klipper/run").text
+    assert body, "no klipper run script in either the database or the source tree"
+    assert "/usr/prog/klipper/klippy" not in body, (
+        "the klipper service still execs klippy out of /usr/prog -- that tree "
+        "is FlashForge's stock 0.12 and a stock flash owns it")
+    # The run script spells it $MODDIR, unexpanded, so match the tail rather
+    # than the absolute path this file computes.
+    assert "klipper/klippy/klippy.py" in body, (
+        "the klipper service does not exec %s/klippy.py" % KLIPPY_DIR)
+    assert "$FF_PYTHON" in body, (
+        "the klipper service does not run klippy under $FF_PYTHON")
+
+
+def test_klippy_imports_resolve_on_our_python(box):
+    """cffi, greenlet, pyserial and jinja2 are anvil-klipper's Depends. They
+    used to arrive as anvil-moonraker's, or from a hardcoded list in
+    bin/patch.sh -- so a BUILD_MOONRAKER=0 build shipped a klippy that dies
+    the first time it opens an MCU."""
+    for mod in ("cffi", "greenlet", "serial", "jinja2"):
+        r = box.sh(". %s/anvil-env.sh; $FF_PYTHON -c 'import %s' 2>&1"
+                   % (MODDIR, mod))
+        assert r.ok, (
+            "klippy's %s does not import on FF_PYTHON: %s" % (mod, r.text))
 
 
 def _bytes_at(box, path, skip, count):

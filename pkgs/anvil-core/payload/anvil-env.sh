@@ -87,18 +87,24 @@ export LD_LIBRARY_PATH
 #
 # WHO ELSE THIS MOVES. grep FF_PYTHON payload/ bin/ before touching this line
 # again -- the answer changes as callers are added. Today it is Moonraker,
-# ff-startup.py, ffscreen.py and ff_mcu_bringup.py (the MCU bootloader
-# handshake start.sh runs before Klipper). The last three are stdlib-only
+# KLIPPY, ff-startup.py, ffscreen.py and ff_mcu_bringup.py (the MCU bootloader
+# handshake that runs before Klipper). Three of those five are stdlib-only
 # (os/sys/termios/time/argparse/json/subprocess/urllib -- checked against
-# CPython's own removed-in-3.13 list), so the only one with any C-extension
-# surface is Moonraker, and that is the one measured above.
+# CPython's own removed-in-3.13 list); the two with C-extension surface are
+# Moonraker, measured above, and klippy.
 #
-# WHO THIS DOES NOT MOVE. Klipper is not on this list. It is started by
-# FlashForge's own /usr/prog/klipper/start.sh, hardcoded to
-# /usr/prog/Python-3.8.2/bin/python3, independently of FF_PYTHON -- see
-# init.d/S70klipper's own header. klippy's numpy gap
-# (extras/stepper_resonance_tester.py) is therefore not this switch's problem;
-# it stays open as a separate, smaller item.
+# KLIPPY IS ON THIS LIST NOW. This block used to say it was not -- that
+# FlashForge's own start.sh started it, hardcoded to
+# /usr/prog/Python-3.8.2/bin/python3. Both halves are gone:
+# etc/s6-rc/source/klipper/run execs $FF_PYTHON against $MODDIR/klipper/klippy,
+# and prog/start.sh is a `s6-rc -u change klipper` and nothing else. klippy
+# reaches c_helper.so through _cffi_backend, which is the reason this
+# interpreter had to be a glibc build; anvil-klipper declares cffi, greenlet,
+# pyserial and jinja2 against it.
+#
+# klippy's numpy gap (extras/stepper_resonance_tester.py) IS this switch's
+# problem now, and stays open as a separate, smaller item: the module guards
+# its own import, so the printer runs without it and loses resonance testing.
 #
 # FlashForge's tree is not touched either way: nothing here writes to
 # /usr/prog, and everything of ours lives under /usr/data/anvil like every
