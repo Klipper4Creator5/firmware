@@ -225,10 +225,10 @@ libsodium is ours -- and packaging and integration followed:
    the replica.
 4. ~~Then the switch itself.~~ **Done**: `FF_PYTHON` in `anvil-env.sh` and
    `/usr/prog/libsodium/lib` off `ANVIL_LIBS`, in the same commit.
-5. klippy is **not** blocked by packages, and was never part of this switch:
-   it keeps running on FlashForge's 3.8.2, started independently by
-   `/usr/prog/klipper/start.sh` (see `init.d/S70klipper`), not by
-   `FF_PYTHON`. cffi, greenlet, jinja2, markupsafe
+5. klippy is **not** blocked by packages, and was not part of this switch --
+   though it has since made the same move: the `klipper` s6-rc service execs
+   `$FF_PYTHON` against `$MODDIR/klipper/klippy`, so it is on 3.13 as
+   well. cffi, greenlet, jinja2, markupsafe
    and pyserial all build, and `c_helper.so` binds. `numpy` is the only gap,
    wanted solely by `extras/stepper_resonance_tester.py`, which Klipper loads
    on demand. numpy on 3.13 means numpy >= 2.1 and a Meson cross-file, and

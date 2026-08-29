@@ -62,7 +62,9 @@ if [ -n "$SOFTWARE_TAR" ]; then
 fi
 
 # --- 5. shell syntax of scripts
-for s in "$WORK/runFirmwareExe.sh" "$WORK/sw/run.sh" "$WORK/sw/start.sh" "$WORK/sw/app_startup.sh"; do
+# start.sh and firmwareExe are the payload's now, not the component's -- section
+# 7 extracts and checks them there.
+for s in "$WORK/runFirmwareExe.sh" "$WORK/sw/run.sh" "$WORK/sw/app_startup.sh"; do
     [ -f "$s" ] || continue
     if sh -n "$s" 2>/dev/null; then ok "syntax OK: $(basename "$s")"
     else bad "SYNTAX ERROR in $(basename "$s")"; sh -n "$s" 2>&1 | head -3 | sed 's/^/        /'; fi
@@ -84,14 +86,20 @@ fi
 # chelper.tar that carried its .so are both gone. Unconditional, because
 # v20260824 passed here by having every check below conditional on files the
 # broken build did not contain. ./klipper alone, not the whole payload --
-# section 8 answers the rest from a listing. Paths carry a leading ./ because
-# bin/pack.sh tars `.` from inside $PAYLOAD_DIR.
+# section 8 answers the rest from a listing. ./prog rides along because the two
+# stock-path scripts moved there and still need a syntax gate. Paths carry a
+# leading ./ because bin/pack.sh tars `.` from inside $PAYLOAD_DIR.
 PAYLOAD_TAR=$(ls -1 "$WORK"/anvil.tar.xz 2>/dev/null | head -n1)
 if [ -n "$PAYLOAD_TAR" ]; then
     mkdir -p "$WORK/pl"
-    xz -dc "$PAYLOAD_TAR" 2>/dev/null | tar -xf - -C "$WORK/pl" ./klipper 2>/dev/null \
-        || tar -xf "$PAYLOAD_TAR" -C "$WORK/pl" ./klipper 2>/dev/null
+    xz -dc "$PAYLOAD_TAR" 2>/dev/null | tar -xf - -C "$WORK/pl" ./klipper ./prog 2>/dev/null \
+        || tar -xf "$PAYLOAD_TAR" -C "$WORK/pl" ./klipper ./prog 2>/dev/null
 fi
+for s in "$WORK/pl/prog/start.sh" "$WORK/pl/prog/firmwareExe"; do
+    [ -f "$s" ] || { bad "the payload carries no prog/$(basename "$s") -- link-prog has nothing to point the stock path at"; continue; }
+    if sh -n "$s" 2>/dev/null; then ok "syntax OK: prog/$(basename "$s")"
+    else bad "SYNTAX ERROR in prog/$(basename "$s")"; sh -n "$s" 2>&1 | head -3 | sed 's/^/        /'; fi
+done
 if [ -f "$WORK/pl/klipper/klippy/chelper/__init__.py" ]; then
     ok "payload carries the fork klippy tree"
 else
@@ -125,6 +133,15 @@ fi
 [ -e "$WORK/sw/klipper/klippy" ] \
     && bad "the software component still carries a klippy tree -- bin/patch.sh section 1 is staging one again" \
     || ok "no klippy tree in the software component (the payload is the only one)"
+# Same rule for the two stock-path scripts: anvil-core owns them at
+# $MODDIR/prog/ and link-prog symlinks them into place. A component copy of the
+# wrapper is worse than none -- with no payload it never starts a UI, where an
+# absent one lets app_startup.sh restore the stock binary.
+for f in firmwareExe start.sh; do
+    [ -e "$WORK/sw/$f" ] \
+        && bad "the software component still carries $f -- bin/patch.sh section 8 is staging one again" \
+        || ok "no $f in the software component (anvil-core's \$MODDIR/prog is the only one)"
+done
 
 # --- 8. mod payload
 if [ -f "$WORK/anvil.tar.xz" ]; then

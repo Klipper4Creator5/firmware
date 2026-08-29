@@ -233,12 +233,11 @@ Which is to say:
 ```
 pkgs/anvil-core/            what makes the machine ours, and nothing else
   payload/  anvil-env.sh      PATH/LD_LIBRARY_PATH/FF_PYTHON -- sourced
-            anvil-service.sh  the start/stop/status/liveness shape services share
-            init.d/           S40s6, S50wifi, S60nginx, S62moonraker, S65camera,
-                              S70klipper, S80ui
             bin/              ff-startup.py, ff_mcu_bringup.py, ffscreen.py,
                               wifi-action.sh
-            etc/s6/           the s6 scandir, one directory per service
+            etc/s6-rc/source/ one directory per service: wifi, nginx, moonraker,
+                              camera, klipper, ui, mcu-bringup, ff-startup,
+                              ok-all
             nginx/nginx.conf
             bin/anvil-link-prog.sh  links the two below, and the configs, into
                               the absolute paths the stock scripts read

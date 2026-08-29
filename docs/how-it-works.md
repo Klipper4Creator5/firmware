@@ -130,9 +130,9 @@ in `anvil-env.sh` names a CPython 3.13 of our own, cross-built for mipsel by
 recipe and one `.ipk` each — and libsodium in `$MODDIR/lib`; none of it
 borrowed from `/usr/prog`. Measured through the
 real boot path (the scandir, the moonraker service, readiness gating on `:7125`
-actually listening, a `kill -9` respawn, a stop that stays stopped). klippy is not part of
-this: it stays on FlashForge's 3.8.2, started independently by
-`/usr/prog/klipper/start.sh`.
+actually listening, a `kill -9` respawn, a stop that stays stopped). klippy is on it
+too: the `klipper` service execs `$FF_PYTHON` against the klippy tree in
+`$MODDIR/klipper`, so both halves are ours.
 
 **The Moonraker commit pin is still a 2023 one, though the reason it exists
 has changed.** FlashForge built python 3.8.2 without the `_sqlite3` module,
@@ -163,10 +163,10 @@ the old one aside first and restoring it if the copy does not complete.
 
 `make test` covers this end to end on the printer replica: that the swap
 happened, that the installed `webcam.py` has the `enabled` field, that the
-shipped tree runs on the printer's own python3.8 **and is still running after a
-settle**, and that its log has no import errors. The settle matters — a build
-that dies on a missing module is alive for a second or two first, and checking
-only "did it start" is what let the sqlite3 failure through.
+shipped tree runs on our own CPython 3.13 (`$FF_PYTHON`) **and is still running
+after a settle**, and that its log has no import errors. The settle matters — a
+build that dies on a missing module is alive for a second or two first, and
+checking only "did it start" is what let the sqlite3 failure through.
 `BUILD_MOONRAKER=0` builds a package that leaves the stock server alone.
 
 ## Five things the stock firmware does that will surprise you

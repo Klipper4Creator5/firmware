@@ -63,6 +63,8 @@ Get them wrong and the phase fails on a printer, not in CI.
 * We do **not** install Klipper. `bin/patch.sh` stages a *software component*
   and FlashForge's own stock `run.sh` copies it onto `/usr/prog/klipper`. That
   is why Klipper sits on the firmware partition -- inherited, not chosen.
+  **Superseded by phase 7:** `anvil-klipper` installs the tree at
+  `$MODDIR/klipper` and the `klipper` service runs it from there.
 * `pkgs/klipper/prog/start.sh` already **is** `/usr/prog/klipper/start.sh`; the mod
   replaces it. What we do not own are the FlashForge pieces it calls:
   `klipperDaemon`, `klipper_pri.sh`, `checkEboard`, `libmcu-bare.bin`.
@@ -504,7 +506,9 @@ So s6-rc roughly DOUBLES what supervision costs on the data partition, and it
 does so to buy a boot order that is three real edges wide (see the section
 above) and was previously spelled as filenames. That is the honest trade and it should be read next to the
 free-space unknown phase 6 records: nobody has ever run `df` on a real printer.
-`s6-rc-compile` (131KB) is host-side only and is not shipped.
+`s6-rc-compile` (131KB) is host-side only and is not shipped. [Superseded: it
+ships. `pkgs/3rdparty/s6-rc/build.sh` keeps it deliberately -- it is the only
+way to fix a printer whose database is wrong without a laptop.]
 
 **Both new packages must be configured `--prefix=/usr/data/anvil`, for a reason
 one level worse than the `s6-ftrigrd` trap.** execline's `--shebangdir`

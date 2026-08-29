@@ -10,12 +10,15 @@
 # the only place anything is installed and `opkg upgrade` is enough to change
 # what the printer runs.
 #
-# ORDERING. The software component carries firmwareExe and start.sh and stock
-# run.sh copies them into place at its lines 107-179, before run-append.sh
-# extracts the payload at line 180. So the component cannot ship the symlinks
-# itself: on a first install they would dangle, and on an upgrade they would
-# resolve to the payload being replaced. This runs after extraction, and again
-# from anvil-core's postinst.
+# ORDERING. Stock run.sh distributes the software component at its lines
+# 107-179, before run-append.sh extracts the payload at line 180. So the
+# component cannot ship these symlinks itself: on a first install they would
+# dangle, and on an upgrade they would resolve to the payload being replaced.
+# This runs after extraction, and again from anvil-core's postinst. The
+# component no longer carries firmwareExe or start.sh at all -- nothing execs
+# either before this point, and a wrapper without a payload behind it is worse
+# than no wrapper (app_startup.sh restores the stock binary from a version
+# directory; the wrapper would just sit there and never start a UI).
 set -e
 
 MODDIR=${MODDIR:-/usr/data/anvil}
@@ -30,8 +33,9 @@ if [ ! -f /usr/prog/app_startup.sh ]; then
 fi
 
 # $1 is relative to $MODDIR, $2 is the absolute path the printer reads. The
-# two destinations under /usr/prog mirror what stock run.sh does with the same
-# files, so this stays true as long as that does:
+# two destinations under /usr/prog are the ones stock run.sh copies to, so this
+# stays true as long as that does -- its two cp lines are no-ops now that the
+# component ships neither file:
 #     cp $WORK_DIR/firmwareExe /usr/prog/PROGRAM/software/
 #     cp $WORK_DIR/start.sh    /usr/prog/klipper/start.sh
 link_one() {

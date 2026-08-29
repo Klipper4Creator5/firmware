@@ -52,8 +52,8 @@
 #
 # NOT libsodium either: the only importer of libnacl is Moonraker, which runs
 # on our 3.13, whose libnacl resolves $MODDIR/lib/libsodium.so by absolute path
-# with no library path entry at all. klippy runs on 3.8 and has no libnacl
-# import.
+# with no library path entry at all. klippy is on that same 3.13 and has no
+# libnacl import.
 ANVIL_LIBS="/usr/prog/Python-3.8.2/lib
 /usr/prog/openssl-1.0.2d/lib
 /usr/prog/libffi-3.4.4/lib"

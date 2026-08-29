@@ -55,6 +55,8 @@ pytestmark = pytest.mark.replica
 
 MODDIR = "/usr/data/anvil"
 FE = "/usr/prog/PROGRAM/software/firmwareExe"
+# The other stock path anvil-link-prog.sh owns. klipperDaemon starts from here.
+START = "/usr/prog/klipper/start.sh"
 APP = "/usr/prog/app_startup.sh"
 SOURCE = MODDIR + "/etc/s6-rc/source"
 DB = MODDIR + "/etc/s6-rc/compiled/current"
@@ -139,6 +141,30 @@ def test_the_wrapper_starts_the_supervisor(box):
     assert "s6-rc" in text, (
         "BRICK: the wrapper never asks s6-rc for a transition, so no service "
         "would start")
+
+
+def test_the_stock_paths_are_symlinks_into_the_payload(box):
+    """The property the whole seam rests on since the software component
+    stopped carrying firmwareExe and start.sh.
+
+    anvil-core installs both at $MODDIR/prog/ and anvil-link-prog.sh points the
+    stock paths at them -- from run-append.sh on a flash and from the postinst
+    on `opkg upgrade anvil-core`. A REGULAR FILE at either path means the link
+    step did not run, and the printer would go on executing whatever the last
+    install happened to leave there while an upgrade quietly rewrote $MODDIR.
+    """
+    for path in (FE, START):
+        target = box.sh("readlink %s 2>/dev/null" % path).out.strip()
+        assert target, (
+            "%s is not a symlink -- anvil-link-prog.sh did not run, so an "
+            "`opkg upgrade anvil-core` would not change what this printer "
+            "executes" % path)
+        assert target.startswith(MODDIR + "/prog/"), (
+            "%s -> %r, which is not under %s/prog -- anvil-core is not what "
+            "this printer runs" % (path, target, MODDIR))
+        assert box.file(path).exists, (
+            "%s -> %r dangles: the link is there but the payload is not"
+            % (path, target))
 
 
 def test_every_installed_script_parses_under_the_printers_busybox(box):
@@ -389,15 +415,20 @@ def test_a_boot_with_no_stick_does_not_try_to_update(box):
     firmwareExe is neutered for the run, because the real one holds the
     foreground forever by design. What is under test is the update block's
     decision, not the boot that follows it.
+
+    The stub goes in by MOVING THE SYMLINK ASIDE, not by writing to $FE: that
+    path is a link into $MODDIR/prog now, so a redirection would write through
+    it and leave the packaged wrapper stubbed for whatever runs next. `mv`
+    moves the link itself, and moving it back restores it exactly.
     """
-    box.sh("cp %s /tmp/fe.real && printf '#!/bin/sh\\nexit 0\\n' > %s"
-           % (FE, FE))
+    box.sh("mv -f %s /tmp/fe.link && printf '#!/bin/sh\\nexit 0\\n' > %s "
+           "&& chmod +x %s" % (FE, FE, FE))
     try:
         box.sh("sh %s > /tmp/boot-nostick.log 2>&1; echo rc=$?" % APP,
                timeout=300)
         log = box.file("/tmp/boot-nostick.log").text
     finally:
-        box.sh("cp /tmp/fe.real %s && chmod +x %s" % (FE, FE))
+        box.sh("rm -f %s && mv -f /tmp/fe.link %s" % (FE, FE))
 
     assert log.strip(), "app_startup.sh produced no output at all"
     assert "find update file" not in log, (

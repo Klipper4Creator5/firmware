@@ -125,7 +125,7 @@ START_PRINT TOOLS=0:220,2:240 BED=60 LEVEL=1 SOAK=300
 
 The macros are on the printer at `/usr/data/config/ff-print-macros.cfg`, and
 in this repo at
-[`payload/klipper/config/ff-print-macros.cfg`](../payload/klipper/config/ff-print-macros.cfg).
+[`pkgs/klipper-config/payload/config/ff-print-macros.cfg`](../pkgs/klipper-config/payload/config/ff-print-macros.cfg).
 They are ordinary Klipper macros with comments explaining why each step is
 what it is.
 

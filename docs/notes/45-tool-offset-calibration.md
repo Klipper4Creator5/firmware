@@ -16,8 +16,8 @@ per-tool sections, modelled on `[bed_mesh <profile>]` / klipper-toolchanger's `[
 | `pkgs/klipper/payload/klipper/klippy/extras/ff_tool_offset.py` | `TOOL_CALIBRATE_TOOL_OFFSET`, `TOOL_LOCATE_SENSOR`, `TOOL_OFFSET_STATUS`; `[ff_tool_offset]` holds `station_x/y/z` (autosaved) + probe geometry |
 | `pkgs/klipper/payload/klipper/klippy/extras/ff_toolchange.py` | takes docks/offsets from the `ff_tool` objects; `refresh_offsets()`; `_station_z()`; JSON reader and `TOOLCHANGE_RELOAD` removed |
 | `pkgs/klipper/payload/klipper/klippy/extras/ff_legacy.py` | `FF_IMPORT_FIRMWARE_CONFIG [DIR=] [APPLY=1]` — one-shot import of extruder/test/zoffset.json |
-| `pkgs/anvil-core/payload/config/ff-toolchange.cfg` | four deliberately empty `[ff_tool 0..3]` sections + `[ff_toolchange]`. Per-unit values must NOT go here — `SAVE_CONFIG` refuses to autosave an option an include already sets |
-| `pkgs/anvil-core/payload/config/ff-tool-offset.cfg`, `pkgs/anvil-core/payload/config/ff-legacy.cfg` | sections for the other two extras |
+| `pkgs/klipper-config/payload/config/ff-toolchange.cfg` | four deliberately empty `[ff_tool 0..3]` sections + `[ff_toolchange]`. Per-unit values must NOT go here — `SAVE_CONFIG` refuses to autosave an option an include already sets |
+| `pkgs/klipper-config/payload/config/ff-tool-offset.cfg`, `pkgs/klipper-config/payload/config/ff-legacy.cfg` | sections for the other two extras |
 
 ## Storage layout
 
@@ -57,7 +57,7 @@ A built package needs none of this — it installs the extras and
 hand, onto a printer that is already modded:
 
 ```
-cp pkgs/klipper/payload/klipper/klippy/extras/ff_*.py /usr/prog/klipper/klippy/extras/
+cp pkgs/klipper/payload/klipper/klippy/extras/ff_*.py /usr/data/anvil/klipper/klippy/extras/
 # Nothing to add to printer.cfg: printer.base.cfg already includes the
 # ff-*.cfg set. Section order does not matter.
 RESTART

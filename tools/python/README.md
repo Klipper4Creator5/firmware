@@ -252,6 +252,10 @@ FlashForge's binary.
 
 ## It ships. Nothing runs it.
 
+*[Superseded: `FF_PYTHON` is `$MODDIR/bin/python3.13` now, and Moonraker,
+klippy, `ff-startup.py`, `ffscreen.py` and the MCU bring-up all run on it. What
+follows is the state this investigation ended in.]*
+
 `payload/anvil-env.sh` still points `FF_PYTHON` at
 `/usr/prog/Python-3.8.2/bin/python3`. That is timing, not preference: klippy,
 Moonraker and `ff-startup.py` import third-party C extensions -- tornado,

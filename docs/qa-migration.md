@@ -476,8 +476,9 @@ again, and should know two things it had learnt. `make_fixture` staged into
 mounts host-side, so a path under the build container's `/tmp` does not exist
 as far as the daemon is concerned. And the shape it reproduced -- the
 software component's `run.sh` ending in `tar -xf
-$WORK_DIR/klipper/chelper.tar` -- is what `bin/patch.sh` section 4 still
-depends on. Recover both from git history rather than from a fresh reading of
+$WORK_DIR/klipper/chelper.tar` -- is what `bin/patch.sh` depended on while the
+klippy tree still went out on the firmware partition; the tree lives at
+`$MODDIR/klipper` now and neither that section nor the `chelper.tar` exists. Recover both from git history rather than from a fresh reading of
 a stock package.
 
 ### What survives in test/

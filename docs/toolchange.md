@@ -19,23 +19,23 @@ documented in the file headers.
 
 | File | Goes to (on the printer) | What it does |
 |---|---|---|
-| [`pkgs/klipper/payload/klipper/klippy/extras/ff_toolchange.py`](../pkgs/klipper/payload/klipper/klippy/extras/ff_toolchange.py) | `/usr/prog/klipper/klippy/extras/` | The toolchanger: `T0..T3`, dock/grab state machine with sensor polling and retries, per-tool G-code offsets (the absolute ~3.2 mm bed-frame Z is applied at every grab), `TOOLCHANGE_SET_PRINT_OFFSET` (the print-start thermal/bed/layer Z terms), `TOOL_Z_ADJUST` (per-tool babystep, live, saved on request), `TOOLCHANGE_STATUS`, `TOOLCHANGE_PARK` |
+| [`pkgs/klipper/payload/klipper/klippy/extras/ff_toolchange.py`](../pkgs/klipper/payload/klipper/klippy/extras/ff_toolchange.py) | `/usr/data/anvil/klipper/klippy/extras/` | The toolchanger: `T0..T3`, dock/grab state machine with sensor polling and retries, per-tool G-code offsets (the absolute ~3.2 mm bed-frame Z is applied at every grab), `TOOLCHANGE_SET_PRINT_OFFSET` (the print-start thermal/bed/layer Z terms), `TOOL_Z_ADJUST` (per-tool babystep, live, saved on request), `TOOLCHANGE_STATUS`, `TOOLCHANGE_PARK` |
 | [`pkgs/helixscreen/payload/helixscreen/config/printer_database.d/flashforge_creator5.json`](../pkgs/helixscreen/payload/helixscreen/config/printer_database.d/flashforge_creator5.json) | HelixScreen `config/printer_database.d/` | Printer-database entry so HelixScreen auto-detects both Creator 5 models as tool changers (the Pro and the non-Pro differ only by the chamber heater) |
-| [`pkgs/klipper/payload/klipper/klippy/extras/ff_print.py`](../pkgs/klipper/payload/klipper/klippy/extras/ff_print.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_print]` — takes over `SDCARD_PRINT_FILE` and `M23`, reads bed/nozzle/initial tool/first-layer height out of the file itself, and calls `FF_BEFORE_PRINT_START` before the file's first line and `FF_AFTER_PRINT_END` once the job leaves the printing state. Declared in `ff-print-macros.cfg`; holds no policy of its own |
-| [`pkgs/klipper/payload/klipper/klippy/extras/ff_tool.py`](../pkgs/klipper/payload/klipper/klippy/extras/ff_tool.py) | `/usr/prog/klipper/klippy/extras/` | `[ff_tool n]` — one section per tool; `dock_x/dock_y`, `nozzle_x/y/z` and `z_adjust` are all autosaved (import or calibration + `SAVE_CONFIG`) |
-| [`pkgs/klipper/payload/klipper/klippy/extras/ff_tool_offset.py`](../pkgs/klipper/payload/klipper/klippy/extras/ff_tool_offset.py) | `/usr/prog/klipper/klippy/extras/` | `TOOL_CALIBRATE_TOOL_OFFSET` / `TOOL_LOCATE_SENSOR` / `TOOL_OFFSET_STATUS` — the touchscreen's nozzle XY/Z offset calibration, recovered from the binary and reimplemented in Klipper |
-| [`pkgs/klipper/payload/klipper/klippy/extras/ff_legacy.py`](../pkgs/klipper/payload/klipper/klippy/extras/ff_legacy.py) | `/usr/prog/klipper/klippy/extras/` | `FF_IMPORT_FIRMWARE_CONFIG` — one-shot import of the factory/touchscreen JSON into Klipper config. The command and nothing else: no startup behaviour. `bin/ff-startup.py` is what runs it on the first boot |
-| [`pkgs/anvil-core/payload/config/ff-toolchange.cfg`](../pkgs/anvil-core/payload/config/ff-toolchange.cfg) | `/usr/data/config/` | empty `[ff_tool 0..3]` sections (the per-unit dock/nozzle data is autosaved, nothing unit-specific ships), `[ff_toolchange]` feeds/geometry, the `G28` dock-first wrapper |
-| [`pkgs/anvil-core/payload/config/ff-tool-offset.cfg`](../pkgs/anvil-core/payload/config/ff-tool-offset.cfg) | `/usr/data/config/` | `[ff_tool_offset]` — probe geometry and guards for the calibration commands |
-| [`pkgs/anvil-core/payload/config/ff-legacy.cfg`](../pkgs/anvil-core/payload/config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — stays included permanently; declares the section and, optionally, `firmware_config_dir` |
+| [`pkgs/klipper/payload/klipper/klippy/extras/ff_print.py`](../pkgs/klipper/payload/klipper/klippy/extras/ff_print.py) | `/usr/data/anvil/klipper/klippy/extras/` | `[ff_print]` — takes over `SDCARD_PRINT_FILE` and `M23`, reads bed/nozzle/initial tool/first-layer height out of the file itself, and calls `FF_BEFORE_PRINT_START` before the file's first line and `FF_AFTER_PRINT_END` once the job leaves the printing state. Declared in `ff-print-macros.cfg`; holds no policy of its own |
+| [`pkgs/klipper/payload/klipper/klippy/extras/ff_tool.py`](../pkgs/klipper/payload/klipper/klippy/extras/ff_tool.py) | `/usr/data/anvil/klipper/klippy/extras/` | `[ff_tool n]` — one section per tool; `dock_x/dock_y`, `nozzle_x/y/z` and `z_adjust` are all autosaved (import or calibration + `SAVE_CONFIG`) |
+| [`pkgs/klipper/payload/klipper/klippy/extras/ff_tool_offset.py`](../pkgs/klipper/payload/klipper/klippy/extras/ff_tool_offset.py) | `/usr/data/anvil/klipper/klippy/extras/` | `TOOL_CALIBRATE_TOOL_OFFSET` / `TOOL_LOCATE_SENSOR` / `TOOL_OFFSET_STATUS` — the touchscreen's nozzle XY/Z offset calibration, recovered from the binary and reimplemented in Klipper |
+| [`pkgs/klipper/payload/klipper/klippy/extras/ff_legacy.py`](../pkgs/klipper/payload/klipper/klippy/extras/ff_legacy.py) | `/usr/data/anvil/klipper/klippy/extras/` | `FF_IMPORT_FIRMWARE_CONFIG` — one-shot import of the factory/touchscreen JSON into Klipper config. The command and nothing else: no startup behaviour. `bin/ff-startup.py` is what runs it on the first boot |
+| [`pkgs/klipper-config/payload/config/ff-toolchange.cfg`](../pkgs/klipper-config/payload/config/ff-toolchange.cfg) | `/usr/data/config/` | empty `[ff_tool 0..3]` sections (the per-unit dock/nozzle data is autosaved, nothing unit-specific ships), `[ff_toolchange]` feeds/geometry, the `G28` dock-first wrapper |
+| [`pkgs/klipper-config/payload/config/ff-tool-offset.cfg`](../pkgs/klipper-config/payload/config/ff-tool-offset.cfg) | `/usr/data/config/` | `[ff_tool_offset]` — probe geometry and guards for the calibration commands |
+| [`pkgs/klipper-config/payload/config/ff-legacy.cfg`](../pkgs/klipper-config/payload/config/ff-legacy.cfg) | `/usr/data/config/` | `[ff_legacy]` — stays included permanently; declares the section and, optionally, `firmware_config_dir` |
 | [`pkgs/anvil-core/payload/bin/ffscreen.py`](../pkgs/anvil-core/payload/bin/ffscreen.py) | `/usr/data/anvil/bin/` | A few lines of text and a progress bar drawn straight onto `/dev/fb0`, geometry read from sysfs. The framebuffer is **portrait 480×800@32** and the panel is that buffer turned 90° clockwise (landscape 800×480) — established from FlashForge's own `/usr/prog/start.img`, 1536000 bytes, which only decodes into a picture read that way. Drawing is done in landscape coordinates and each rectangle is rotated on the way into the buffer, so it costs arithmetic per rectangle and nothing per pixel. All of the first boot happens before HelixScreen starts, so without it the panel is black for the longest wait of the install — which reads as a brick and invites a power cut mid-`SAVE_CONFIG`. `make boot-screen` renders every frame to PNG on the host; `make boot-screen-sim` renders the same frames inside the replica using FlashForge's own python3 on MIPS (they come out byte-identical); `qa/replica/test_boot_screen.py` is the gate |
 | [`pkgs/anvil-core/payload/bin/ff-startup.py`](../pkgs/anvil-core/payload/bin/ff-startup.py) | `/usr/data/anvil/bin/` | Everything before HelixScreen. **Every boot** it hands the toolhead boards over from their bootloaders (calling `ff_mcu_bringup.py` directly — it owns when klippy opens the ports, so it owns doing this first), starts klipper, and waits for klipper + moonraker to be ready, naming the board or service holding things up and re-handing the boards over on each retry. It runs as two s6-rc oneshots (`mcu-bringup`, then `ff-startup`), and the UI depends on the second — starting the UI before that is what produces a screen reporting a disconnected printer with no clue which board is missing. **First boot only**, once that has happened, it sends `FF_IMPORT_FIRMWARE_CONFIG` and `SAVE_CONFIG` over the moonraker API and stamps `/usr/data/anvil/.firmware-config-imported`. Only a verified save stamps, so a slow boot retries. `MOD_STARTUP=0` skips the lot; `MOD_IMPORT=0` keeps the wait and skips the migration |
-| [`pkgs/anvil-core/payload/config/ff-print-macros.cfg`](../pkgs/anvil-core/payload/config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the `_FF_PREFLIGHT` calibration and tool-presence gate; declares `[ff_print]` and the `FF_BEFORE_PRINT_START` / `FF_AFTER_PRINT_END` entry points it calls |
-| [`pkgs/anvil-core/payload/config/ff-filament.cfg`](../pkgs/anvil-core/payload/config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
-| [`pkgs/anvil-core/payload/config/ff-runout.cfg`](../pkgs/anvil-core/payload/config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163, reported here in plain words); `ff_toolchange` arms only the mounted tool's sensors |
+| [`pkgs/klipper-config/payload/config/ff-print-macros.cfg`](../pkgs/klipper-config/payload/config/ff-print-macros.cfg) | `/usr/data/config/` | `START_PRINT` / `END_PRINT` / `PAUSE` / `RESUME` / `CANCEL_PRINT`, reconstructed from the app's sequences, plus the `_FF_PREFLIGHT` calibration and tool-presence gate; declares `[ff_print]` and the `FF_BEFORE_PRINT_START` / `FF_AFTER_PRINT_END` entry points it calls |
+| [`pkgs/klipper-config/payload/config/ff-filament.cfg`](../pkgs/klipper-config/payload/config/ff-filament.cfg) | `/usr/data/config/` | `LOAD_FILAMENT` / `UNLOAD_FILAMENT` / `PURGE` — the touchscreen's filament-load sequence (grab tool, purge chute, feed) recovered from the binary; unload is a designed retract (the stock app has none) |
+| [`pkgs/klipper-config/payload/config/ff-runout.cfg`](../pkgs/klipper-config/payload/config/ff-runout.cfg) | `/usr/data/config/` | Runout / clog handling: gives the stock `fd_ex*` / `fm_ex*` sensors a `runout_gcode` that pauses a Mainsail print when the **mounted** tool runs out or clogs (the app's E0162 / E0163, reported here in plain words); `ff_toolchange` arms only the mounted tool's sensors |
 | [`pkgs/klipper-config/payload/config/printer.base.cfg`](../pkgs/klipper-config/payload/config/printer.base.cfg) | `$MODDIR/config/` -> symlinked to `/usr/data/config/printer.base.cfg` | FlashForge's `printer.base.cfg` with the chamber block replaced by `[include printer.chamber.cfg]`. Klipper can override an option but cannot un-declare a section, and the plain Creator 5 has no chamber heating element, so its heater must be **absent** rather than neutralised. `bin/unpack.sh` compares this against each stock package it unpacks and warns if FlashForge's has changed |
 | [`Creator5.cfg`](../pkgs/klipper-config/payload/config/chamber/Creator5.cfg) · [`Creator5Pro.cfg`](../pkgs/klipper-config/payload/config/chamber/Creator5Pro.cfg) | `$MODDIR/config/chamber/<Machine>.cfg` -> symlinked to `/usr/data/config/printer.chamber.cfg` | The one per-model difference: the Pro gets `[heater_generic chamber_heater]` + `[verify_heater]` verbatim from FlashForge, the Creator 5 gets only `[temperature_sensor chamber]` on the same pin. **Both ship in `anvil-klipper-config`** and `anvil-link-prog.sh` links whichever the printer asks for, reading `MACHINE=` out of FlashForge's own `app_startup.sh`. They used to be a package per model, which Conflicted — each owned `config/printer.chamber.cfg`, so opkg refused the pair and the build had to choose. Nothing is edited at build time, and the payload is no longer model-specific |
-| [`pkgs/anvil-core/payload/config/ff-chamber.cfg`](../pkgs/anvil-core/payload/config/ff-chamber.cfg) | `/usr/data/config/` | `M141` / `M191` for the chamber heater (Klipper has neither, and the stock app drove the chamber only from its own UI), plus the gate: the macros ask Klipper whether `heater_generic chamber_heater` exists, so a non-zero chamber target is refused on a machine that does not declare one. Nothing to keep in sync; identical in every package |
+| [`pkgs/klipper-config/payload/config/ff-chamber.cfg`](../pkgs/klipper-config/payload/config/ff-chamber.cfg) | `/usr/data/config/` | `M141` / `M191` for the chamber heater (Klipper has neither, and the stock app drove the chamber only from its own UI), plus the gate: the macros ask Klipper whether `heater_generic chamber_heater` exists, so a non-zero chamber target is refused on a machine that does not declare one. Nothing to keep in sync; identical in every package |
 | [`docs/notes/`](notes/) | (reference only) | Condensed reverse-engineering notes: what the stock app actually does, with binary addresses |
 
 ## ⚠️ Before you start
@@ -62,16 +62,17 @@ documented in the file headers.
 * **Still never edit the JSON under `/usr/data/firmwareRes/config/`.** This
   module no longer reads it, but the touchscreen app still does and rewrites
   those files wholesale — leave it alone.
-* **Klipper lives on the firmware partition.** A FlashForge OTA update will
-  overwrite `/usr/prog/klipper/`, deleting the extras. Keep this repo and
-  re-run step 1 after every firmware update. The `#*#` block in
-  `printer.cfg` is on the data partition and survives.
+* **Klipper lives on the data partition.** The extras install under
+  `/usr/data/anvil/klipper/klippy/extras/`, which a FlashForge OTA cannot
+  delete — but an OTA rewrites the software component the mod boots from, so
+  re-flash the mod after one. The `#*#` block in `printer.cfg` survives either
+  way.
 
 ## Install
 
 A package built from this repo needs no config editing at all. It ships:
 
-* the `ff_*.py` extras, into the Klipper tree it flashes (`bin/patch.sh`)
+* the `ff_*.py` extras, inside the klippy tree `anvil-klipper` installs
 * the `ff-*.cfg`, to `/usr/data/config/` (`run-append.sh`, keeping any you
   edited and leaving the new one as `.mod-new`)
 * the `[include]` lines for all seven, at the end of `printer.base.cfg` —
@@ -93,12 +94,12 @@ root/ssh access is covered in the community
 [Discord](https://discord.gg/tYs3eNEDq)):
 
 ```sh
-# 1. the klippy extras (firmware partition — may need remount rw)
+# 1. the klippy extras (data partition — the tree the klipper service runs)
 scp pkgs/klipper/payload/klipper/klippy/extras/ff_*.py \
-    pwned@PRINTER:/usr/prog/klipper/klippy/extras/
+    pwned@PRINTER:/usr/data/anvil/klipper/klippy/extras/
 
 # 2. the config files (data partition — survives OTA)
-scp pkgs/anvil-core/payload/config/ff-*.cfg \
+scp pkgs/klipper-config/payload/config/ff-*.cfg \
     pwned@PRINTER:/usr/data/config/
 ```
 
@@ -371,7 +372,7 @@ dialog. Drop `pkgs/helixscreen/payload/helixscreen/config/printer_database.d/fla
 `config/printer_database.d/` for auto-detection (`ams_type: tool_changer`,
 `z_offset_calibration_strategy: firmware_managed`). Its default Load/Unload buttons only mount/unmount the tool (`SELECT_TOOL` /
 `UNSELECT_TOOL`); to actually feed or pull filament assign `LOAD_FILAMENT`,
-`UNLOAD_FILAMENT` and `PURGE` from [`pkgs/anvil-core/payload/config/ff-filament.cfg`](../pkgs/anvil-core/payload/config/ff-filament.cfg)
+`UNLOAD_FILAMENT` and `PURGE` from [`pkgs/klipper-config/payload/config/ff-filament.cfg`](../pkgs/klipper-config/payload/config/ff-filament.cfg)
 in Settings → Macro Buttons — a user-assigned macro outranks the backend, and
 the parameter dialog picks up `TOOL` / `TEMP` / `PURGE_TEMP` from the macros.
 

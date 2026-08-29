@@ -176,18 +176,6 @@ case "$S6RC_SHEBANG" in
 esac
 say "s6-rc: database $S6RC_DB_NAME compiled -- $(ls "$S6RC_SRC" | wc -l) definitions"
 
-# --- 5c. CPython 3.13 (shipped)
-# FF_PYTHON points here -- but not for klippy, which runs on the stock 3.8.2.
-# That 3.8.2 has no _sqlite3, which is what pins MOONRAKER_VERSION to 2023.
-# The dev half is never installed, so verify.sh's "no headers" check passes.
-
-# Each python-* recipe asserts its own extension: an aggregate count cannot say
-# WHICH one fell back to a pure-python wheel. A gate in build.sh does not run
-# on a cache hit.
-du -sh "$PAYLOAD_DIR/lib/python$PY_MM" | awk '{print "   "$1"\tlib/python'"$PY_MM"'/"}'
-du -sh "$PAYLOAD_DIR/lib/python$PY_MM/site-packages" \
-    | awk '{print "   "$1"\tlib/python'"$PY_MM"'/site-packages/"}'
-
 # --- 6. SSH
 # Nothing to install: the stock rootfs ships dropbear and an enabled
 # S50dropbear, so ssh is already listening. Only the password is missing.
@@ -209,23 +197,17 @@ else
     skip "root password (set ROOT_PW_HASH)"
 fi
 
-# --- 8. start.sh (web stack on)
-# From the installed payload, but still carried in the component: that is what
-# FlashForge's run.sh copies to /usr/prog, and what keeps a printer bootable
-# when the payload is not there. anvil-link-prog.sh then swaps it for a link.
-say "start.sh: enabling nginx + moonraker"
-cp -f "$PAYLOAD_DIR/prog/start.sh" "$SOFTWARE_DIR/start.sh"
-chmod +x "$SOFTWARE_DIR/start.sh"
-
-# --- 9. firmwareExe -> our wrapper script
-# The stock chain is rcS -> S99factory_test_shell -> app_startup.sh ->
-# firmwareExe, which also starts Klipper: this one file owns the whole
-# userspace boot and leaves the init chain stock. The binary is not kept
-# aside -- flashing the stock package is the uninstall. From the payload, as
-# in section 8.
-say "firmwareExe: installing wrapper (replaces the stock binary)"
-cp -f "$PAYLOAD_DIR/prog/firmwareExe" "$SOFTWARE_DIR/firmwareExe"
-chmod +x "$SOFTWARE_DIR/firmwareExe"
+# --- 8. firmwareExe + start.sh -- anvil-core's, and NOT in the component
+# Both install at $MODDIR/prog/ and anvil-link-prog.sh points the stock paths
+# at them, on the flash path (run-append.sh) and on `opkg upgrade anvil-core`
+# (postinst). Nothing execs either between run.sh copying the component and
+# link-prog running, so the component copy bought no ordering -- and it cost:
+# our wrapper with no payload never starts a UI, it logs and sleeps for ever,
+# turning a failed install into an unbootable printer. Absent, app_startup.sh
+# restores a firmwareExe from a version directory and the stock recovery works.
+# Stock run.sh is set -x, not set -e, so its two cp lines are noisy no-ops.
+say "firmwareExe + start.sh: dropped from the component (anvil-core owns both)"
+rm -f "$SOFTWARE_DIR/firmwareExe" "$SOFTWARE_DIR/start.sh"
 
 # --- 10. anvil.conf
 # anvil.conf is not in anvil-core and is the whole of what is left here:

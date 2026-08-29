@@ -16,7 +16,7 @@
 # Driving the same MOTOR_* macros therefore inherits that behaviour unchanged.
 #
 # Install: copy ff_tool.py and ff_toolchange.py to
-# /usr/prog/klipper/klippy/extras/, then see config/ff-toolchange.cfg.
+# /usr/data/anvil/klipper/klippy/extras/, then see config/ff-toolchange.cfg.
 #
 # Klipper calls Tn only for lines that reach the gcode engine. We ship upstream
 # virtual_sdcard, which passes tool lines straight through, so a bare "Tn" from

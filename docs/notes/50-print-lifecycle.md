@@ -1,7 +1,7 @@
 # Print lifecycle, address-verified
 
 Everything below lives in the APP, not in Klipper: the fork ships only bare
-`[pause_resume]` and `[virtual_sdcard]`. `pkgs/anvil-core/payload/config/ff-print-macros.cfg` reproduces the
+`[pause_resume]` and `[virtual_sdcard]`. `pkgs/klipper-config/payload/config/ff-print-macros.cfg` reproduces the
 sequences for Mainsail-started prints.
 
 **How they are entered now.** `START_PRINT` is no longer something the slicer has to

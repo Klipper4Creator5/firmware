@@ -373,7 +373,9 @@ The package installs the tree under `$MODDIR/klipper`, where nothing reads it
 yet: klippy is still started by the stock `/usr/prog/klipper/klipperDaemon`,
 so `bin/patch.sh` stages the recipe's output into the SOFTWARE component as
 before. Phase 7 of `docs/notes/80-s6-migration.md` is what makes the installed
-copy the live one.
+copy the live one. [Superseded: phase 7 landed. The `klipper` s6-rc service
+execs `$FF_PYTHON` against `$MODDIR/klipper/klippy`, and the software-component
+copy is gone.]
 
 `patch.sh` keeps staging the payload from those same trees, so the shipped
 tarball does not change. The work is mechanical; the risk is in the two builds

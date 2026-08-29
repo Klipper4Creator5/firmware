@@ -263,10 +263,10 @@ sync
 # Overriding from printer.cfg AFTER the include survives every flash, while an
 # edit here is reverted by the next one. Each file says so in its header.
 #
-# printer.base.cfg is on the same footing and needs no rule here: it installs
-# to /usr/prog/klipper/config with the software component, which a flash
-# replaces wholesale. printer.chamber.cfg used to be beside it and is not any
-# more -- see the case below.
+# printer.base.cfg is on the same footing and needs no rule here: it is
+# anvil-klipper-config's, and anvil-link-prog.sh symlinks $MODDIR/config into
+# /usr/data/config, so an upgrade repoints the link rather than editing a file.
+# printer.chamber.cfg goes the same way -- see the case below.
 #
 # moonraker.conf is KEPT when edited. There is no include-and-override seam for
 # it, and a printer reached through a tuned trusted_clients or cors_domains
