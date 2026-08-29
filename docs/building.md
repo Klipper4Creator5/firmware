@@ -28,12 +28,16 @@ run flags. A build cannot reach the docker daemon.
 ```
 fetch-assets.sh  download Mainsail + HelixScreen + Moonraker into vendor/
 unpack.sh   decrypt the stock .tgz, open the software component
-patch.sh    apply the mods to work/software/ and build work/modpayload/
+patch.sh    apply the mods to work/software/, and install the .ipk feed
+            into work/modpayload-root/ to make the payload
 pack.sh     regenerate md5sum.list, tar, encrypt → work/out/<Model>-anvil-<date>.tgz
 verify.sh   simulate every check the printer performs, against the built file
 ```
 
-`make build` runs the first four. `verify.sh` is NOT one of them -- run
+`make build` runs the first four. It needs the .ipk feed to exist first --
+`patch.sh` assembles the payload by installing it -- so `make packages`
+comes before a cold `make build`; patch.sh says so if it is missing.
+`verify.sh` is NOT one of them -- run
 `make verify` after it, as the hardware checklist does. Each is idempotent and
 safe to re-run.
 

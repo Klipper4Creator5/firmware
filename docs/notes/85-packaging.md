@@ -394,7 +394,7 @@ real regression from an expected difference:
   per-file mtimes, so it has never been byte-reproducible and the stated gate
   could never have passed.
 
-What is checked instead: the staged `work/modpayload` **tree** — file list,
+What is checked instead: the assembled `work/modpayload-root` **tree** — file list,
 modes and content hashes — is unchanged except for the components a change
 deliberately rebuilt. The `.ipk` files themselves ARE byte-reproducible and
 that is checked directly: two cold `make packages` runs produce identical
@@ -482,79 +482,158 @@ it and left the one that does sitting in the cache. `pkg_payload_hash` is now
 the one way a recipe keys its own files, and a recipe cannot hash somebody
 else's.
 
-## Phase 2 — install packages on the printer  *(~1–2 days)*
+## Phase 2 — the payload is the feed  *(assembly half: done)*
 
-Most of this phase is now done: `opkg` builds, is packaged, and works on
-mipsel. What remains is the bootstrap and the replica proof.
+Split in two, and only the first half is done.
 
-The bootstrap is the only genuinely interesting part, and it is a chicken and
-egg: opkg cannot install the package that contains opkg. Two answers, and they
-compose —
+**The assembly half — done.** `bin/patch.sh` no longer stages anything. It
+installs the feed into a staging root and ships what lands there:
 
-1. The tarball payload ships `$MODDIR/bin/opkg` directly, as it ships every
-   other binary today. From the second update onward opkg manages everything,
-   including itself.
-2. `pkgs/ipk-install` — POSIX sh, no opkg and no `ar` — installs the first
-   packages onto a machine that has neither. It writes opkg's own on-disk
-   database (`$MODDIR/var/lib/opkg/{status,info/*.{control,list}}`), so opkg
-   adopts what it installed rather than disagreeing with it.
+    ./bin/build-packages.sh                       # the feed
+    opkg --conf <generated> --force-postinstall \
+         install <the runtime set>                # into work/modpayload-root
+    tar -C work/modpayload-root/usr/data/anvil    # the payload
 
-Route 1 is simpler and route 2 is what makes a hand-repaired printer
-recoverable. Both are cheap; ship 1 and keep 2.
+Eight sections that each ran a recipe and copied its build tree are gone, and
+with them the hand-written `PKG_DEV_FILES` prune, three partial ABI gates and
+the last `pkg_out` call. `patch.sh` went from 793 lines to about 700, and what
+is left of it writes `/usr/prog` — FlashForge's tree, which no package of ours
+may touch — plus the three files that are in the payload and in no package.
 
-### What the tarball becomes
+**The on-printer half — not started.** `.install-manifest` still exists and
+`installer/run-append.sh` still deletes by it. Replacing it with opkg's own
+`.list` files changes what happens on real printers during an upgrade and
+rewrites `test/integration/printer/case-upgrade.sh`; it is a separate change
+with a different risk profile. Keeping the halves apart is what made the first
+one provable: on-printer behaviour is unchanged, so correctness reduced to a
+payload diff.
 
-The end state, and the thing every recipe added so far is for: **`bin/pack.sh`
-stops being handed a tree that `bin/patch.sh` assembled, and is handed one that
-was produced by installing the feed.**
+### What it is assembled with
 
-    ./bin/build-packages.sh                 # the feed
-    for p in work/packages/*.ipk; do        # into a staging root
-        pkgs/ipk-install install "$p" --root work/modpayload-root
-    done
-    tar -C work/modpayload-root/usr/data/anvil ...   # the payload
+**A host opkg, not `pkgs/ipk-install`.** `pkg_buildopkg` (`pkgs/lib.sh`) builds
+an x86-64 opkg from the same pinned tarball the mipsel one comes from, cached
+at `work/.opkg-host`, shaped as `pkg_buildpython`'s twin. `ipk-install` exists
+because the *printer* has no opkg and no `ar`; neither is true in the build
+container, and the imitation resolves no `Depends`, enforces no `Conflicts`,
+reads no `Provides` and handles no `conffiles`. It keeps its job — repairing a
+machine by hand — and is off the build path, which
+`test_ipk_install_is_not_on_the_build_path` now enforces.
 
-At that point `bin/patch.sh` has no staging left in it at all. Sections 3, 4,
-5, 5b, 5c, 5d and 10 exist today only to copy a recipe's output tree into
-`work/modpayload`, and every one of those copies is a second description of
-what a package already contains — the same class of duplication the recipes
-themselves removed one level down. The payload becomes a *view* of the feed
-rather than a parallel assembly of it, and "what does this release install?"
-has one answer, readable with `opkg-list-fields` instead of by reading a
-1400-line shell script.
+The database is therefore written by the same program that will later read it
+on the printer, which is what makes "phase 2 is a swap rather than a
+migration" true rather than an argument about format compatibility.
 
-What still cannot move: sections 1, 2, 7, 8, 9 and 11 do not write to
-`$MODDIR` at all. They patch the SOFTWARE component (`/usr/prog`) — the
-Klipper tree, the toolchanger configs, the root password, `start.sh`,
-`firmwareExe` and the `run.sh` injection. Those are edits to somebody else's
-filesystem, not packages of ours, and they stay in `patch.sh` until phase 7 of
-`docs/notes/80-s6-migration.md` moves Klipper under `$MODDIR` and leaves
-`firmwareExe` as the only file placed outside `/usr/data`.
+**`--prefix=$MODDIR`, and it is the trap.** opkg bakes its state directory in
+at compile time (`libopkg/Makefile.am`: `-DVARDIR="@localstatedir@"`). Built
+with any other prefix it looks for its status file somewhere else no matter
+what `--offline-root` it is given, comes up believing nothing is installed,
+and reinstalls the world. `--disable-shared` is the second half: the prefix
+goes into `libopkg` too, so a shared build produces a `bin/opkg` that looks
+for `libopkg.so.1` at a path that exists on the printer and not here.
+`pkg_buildopkg` checks both against the binary it produced.
 
-Section 1 is now the *staging* half of that: the Klipper BUILD is
-`pkgs/klipper` and `anvil-klipper` installs the tree under `$MODDIR/klipper`
-like every other package, so what is left in `patch.sh` is a `cp -a` into
-`/usr/prog` plus the `chelper.tar` the stock installer's `run.sh` extracts.
-Phase 7 deletes those lines rather than moving a build.
+**A chroot was tried and rejected.** It works, and it marks packages
+`installed` without `--force-postinstall`, but it needs root: unprivileged
+`chroot` is `Operation not permitted` and `unshare -Ur` is blocked by Docker's
+seccomp profile. The payload then comes out root-owned and the build-lane user
+cannot delete it, so the next `make build` dies on its own `rm -rf` — the
+failure `Makefile:48-61` exists to prevent. It is also more code: opkg plus an
+`ldd` loop for ten shared libraries, against a five-line config file.
 
-**The CPython blocker is gone.** It read: "section 5c is 800 lines and builds
-the interpreter, seven static libraries and eighteen cross-built wheels; until
-that is a set of recipes there is no feed that contains everything the payload
-needs." It is a set of recipes now — 40 packages, and the loop above would
-produce a tree with Python in it. Every recipe the payload needs exists.
+### What the set is
 
-**What blocks it now is smaller and different.** `pkgs/ipk-install` has to run
-against a staging root rather than a live one, `bin/pack.sh` has to take its
-tree from there, and section 10b's generated `.install-manifest` has to give
-way to opkg's own `.list` files — which `pkgs/ipk-install` already writes, and
-already notes is what makes the hand-rolled manifest redundant. None of that
-needs a compiler.
+Derived from `pkg_recipes`, which is already `PKG_WHEN`-gated — so
+`BUILD_HELIX`, `BUILD_MAINSAIL`, `BUILD_MOONRAKER`, `BUILD_TOOLCHANGE` and
+`BUILD_KLIPPER` are read in the `pkg.conf` that owns each and nowhere else.
+31 packages of 41 recipes.
 
-**Gate:** a replica install driven by packages leaves the same tree the
-tarball leaves, and an upgrade removes exactly what the previous version
-installed — the property `test-upgrade` already checks for the tarball. The
-replica is the only place the printer's own busybox and tar get a vote, and
-neither has been asked yet.
+**`-dev` is filtered by package NAME, not by "has a runtime half"**, and the
+first attempt got this wrong. `execline`, `s6` and CPython ship both halves
+and `pkg_ipk` names the runtime one; `zlib`, `openssl`, `sqlite`, `expat`,
+`libffi`, `xz`, `bzip2`, `libarchive` and `skalibs` ship *only* a dev package
+and say so by setting `PKG_NAME=anvil-<x>-dev` outright. Asking the first
+question installed all nine — 40 packages and 2165 ELF objects where there
+should be 31 and 154.
+
+The model is the one fact opkg cannot work out for itself: both chamber
+configs are built every time, they own the same `config/printer.chamber.cfg`,
+and they `Conflict`. opkg refuses the pair with exit 255 — measured — so
+`$TARGET_MACHINE` picks one.
+
+### The database ships
+
+`$MODDIR/var/lib/opkg/{status,info/*}` is in the payload and in
+`.install-manifest`. This is coherent with `installer/run-append.sh`: pass 1
+deletes what the *old* manifest named, including the old database, and the new
+tarball then extracts one that exactly describes the payload being extracted.
+A `.tgz` flash is a full reset of `/usr/data/anvil`.
+
+The alternatives are worse. Leaving it out defeats the point — an opkg with no
+`status` believes nothing is installed. Keeping it out of the *manifest* only
+is worse still: a package release N shipped and N+1 dropped would keep its
+stanza forever while its files were gone.
+
+**Known gap.** A printer that runs `opkg install` for something extra and then
+flashes a `.tgz` keeps that package's files — they are in no manifest of ours
+— but loses its stanza. That is inherent to running two install mechanisms at
+once, and it dissolves when the manifest gives way to opkg's `.list` files.
+
+**`Installed-Time` is normalised** after installing. opkg takes it from
+`time()` and honours `SOURCE_DATE_EPOCH` only for a man-page date at configure
+time, so two builds of one commit differed by one line per package — measured,
+fixed, measured again.
+
+### Maintainer scripts: what we learned, and what it costs
+
+**opkg 0.7.0 does not run maintainer scripts under `--offline-root`**
+(`libopkg/pkg.c:1339`, `opkg_cmd.c:342`) unless `--force-postinstall`, and it
+**sets no `IPKG_INSTROOT` at all** — the variable does not appear anywhere in
+its source.
+
+The install passes `--force-postinstall`, but only to make opkg mark packages
+`installed` rather than `unpacked`: nothing runs opkg on the printer after
+`run-append.sh` extracts the tarball, so the extraction *is* the install and a
+database saying otherwise would make the first real `opkg upgrade` argue with
+the filesystem. No recipe defines a maintainer script, so nothing runs.
+
+This contradicts an assumption made earlier in this document. The plan for
+`firmwareExe` and `start.sh` was to package them and let a postinst place them
+on `/usr/prog` from a staging root. That does not work as written: the script
+would run on the build host with no `IPKG_INSTROOT` to tell it where the root
+is. The options when that step arrives are to set an environment variable of
+our own and have the script read it, or to leave those two files as the
+`prog/` copies they are today. It needs its own design; it is not free.
+
+### The gate this cleared
+
+A payload built from the parent commit and from the migration, on the
+synthetic stock fixture with the real vendored assets:
+
+| | |
+|---|---|
+| files removed | 0 |
+| content changes among 2778 shared files | 1 — `.install-manifest`, which lists the payload |
+| mode changes | 0 |
+| symlink changes | 0 |
+| added | `klipper/**`, `var/lib/opkg/**`, `bin/opkg` |
+| two builds in a row | byte-identical |
+
+`bin/verify.sh` passes every check including the ship boundary; `make test`
+runs `build-packages → unpack → patch → pack → verify` with 9 gates green.
+
+**One bug fell out of it.** `PKG_EXCLUDE` was applied with `find -name`, which
+matches a basename at any depth, so `.version` deleted Mainsail's own
+`www/mainsail/.version` along with the recipe stamp. `anvil-mainsail` had been
+shipping without it, invisibly, because the payload was copied from
+`work/pkg` where the file survived. Making the package's contents the
+payload's contents is what surfaced it.
+
+**Still owed by this phase**, and the allowlist in
+`test_every_payload_file_is_owned_by_a_package` is the list: `.install-manifest`
+(generated), `anvil.conf` and `config/moonraker-custom.conf` (user state, and
+arguably `conffiles` once the on-printer half lands), `bin/busybox` (optional,
+from `config.env`), and opkg's own `var`, `var/lib`, `var/run`. Six entries,
+three of them opkg's.
 
 ## Phase 3 — a feed  *(~2–3 days)*
 

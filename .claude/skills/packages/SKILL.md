@@ -74,6 +74,12 @@ pkg_end
 | `pkg_ship <glob>...` | copy from staging into the package; globs are relative to the prefix |
 | `pkg_end` | seal the cache |
 
+`pkg_buildopkg` is not a recipe verb: it builds the x86-64 opkg that
+`bin/patch.sh` assembles the payload with, cached at `work/.opkg-host`. It has
+to be configured `--prefix=$MODDIR` and `--disable-shared` — opkg bakes its
+state directory into both the binary and libopkg at compile time — and it
+checks its own output for both.
+
 Three more exist only for python packages:
 
 | verb | what it does |
