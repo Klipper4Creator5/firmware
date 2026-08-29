@@ -59,9 +59,9 @@
 #
 # THE BROWSER UI IS DELIBERATELY NOT CONSULTED. Everything here travels over
 # moonraker's API, so klipper and moonraker are the only services involved.
-# Which browser UI is installed -- Mainsail, Fluidd, none at all with
-# MOD_WEB=0 -- is a build-time choice that this migration has no stake in, so
-# it is not waited for, not checked, and not mentioned again.
+# Which browser UI is installed -- Mainsail, Fluidd, or nothing at all on a
+# BUILD_MAINSAIL=0 build -- is a packaging choice that this migration has no
+# stake in, so it is not waited for, not checked, and not mentioned again.
 #
 # WHAT THE PANEL SHOWS. All of this happens before HelixScreen starts, so the
 # screen is black for as long as it takes -- which on a first boot is the

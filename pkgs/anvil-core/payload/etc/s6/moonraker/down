@@ -5,26 +5,21 @@ live in it rather than in a comment somewhere else that would drift away from
 it. (case-moonraker.sh checks that too, with this text in place, because a
 fact this file depends on is worth measuring rather than believing.)
 
-WHY MOONRAKER SHIPS DOWN. The gate on the web stack is MOD_WEB in anvil.conf,
-and it is ONE switch across two services -- init.d/S60nginx and
-init.d/S62moonraker -- because "no web stack" is one intention and there is no
-useful printer with Mainsail and no moonraker behind it. That switch is read
-AT RUNTIME, on the printer, out of a file the user edits over ssh; this payload
-is built ONCE, weeks earlier, by bin/patch.sh. So the scandir cannot be where
-the decision is made: a service directory that ships without this file is a
-service the scanner starts a fraction of a second after init.d/S40s6 runs,
-before anything has read anvil.conf and regardless of what it says. MOD_WEB=0
-would mean "moonraker runs for two seconds on every boot and is then shot",
-which is not what it says on the tin and is worse than not having the switch.
+WHY MOONRAKER SHIPS DOWN. It is ORDERING. A service directory that ships
+without this file is a service the scanner starts a fraction of a second after
+init.d/S40s6 runs -- before init.d/S62moonraker has checked a single one of its
+prerequisites, before init.d/S60nginx has put a web server in front of it, and
+before init.d/S70klipper has started the klippy it wants to talk to.
 
 So the shipped state is "down", meaning: THE SCANNER DOES NOT DECIDE WHEN
-MOONRAKER STARTS. init.d/S62moonraker does, at the point in the boot where
-anvil.conf has been sourced, by calling svc_s6_up -- which overrides this file
-for as long as that s6-supervise lives. MOD_WEB=1 and it comes up there;
-MOD_WEB=0 and it never comes up at all, which is exactly what the switch has
-always promised. The same is then true of every other way in: `S62moonraker
-start` over ssh re-reads anvil.conf, and a user who sets MOD_WEB=0 and reboots
-gets no API server rather than one that has to be caught and stopped.
+MOONRAKER STARTS. init.d/S62moonraker does, at the point in the boot where the
+things it depends on are actually there, by calling svc_s6_up -- which
+overrides this file for as long as that s6-supervise lives.
+
+This used to be argued from a switch, MOD_WEB, which no longer exists. Nothing
+above depended on it: the reason the scandir cannot decide is that the scandir
+runs before the boot does, and that was true before there was a flag and is
+true now that there is not one.
 
 IT MATTERS MORE HERE THAN ANYWHERE ELSE, and that is worth saying plainly.
 Moonraker is not a service that idles when it is started too early: it opens
@@ -48,9 +43,9 @@ until something runs `S62moonraker start` again. That is a rare failure
 that crashes) with an honest signal (`S62moonraker status` says it is not
 running, and says so from s6-svstat rather than from a pidfile) and a one-line
 fix from an ssh session. The alternative -- deleting this file at runtime once
-MOD_WEB has been read -- buys back that corner case at the price of a payload
-that rewrites its own install tree, which every path in this mod is arranged
-not to do.
+the boot has got far enough -- buys back that corner case at the price of a
+payload that rewrites its own install tree, which every path in this mod is
+arranged not to do.
 
 This file is not a record of anything having gone wrong: it is the state
 moonraker ships in, on every build, and nothing removes it.

@@ -110,14 +110,20 @@ This distinction is the one to keep straight:
   defaulted in `bin/common.sh`, never present on the printer.
   (`BUILD_TOOLCHANGE`, `BUILD_MAINSAIL`, `BUILD_MOONRAKER`,
   `BUILD_HELIX`.)
-* **`MOD_*`** are runtime switches. They are written into
+* **`MOD_*`** are runtime tunables. They are written into
   `/usr/data/anvil/anvil.conf`, which the printer re-reads at every boot, so
   they can be changed over ssh afterwards and survive a mod update.
-  (`MOD_WEB`, `MOD_CAM`, `MOD_UI`, `MOD_WIFI`, plus the `MOD_CAM_*` tunables.)
-  `MOD_SSH` is the odd one out: it is written to the same file, but nothing on
-  the printer reads it — it is consumed at build time by `bin/patch.sh` to
-  decide whether to set a root password, and ssh itself comes from the stock
-  `/etc/init.d/S50dropbear` regardless.
+  (`MOD_SPLASH`, `MOD_STARTUP`, `MOD_IMPORT`, `MOD_S6`, the `MOD_CAM_*` camera
+  settings and the `NICE_*` priorities.)
+
+  There used to be five more — `MOD_WEB`, `MOD_CAM`, `MOD_UI`, `MOD_SSH`,
+  `MOD_WIFI` — and they are gone. Each was an on/off switch that defaulted to
+  on, and what each described was a half-installed printer: Mainsail with no
+  moonraker behind it, a screen dark on purpose, a root password deliberately
+  not set on a machine whose recovery story is ssh. The web stack, the camera,
+  the screen and wifi now run because they are installed. **To leave a piece
+  out, leave it out** — that is what the `BUILD_*` flags are for — or
+  `opkg remove` it on the printer.
 
 ## Third-party pieces are downloaded, not vendored
 

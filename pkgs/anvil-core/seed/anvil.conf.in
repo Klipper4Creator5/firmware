@@ -1,18 +1,22 @@
 # /usr/data/anvil/anvil.conf -- runtime switches. Edit on the printer, reboot.
 # PRESERVED across mod updates.
 
-# Web stack: nginx (Mainsail on :80) + moonraker (:7125).
-# The only one there is -- FlashForge's HTTP API went with firmwareExe.
-# 0 = no web UI at all, ssh only.
-MOD_WEB=1
-
-# Camera: mjpg-streamer on :8080, proxied by nginx at /webcam/. The binary is
-# FlashForge's own, already on the firmware partition; firmwareExe used to be
-# what started it. Optional tunables, defaults shown:
+# FIVE SWITCHES USED TO BE IN THIS FILE and are not any more: MOD_WEB (the web
+# stack), MOD_CAM (the camera), MOD_UI (the touchscreen), MOD_WIFI (wlan0) and
+# MOD_SSH (which was never read on the printer at all). All five defaulted to
+# 1, and what each really offered was a partly-installed mod -- a state nobody
+# chose on purpose and everything downstream had to keep a second answer for.
+# The web stack, the screen and wifi now start because they are installed, and
+# not starting them is `opkg remove`, or a stock FlashForge package.
+#
+# The camera is the one worth spelling out, because it looks like a switch is
+# missing: mjpg-streamer on :8080, proxied by nginx at /webcam/, from
+# FlashForge's own binary on the firmware partition. A printer with no camera
+# needs no setting -- init.d/S65camera finds no device, says so in the boot log
+# and stops. These tune it when there IS one; defaults shown:
 #MOD_CAM_RES=1280x720
 #MOD_CAM_FPS=30
 #MOD_CAM_PORT=8080
-MOD_CAM=1
 
 # Boot splash: a line of text on the panel from the moment the mod gets
 # control until HelixScreen paints. Without it the screen is black for the
@@ -41,20 +45,6 @@ MOD_STARTUP=1
 # never runs again. 0 = never migrate (you calibrate by hand); the startup
 # wait above still happens.
 MOD_IMPORT=1
-
-# Touchscreen UI: HelixScreen, started by the firmwareExe wrapper.
-# 0 = boot headless (blank screen); ssh and Mainsail are unaffected.
-MOD_UI=1
-
-# SSH: dropbear on :22. NOT read on the printer -- ssh comes from the stock
-# /etc/init.d/S50dropbear and is up regardless. This is here because the value
-# is baked in at build time (it decides whether a root password was set);
-# editing it now changes nothing.
-MOD_SSH=1
-
-# WiFi: bring up wlan0 + wpa_supplicant + udhcpc, because firmwareExe used to
-# do it and no longer runs.
-MOD_WIFI=1
 
 # Process supervision: s6-svscan, started first by init.d/S40s6 and watching
 # $MODDIR/etc/s6 for service directories: nginx, the camera and moonraker are
@@ -94,6 +84,7 @@ NICE_MOONRAKER=5
 # The streamer: the most deserving. It is pure background work that nothing
 # waits on, and if the camera hands over YUYV rather than MJPEG it encodes
 # every frame in software, which is the largest CPU load the mod can add.
-# If a print dies with "Timer too close" and this is the difference, the
-# camera was the cause and MOD_CAM=0 is the answer, not a nicer number.
+# If a print dies with "Timer too close" and this is the difference, the camera
+# was the cause: stop it (`S65camera stop`) or unplug it, rather than reaching
+# for a nicer number.
 NICE_CAM=10

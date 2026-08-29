@@ -13,11 +13,17 @@
 #
 # HelixScreen is the only UI: FlashForge's firmwareExe is retired and there is
 # nothing to fall back to. There is no crash counter and no automatic headless
-# latch -- the UI is started whenever it is installed and MOD_UI is not 0.
-# To stop it, set MOD_UI=0 in /usr/data/anvil/anvil.conf and reboot; ssh comes
-# from the stock /etc/init.d/S50dropbear, which busybox init ran long before
-# this script, so it is up regardless of what happens here, and so are
-# S60nginx/S62moonraker (Mainsail) and S70klipper.
+# latch, and there is no MOD_UI either -- the UI is started whenever it is
+# INSTALLED, which is the one fact that decides it. A build that does not want
+# the screen is BUILD_HELIX=0, which ships no anvil-helixscreen and lands in
+# have_helix() below; a printer that wants it off can `opkg remove
+# anvil-helixscreen` or stop the process. Neither needs a line in anvil.conf,
+# and the flag cost every headless question two answers -- "not installed" and
+# "installed but switched off" -- that behave identically from the screen.
+#
+# Whatever happens here, ssh comes from the stock /etc/init.d/S50dropbear,
+# which busybox init ran long before this script, so it is up regardless, and
+# so are S60nginx/S62moonraker (Mainsail) and S70klipper.
 MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 # start/stop/status/liveness, shared with the other services. See
@@ -37,12 +43,7 @@ have_helix() { [ -x $MODDIR/helixscreen/bin/helix-launcher.sh ] || [ -x $MODDIR/
 start() {
     want=helix
 
-    if [ "${MOD_UI:-1}" = 0 ]; then
-        svc_say "MOD_UI=0 in anvil.conf -- staying headless"
-        want=none
-    fi
-
-    if [ "$want" = helix ] && ! have_helix; then
+    if ! have_helix; then
         svc_say "HelixScreen is not installed -- staying headless"
         want=none
     fi
@@ -64,7 +65,7 @@ stop() {
 
 status() {
     svc_say "choice: `cat $CHOICE 2>/dev/null || echo unset`"
-    svc_say "MOD_UI: ${MOD_UI:-1}"
+    svc_say "installed: `have_helix && echo yes || echo no`"
 }
 
 svc_dispatch "$@"

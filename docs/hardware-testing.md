@@ -110,8 +110,8 @@ screen and there is nothing to fall back to:
   `firmwareExe` — not any init script — that ran `/usr/prog/klipper/start.sh`.
   Without this the printer would boot to a working screen and be unable to
   move.
-- If the UI misbehaves, set `MOD_UI=0` in `/usr/data/anvil/anvil.conf` and
-  reboot: the printer comes up **headless** — no UI started at all. ssh and
+- If the UI misbehaves, `opkg remove anvil-helixscreen` and reboot: the
+  printer comes up **headless** — S80ui finds nothing to start. ssh and
   Mainsail are unaffected either way. There is no automatic latch; nothing
   stops the UI unless you do.
 
@@ -255,14 +255,15 @@ machine will make it light up again:
 ```sh
 ssh root@PRINTER
 /usr/data/anvil/init.d/S80ui status        # what did it choose, and why
-# chose "none"  -> MOD_UI=0, or HelixScreen is not installed
+# chose "none"  -> HelixScreen is not installed
 # chose "helix" -> it was started and failed on its own; see its log
 ```
 
-`MOD_UI=0` only stops it being started at all — useful to silence a UI that
-interferes with something else, not a repair. The actual fix is to flash a
-package again: the mod, if you have a corrected build, or the stock FlashForge
-package for your model to go back to FlashForge's own interface.
+`opkg remove anvil-helixscreen` only stops it being started at all — useful to
+silence a UI that interferes with something else, not a repair. The actual fix
+is to flash a package again: the mod, if you have a corrected build, or the
+stock FlashForge package for your model to go back to FlashForge's own
+interface.
 
 ---
 

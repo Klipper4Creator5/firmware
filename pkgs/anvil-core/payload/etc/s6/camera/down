@@ -3,24 +3,22 @@
 # contents, so this text is here purely for whoever finds the file on a printer
 # and wants to know why it exists.
 #
-# WHY THE CAMERA SHIPS DOWN. MOD_CAM lives in /usr/data/anvil/anvil.conf and is
-# read at RUNTIME, on the printer, by a user who may have edited it after the
-# install; this payload is built ONCE, in CI, months earlier. So the build
-# cannot know whether the camera is wanted, and the alternative -- shipping no
-# `down` file and letting bin/patch.sh drop one in when MOD_CAM=0 -- would bake
-# a build-time answer into the image and quietly ignore the file the user
-# actually edits.
+# WHY THE CAMERA SHIPS DOWN. The moment s6-svscan notices this directory it
+# starts an s6-supervise for it, and without this file that supervise would
+# launch mjpg-streamer immediately -- before payload/init.d/S65camera has
+# looked for the video device, checked that FlashForge's streamer binary is
+# still on the firmware partition where it expects it, or read the resolution
+# and port out of anvil.conf. Started that early it would fail on a printer
+# with no camera, be restarted, and fail again, filling the boot log with the
+# one message that is guaranteed not to be the actual problem.
 #
-# Shipping `down` unconditionally moves the decision to the only place that can
-# make it. The moment s6-svscan notices this directory it starts an
-# s6-supervise for it, and without this file that supervise would launch the
-# streamer immediately, before any init script had read anvil.conf -- MOD_CAM=0
-# would mean "the camera runs for a second and is then killed", which is not
-# what it says. With this file the service sits down and idle, costing one
-# ~30KB supervisor and nothing else, until payload/init.d/S65camera -- which
-# HAS read anvil.conf -- brings it up with `s6-svc -u`.
+# This used to be argued from a switch, MOD_CAM, which no longer exists. The
+# argument survives it unchanged, because it was never about the switch: it is
+# that the SCANNER cannot make this decision and S65camera can. With this file
+# the service sits down and idle, costing one ~30KB supervisor and nothing
+# else, until S65camera brings it up with `s6-svc -u`.
 #
 # The state is not sticky across boots, and that is correct: `down` is consulted
 # by s6-supervise when the scandir is scanned, which happens fresh on every
-# boot, so a camera someone brought up by hand does not silently outlive the
-# MOD_CAM=0 they set afterwards.
+# boot, so a camera brought up by hand for a test does not silently outlive the
+# session it was brought up in.

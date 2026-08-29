@@ -47,7 +47,7 @@ S60nginx     nginx (Mainsail) on :80
 S62moonraker moonraker on :7125
 S65camera    mjpg-streamer on :8080 (nginx proxies it at /webcam/)
 S70klipper   Klipper
-S80ui        decides whether the UI runs (MOD_UI, HelixScreen installed?)
+S80ui        decides whether the UI runs (is HelixScreen installed?)
 ```
 
 nginx and moonraker were one script, `S60web`, until they were split. They fail

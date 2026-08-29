@@ -27,11 +27,14 @@
 # is what starts the supervisor this script now hands the work to, and that
 # ordering is not a coincidence either -- see below.
 #
-# MOD_WEB=0 gates BOTH scripts, and does NOT fall back to anything: it leaves
-# the printer with ssh and the touchscreen only. It is a debugging switch, not
-# a way back to stock -- that is a stock FlashForge package. It stays one
-# switch across the two scripts because "no web stack" is one intention; there
-# is no useful printer with Mainsail and no moonraker behind it.
+# THERE IS NO SWITCH ANY MORE. This script and S62moonraker used to read
+# MOD_WEB out of anvil.conf and return early if it was 0, which left a printer
+# with ssh and the touchscreen only. It was described as a debugging switch and
+# it earned that description exactly once; what it cost the rest of the time
+# was a second state for every question anyone asked about the web stack --
+# every gate, every test, every `down` file argued about both. Mainsail and
+# moonraker are what this mod IS. A printer that does not want them wants a
+# stock FlashForge package, which is a thing that exists and is one flash away.
 #
 # WHAT CHANGED WHEN s6 ARRIVED, and what deliberately did not. nginx is now a
 # supervised service: $MODDIR/etc/s6/nginx/ holds a `run` script, s6-supervise
@@ -49,11 +52,13 @@
 # for: the waiting is done by C that s6 maintains rather than by a `while
 # kill -0 ...; sleep 1` we maintain, and `restart` cannot race its own start.
 #
-# WHERE THE MOD_WEB GATE LIVES NOW. In this file, exactly as before, and NOT in
-# the scandir -- $MODDIR/etc/s6/nginx/down ships in the payload precisely so
-# that the scanner never makes that decision. anvil.conf is read at runtime and
-# the payload is built once; the long version of that argument is written in
-# the `down` file itself, next to the thing it explains.
+# WHY $MODDIR/etc/s6/nginx/down STILL SHIPS, now that no flag needs it. It is
+# ORDERING, and it always was the larger half of the argument: s6-svscan starts
+# a service the instant the directory appears, which is before this script has
+# checked that nginx exists, that its config is where it thinks it is, and that
+# moonraker is coming up behind it. `down` means the scanner supervises and
+# waits, and start() below is what decides the moment. The long version is in
+# the `down` file, next to the thing it explains.
 MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 # The library path and the interpreter, from the one file that defines them.
@@ -139,9 +144,9 @@ await_supervisor() {
 #
 #   * The failure this would otherwise produce is a printer with no web UI and
 #     no way to be told why, because the way you would be told is a web UI.
-#     ssh is the remaining door and it is the one MOD_WEB=0 leaves you; a
-#     printer that loses Mainsail because a SUPERVISOR did not build has lost
-#     it for a reason that has nothing to do with nginx.
+#     ssh is the remaining door; a printer that loses Mainsail because a
+#     SUPERVISOR did not build has lost it for a reason that has nothing to do
+#     with nginx.
 #   * The old path is not hypothetical or unmaintained -- it is the code that
 #     shipped for the whole life of this script, it is nine lines, and
 #     case-moonraker.sh still exercises it, because that case starts nginx
@@ -175,7 +180,6 @@ start_unsupervised() {
 }
 
 start() {
-    [ "${MOD_WEB:-1}" = "1" ] || { svc_say "disabled in anvil.conf (MOD_WEB=0)"; return 0; }
     # The two prerequisites this script has always checked, in the same order
     # and with the same words, because they are the two things that are
     # actually missing when nginx does not start and neither of them is any
@@ -212,9 +216,9 @@ start() {
     fi
 
     # And up it goes. svc_s6_up is `s6-svc -wu -u` with a bound: it asks for the
-    # service to be brought up -- overriding the `down` file, which is how the
-    # MOD_WEB gate above turns into a running server -- and does not return
-    # until it IS up. 10 rather than the default 15 seconds because nginx
+    # service to be brought up -- overriding the `down` file, which is how a
+    # supervised-but-idle service becomes a running server -- and does not
+    # return until it IS up. 10 rather than the default 15 seconds because nginx
     # coming up is a bind() and a fork() and nothing else: it is either up in
     # well under a second or it is not coming up at all, and every second spent
     # here is a second firmwareExe is not spending on moonraker, the camera and

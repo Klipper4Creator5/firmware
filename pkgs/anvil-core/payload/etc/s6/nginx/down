@@ -5,24 +5,19 @@ live in it rather than in a comment somewhere else that would drift away from
 it. (The gate checks that too, with this text in place, because a fact this
 file depends on is worth measuring rather than believing.)
 
-WHY NGINX SHIPS DOWN. The gate on the web stack is MOD_WEB in anvil.conf. It
-is read AT RUNTIME, on the printer, from a file the user edits over ssh -- and
-this payload is built ONCE, weeks earlier, by bin/patch.sh. So the scandir
-cannot be where the decision is made: a service directory that ships without
-this file is a service the scanner starts a fraction of a second after
-init.d/S40s6 runs, before anything has read anvil.conf and regardless of what
-it says. MOD_WEB=0 would mean "nginx runs for two seconds on every boot and is
-then shot", which is not what it says on the tin and is worse than not having
-the switch.
+WHY NGINX SHIPS DOWN. It is ORDERING. s6-svscan starts a service the instant
+it notices the directory, which is a fraction of a second after init.d/S40s6
+runs -- before init.d/S60nginx has checked that the nginx binary is where it
+thinks it is, before its config has been put in place, and before moonraker
+is coming up behind it. A web server that binds :80 at that moment serves
+Mainsail a backend that does not exist yet, and the first thing a user sees is
+a UI blaming Klipper for something nginx did.
 
-So the shipped state is "down", meaning: THE SCANNER DOES NOT DECIDE WHEN
-NGINX STARTS. init.d/S60nginx does, at the point in the boot where anvil.conf
-has been sourced, by calling svc_s6_up -- which overrides this file for as
-long as that s6-supervise lives. MOD_WEB=1 and it comes up there; MOD_WEB=0
-and it never comes up at all, which is exactly what the switch has always
-promised. The same is then true of every other way in: `S60nginx start` over
-ssh re-reads anvil.conf, and a user who sets MOD_WEB=0 and reboots gets no web
-server rather than a web server that has to be caught and stopped.
+This used to be argued from a switch, MOD_WEB, which no longer exists. The
+argument was never really about the switch: it was that THE SCANNER DOES NOT
+DECIDE WHEN NGINX STARTS. init.d/S60nginx does, at the point in the boot where
+its prerequisites have been checked, by calling svc_s6_up -- which overrides
+this file for as long as that s6-supervise lives.
 
 THE COST, stated honestly, because it is the one thing this arrangement gives
 up. `down` is consulted when s6-supervise STARTS, not when the service dies:
@@ -35,9 +30,9 @@ that fresh one reads this file, and nginx stays down until something runs
 program that blocks in poll() and is not the thing that crashes) with an
 honest signal (`S60nginx status` says it is not running, and says so from
 s6-svstat rather than from a pidfile) and a one-line fix from an ssh session.
-The alternative -- deleting this file at runtime once MOD_WEB has been read --
-buys back that corner case at the price of a payload that rewrites its own
-install tree, which every path in this mod is arranged not to do.
+The alternative -- deleting this file at runtime once the boot has got far
+enough -- buys back that corner case at the price of a payload that rewrites
+its own install tree, which every path in this mod is arranged not to do.
 
 This file is not a record of anything having gone wrong: it is the state nginx
 ships in, on every build, and nothing removes it.

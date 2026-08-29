@@ -86,10 +86,10 @@ would let those waits be declared instead of coded.
 
 ## What neither one replaces
 
-`anvil-service.sh` is not only supervision. `MOD_WEB`/`MOD_CAM` gating,
-`anvil-env.sh`'s library path and `FF_PYTHON`, `S70klipper`'s `force-start`
-handoff to `bin/ff-startup.py`, and the MCU-retry that counts attempts and
-gives up all remain ours. A supervisor restarts blindly; it cannot tell "MCU
+`anvil-service.sh` is not only supervision. The prerequisite checks each init
+script makes before it brings its service up, `anvil-env.sh`'s library path and
+`FF_PYTHON`, `S70klipper`'s `force-start` handoff to `bin/ff-startup.py`, and
+the MCU-retry that counts attempts and gives up all remain ours. A supervisor restarts blindly; it cannot tell "MCU
 handshake failed" from "clean exit".
 
 And `firmwareExe` runs `$MODDIR/init.d/S*` one at a time in the foreground, in

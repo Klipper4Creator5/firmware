@@ -159,23 +159,14 @@ ready_report() {
 }
 
 start() {
-    # MOD_CAM, and the reason the check is here rather than in the payload. The
-    # service directory ships with a `down` file so that s6 never starts the
-    # streamer on its own (see the long note inside that file); this line is
-    # the other half of that decision -- the runtime read of the runtime
-    # config, in the one place that has already sourced anvil.conf. A user who
-    # sets MOD_CAM=0 and reboots gets a supervised service sitting idle, which
-    # costs one ~30KB s6-supervise and no camera at all.
-    if [ "${MOD_CAM:-1}" != "1" ]; then
-        svc_say "disabled by MOD_CAM"
-        # ...and if it happens to be up -- MOD_CAM was flipped and this is a
-        # `restart`, not a boot -- take it down, because "disabled" that leaves
-        # the camera streaming is a lie the old script never had to tell.
-        if svc_s6_running && [ -d "$S6DIR" ]; then
-            svc_s6_down "$S6NAME" 15 >/dev/null 2>&1
-        fi
-        return 0
-    fi
+    # MOD_CAM USED TO BE READ HERE and is gone. A printer with no camera does
+    # not need a switch: the checks below already find that out -- there is no
+    # $VIDEO, mjpg-streamer says so, and the log says which. The switch existed
+    # to skip a 35-second wait for a camera that was known to be absent, and
+    # what it actually did was give every question about the camera two
+    # answers. The `down` file in the service directory stays, for the reason
+    # written inside it: it is what stops s6 starting the streamer before this
+    # script has looked for the device.
     s6_or_complain || return 1
     if [ ! -d "$S6DIR" ]; then
         svc_warn "no service directory at $S6DIR -- this payload did not ship it"

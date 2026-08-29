@@ -191,7 +191,7 @@ jobs:
           Mainsail run from their own services, before and independently of
           the UI, so reach it at `http://<printer-ip>/` or ssh in and read
           `/usr/data/logs/helixscreen.log`. There is no automatic fallback --
-          set `MOD_UI=0` in `/usr/data/anvil/anvil.conf` to boot headless on
+          `opkg remove anvil-helixscreen` to boot headless on
           purpose. **To go back to stock**, put FlashForge's own package on a
           USB stick and power on -- that path is tested on every release too.
 

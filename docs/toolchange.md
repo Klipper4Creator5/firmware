@@ -157,7 +157,8 @@ scp pkgs/anvil-core/payload/config/ff-*.cfg \
    which the `firmwareExe` wrapper runs ahead of HelixScreen. It waits until
    klipper and moonraker are up — those two and nothing else, since that is
    what it talks to; the browser UI gets a short grace period and is then
-   ignored, so `MOD_WEB=0` or a Fluidd build still migrates — then sends the
+   ignored, so a Fluidd build or one with no browser UI at all still
+   migrates — then sends the
    two commands below over the moonraker API: `[ff_legacy]` reads `extruder.json` /
    `test.json` / `zoffset.json` and stages **your unit's** dock coordinates,
    nozzle and station values, station start point and any per-tool Z tune,

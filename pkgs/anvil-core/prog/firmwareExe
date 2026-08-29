@@ -132,7 +132,8 @@ fi
 
 # ---- the UI, in the foreground so the stock watchdog can see us ----------
 # S80ui already decided and wrote its verdict here: "helix" to start the UI,
-# "none" to stay headless (MOD_UI=0, or HelixScreen not installed).
+# "none" to stay headless, which now means one thing: HelixScreen is not
+# installed. MOD_UI used to be the other way to get here and is gone.
 UI_CHOICE=`cat $MODDIR/.ui-choice 2>/dev/null || echo none`
 echo "ui: choice is $UI_CHOICE"
 
@@ -160,6 +161,6 @@ fi
 # Mainsail remain available.
 splash --title "REFORGE" \
        --status "NO SCREEN" \
-       --detail "MAINSAIL AND SSH ARE RUNNING. SET MOD_UI=1 IN ANVIL.CONF TO TURN THE SCREEN ON."
+       --detail "MAINSAIL AND SSH ARE RUNNING. INSTALL ANVIL-HELIXSCREEN TO TURN THE SCREEN ON."
 echo "ui: nothing left in the foreground -- holding process so services stay up"
 while true; do sleep 3600; done

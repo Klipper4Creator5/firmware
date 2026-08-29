@@ -25,12 +25,12 @@
 # process itself, which is also what makes `s6-svstat -p` the honest answer to
 # "which moonraker is this printer running?" that the pidfile used to give.
 #
-# THIS FILE DOES NOT LOOK AT MOD_WEB. It cannot: it runs whenever s6 decides
-# the service should be up, and a `run` that exits because it disagrees is a
-# respawn loop with extra steps. The gate is the `down` file next to this one
-# plus init.d/S62moonraker, which is the thing that reads anvil.conf at the
-# point in the boot where reading it means something. See the comment inside
-# `down`; that is where the whole MOD_WEB story is written.
+# THIS FILE DECIDES NOTHING. It runs whenever s6 decides the service should be
+# up, and a `run` that exits because it disagrees is a respawn loop with extra
+# steps. What decides is the `down` file next to this one plus
+# init.d/S62moonraker, which picks the point in the boot where starting a
+# server that wants klippy and a web front end means something. See the comment
+# inside `down`; the whole story is written there.
 #
 # NOTHING HERE MOVES. The interpreter, the entry point, the data directory and
 # the config moonraker reads out of it are all exactly where init.d/S62moonraker

@@ -27,13 +27,20 @@ fi
 # it. A stock build was a printer with the mod's configuration and none of the
 # code behind it.
 #
-# Plain defaults, overridable from config.env, which is sourced above. Not an
-# exhaustive list: MOD_CAM and MOD_WIFI are defaulted where they are used, in
-# bin/patch.sh, and appear here only if config.env sets them.
+# Plain defaults, overridable from config.env, which is sourced above.
+#
+# THE MOD_* SWITCHES ARE GONE -- MOD_WEB, MOD_CAM, MOD_UI, MOD_SSH, MOD_WIFI.
+# Every one of them defaulted to 1, and each bought a second state that every
+# init script, gate and test then had to reason about: nginx that might not
+# run, a camera that might not stream, a screen that might be off on purpose.
+# Nobody wanted those states -- what people want when they set one is a stock
+# printer, which is one FlashForge package away. What remains configurable is
+# what has a real range: the BUILD_* flags below decide what goes IN a build,
+# and the MOD_CAM_* and NICE_* values in anvil.conf tune what is running.
 #
 # FlashForge's firmwareExe is REPLACED, not kept: HelixScreen is the only UI.
-# If it will not start, set MOD_UI=0 in /usr/data/anvil/anvil.conf to boot
-# headless. ssh and Mainsail are your recovery path if the screen is dark, and
+# If it will not start, `opkg remove anvil-helixscreen` boots headless.
+# ssh and Mainsail are your recovery path if the screen is dark, and
 # a USB stick with the STOCK FlashForge package on it is the uninstall for
 # everything that came out of a package (`make test-recovery`). Moonraker is
 # the exception: it lives only on the factory image, so a reflash cannot put
@@ -42,9 +49,6 @@ BUILD_TOOLCHANGE="${BUILD_TOOLCHANGE:-1}"
 BUILD_MAINSAIL="${BUILD_MAINSAIL:-1}"
 BUILD_MOONRAKER="${BUILD_MOONRAKER:-1}"
 BUILD_HELIX="${BUILD_HELIX:-1}"
-MOD_SSH="${MOD_SSH:-1}"
-MOD_WEB="${MOD_WEB:-1}"
-MOD_UI="${MOD_UI:-1}"
 
 # Everything we add to the printer lives under this one directory on the DATA
 # partition, so a FlashForge OTA cannot delete it. It is a --prefix root and

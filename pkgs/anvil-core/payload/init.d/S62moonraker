@@ -11,8 +11,9 @@
 # they are two now, and why the numbering has to keep this one after S60nginx
 # and before S65camera.
 #
-# MOD_WEB=0 gates both scripts. It does not fall back to anything; it is a
-# debugging switch, not a way back to stock.
+# NEITHER SCRIPT HAS A SWITCH. MOD_WEB used to gate both and no longer exists;
+# the argument is in S60nginx's header, and the short version is that "no web
+# stack" was a state nobody wanted and everything had to reason about.
 #
 # WHAT CHANGED WHEN s6 ARRIVED, and what deliberately did not. moonraker is now
 # a supervised service: $MODDIR/etc/s6/moonraker/ holds a `run` script,
@@ -41,11 +42,13 @@
 # what people type. start/stop/restart/status all still exist, still say
 # "moonraker: ...", and still mean what they meant.
 #
-# WHERE THE MOD_WEB GATE LIVES NOW. In this file, exactly as before, and NOT in
-# the scandir -- $MODDIR/etc/s6/moonraker/down ships in the payload precisely so
-# that the scanner never makes that decision. anvil.conf is read at runtime and
-# the payload is built once; the long version of that argument is written in
-# the `down` file itself, next to the thing it explains.
+# WHY $MODDIR/etc/s6/moonraker/down STILL SHIPS. Ordering, which was always the
+# larger half of the reason: s6-svscan starts a service the instant the
+# directory appears, and moonraker must not be started before this script has
+# checked its prerequisites -- nor before nginx, which S60nginx runs first so
+# that a browser arriving early gets a page rather than a refused connection.
+# `down` means the scanner supervises and waits. The long version is in the
+# `down` file, next to the thing it explains.
 MODDIR=/usr/data/anvil
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 # The library path and the interpreter, from the one file that defines them.
@@ -178,12 +181,12 @@ await_supervisor() {
 # S65camera refuses and explains. moonraker FALLS BACK, with nginx, and the
 # reason is that it is the same decision, not a second one:
 #
-#   * MOD_WEB IS ONE SWITCH ACROSS BOTH SCRIPTS, so "the web stack runs" and
-#     "the web stack does not" are the only two states the user asked for. A
-#     dead supervisor that left nginx serving and moonraker refusing would
-#     invent a third one that nobody chose and that is the worst of the three
-#     to be handed: Mainsail loads, connects to nothing, and blames Klipper.
-#     Every minute spent debugging that is spent in the wrong subsystem.
+#   * THE WEB STACK IS ONE THING, so "it runs" is the only state anyone asked
+#     for. A dead supervisor that left nginx serving and moonraker refusing
+#     would invent a second one that nobody chose and that is the worse of the
+#     two to be handed: Mainsail loads, connects to nothing, and blames
+#     Klipper. Every minute spent debugging that is spent in the wrong
+#     subsystem.
 #   * MOONRAKER IS NOT ONLY THE UI. bin/ff-startup.py -- which S70klipper hands
 #     the whole boot to -- drives the panel from moonraker's API and cannot
 #     learn klippy_state, report an MCU fault, or run the firmware-config
@@ -284,8 +287,6 @@ ready_report() {
 }
 
 start() {
-    [ "${MOD_WEB:-1}" = "1" ] || { svc_say "disabled in anvil.conf (MOD_WEB=0)"; return 0; }
-
     # Every branch below says something. There is no stock server left to
     # quietly take over, so the boot log is the only place that can explain a
     # printer with no UI. A missing prerequisite is REPORTED and returns
@@ -322,9 +323,9 @@ start() {
     fi
 
     # And up it goes. svc_s6_up is `s6-svc -wu -u` with a bound: it asks for the
-    # service to be brought up -- overriding the `down` file, which is how the
-    # MOD_WEB gate above turns into a running server -- and does not return
-    # until it IS up. UP, note, not READY: -wu returns as soon as s6 has forked
+    # service to be brought up -- overriding the `down` file, which is how a
+    # supervised-but-idle service becomes a running server -- and does not
+    # return until it IS up. UP, note, not READY: -wu returns as soon as s6 has forked
     # the run script, which is exactly what we want on the boot path, because
     # moonraker takes the better part of a minute to import its components on
     # this box and firmwareExe is running these scripts one at a time in the

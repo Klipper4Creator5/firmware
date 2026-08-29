@@ -1,7 +1,7 @@
 # Runs near the END of the stock run.sh, after it has installed its own
 # files. Backups already happened in the pre-block at the top.
 MODDIR=/usr/data/anvil
-# Set by bin/patch.sh: 1 when MOD_SSH=1 but no ROOT_PW_HASH was baked in.
+# Set by bin/patch.sh: 1 when no ROOT_PW_HASH was baked in.
 MOD_PW_AUTO=0
 case "$MODDIR" in
     /usr/data/?*) ;;

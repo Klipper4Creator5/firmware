@@ -213,9 +213,11 @@ supervision change.
 ## Phase 5, continued -- moonraker onto s6
 
 Same shape as nginx: a service directory whose `run` execs moonraker in the
-foreground under `$FF_PYTHON`, `MOD_WEB` honoured through a shipped `down`
-file, and `S62moonraker` kept as a thin wrapper so the verbs people use do not
-change. Moonraker's own readiness -- it serves an HTTP API and klippy connects
+foreground under `$FF_PYTHON`, a shipped `down` file so the scanner does not
+start it before its prerequisites exist, and `S62moonraker` kept as a thin
+wrapper so the verbs people use do not change. (Written when `MOD_WEB` still
+existed, which is what the `down` file was argued from at the time; the flag is
+gone and the `down` file is not — ordering was always the real reason.) Moonraker's own readiness -- it serves an HTTP API and klippy connects
 to it over `/tmp/uds` -- makes it a genuine `notification-fd` candidate, which
 matters because `bin/ff-startup.py` currently polls its API to learn
 `klippy_state`.

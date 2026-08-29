@@ -27,11 +27,11 @@
 # `S60nginx stop` above all -- would go to a shell that ignores it while nginx
 # carried on. exec makes the pid s6 is holding the pid of nginx itself.
 #
-# THIS FILE DOES NOT LOOK AT MOD_WEB. It cannot: it runs whenever s6 decides
-# the service should be up, and a `run` that exits because it disagrees is a
-# respawn loop with extra steps. The gate is the `down` file next to this one
-# plus init.d/S60nginx, which is the thing that reads anvil.conf. See the
-# comment in `down` -- that is where the whole MOD_WEB story is written.
+# THIS FILE DECIDES NOTHING. It runs whenever s6 decides the service should be
+# up, and a `run` that exits because it disagrees is a respawn loop with extra
+# steps. What decides is the `down` file next to this one plus init.d/S60nginx,
+# which is the thing that checks nginx's prerequisites and picks the moment.
+# See the comment in `down`; the whole story is written there.
 MODDIR=/usr/data/anvil
 NGINX=/usr/prog/nginx/sbin/nginx
 

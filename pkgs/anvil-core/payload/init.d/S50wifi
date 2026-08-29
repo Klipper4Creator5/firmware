@@ -96,10 +96,10 @@ connect() {
 }
 
 start() {
-    if [ "${MOD_WIFI:-1}" != "1" ]; then
-        svc_say "disabled by MOD_WIFI"
-        return 0
-    fi
+    # No MOD_WIFI check: it is gone, and the line below is what it was standing
+    # in front of. A printer with nothing to connect to has no $WIFI_CONF and
+    # this script says so and returns -- which is the same outcome the flag
+    # bought, without a second place to look when wifi does not come up.
     if supplicant_running; then
         svc_say "wpa_supplicant already running"
         return 0
