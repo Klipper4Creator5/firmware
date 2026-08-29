@@ -72,7 +72,7 @@ The load pages (`FilamentLoad`, `LoadFilamentPrint`) never touch the sensors.
 
 ## Port
 
-`pkgs/klipper/prog/klippy/extras/ff_toolchange.py` (`[ff_toolchange] runout_switch_prefix: fd_ex`,
+`pkgs/klipper/payload/klipper/klippy/extras/ff_toolchange.py` (`[ff_toolchange] runout_switch_prefix: fd_ex`,
 `runout_motion_prefix: fm_ex`; empty or absent sections = that kind off, partial = config
 error):
 

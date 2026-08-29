@@ -5,7 +5,7 @@ Everything below lives in the APP, not in Klipper: the fork ships only bare
 sequences for Mainsail-started prints.
 
 **How they are entered now.** `START_PRINT` is no longer something the slicer has to
-call. `[ff_print]` (`pkgs/klipper/prog/klippy/extras/ff_print.py`) wraps `SDCARD_PRINT_FILE` and
+call. `[ff_print]` (`pkgs/klipper/payload/klipper/klippy/extras/ff_print.py`) wraps `SDCARD_PRINT_FILE` and
 `M23`, reads the slicer metadata out of the file itself, and calls
 `FF_BEFORE_PRINT_START` (which runs `START_PRINT` when its `prepare` variable is 1, the
 shipped default) and `FF_AFTER_PRINT_END`. `CANCEL_PRINT` is overridden too. So the

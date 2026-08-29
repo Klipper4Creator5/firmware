@@ -26,7 +26,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 
 def _load():
-    path = os.path.join(ROOT, "pkgs", "klipper", "prog", "klippy", "extras",
+    path = os.path.join(ROOT, "pkgs", "klipper", "payload", "klipper", "klippy", "extras",
                         "ff_tool_offset.py")
     spec = importlib.util.spec_from_file_location("ff_tool_offset", path)
     mod = importlib.util.module_from_spec(spec)

@@ -233,8 +233,23 @@ esac
 # and every path in a package of ours lands under $MODDIR.
 if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     say "Toolchange: ff_*.py + configs"
+    # OUT OF THE PAYLOAD, like section 1's klippy tree and for the same
+    # reason: anvil-klipper carries these now, so copying them from the
+    # recipe directory would be a second source for a file a package already
+    # holds. They ride the fork, so BUILD_KLIPPER=stock has none to copy --
+    # said out loud rather than left as five files silently missing from a
+    # printer that would then fail at klippy's first [ff_toolchange].
+    _ffx="$PAYLOAD_DIR/klipper/klippy/extras"
+    [ -d "$_ffx" ] || pkg_die \
+        "BUILD_TOOLCHANGE=1 needs the ff_*.py extras and BUILD_KLIPPER=${BUILD_KLIPPER:-fork} built no anvil-klipper to carry them. Set BUILD_TOOLCHANGE=0, or BUILD_KLIPPER=fork"
     mkdir -p "$SOFTWARE_DIR/klipper/extras"
-    cp -f pkgs/klipper/prog/klippy/extras/ff_*.py "$SOFTWARE_DIR/klipper/extras/"
+    # Named by the recipe, not globbed out of the payload: the fork ships an
+    # ff_eddy.py of its own and `ff_*.py` cannot tell it from ours. It rides
+    # the klippy tree section 1 copied either way, so sweeping it up here
+    # would put the same file in the component twice.
+    for _f in pkgs/klipper/payload/klipper/klippy/extras/ff_*.py; do
+        cp -f "$_ffx/$(basename "$_f")" "$SOFTWARE_DIR/klipper/extras/"
+    done
 
     # Our printer.base.cfg is FlashForge's with the chamber block replaced by
     # [include printer.chamber.cfg] -- Klipper can override an option but

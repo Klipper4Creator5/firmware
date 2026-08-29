@@ -49,6 +49,21 @@ pkg_build "$_top"
 # error. See docs/notes/20-klipper-fork.md.
 pkg_stage "$PKG_WORK/src/$_top/klippy" "klipper/klippy"
 
+# The toolchanger extras, ON TOP of the fork's own -- the order stock run.sh
+# used, kept because klippy has no search path: it resolves an extra as
+# dirname(klippy.py)/extras/<name>.py and nothing else. Being inside the tree
+# is the whole reason these can be a package member at all.
+#
+# NOT gated on BUILD_TOOLCHANGE. An extra is inert until a config section
+# instantiates it and those sections are anvil-klipper-config's, where the
+# flag still applies -- so gating here bought nothing and cost the mismatch
+# that kept these five files on /usr/prog: this recipe answers to
+# BUILD_KLIPPER, they answered to BUILD_TOOLCHANGE, and a package cannot hold
+# files with a different gate from its own.
+for _e in "$PKG_DIR"/payload/klipper/klippy/extras/ff_*.py; do
+    pkg_stage "$_e" "klipper/klippy/extras/$(basename "$_e")"
+done
+
 # The __pycache__ sweep that used to be here is pkg_ship's now. It was
 # written twice, here and in pkgs/moonraker, and the recipe that needed it
 # most did not have it: anvil-core stages a directory of .py helpers and was

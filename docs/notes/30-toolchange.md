@@ -1,7 +1,7 @@
 # Toolchange: sequences, sensors, mounted-tool state
 
 Address-verified against the live binary (`CommMgr` methods). Ported in
-`pkgs/klipper/prog/klippy/extras/ff_toolchange.py`; divergences are deliberate and listed at the end.
+`pkgs/klipper/payload/klipper/klippy/extras/ff_toolchange.py`; divergences are deliberate and listed at the end.
 
 ## Physical model
 

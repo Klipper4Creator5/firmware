@@ -143,7 +143,7 @@ def check_undefined_names(reporter):
                    "through 'make test')")
     targets = []
     for pattern in ("bin/*.py", "pkgs/*/payload/bin/*.py",
-                    "pkgs/*/prog/klippy/extras/*.py", "test/*.py",
+                    "pkgs/*/payload/klipper/klippy/extras/*.py", "test/*.py",
                     "test/ffsim/*.py", "test/integration/*.py"):
         targets += sorted(ROOT.glob(pattern))
     targets = [str(t) for t in targets if t.is_file()]
@@ -298,6 +298,13 @@ def make_fixture(reporter, tmp):
         'SW_VER=""\n'
         'STOCK_TGZ="%s"\n'
         "BUILD_KLIPPER=stock\n"
+        # AND THEREFORE BUILD_TOOLCHANGE=0. The ff_*.py extras are
+        # anvil-klipper's now, so BUILD_KLIPPER=stock builds nothing that
+        # carries them -- and they are written against the fork's v0.13
+        # klippy, so dropping them onto FlashForge's v0.12 is the mixture that
+        # shipped as v20260824. patch.sh refuses the pair rather than shipping
+        # ff-*.cfg whose sections nothing implements.
+        "BUILD_TOOLCHANGE=0\n"
         'HELIX_TGZ="%s"\n'
         'MAINSAIL_ZIP="%s"\n'
         'MOONRAKER_TGZ="%s"\n'

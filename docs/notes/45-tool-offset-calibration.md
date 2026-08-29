@@ -12,10 +12,10 @@ per-tool sections, modelled on `[bed_mesh <profile>]` / klipper-toolchanger's `[
 
 | file | role |
 |---|---|
-| `pkgs/klipper/prog/klippy/extras/ff_tool.py` | `[ff_tool n]`: `dock_x/dock_y` (autosaved by `FF_IMPORT_FIRMWARE_CONFIG`), `nozzle_x/y/z` (measured) and `z_adjust` (user per-tool Z correction, `TOOL_Z_ADJUST`) all autosaved |
-| `pkgs/klipper/prog/klippy/extras/ff_tool_offset.py` | `TOOL_CALIBRATE_TOOL_OFFSET`, `TOOL_LOCATE_SENSOR`, `TOOL_OFFSET_STATUS`; `[ff_tool_offset]` holds `station_x/y/z` (autosaved) + probe geometry |
-| `pkgs/klipper/prog/klippy/extras/ff_toolchange.py` | takes docks/offsets from the `ff_tool` objects; `refresh_offsets()`; `_station_z()`; JSON reader and `TOOLCHANGE_RELOAD` removed |
-| `pkgs/klipper/prog/klippy/extras/ff_legacy.py` | `FF_IMPORT_FIRMWARE_CONFIG [DIR=] [APPLY=1]` — one-shot import of extruder/test/zoffset.json |
+| `pkgs/klipper/payload/klipper/klippy/extras/ff_tool.py` | `[ff_tool n]`: `dock_x/dock_y` (autosaved by `FF_IMPORT_FIRMWARE_CONFIG`), `nozzle_x/y/z` (measured) and `z_adjust` (user per-tool Z correction, `TOOL_Z_ADJUST`) all autosaved |
+| `pkgs/klipper/payload/klipper/klippy/extras/ff_tool_offset.py` | `TOOL_CALIBRATE_TOOL_OFFSET`, `TOOL_LOCATE_SENSOR`, `TOOL_OFFSET_STATUS`; `[ff_tool_offset]` holds `station_x/y/z` (autosaved) + probe geometry |
+| `pkgs/klipper/payload/klipper/klippy/extras/ff_toolchange.py` | takes docks/offsets from the `ff_tool` objects; `refresh_offsets()`; `_station_z()`; JSON reader and `TOOLCHANGE_RELOAD` removed |
+| `pkgs/klipper/payload/klipper/klippy/extras/ff_legacy.py` | `FF_IMPORT_FIRMWARE_CONFIG [DIR=] [APPLY=1]` — one-shot import of extruder/test/zoffset.json |
 | `pkgs/anvil-core/payload/config/ff-toolchange.cfg` | four deliberately empty `[ff_tool 0..3]` sections + `[ff_toolchange]`. Per-unit values must NOT go here — `SAVE_CONFIG` refuses to autosave an option an include already sets |
 | `pkgs/anvil-core/payload/config/ff-tool-offset.cfg`, `pkgs/anvil-core/payload/config/ff-legacy.cfg` | sections for the other two extras |
 
@@ -57,7 +57,7 @@ A built package needs none of this — it installs the extras and
 hand, onto a printer that is already modded:
 
 ```
-cp pkgs/klipper/prog/klippy/extras/ff_*.py /usr/prog/klipper/klippy/extras/
+cp pkgs/klipper/payload/klipper/klippy/extras/ff_*.py /usr/prog/klipper/klippy/extras/
 # Nothing to add to printer.cfg: printer.base.cfg already includes the
 # ff-*.cfg set. Section order does not matter.
 RESTART
