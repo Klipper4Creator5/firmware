@@ -49,22 +49,15 @@ MOD_UI="${MOD_UI:-1}"
 # give a different one.
 MODDIR="${MODDIR:-/usr/data/anvil}"
 
-# Where the payload -- everything bound for $MODDIR on the printer -- is
-# assembled, before bin/pack.sh tars it into anvil.tar.xz.
+# Where the payload is assembled, before bin/pack.sh tars it into
+# anvil.tar.xz. TWO NAMES because opkg unpacks a package's paths -- which are
+# ./usr/data/anvil/... -- relative to the root it is given, so the payload is
+# $MODDIR deep inside that root. patch.sh installs into the root and finishes
+# the payload; pack.sh only tars the payload.
 #
-# TWO NAMES, BECAUSE ASSEMBLING IT TAKES TWO. bin/patch.sh builds the payload
-# by installing the .ipk feed with a real opkg, and opkg unpacks a package's
-# paths -- which are ./usr/data/anvil/... -- relative to the root it is given.
-# So the root and the payload are not the same directory: the payload is
-# $MODDIR deep inside the root. patch.sh needs both (it installs into the root
-# and then gates and finishes the payload); bin/pack.sh only ever tars the
-# payload and has no business knowing a root exists.
-#
-# Spelled here, once, for the same reason MODDIR is. This was a local
-# assignment in bin/patch.sh that bin/pack.sh, the Makefile's clean target and
-# test/run-tests.py's teardown each restated as a literal -- four files free to
-# disagree about where the payload is, and the three that do not create it
-# would have failed silently, leaving the next build to ship a mixture of two.
+# Here rather than local to patch.sh because pack.sh, the Makefile's clean
+# target and test/run-tests.py's teardown all name this tree, and the three
+# that only delete it would have failed silently.
 PAYLOAD_ROOT="${PAYLOAD_ROOT:-$ROOT/work/modpayload-root}"
 PAYLOAD_DIR="${PAYLOAD_DIR:-$PAYLOAD_ROOT$MODDIR}"
 export PAYLOAD_ROOT PAYLOAD_DIR

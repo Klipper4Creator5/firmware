@@ -83,7 +83,7 @@ MOONRAKER_PID=/run/moonraker.pid
 
 # ONE moonraker, at one path, and that path is on the DATA partition.
 #
-# bin/patch.sh stages Moonraker's python package straight into the payload
+# Moonraker's python package is installed straight into the payload
 # (`cp -a work/.moonraker/moonraker "$MOD_PAYLOAD/moonraker"`), so the tarball
 # the installer extracts already puts the entry point here. Nothing else has to
 # happen for this to exist, and if it does not exist the install did not

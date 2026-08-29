@@ -6,7 +6,7 @@
 # notification, which runit has no concept of; the measurements are in
 # tools/supervisor/README.md, and the contrast note in section 3 is why we are
 # here. This gate is fed the `bin/` and `libexec/` the recipes produced, which
-# is what bin/patch.sh stages into the payload.
+# is what the payload carries.
 #
 # s6 has its own prefix baked in at compile time, so it can only be unpacked
 # where it was configured to live: /usr/data/anvil, the mod's prefix root.

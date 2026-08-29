@@ -101,7 +101,7 @@ mkdir -p $MODDIR/init.d $MODDIR/nginx/logs $MODDIR/nginx/tmp /usr/data/logs
 cp -f $PAYLOAD/anvil-env.sh $PAYLOAD/anvil-service.sh $PAYLOAD/anvil.conf $MODDIR/
 cp -f $PAYLOAD/init.d/S* $MODDIR/init.d/
 chmod +x $MODDIR/init.d/S*
-# The service directory, staged the way bin/patch.sh stages payload/etc/ --
+# The service directory, laid out the way anvil-core ships payload/etc/ --
 # contents and mode. If this ever stops being copied by the build, the case
 # does not silently pass: S60nginx says so and section 3 fails.
 if [ -d "$PAYLOAD/etc/s6/nginx" ]; then

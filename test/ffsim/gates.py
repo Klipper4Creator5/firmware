@@ -375,7 +375,7 @@ def _python_trees(config):
     interpreter and its site-packages into together. CPython is pkgs/3rdparty/python now
     and each of the eighteen third-party packages is a pkgs/3rdparty/python-* of its own,
     so what a printer sees is the union of their bin/ and lib/ -- which is
-    exactly what bin/patch.sh section 5c stages, in this order.
+    exactly what the payload's python packages provide, in this order.
 
     The interpreter comes first so that a half-built checkout fails on the
     thing the caller actually needs rather than on a package that depends on it.

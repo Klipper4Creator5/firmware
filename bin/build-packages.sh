@@ -5,10 +5,9 @@
 #     ./bin/build-packages.sh              all recipes
 #     ./bin/build-packages.sh opkg         that one and everything it needs
 #
-# WHAT THIS IS. The proof-of-concept half of docs/notes/85-packaging.md: the
-# evidence that this repo's cross-builds can be delivered as packages, standing
-# beside the tarball rather than replacing it. bin/patch.sh still stages
-# libsodium into the payload exactly as it did and `make build` is untouched.
+# WHAT THIS IS. The feed bin/patch.sh installs to make the payload, so this
+# runs before a build rather than beside it. It still needs no stock FlashForge
+# package, which is why it is a separate script -- see the end of this header.
 #
 # ONE RECIPE PRODUCES ONE PACKAGE, and a recipe that needs a library names it
 # in PKG_BUILD_DEPENDS and gets it out of this feed. That is why the loop below
@@ -130,19 +129,15 @@ for r in "${RECIPES[@]}"; do
         rm -rf "$LAYOUT"
         mkdir -p "$LAYOUT$MODDIR" "$LAYOUT/CONTROL"
         cp -a "$PKG_ROOT/." "$LAYOUT$MODDIR/"
-        # PKG_EXCLUDE is a space-separated list of patterns and is meant
-        # to word-split here.
+        # -maxdepth 1 is not a micro-optimisation. PKG_EXCLUDE is always
+        # ".version", the stamp pkg_end writes at the ROOT of a recipe's
+        # output, but `find -name` matches a basename at any depth -- and
+        # Mainsail ships a .version of its own at www/mainsail/.version. This
+        # deleted it, and anvil-mainsail shipped without it for as long as the
+        # payload was copied from work/pkg rather than from the package.
+        #
+        # PKG_EXCLUDE is a space-separated list of patterns, meant to split.
         # shellcheck disable=SC2086
-        # -maxdepth 1, AND THAT IS NOT A MICRO-OPTIMISATION. Every value
-        # PKG_EXCLUDE has ever had is ".version", the stamp pkg_end writes at
-        # the ROOT of a recipe's output -- but `find -name` matches a basename
-        # at any depth, and Mainsail's release zip ships a .version of its own
-        # at www/mainsail/.version. So this deleted upstream's file too, and
-        # anvil-mainsail shipped without it. Nothing noticed, because
-        # bin/patch.sh copied the payload out of work/pkg where the file was
-        # still there; installing the payload from the .ipk instead is what
-        # made the package's contents the payload's contents and put a
-        # one-line difference in the diff.
         for p in $PKG_EXCLUDE; do
             find "$LAYOUT$MODDIR" -maxdepth 1 -name "$p" -exec rm -rf {} + 2>/dev/null || true
         done

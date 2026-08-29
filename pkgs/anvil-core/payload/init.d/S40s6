@@ -125,9 +125,9 @@ start() {
         return 0
     fi
 
-    # WHY THE mkdir IS HERE AS WELL AS IN THE PAYLOAD. bin/patch.sh stages
-    # etc/s6/ into the payload, so the directory ships, lands on a real
-    # install, and -- the reason for staging it rather than only creating it
+    # WHY THE mkdir IS HERE AS WELL AS IN THE PAYLOAD. anvil-core ships
+    # etc/s6/, so the directory lands on a real install and -- the reason for
+    # shipping it rather than only creating it
     # here -- is NAMED IN THE INSTALL MANIFEST, which is what lets a later
     # update account for it instead of orphaning it. But it ships EMPTY, and
     # an empty directory is precisely the kind of payload path that other

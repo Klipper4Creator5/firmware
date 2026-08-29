@@ -305,14 +305,10 @@ def make_fixture(reporter, tmp):
         "TARGET_MACHINE=Creator5Pro\n"
         "ROOT_PW_HASH='$6$ci$abcdefghijklmnopqrstuvwxyz'\n"
         "FF_KEY='FFP0331&*%%root'\n"
-        # A FEED OF ITS OWN, for the same reason the config is a throwaway.
-        # The payload is assembled by installing packages, so this lane builds
-        # them -- and it builds them from a config that renames every package
-        # carrying MOD_VER and points three recipes at fixture assets. Sharing
-        # work/packages would leave anvil-core_ci-1 where the developer's
-        # anvil-core_<date>-1 was, and bin/build-packages.sh's prune would
-        # delete the rest of their feed on the way past. Measured, the first
-        # time this lane ran: 44 packages became 43, all renamed.
+        # A feed of its own, for the same reason the config is a throwaway:
+        # sharing work/packages would leave anvil-core_ci-1 where the
+        # developer's anvil-core_<date>-1 was, and build-packages.sh's prune
+        # would delete the rest on the way past (measured: 44 became 43).
         'PKG_FEED="%s"\n'
         % (stock_package, assets / "helixscreen.tar.gz",
            assets / "mainsail.zip",
@@ -387,18 +383,10 @@ def main():
             # build.
             failures_before = reporter.failed
             broken = False
-            # build-packages FIRST, and under the FIXTURE's config. The payload
-            # is assembled by installing the feed, so patch.sh needs .ipk files
-            # that match the config it is running under -- and this config is
-            # not the developer's: MOD_VER=ci alone renames every package whose
-            # version is the release date, so a feed built from config.env
-            # resolves to filenames that do not exist here. It also points
-            # MAINSAIL_ZIP and friends at the tiny stand-ins make_fixture
-            # writes, which is what keeps this lane off the network.
-            #
-            # Cheap in practice: the pinned third-party recipes are keyed on
-            # their own versions and stay cached, so what actually rebuilds is
-            # the handful of packages carrying MOD_VER or a fixture asset.
+            # build-packages first, and under the FIXTURE's config: the
+            # payload is installed from the feed, and MOD_VER=ci alone renames
+            # every package versioned by release date. The pinned recipes stay
+            # cached, so only those few rebuild.
             for step in ("build-packages", "unpack", "patch", "pack"):
                 with reporter.gate(step):
                     reporter.run(["./bin/%s.sh" % step], cwd=ROOT, env=env)

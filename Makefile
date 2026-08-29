@@ -198,7 +198,7 @@ vendor: image config.env
 build: image config.env
 	@$(RUN) ./bin/build.sh $(PACKARGS)
 
-# The packaging proof-of-concept (docs/notes/85-packaging.md). Builds every
+# The package feed (docs/notes/85-packaging.md). Builds every
 # recipe under pkgs/ into work/packages/ as .ipk files plus the feed index that
 # makes that directory an opkg repository.
 #

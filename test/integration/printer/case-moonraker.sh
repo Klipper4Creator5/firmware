@@ -108,7 +108,7 @@ cp -f $PAYLOAD/anvil-service.sh $MODDIR/ 2>/dev/null
 cp -f $PAYLOAD/anvil.conf $MODDIR/ 2>/dev/null
 cp -f $PAYLOAD/init.d/S* $MODDIR/init.d/ 2>/dev/null
 chmod +x $MODDIR/init.d/S* 2>/dev/null
-# The s6 service directories, staged the way bin/patch.sh stages payload/etc/ --
+# The s6 service directories, laid out the way anvil-core ships payload/etc/ --
 # with cp -a, contents and mode. A per-file cp would silently drop the `down`
 # and `notification-fd` control files (they are not scripts and match no *.sh
 # glob) and could lose the executable bit on `run`, which is a service s6 can

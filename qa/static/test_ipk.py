@@ -504,21 +504,14 @@ def test_the_payload_is_the_feed_installed():
 def test_the_host_opkg_is_built_for_the_prefix():
     """pkg_buildopkg's two flags, both of which fail silently if dropped.
 
-    opkg compiles its state directory in (libopkg/Makefile.am passes
-    -DVARDIR="@localstatedir@"), so an opkg configured with any other --prefix
-    looks for its status file somewhere else no matter what --offline-root it
-    is handed at runtime. It runs perfectly, writes a database nobody reads,
-    and hands back a payload the printer's opkg sees as empty. Measured from
-    both sides -- see pkgs/3rdparty/opkg/build.sh, which had to learn the same
-    thing for the cross build.
+    opkg compiles its state directory in (-DVARDIR="@localstatedir@"), so any
+    other --prefix looks for its status file elsewhere whatever --offline-root
+    it is handed: it runs perfectly and writes a database nobody reads.
+    --disable-shared is the second half -- the prefix goes into libopkg too.
 
-    --disable-shared is the second half of it: the prefix goes into libopkg
-    too, so a shared build produces a bin/opkg that looks for libopkg.so.1 at
-    a path that exists on the printer and not in the container.
-
-    pkg_buildopkg asserts both against the binary it produced. This asserts
-    the flags are still asked for, because the check inside it is only
-    reachable if the build gets that far.
+    pkg_buildopkg checks both against the binary it produced; this checks the
+    flags are still asked for, since that check is only reachable if the build
+    gets that far.
     """
     lib = (ROOT / "pkgs" / "lib.sh").read_text()
     fn = lib.split("pkg_buildopkg() {", 1)
@@ -542,13 +535,11 @@ def test_the_host_opkg_is_built_for_the_prefix():
 def test_ipk_install_is_not_on_the_build_path():
     """The printer's installer installs on the printer, and nowhere else.
 
-    pkgs/ipk-install is POSIX sh that walks an ar archive by hand because the
-    printer has no opkg and no ar -- both measured, see its header. The build
-    container has both, and pkg_buildopkg builds the real client from the same
-    pinned source the printer's opkg is built from. Using the imitation to
-    assemble a payload would mean arguing that its result matches what opkg
-    would have done, when opkg is right there: it resolves no Depends,
-    enforces no Conflicts, reads no Provides and handles no conffiles.
+    pkgs/ipk-install walks an ar archive by hand because the printer has no
+    opkg and no ar. The build container has both, so using the imitation here
+    would mean arguing that its result matches what opkg would have done --
+    and it resolves no Depends, enforces no Conflicts, reads no Provides and
+    handles no conffiles.
     """
     for script in sorted((ROOT / "bin").glob("*.sh")):
         body = "\n".join(ln for ln in script.read_text().splitlines()
@@ -576,13 +567,10 @@ def _payload():
 def test_every_payload_file_is_owned_by_a_package():
     """Everything in the payload came from a package, or is on this list.
 
-    The point of assembling the payload by installing the feed is that the
-    two are the same set. This asks the payload to prove it, against opkg's
-    own record of what it put there -- and the interesting output is not the
-    pass, it is the allowlist below. Those are the files that are IN the
-    payload and in NO package, which is the remaining to-do list for phase 2
-    of docs/notes/85-packaging.md. It should shrink; it must not grow by
-    accident.
+    Checked against opkg's own record of what it installed. The interesting
+    output is not the pass but the allowlist below: the files that are in the
+    payload and in no package, which is phase 2's remaining to-do list. It
+    should shrink and must not grow by accident.
     """
     payload = _payload()
 
@@ -639,17 +627,14 @@ def test_every_payload_file_is_owned_by_a_package():
 def test_the_payload_database_has_no_clock_in_it():
     """Two builds of one commit produce one payload, byte for byte.
 
-    opkg stamps Installed-Time from time() (libopkg/opkg_install.c) and
-    honours SOURCE_DATE_EPOCH only for a man-page date at configure time, so
-    the database it writes differs between two builds a second apart --
-    measured, before this was fixed. bin/patch.sh normalises the field
-    afterwards, on the same argument that puts --clamp-mtime and
-    `objcopy -D` elsewhere in the packaging: this is an image being baked, not
-    a machine being installed, and the time it was baked at is not part of it.
+    opkg stamps Installed-Time from time() and honours SOURCE_DATE_EPOCH only
+    for a man-page date, so its database differs between two builds a second
+    apart. patch.sh normalises the field: this is an image being baked, not a
+    machine being installed.
 
-    anvil.tar.xz is not reproducible for other reasons yet (bin/pack.sh's tar
-    does not sort or clamp), so this asks the database rather than the
-    tarball -- it is the part that regressed and the part that is fixed.
+    Asked of the database rather than of anvil.tar.xz, which is not
+    reproducible yet for unrelated reasons (pack.sh's tar neither sorts nor
+    clamps).
     """
     status = (_payload() / "var" / "lib" / "opkg" / "status").read_text()
     stamps = re.findall(r"^Installed-Time:\s*(\S+)$", status, re.M)

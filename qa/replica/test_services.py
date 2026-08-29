@@ -86,7 +86,7 @@ def box(printer):
 # ------------------------------------------------------------- the foundation
 
 def test_payload_ships_anvil_service_sh(box):
-    """The library is sourced, never executed, so bin/patch.sh stages it with
+    """The library is sourced, never executed, so it is packaged with
     a plain cp and no chmod +x. It once did not stage it at all, which would
     have made every service abort at boot -- hence checking for it by itself,
     before anything tries to use it."""
@@ -283,7 +283,7 @@ class TestInitSequence:
         """
         scanner = box.file("%s/bin/s6-svscan" % MODDIR)
         assert scanner.executable, (
-            "no s6-svscan in the installed package -- bin/patch.sh stages it "
+            "no s6-svscan in the installed package -- anvil-s6 ships it "
             "from work/.s6, so this package was built without it")
         # A cross-built MIPS binary, not a shell script. The first four bytes
         # of an ELF are \x7fELF; Printer.sh decodes with errors="replace", so

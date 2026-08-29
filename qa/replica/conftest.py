@@ -17,7 +17,7 @@ payload/init.d/S* by hand. Two things were wrong with that:
     here would have gone red;
   * it could only place what is in payload/, so anything the BUILD produces
     was missing. The cross-compiled s6 is the obvious one: it lives in
-    work/.s6 and bin/patch.sh stages it into the package, so a hand-placed
+    work/.s6 and the payload carries it, so a hand-placed
     payload has no supervisor at all and the tests had to carry a stand-in
     scanner to paper over it.
 

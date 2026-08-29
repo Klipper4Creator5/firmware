@@ -36,7 +36,7 @@ mkdir -p $MODDIR/init.d
 cp -f $PAYLOAD/anvil-env.sh $MODDIR/ 2>/dev/null
 cp -f $PAYLOAD/anvil-service.sh $MODDIR/ 2>/dev/null
 cp -f $PAYLOAD/init.d/S* $MODDIR/init.d/ 2>/dev/null
-# The s6 service directories, as bin/patch.sh stages them. Installing init.d
+# The s6 service directories, as the payload carries them. Installing init.d
 # without these would be a layout no printer ever has, and it is exactly the
 # half where the interesting mistakes live: a `run` that arrived without its
 # executable bit, or a service that ships without `down` and therefore starts
@@ -122,7 +122,7 @@ s6_procs() {
     ps 2>/dev/null | grep 's6-svscan\|s6-supervise' | grep -v grep | grep -v case.sh
 }
 
-# The library is sourced, never executed, so bin/patch.sh stages it with a
+# The library is sourced, never executed, so it is packaged with a
 # plain cp and no chmod +x. It once did not stage it at all, which would have
 # made every service below abort at boot -- hence checking for it by itself,
 # before anything tries to use it.
