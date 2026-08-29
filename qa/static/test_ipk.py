@@ -33,7 +33,6 @@ import re
 import shutil
 import subprocess
 import tarfile
-import tempfile
 
 import pytest
 
@@ -568,18 +567,48 @@ def test_the_payload_keeps_libsodium_as_a_symlink():
         % (lib, os.readlink(lib)))
 
 
-def test_packages_are_abi_gated_before_they_ship():
-    """bin/build-packages.sh runs mips_abi_gate over every recipe's tree.
+def test_there_is_exactly_one_abi_gate_and_it_is_the_replica_one():
+    """The ABI question is asked once, of the installed filesystem.
 
-    THIS IS THE ONLY ABI GATE ON THE RELEASE PATH NOW. bin/patch.sh used to
-    walk the assembled payload as well, which was belt and braces while one
-    file in it (config.env's busybox) came from outside the feed. That file is
-    pkgs/busybox now, so every byte in the payload came out of an .ipk and
-    every .ipk passed this. It runs in build-packages.sh's packaging loop
-    rather than inside a build.sh, so it re-reads cached trees too.
+    It used to be asked in four places: mips_abi_gate in bin/common.sh, called
+    at the packaging boundary by bin/build-packages.sh and again by two
+    recipes that did not trust it, plus a narrower readelf|grep in
+    bin/verify.sh. Four implementations of one rule, each over a different
+    subset of the files -- and the largest binary we ship, HelixScreen, went
+    through a route (bin/patch.sh) that none of them read.
+
+    qa/replica/test_abi.py replaces all of it by sweeping the filesystem the
+    kernel will actually load from, which is the only place every route is
+    visible at once. This test exists so that a build-time gate cannot quietly
+    grow back beside it: two gates disagreeing about which files are exempt is
+    how the old set ended up with a hole in it.
     """
-    assert "mips_abi_gate" in (ROOT / "bin" / "build-packages.sh").read_text()
-    assert "mips_abi_gate()" in (ROOT / "bin" / "common.sh").read_text()
+    gate = ROOT / "qa" / "replica" / "test_abi.py"
+    assert gate.is_file(), (
+        "qa/replica/test_abi.py is gone -- nothing checks the ABI of anything "
+        "this repo ships")
+    for name in ("nan2008", "o32", "mips32r2"):
+        assert name in gate.read_text(), (
+            "qa/replica/test_abi.py no longer mentions %s, so it is not the "
+            "gate this test thinks it is" % name)
+
+    shell = [ROOT / "bin" / "common.sh", ROOT / "bin" / "build-packages.sh",
+             ROOT / "bin" / "verify.sh", ROOT / "bin" / "patch.sh",
+             ROOT / "pkgs" / "lib.sh"]
+    shell += sorted(ROOT.glob("pkgs/*/build.sh"))
+    shell += sorted(ROOT.glob("pkgs/3rdparty/*/build.sh"))
+    back = []
+    for f in shell:
+        if not f.is_file():
+            continue
+        body = "\n".join(ln for ln in f.read_text().splitlines()
+                          if not ln.lstrip().startswith("#"))
+        if "nan2008" in body or "mips_abi_gate" in body:
+            back.append(str(f.relative_to(ROOT)))
+    assert not back, (
+        "a build-time ABI gate is back in %s. There is one gate and it is "
+        "qa/replica/test_abi.py; a second one over a different subset of the "
+        "files is what the first set of four was." % ", ".join(back))
 
 
 def test_the_archives_are_built_by_upstream():
@@ -673,10 +702,11 @@ def test_an_arch_all_package_has_no_native_code():
     Three packages claim it -- anvil-mainsail, anvil-moonraker and anvil-core
     -- on the grounds that they are JavaScript, Python and shell. The claim
     matters because opkg accepts `all` on any printer without consulting the
-    ABI, so an ELF object that slipped into one of them would be the one path
-    into $MODDIR that nothing checks. mips_abi_gate passes a
-    tree with no ELF in it by returning zero, which is correct and is also
-    why it cannot be the thing that catches this.
+    ABI, so an ELF object that slipped into one of them would install on a
+    printer that cannot run it. qa/replica/test_abi.py would refuse the
+    object once it were on a machine; this refuses the CLAIM, here, without
+    needing a replica -- and it is the only check that reads `all` as a
+    promise rather than as an absence of anything to check.
 
     Checked against the built tree when there is one; a checkout that has not
     run `make packages` has nothing to inspect and is not a failure.
@@ -880,47 +910,6 @@ def test_dependencies_are_unpacked_by_upstream():
                      if not ln.lstrip().startswith("#"))
     assert "ar x" not in body and "debian-binary" not in body, (
         "pkgs/lib.sh is taking .ipk files apart itself again")
-
-
-def test_the_abi_gate_reads_every_member_of_an_archive():
-    """A static archive is many ELF headers, and all of them are checked.
-
-    readelf -h on a .a prints one header per MEMBER -- 122 for this repo's
-    libarchive.a. The gate used to read a single `Flags:` line, so it handed a
-    multi-line string to a comparison expecting one word and every archive
-    failed with an unreadable error. Nothing caught it because no package had
-    ever shipped a .a until pkgs/3rdparty/zlib did.
-
-    Built here rather than mocked: a two-member x86 archive must be REFUSED
-    (wrong ABI) and the refusal must say it looked at both members, which is
-    the part that proves per-member iteration.
-    """
-    for tool in ("gcc", "ar"):
-        assert shutil.which(tool), (
-            "%s is missing, so this gate cannot run -- it must not be skipped"
-            % tool)
-    with tempfile.TemporaryDirectory() as td:
-        td = pathlib.Path(td)
-        objs = []
-        for i in (1, 2):
-            src = td / ("m%d.c" % i)
-            src.write_text("int m%d(void){return %d;}\n" % (i, i))
-            obj = td / ("m%d.o" % i)
-            subprocess.run(["gcc", "-c", str(src), "-o", str(obj)], check=True)
-            objs.append(str(obj))
-        lib = td / "lib" / "libhost.a"
-        lib.parent.mkdir()
-        subprocess.run(["ar", "rcs", str(lib)] + objs, check=True)
-
-        out = subprocess.run(
-            ["bash", "-c",
-             ". bin/common.sh; mips_abi_gate '%s'" % lib.parent],
-            cwd=ROOT, capture_output=True, text=True)
-        assert out.returncode != 0, (
-            "mips_abi_gate accepted an x86-64 archive:\n%s" % out.stdout)
-        assert "of 2 ELF header(s)" in out.stderr, (
-            "mips_abi_gate did not report per-member counts, so it is not "
-            "looking inside the archive:\n%s" % out.stderr)
 
 
 def test_no_cache_stamp_is_spelled_in_two_places():

@@ -70,21 +70,18 @@ done
 # shipping bytecode whenever a test had imported one of them.
 pkg_ship "klipper"
 
-# ------------------------------------------------------------------ the gates
-# Both run over $PKG_OUT rather than over the staging tree, so they read the
-# bytes that actually ship -- pkg_ship strips ELF on the way out, and a gate
-# that checked the unstripped object would be checking a file no printer gets.
+# ------------------------------------------------------------------- the gate
+# Over $PKG_OUT rather than over the staging tree, so it reads the bytes that
+# actually ship -- pkg_ship strips ELF on the way out, and a gate that checked
+# the unstripped object would be checking a file no printer gets.
 #
-# ABI first: the kernel refuses anything that is not o32/nan2008/mips32r2, and
-# it refuses it with ENOEXEC, three layers below anything that says MIPS.
-# bin/build-packages.sh gates every package the same way at the boundary, but
-# this tree is ALSO staged into the SOFTWARE component by bin/patch.sh, which
-# never puts it through the payload gate -- so the check belongs here, where
-# both vehicles are downstream of it.
-_gated=$(mips_abi_gate "$PKG_OUT/klipper/klippy/chelper/c_helper.so") || exit 1
-pkg_say "klipper: c_helper.so is nan2008/o32/mips32r2 ($_gated ELF object)"
-
-# Symbols second, and this is the check the ABI one cannot make: a .so with a
+# The ABI of this .so is NOT checked here. The kernel refuses anything that is
+# not o32/nan2008/mips32r2 and refuses it with ENOEXEC, and that question is
+# now asked once, of the installed filesystem, in qa/replica/test_abi.py --
+# which covers both vehicles this tree travels on (the .ipk and the SOFTWARE
+# component bin/patch.sh stages) instead of only the one a build.sh can see.
+#
+# Symbols, though, are a check the ABI one cannot make: a .so with a
 # perfect header and a missing symbol is exactly the stale build described at
 # the top of this file. It moved here from bin/patch.sh for the reason the s6
 # presence checks did -- it now runs on `make packages` too, so a bad object

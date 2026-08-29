@@ -29,7 +29,8 @@ not yesterday's.
 
 | module | asks |
 |---|---|
-| `test_install.py` | what the machine's own installer produced: the stock boot chain is untouched and still parses, the wrapper is installed and starts the supervisor, every installed script is `sh -n`-clean under the printer's own busybox, `c_helper.so` is still nan2008 MIPS, klipper and the UI are services in the compiled database, klipper depends on the bring-up, the config include set is wired up, the user's `printer.cfg` survived, a pristine `backup/stock` was kept, and a boot with no stick does not go looking for an update |
+| `test_install.py` | what the machine's own installer produced: the stock boot chain is untouched and still parses, the wrapper is installed and starts the supervisor, every installed script is `sh -n`-clean under the printer's own busybox, klipper and the UI are services in the compiled database, klipper depends on the bring-up, the config include set is wired up, the user's `printer.cfg` survived, a pristine `backup/stock` was kept, and a boot with no stick does not go looking for an update |
+| `test_abi.py` | the ABI gate, and the only one there is: every ELF object on the installed filesystem -- ours, the stock tree's and whatever `bin/patch.sh` staged -- is 32-bit little-endian MIPS, and every one the kernel's loader will handle is `nan2008/o32/mips32r2`. Two exemptions, both measured and both narrow: kernel modules are `ET_REL` and have no FP ABI to agree about, and FlashForge ships one inert ARM binary |
 | `test_upgrade.py` | an update deletes what the last package shipped and **only** that -- the user's edits, their `moonraker-custom.conf`, their HelixScreen settings and anything nobody shipped all survive, over both the manifest path and the pre-manifest sweep |
 | `test_supervisor.py` | the s6 we cross-compiled: all 13 binaries load on the printer's kernel, and `s6-svwait -U` really waits for readiness rather than returning on the fork |
 | `test_boot_screen.py` | the first-boot screen renders on our own CPython 3.13, one screen's worth of correctly packed bytes, and degrades to "no screen" rather than raising when there is no panel |
@@ -218,9 +219,8 @@ Tests that cannot fail are worse than no tests, because they read as coverage:
   - `test-abi` had **never asserted anything in CI**. `run-tests.sh` deleted
     `work/modpayload` immediately before it ran and CI set `KLIPPER_FORK=""`,
     so it had no targets on any run, skipped, exited 0 and was printed as
-    `ok`. `bin/patch.sh` refuses to build a non-nan2008 `c_helper.so` anyway,
-    and `qa/replica/test_install.py` reads the ELF header of the file that
-    actually landed.
+    `ok`. `qa/replica/test_abi.py` now reads the ELF header of every object
+    that actually landed, which is the check `test-abi` was aiming at.
   - `test-macros` used `jinja2.Environment()` — the default `{{ }}` syntax.
     The configs contain **no** `{{` at all, only single-brace expressions, so
     it validated `{% %}` block structure and never once looked inside an

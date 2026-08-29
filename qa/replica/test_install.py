@@ -60,11 +60,9 @@ START = "/usr/prog/klipper/start.sh"
 APP = "/usr/prog/app_startup.sh"
 SOURCE = MODDIR + "/etc/s6-rc/source"
 DB = MODDIR + "/etc/s6-rc/compiled/current"
-# The klipper s6-rc service execs $FF_PYTHON against $MODDIR/klipper/klippy,
-# so this is the .so that actually gets dlopened. /usr/prog/klipper/klippy
-# still holds FlashForge's stock tree; nothing reads it.
+# The klipper s6-rc service execs $FF_PYTHON against $MODDIR/klipper/klippy.
+# /usr/prog/klipper/klippy still holds FlashForge's stock tree; nothing reads it.
 KLIPPY_DIR = MODDIR + "/klipper/klippy"
-CHELPER = KLIPPY_DIR + "/chelper/c_helper.so"
 INSTALL_LOG = "/usr/data/anvil-install.log"
 
 
@@ -265,52 +263,12 @@ def test_klippy_imports_resolve_on_our_python(box):
             "klippy's %s does not import on FF_PYTHON: %s" % (mod, r.text))
 
 
-def _bytes_at(box, path, skip, count):
-    """`count` bytes of `path` at offset `skip`, as lowercase hex strings.
-
-    MEASURED on this machine: /usr/bin/od takes neither `-A` nor `-t` (it is
-    not busybox's, and `busybox od` resolves to the same binary), so the usual
-    `od -An -tx1` returns nothing but a usage error -- which, read as bytes,
-    is an empty list rather than a loud failure. `xxd -p` is there and does
-    exactly this job, so it is used instead of teaching a parser to cope with
-    an od that cannot be asked.
-    """
-    out = box.sh("xxd -s %d -l %d -p %s 2>&1" % (skip, count, path)).out.strip()
-    digits = "".join(out.split())
-    if len(digits) < count * 2 or any(c not in "0123456789abcdef" for c in digits):
-        return []
-    return [digits[n:n + 2] for n in range(0, count * 2, 2)]
-
-
-def test_the_chelper_is_a_32_bit_little_endian_mips_object(box):
-    """klippy loads this through cffi at connect time, so a wrong-architecture
-    build is not caught until the printer is already trying to print."""
-    # dd, not `od -N`: the printer's busybox od does not take the skip/length
-    # flags GNU od does, and an od that ignored them would return the whole
-    # 47KB object and make the slice comparisons below pass on the wrong bytes.
-    head = _bytes_at(box, CHELPER, 0, 20)
-    assert len(head) == 20, (
-        "%s missing or unreadable -- klippy will not start (got %r)"
-        % (CHELPER, head))
-    assert head[:4] == ["7f", "45", "4c", "46"], (
-        "%s is not an ELF object (starts %s)" % (CHELPER, head[:4]))
-    assert head[4] == "01", "%s is not 32-bit (EI_CLASS %s)" % (CHELPER, head[4])
-    assert head[5] == "01", (
-        "%s is not little-endian (EI_DATA %s)" % (CHELPER, head[5]))
-    assert head[18:20] == ["08", "00"], (
-        "%s is not MIPS (e_machine %s)" % (CHELPER, head[18:20]))
-
-
-def test_the_chelper_is_nan2008(box):
-    """The printer's toolchain is nan2008; a legacy-NaN object dies on import.
-    e_flags bit 0x400 is EF_MIPS_NAN2008, read out of the 32-bit LE header at
-    offset 36."""
-    raw = _bytes_at(box, CHELPER, 36, 4)
-    assert len(raw) == 4, "could not read e_flags from %s (got %r)" % (CHELPER, raw)
-    flags = int("".join(reversed(raw)), 16)          # 32-bit little-endian
-    assert flags & 0x400, (
-        "BRICK: %s is not nan2008 (e_flags 0x%08x) -- klippy dies on import"
-        % (CHELPER, flags))
+# THE CHELPER'S ABI IS NOT ASKED HERE ANY MORE. Two tests used to read its
+# ELF header a byte at a time through `xxd` -- 32-bit, little-endian, MIPS,
+# then e_flags for nan2008 -- for one file out of the several hundred ELF
+# objects an install puts on this machine. qa/replica/test_abi.py sweeps all
+# of them on the same fixture and names c_helper.so explicitly, so what was
+# here is a strict subset of what runs there.
 
 
 # ------------------------------------------------------- the mod's own config

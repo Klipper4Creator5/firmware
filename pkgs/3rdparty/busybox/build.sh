@@ -30,13 +30,10 @@ pkg_stage "$BUSYBOX_BIN" "bin/busybox"
 chmod +x "$PKG_WORK/stage$MODDIR/bin/busybox"
 pkg_ship "bin/busybox"
 
-# NAMED, THOUGH bin/build-packages.sh WOULD CATCH IT ANYWAY. Its gate says
-# "this package has a foreign object in it"; this one can say which knob to
-# turn, because this is the only recipe whose input is a path a user typed.
-mips_abi_gate "$PKG_OUT/bin/busybox" >/dev/null || pkg_die \
-    "BUSYBOX_BIN=$BUSYBOX_BIN is not nan2008/o32/mips32r2. The printer cannot
-     exec it -- unset BUSYBOX_BIN in config.env, or point it at one built for
-     this ABI"
+# BUSYBOX_BIN is a path a user typed, so a foreign binary here is the likeliest
+# ABI mistake in the feed. It is not checked at build time any more: the one
+# ABI gate reads the installed filesystem in qa/replica/test_abi.py, which
+# names this file if it is wrong. See that module for why the gate moved.
 
 pkg_say "busybox: $(du -h "$PKG_OUT/bin/busybox" | cut -f1) from BUSYBOX_BIN"
 pkg_end

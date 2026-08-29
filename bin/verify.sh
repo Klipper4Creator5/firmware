@@ -80,7 +80,7 @@ if [ -f "$WORK/sw/app_startup.sh" ]; then
         || bad "nothing launches a UI -- printer boots to a blank screen"
 fi
 
-# --- 7. MIPS ABI of any binaries
+# --- 7. the payload's klippy tree
 # The klippy tree is in the PAYLOAD now, not the software component: the
 # klipper service execs $MODDIR/klipper/klippy, so the component copy and the
 # chelper.tar that carried its .so are both gone. Unconditional, because
@@ -109,15 +109,16 @@ CHELPER="$WORK/pl/klipper/klippy/chelper/c_helper.so"
 [ -f "$CHELPER" ] || bad "no c_helper.so in the payload klippy tree -- klippy cannot talk to an MCU"
 if [ -f "$CHELPER" ]; then
     if ! head -c 4 "$CHELPER" | grep -q ELF; then
-        warn "c_helper.so is not an ELF (synthetic fixture) -- ABI check skipped"
+        warn "c_helper.so is not an ELF (synthetic fixture)"
         CHELPER=""
     fi
     if [ -n "$CHELPER" ]; then
-        if readelf -h "$CHELPER" 2>/dev/null | grep -q nan2008; then
-            ok "c_helper.so is nan2008 MIPS32r2 (kernel will load it)"
-        else
-            bad "c_helper.so is NOT nan2008 -- kernel returns ENOEXEC, klippy dies"
-        fi
+        # NO ABI CHECK HERE. This file used to grep readelf for nan2008, which
+        # was a fourth partial copy of a rule stated in three other places and
+        # read only this one object out of a payload full of them.
+        # qa/replica/test_abi.py asks it once, of every ELF on the installed
+        # filesystem. What is left below is the check that one cannot make.
+        #
         # The failure that reached a printer: a .so older than the klippy tree
         # beside it. cffi resolves lazily; only a symbol check catches it.
         if python3 "$ROOT/test/test-chelper.py" "$WORK/pl/klipper" >/dev/null 2>&1; then

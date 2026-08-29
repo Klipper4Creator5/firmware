@@ -1034,10 +1034,10 @@ pkg_ship() {
     #
     # Both passes need the cross toolchain, and a recipe that compiles nothing
     # never called pkg_toolchain -- it has no archive to normalise and no ELF
-    # to strip. Skipping is safe because mips_abi_gate in
-    # bin/build-packages.sh reads every ELF at the package boundary, so a
-    # recipe that forgot pkg_toolchain and did produce objects is caught there
-    # rather than here by an unbound variable.
+    # to strip. Skipping is safe because qa/replica/test_abi.py reads every
+    # ELF on the installed filesystem, so a recipe that forgot pkg_toolchain
+    # and did produce objects is caught there rather than here by an unbound
+    # variable.
     if [ -n "${PKG_HOST:-}" ]; then
         find "$PKG_OUT" -name '*.a' -print | while IFS= read -r _a; do
             "$PKG_HOST-objcopy" --enable-deterministic-archives "$_a" \

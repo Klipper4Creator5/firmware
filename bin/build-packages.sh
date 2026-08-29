@@ -60,12 +60,6 @@ for r in "${RECIPES[@]}"; do
             echo "!! $r: PKG_ROOT '$PKG_ROOT' does not exist -- did build.sh run?" >&2
             exit 1; }
 
-        # THE ABI GATE, at the package boundary. Here and not in a build.sh
-        # because a recipe's own gates do not run on a cache hit and this one
-        # must; over PKG_ROOT because readelf cannot look inside a tarball.
-        n=$(mips_abi_gate "$PKG_ROOT") || exit 1
-        say "$PKG_NAME: $n ELF object(s) pass nan2008/o32/mips32r2"
-
         # --- the layout
         # opkg-build packages a DIRECTORY: the tree as it appears on the target,
         # plus a CONTROL/ it does not ship. Laid down under $MODDIR, so `opkg
