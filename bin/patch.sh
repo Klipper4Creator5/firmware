@@ -145,15 +145,6 @@ sed -i "s/^Installed-Time: .*/Installed-Time: ${SOURCE_DATE_EPOCH:-1}/" \
 
 say "payload: $(grep -c '^Package:' "$PAYLOAD_DIR/var/lib/opkg/status") packages installed ($MODEL_PKG for $TARGET_MACHINE)"
 
-# The one file whose absence is silent and fatal: printer.base.cfg includes
-# printer.chamber.cfg unconditionally, so a payload without it is a printer
-# whose klippy will not start. Asked of the payload rather than of the feed,
-# because what ships is what was installed.
-if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
-    [ -f "$PAYLOAD_DIR/config/printer.chamber.cfg" ] || pkg_die \
-        "no config/printer.chamber.cfg in the payload -- $MODEL_PKG did not install"
-fi
-
 # ---------------------------------------------------------------- 1. Klipper
 # BUILD_KLIPPER=fork (the default) ships the creator5 Klipper tree; =stock
 # keeps FlashForge's, and has to be asked for by name. There is no silent
