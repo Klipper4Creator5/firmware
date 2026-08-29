@@ -146,8 +146,19 @@ for _r in $(LC_ALL=C pkg_recipes | LC_ALL=C sort); do
             [ "$_r" = "$MODEL_PKG" ] || continue ;;
     esac
     _ipk=$(pkg_ipk "$_r")
-    [ -f "$_ipk" ] || pkg_die \
-        "no .ipk for recipe '$_r' at $_ipk -- run ./bin/build-packages.sh"
+    if [ ! -f "$_ipk" ]; then
+        # A FEED BUILT ON ANOTHER DAY IS THE LIKELY CAUSE, and saying so is
+        # worth the six lines. anvil-core and the config packages take
+        # PKG_VERSION from MOD_VER, which bin/common.sh defaults to today's
+        # date -- so a feed built yesterday resolves to filenames that do not
+        # exist today, and the bare "run build-packages" that used to print
+        # here reads as a missing package rather than an expired one.
+        _other=$(ls "${_ipk%%_*}"_*.ipk 2>/dev/null | head -n1 || true)
+        if [ -n "$_other" ]; then
+            pkg_die "the feed is stale: this build wants $(basename "$_ipk") and the feed has $(basename "$_other"). MOD_VER defaults to today's date -- rerun ./bin/build-packages.sh"
+        fi
+        pkg_die "no .ipk for recipe '$_r' at $_ipk -- run ./bin/build-packages.sh"
+    fi
     case "${_ipk##*/}" in
         *-dev_*) continue ;;   # headers and static archives; see above
     esac
@@ -555,7 +566,36 @@ say "libsodium: $SODIUM_VERSION in lib/ --" \
     "$(readelf -d "$SODIUM_SO" | awk '/SONAME/{gsub(/[][]/,"",$5); print $5}')," \
     "$(du -h "$SODIUM_SO" | cut -f1)"
 
-# ------------------------------------------------------- 5e. the ABI gate
+# --------------------------------------------------- 5e. a richer busybox
+# OPTIONAL, AND THE ONE FILE IN THE PAYLOAD THAT NO PACKAGE PUT THERE.
+# BUSYBOX_BIN names a prebuilt binary in config.env -- it is unset in every
+# normal build -- and it is copied in for anyone who wants applets the
+# printer's own small busybox was built without.
+#
+# IT IS HERE, ABOVE THE GATE, AND IT USED TO BE BELOW IT. Nine lines further
+# down and after every ABI check, which meant the single file that comes from
+# outside this build entirely was the single file never checked -- the exact
+# inversion of what a gate is for. A foreign-ABI busybox in $MODDIR/bin is
+# ENOEXEC at the first call from an init script, on the printer, with nothing
+# in the message about where it came from.
+#
+# Its own call rather than relying on the payload sweep below, so that the
+# error names BUSYBOX_BIN and config.env instead of "the payload". The one
+# plausible failure is a busybox lifted out of the printer's own rootfs, whose
+# e_flags nobody here has measured, and that is a ten-second diagnosis only if
+# the message says which file it means.
+if [ -n "${BUSYBOX_BIN:-}" ] && [ -f "$BUSYBOX_BIN" ]; then
+    cp -f "$BUSYBOX_BIN" "$PAYLOAD_DIR/bin/busybox"
+    chmod +x "$PAYLOAD_DIR/bin/busybox"
+    mips_abi_gate "$PAYLOAD_DIR/bin/busybox" >/dev/null || {
+        echo "   !! BUSYBOX_BIN=$BUSYBOX_BIN is not nan2008/o32/mips32r2." >&2
+        echo "      The printer cannot exec it. Unset BUSYBOX_BIN in config.env" >&2
+        echo "      or point it at one built for this ABI." >&2
+        exit 1; }
+    say "busybox: $(du -h "$PAYLOAD_DIR/bin/busybox" | cut -f1) from BUSYBOX_BIN"
+fi
+
+# ------------------------------------------------------- 5f. the ABI gate
 # ONE GATE, OVER THE WHOLE PAYLOAD. There used to be three -- s6's over bin/
 # and libexec/, CPython's over the interpreter and its stdlib, libsodium's
 # over one resolved .so -- each run immediately after the copy it was checking
@@ -597,10 +637,6 @@ if [ "${MOD_SSH:-1}" = "1" ]; then
 else
     skip "SSH"
 fi
-if [ -n "${BUSYBOX_BIN:-}" ] && [ -f "$BUSYBOX_BIN" ]; then
-    cp -f "$BUSYBOX_BIN" "$PAYLOAD_DIR/bin/busybox"; chmod +x "$PAYLOAD_DIR/bin/busybox"
-fi
-
 # --------------------------------------------------------- 7. root password
 if [ -n "${ROOT_PW_HASH:-}" ]; then
     say "Accounts: setting root password hash"
