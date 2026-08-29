@@ -501,6 +501,52 @@ def test_the_payload_is_the_feed_installed():
             "the musl toolchain was deleted with it" % gone)
 
 
+
+def _mod_roots():
+    """MOD_ROOTS as bin/patch.sh's own shell reads it, model included."""
+    patch = (ROOT / "bin" / "patch.sh").read_text()
+    m = re.search(r'^MOD_ROOTS="(.*?)"', patch, re.M | re.S)
+    assert m, "bin/patch.sh has no MOD_ROOTS -- has section 0 been rewritten?"
+    models = re.findall(r'\bMODEL_PKG=([\w.+-]+)', patch)
+    assert models, "bin/patch.sh sets no MODEL_PKG -- which chamber config ships?"
+    return [w for w in m.group(1).split() if w != "$MODEL_PKG"] + models
+
+
+def test_the_payload_roots_name_real_packages():
+    """A typo in MOD_ROOTS is silent, so it gets a test instead.
+
+    patch.sh skips a root with no .ipk in the feed, because that is how a
+    PKG_WHEN-gated recipe -- BUILD_HELIX=0, BUILD_KLIPPER=stock -- drops out
+    without the flags being restated here. The cost is that a misspelled root
+    drops out the same way: no error, one package quietly missing from the
+    release. Nothing downstream would notice; the payload would just be
+    smaller.
+    """
+    names = {_conf(p.parent.name, "PKG_NAME") for p in RECIPES}
+    for root in _mod_roots():
+        assert root in names, (
+            "bin/patch.sh installs '%s' and no recipe under pkgs/ builds a "
+            "package by that name. patch.sh cannot tell this from a recipe "
+            "that PKG_WHEN gated off, so it would ship without it" % root)
+
+
+def test_the_payload_roots_stay_a_short_list():
+    """The release is named; the closure is opkg's to work out.
+
+    The point of installing from an indexed feed is that Depends decides what
+    comes along -- which is also what an `opkg install anvil-moonraker` on a
+    printer will do, so the metadata gets exercised on every build instead of
+    only when somebody tries it. A MOD_ROOTS that has grown to the size of the
+    feed means somebody answered a missing dependency by naming the package
+    here, and the printer's copy of that install will still fail.
+    """
+    roots = [r for r in _mod_roots()
+             if not r.startswith("anvil-klipper-creator5")]
+    assert len(roots) <= 12, (
+        "MOD_ROOTS names %d packages. Missing files belong in the depending "
+        "recipe's PKG_DEPENDS, not here:\n  %s"
+        % (len(roots), "\n  ".join(roots)))
+
 def test_the_host_opkg_is_built_for_the_prefix():
     """pkg_buildopkg's two flags, both of which fail silently if dropped.
 

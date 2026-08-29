@@ -44,21 +44,8 @@ mkdir -p "$PAYLOAD_DIR/bin" "$PAYLOAD_DIR/lib" "$PAYLOAD_DIR/libexec" \
 
 # ------------------------------------------------- 0. the payload, installed
 # Every file bound for $MODDIR comes from a package, installed by a real opkg
-# into a staging root. `opkg list-installed` answers "what does this release
-# install?" off the payload itself.
-#
-# THE SET COMES FROM pkg_recipes, which is PKG_WHEN-gated -- so BUILD_HELIX,
-# BUILD_MAINSAIL, BUILD_MOONRAKER, BUILD_TOOLCHANGE and BUILD_KLIPPER are read
-# in the pkg.conf that owns each and not restated by an `if` here that could
-# drift from it.
-#
-# -dev IS FILTERED BY PACKAGE NAME, not by "has a runtime half", because the
-# two ways of being build-time-only look nothing alike. execline, s6 and
-# CPython ship both halves and pkg_ipk names the runtime one; zlib, openssl,
-# sqlite, expat, libffi, xz, bzip2, libarchive and skalibs set
-# PKG_NAME=anvil-<x>-dev outright and have no runtime half to ask for. Asking
-# the wrong question installs those nine -- 40 packages and 2165 ELF objects
-# where there should be 31 and 154.
+# out of the feed bin/build-packages.sh indexed. `opkg list-installed` answers
+# "what does this release install?" off the payload itself.
 say "payload: installing the feed into $PAYLOAD_ROOT"
 pkg_buildopkg
 
@@ -66,76 +53,91 @@ pkg_buildopkg
 # configs own config/printer.chamber.cfg and Conflict, so opkg refuses the
 # pair (exit 255) and the choice has to be made here.
 case "$TARGET_MACHINE" in
-    Creator5)    MODEL_PKG=klipper-creator5-config ;;
-    Creator5Pro) MODEL_PKG=klipper-creator5pro-config ;;
+    Creator5)    MODEL_PKG=anvil-klipper-creator5-config ;;
+    Creator5Pro) MODEL_PKG=anvil-klipper-creator5pro-config ;;
     *) echo "no chamber-config package for TARGET_MACHINE=$TARGET_MACHINE" >&2
        exit 1 ;;
 esac
 
-MOD_IPKS=""
-MOD_NPKG=0
-for _r in $(LC_ALL=C pkg_recipes | LC_ALL=C sort); do
-    case "$_r" in
-        klipper-creator5-config|klipper-creator5pro-config)
-            [ "$_r" = "$MODEL_PKG" ] || continue ;;
-    esac
-    _ipk=$(pkg_ipk "$_r")
-    if [ ! -f "$_ipk" ]; then
-        # A FEED BUILT ON ANOTHER DAY IS THE LIKELY CAUSE, and saying so is
-        # worth the six lines. anvil-core and the config packages take
-        # PKG_VERSION from MOD_VER, which bin/common.sh defaults to today's
-        # date -- so a feed built yesterday resolves to filenames that do not
-        # exist today, and the bare "run build-packages" that used to print
-        # here reads as a missing package rather than an expired one.
-        _other=$(ls "${_ipk%%_*}"_*.ipk 2>/dev/null | head -n1 || true)
-        if [ -n "$_other" ]; then
-            pkg_die "the feed is stale: this build wants $(basename "$_ipk") and the feed has $(basename "$_other"). MOD_VER defaults to today's date -- rerun ./bin/build-packages.sh"
-        fi
-        pkg_die "no .ipk for recipe '$_r' at $_ipk -- run ./bin/build-packages.sh"
-    fi
-    case "${_ipk##*/}" in
-        *-dev_*) continue ;;   # headers and static archives; see above
-    esac
-    MOD_IPKS="$MOD_IPKS $_ipk"
-    MOD_NPKG=$((MOD_NPKG + 1))
-done
-[ "$MOD_NPKG" -gt 0 ] || { echo "no runtime packages selected -- every recipe is gated off?" >&2; exit 1; }
+# WHAT THE RELEASE IS, not the closure of it. Depends brings the rest, and
+# whether it does is the same question an `opkg install anvil-moonraker` on a
+# printer asks -- so the metadata is exercised on every build instead of only
+# when somebody tries it. Naming the closure by hand would have hidden that.
+#
+# A root with no .ipk in the feed is skipped, which is how the PKG_WHEN gates
+# reach here: BUILD_KLIPPER=stock builds no anvil-klipper, so there is nothing
+# to install and no flag restated in this file. A missing DEPENDENCY is still
+# an error, and opkg raises it.
+#
+# The four loose python packages are Recommends, which opkg has no field for:
+# pillow and preprocess-cancellation are Moonraker's thumbnail path
+# (pkgs/moonraker argues them out of Depends), greenlet and cffi are klippy's,
+# which pkgs/klipper cannot declare while klippy still runs under
+# FlashForge's interpreter.
+MOD_ROOTS="anvil-core anvil-opkg anvil-s6-rc anvil-klipper $MODEL_PKG
+           anvil-moonraker anvil-python-pillow anvil-python-preprocess-cancellation
+           anvil-python-greenlet anvil-python-cffi
+           anvil-mainsail anvil-helixscreen"
 
-# Generated, because two of its four lines are paths only this script knows.
+# Named, not versioned: opkg reads the index and picks. The one version that
+# cannot be left to it is anvil-core's -- PKG_VERSION is MOD_VER, which
+# defaults to today's date, so a feed built yesterday installs yesterday's
+# anvil-core without complaint.
+[ -f "$(pkg_ipk anvil-core)" ] || pkg_die \
+    "the feed has no $(basename "$(pkg_ipk anvil-core)") -- rerun ./bin/build-packages.sh"
+
+MOD_INSTALL=""
+for _p in $MOD_ROOTS; do
+    for _f in "$PKG_FEED/${_p}_"*.ipk; do
+        if [ -f "$_f" ]; then MOD_INSTALL="$MOD_INSTALL $_p"; fi
+        break
+    done
+done
+
+# Generated, because four of its lines are paths only this script knows.
 #
 #   offline_root  where opkg unpacks to. NOT where it keeps its database --
 #                 that is compiled in (pkg_buildopkg), with this prefixed.
+#   lists_dir     offline_root-relative too, and outside $MODDIR on purpose:
+#                 the fetched index is build scratch, not payload.
 #   ignore_uid    clears libarchive's EXTRACT_OWNER. The build lane runs as
 #                 the invoking user, so without this all ~3000 entries warn
 #                 that they could not be chowned to root. Payload ownership
 #                 has never meant anything: run-append.sh extracts as root.
 #   arch          the anti-OpenWrt gate where opkg reads it -- a mipsel_24kc
 #                 package has no priority here and is refused unopened.
+#   src           file: is answered before curl is reached at all
+#                 (libopkg/opkg_download.c:134), which is why the host opkg
+#                 can be built --disable-curl and still resolve a feed.
 MOD_OPKG_CONF="$PAYLOAD_ROOT/.opkg.conf"
 mkdir -p "$PAYLOAD_ROOT"
 cat > "$MOD_OPKG_CONF" <<EOF
 dest root /
 option offline_root $PAYLOAD_ROOT
+option lists_dir /.opkg-lists
+option cache_dir /.opkg-cache
 option ignore_uid 1
 arch all 1
 arch $IPK_ARCH 10
+src anvil file:$PKG_FEED
 EOF
 
-# One invocation with the whole set, so opkg does the ordering and the
-# Depends/Conflicts checks rather than this script.
-#
 # --force-postinstall because opkg skips configuration under offline_root and
 # would leave every package Status: unpacked. Nothing runs opkg on the printer
 # after run-append.sh extracts the tarball -- the extraction IS the install --
 # so that would be a database arguing with the filesystem. It runs nothing
 # today; no recipe has a maintainer script, and opkg 0.7.0 sets no
 # IPKG_INSTROOT for one that did. See docs/notes/85-packaging.md.
+mod_opkg() {
+    "$HOSTOPKG" --conf "$MOD_OPKG_CONF" "$@" \
+        >> "$PAYLOAD_ROOT/.opkg.log" 2>&1 && return 0
+    sed 's/^/   /' "$PAYLOAD_ROOT/.opkg.log" >&2
+    echo "opkg failed: $* -- see $PAYLOAD_ROOT/.opkg.log" >&2
+    exit 1
+}
+mod_opkg update
 # shellcheck disable=SC2086
-"$HOSTOPKG" --conf "$MOD_OPKG_CONF" --force-postinstall install $MOD_IPKS \
-    > "$PAYLOAD_ROOT/.opkg-install.log" 2>&1 \
-    || { sed 's/^/   /' "$PAYLOAD_ROOT/.opkg-install.log" >&2
-         echo "opkg could not install the feed -- see $PAYLOAD_ROOT/.opkg-install.log" >&2
-         exit 1; }
+mod_opkg --force-postinstall install $MOD_INSTALL
 
 # opkg takes Installed-Time from time() and honours SOURCE_DATE_EPOCH only
 # for a man-page date, so two builds of one commit differ by a line per
@@ -144,8 +146,9 @@ EOF
 sed -i "s/^Installed-Time: .*/Installed-Time: ${SOURCE_DATE_EPOCH:-1}/" \
     "$PAYLOAD_DIR/var/lib/opkg/status"
 
-rm -f "$MOD_OPKG_CONF" "$PAYLOAD_ROOT/.opkg-install.log"
-say "payload: $MOD_NPKG packages installed ($MODEL_PKG for $TARGET_MACHINE)"
+rm -rf "$MOD_OPKG_CONF" "$PAYLOAD_ROOT/.opkg.log" \
+       "$PAYLOAD_ROOT/.opkg-lists" "$PAYLOAD_ROOT/.opkg-cache"
+say "payload: $(grep -c '^Package:' "$PAYLOAD_DIR/var/lib/opkg/status") packages installed ($MODEL_PKG for $TARGET_MACHINE)"
 
 # The one file whose absence is silent and fatal: printer.base.cfg includes
 # printer.chamber.cfg unconditionally, so a payload without it is a printer
@@ -153,7 +156,7 @@ say "payload: $MOD_NPKG packages installed ($MODEL_PKG for $TARGET_MACHINE)"
 # because what ships is what was installed.
 if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     [ -f "$PAYLOAD_DIR/config/printer.chamber.cfg" ] || pkg_die \
-        "no config/printer.chamber.cfg in the payload -- anvil-$MODEL_PKG did not install"
+        "no config/printer.chamber.cfg in the payload -- $MODEL_PKG did not install"
 fi
 
 # ---------------------------------------------------------------- 1. Klipper

@@ -538,22 +538,51 @@ for `libopkg.so.1` at a path that exists on the printer and not here.
 seccomp profile. The payload then comes out root-owned and the build-lane user
 cannot delete it, so the next `make build` dies on its own `rm -rf` — the
 failure `Makefile:48-61` exists to prevent. It is also more code: opkg plus an
-`ldd` loop for ten shared libraries, against a five-line config file.
+`ldd` loop for ten shared libraries, against a nine-line config file.
 
 ### What the set is
 
-Derived from `pkg_recipes`, which is already `PKG_WHEN`-gated — so
-`BUILD_HELIX`, `BUILD_MAINSAIL`, `BUILD_MOONRAKER`, `BUILD_TOOLCHANGE` and
-`BUILD_KLIPPER` are read in the `pkg.conf` that owns each and nowhere else.
-31 packages of 41 recipes.
+`bin/patch.sh` names twelve packages and lets `Depends` bring the rest: 31
+installed, 19 of them pulled in and marked `Auto-Installed: yes`. The feed is
+indexed (`src anvil file:$PKG_FEED` plus `opkg update`), so this is the same
+resolution an `opkg install anvil-moonraker` performs on a printer — which
+means the dependency metadata is exercised by every build instead of only when
+somebody tries it.
 
-**`-dev` is filtered by package NAME, not by "has a runtime half"**, and the
-first attempt got this wrong. `execline`, `s6` and CPython ship both halves
-and `pkg_ipk` names the runtime one; `zlib`, `openssl`, `sqlite`, `expat`,
-`libffi`, `xz`, `bzip2`, `libarchive` and `skalibs` ship *only* a dev package
-and say so by setting `PKG_NAME=anvil-<x>-dev` outright. Asking the first
-question installed all nine — 40 packages and 2165 ELF objects where there
-should be 31 and 154.
+`file:` is answered before curl is reached at all
+(`libopkg/opkg_download.c:134`), which is why a `--disable-curl` opkg can
+still resolve a feed.
+
+**The gates reach here by absence.** A `PKG_WHEN`-gated recipe leaves no
+`.ipk` in the feed, so `BUILD_KLIPPER=stock` simply has no `anvil-klipper` to
+install — 30 packages instead of 31, with no `BUILD_*` flag restated outside
+the `pkg.conf` that owns it. The cost is that a *misspelled* root drops out
+just as quietly, which is what `test_the_payload_roots_name_real_packages`
+exists for. A missing **dependency** is still a hard error, raised by opkg.
+
+**Four roots are Recommends, a field opkg does not have.**
+`anvil-python-pillow` and `anvil-python-preprocess-cancellation` are
+Moonraker's thumbnail path, which `pkgs/moonraker/pkg.conf` argues out of
+`Depends` on the grounds that a printer without them still serves;
+`anvil-python-greenlet` and `anvil-python-cffi` are klippy's, and
+`pkgs/klipper/pkg.conf` cannot declare them while klippy still runs under
+FlashForge's interpreter.
+
+**An earlier version enumerated the closure by hand**, filtering
+`pkg_recipes`. It worked and it hid the thing worth testing. It also had a trap
+in it: `-dev` had to be filtered by package NAME, not by "has a runtime half",
+because `execline`, `s6` and CPython ship both halves while `zlib`, `openssl`,
+`sqlite`, `expat`, `libffi`, `xz`, `bzip2`, `libarchive` and `skalibs` ship
+*only* a dev package and say so by setting `PKG_NAME=anvil-<x>-dev` outright.
+Asking the first question installed all nine — 40 packages and 2165 ELF
+objects where there should be 31 and 154. Roots and `Depends` cannot make that
+mistake: nothing depends on a `-dev` package.
+
+The one version that cannot be left to opkg is `anvil-core`'s. Its
+`PKG_VERSION` is `MOD_VER`, which defaults to today's date, so a feed built
+yesterday would resolve and install yesterday's `anvil-core` without
+complaint. `patch.sh` checks for the expected filename before installing and
+names `./bin/build-packages.sh` if it is absent.
 
 The model is the one fact opkg cannot work out for itself: both chamber
 configs are built every time, they own the same `config/printer.chamber.cfg`,
