@@ -1,15 +1,12 @@
 #!/bin/sh
 # The camera, under s6. Does phase 4 actually buy what it claimed to buy?
 #
-# WHY THIS EXISTS. S65camera used to hand-roll two things: a `while true;
-# mjpg_streamer; sleep 3; done` respawn loop, and a poll that waited up to
-# thirty seconds for /dev/video0. Phase 4 replaced the first with s6 and the
-# second with a READINESS NOTIFICATION -- the one capability s6 has and runit
-# has not, and the reason the supervisor choice went the way it did. A gate for
-# that has to prove readiness GATES: that `s6-svwait -U` blocks until the
-# camera is usable and does not return merely because a process was forked. A
-# check that would pass either way proves nothing, so section 2 below is
-# written to fail if readiness is a no-op.
+# WHY THIS EXISTS. s6 owns the camera's respawn, and a READINESS NOTIFICATION
+# replaces the poll that waited up to thirty seconds for /dev/video0. A gate
+# for that has to prove readiness GATES: that `s6-svwait -U` blocks until the
+# camera is usable rather than returning because a process was forked. A check
+# that would pass either way proves nothing, so section 2 below is written to
+# fail if readiness is a no-op.
 #
 # WHAT IS REAL HERE AND WHAT IS A STAND-IN -- read this before believing any
 # line of output.

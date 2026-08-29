@@ -307,7 +307,7 @@ echo "=== 5. S62moonraker start -- and READINESS THAT ACTUALLY GATES ==="
 # that it does not have to wait for it.
 rm -f /tmp/ready.at /tmp/bound.at
 T0=`date +%s`
-# The bind sampler. NOT 1-second polling any more -- section (b) below
+# The bind sampler. Deliberately NOT a 1-second poll -- section (b) below
 # compares this timestamp against s6-svwait -U, which is event-driven and
 # returns within a fraction of a second of the run script's own internal
 # check confirming the port is bound. A 1-second poll here can lag the TRUE

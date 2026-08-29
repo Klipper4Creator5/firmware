@@ -10,10 +10,9 @@
 # So this runs the command line start.sh really uses, in the environment
 # start.sh really sets, against the printer's real /usr/prog. FF_PYTHON now
 # names our own $MODDIR/bin/python3.13 (see payload/anvil-env.sh), so that is
-# the interpreter under test here too -- ff_mcu_bringup.py's own imports
-# (os, sys, termios, time) are stdlib-only, checked against CPython's
-# removed-in-3.13 list before the switch, so nothing here is expected to need
-# FlashForge's 3.8.2 any more.
+# the interpreter under test here too -- ff_mcu_bringup.py's imports (os, sys,
+# termios, time) are stdlib-only, checked against CPython's removed-in-3.13
+# list, so nothing here needs FlashForge's 3.8.2.
 #
 # The payload under test is mounted at /tmp/payload.
 FAIL=0
@@ -98,9 +97,9 @@ else
 fi
 
 # 4. it must name EVERY board it owns, not just the first. ttyS5 is in that
-#    list because checkEboard no longer runs: start.sh dropped it, so a
-#    bring-up that quietly stopped covering ttyS5 would strand the eboard
-#    with nothing left to notice.
+#    list because nothing else covers it -- start.sh does not call checkEboard
+#    -- so a bring-up that quietly stopped covering ttyS5 would strand the
+#    eboard with nothing left to notice.
 for dev in /dev/ttyS5 /dev/ttyS7; do
     if grep -q "mcu-bringup: $dev" /tmp/run.out; then
         ok "covers $dev as well"

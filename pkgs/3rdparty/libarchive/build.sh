@@ -2,8 +2,7 @@
 # libarchive -- what opkg reads .ipk files with.
 #
 # NOT OPTIONAL FOR opkg: its ./configure hard-fails at the pkg-config check for
-# libarchive, measured. There is no internal tar fallback any more -- that went
-# in opkg 0.3.0.
+# libarchive, and opkg 0.3.0 dropped the internal tar fallback.
 #
 # CUT DOWN TO ALMOST NOTHING. An .ipk is an ar archive of two gzipped tarballs,
 # so gzip and tar is the entire requirement. Every --without below names a

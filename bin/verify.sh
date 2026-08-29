@@ -271,10 +271,6 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
     # script starts $MODDIR/moonraker/moonraker.py from where it landed, so a
     # payload carrying the directory but not that file ships a Moonraker that
     # cannot start, which looks identical to a dead printer from the outside.
-    # (It used to be phrased as "the file moonrakerDaemon execs by absolute
-    # path" from /usr/prog; moonrakerDaemon is never invoked any more and
-    # nothing is copied to /usr/prog, but the file the check looks for is the
-    # same one, so the assertion itself is unchanged.)
     grep -q 'moonraker/moonraker.py' <<<"$LIST" && ok "Moonraker present" \
                                           || warn "no Moonraker in payload -- the stock 2022 build stays, and Mainsail will hide the webcam"
 else

@@ -6,12 +6,10 @@
 # exactly the two a Debian container would never catch:
 #
 #   * whether $MODDIR/bin/python3.13 -- our own cross-built interpreter,
-#     running here under qemu-mipsel -- executes this code at all. FF_PYTHON
-#     named FlashForge's 3.8.2 for this file's whole earlier life, so this
-#     used to test THAT interpreter; the moonrakerDaemon lesson (reasoning
-#     about compatibility was not enough) is why it still runs the real
-#     interpreter rather than trusting that ffscreen.py's stdlib-only imports
-#     are obviously fine on the new one.
+#     running here under qemu-mipsel -- executes this code at all. It runs the
+#     REAL interpreter rather than trusting that ffscreen.py's stdlib-only
+#     imports are obviously fine on it, because reasoning about compatibility
+#     has not been enough before.
 #   * whether the bytes land where the arithmetic says. A stride or bpp error
 #     produces a diagonally sheared screen, not an exception, so the check has
 #     to be on the buffer itself.

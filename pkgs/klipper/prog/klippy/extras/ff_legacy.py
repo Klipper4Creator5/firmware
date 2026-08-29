@@ -10,11 +10,10 @@
 # and Mainsail are all up, sends FF_IMPORT_FIRMWARE_CONFIG and SAVE_CONFIG
 # over the moonraker API, and stamps the install so it never runs again.
 #
-# This used to be a klippy:ready handler here (auto_import / auto_save), which
-# meant a Creator-5-only, once-per-install chore lived inside a general extra
-# and re-decided itself on every ready, at the one moment klippy cannot know
-# whether the rest of the machine is up. Both options are gone; the command
-# is unchanged, and running it by hand still works exactly as it did.
+# Deliberately NOT a klippy:ready handler here: that would put a
+# Creator-5-only, once-per-install chore inside a general extra and re-decide
+# it on every ready, at the one moment klippy cannot know whether the rest of
+# the machine is up. Running the command by hand works as it always did.
 #
 #   FF_IMPORT_FIRMWARE_CONFIG [DIR=/usr/data/firmwareRes/config] [APPLY=1]
 #

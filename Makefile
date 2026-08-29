@@ -330,18 +330,14 @@ test-services: image
 test-libpath: image
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-libpath.sh
 
-# THE SUPERVISION TARBALL, assembled from three recipe outputs.
-#
-# It used to be one `tar -C work/.s6`, because bin/patch.sh cross-built s6 into
-# that one directory. s6 is four packages now -- skalibs (which ships nothing),
-# execline, s6 and s6-rc -- so the tree a case unpacks into $MODDIR has to be
-# merged from three of them. The .version stamps are dropped on the way: they
-# are build artefacts, and one arriving on the replica would be a file under
-# $MODDIR that no install manifest accounts for.
+# THE SUPERVISION TARBALL, merged from three recipe outputs -- execline, s6 and
+# s6-rc (skalibs ships nothing). The .version stamps are dropped on the way:
+# they are build artefacts, and one arriving on the replica would be a file
+# under $MODDIR that no install manifest accounts for.
 work/.s6-gate.tgz: FORCE
 	@rm -rf work/.s6-gate && mkdir -p work/.s6-gate
 	@for t in work/pkg/execline work/pkg/s6 work/pkg/s6-rc; do \
-		[ -d $$t ] || { echo "!! $$t is missing -- run ./bin/patch.sh first" >&2; exit 1; }; \
+		[ -d $$t ] || { echo "!! $$t is missing -- run 'make packages' first" >&2; exit 1; }; \
 		cp -a $$t/. work/.s6-gate/; \
 	done
 	@rm -f work/.s6-gate/.version
@@ -349,7 +345,7 @@ work/.s6-gate.tgz: FORCE
 FORCE:
 
 # s6 itself, as the build produced it -- not a stand-in. Needs the recipe
-# outputs under work/pkg, which bin/patch.sh fills; the full suite builds this
+# outputs under work/pkg, which `make packages` fills; the full suite builds this
 # tarball for itself, this target is for running the one gate on its own.
 test-supervisor: image work/.s6-gate.tgz
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-supervisor.sh sup.tgz=work/.s6-gate.tgz
@@ -363,16 +359,14 @@ test-nginx: image work/.s6-gate.tgz
 test-camera: image work/.s6-gate.tgz
 	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-camera.sh sup.tgz=work/.s6-gate.tgz
 
-# NINETEEN RECIPE OUTPUTS, MERGED, exactly as work/.s6-gate.tgz merges three.
-# This used to be `tar -czf -C work/.py313 bin lib`: one directory, because
-# bin/patch.sh cross-built the interpreter and its site-packages into one
-# cache. CPython is pkgs/3rdparty/python now and each third-party package is a
-# pkgs/3rdparty/python-* of its own, so what a printer sees is the union of their bin/
-# and lib/ -- which is what bin/patch.sh section 5c stages and what
-# test/ffsim/gates.py packs for the suite.
+# EVERY PYTHON RECIPE OUTPUT, MERGED, exactly as work/.s6-gate.tgz merges
+# three. CPython is pkgs/3rdparty/python and each third-party package a
+# pkgs/3rdparty/python-* of its own, so what a printer sees is the union of
+# their bin/ and lib/ -- which is what the payload gets by installing them
+# and what test/ffsim/gates.py packs for the suite.
 work/.py-gate.tgz: FORCE
 	@rm -rf work/.py-gate && mkdir -p work/.py-gate
-	@[ -d work/pkg/python ] || { echo "!! work/pkg/python is missing -- run ./bin/patch.sh first" >&2; exit 1; }
+	@[ -d work/pkg/python ] || { echo "!! work/pkg/python is missing -- run 'make packages' first" >&2; exit 1; }
 	@for t in work/pkg/python work/pkg/python-*; do \
 		[ -d $$t ] || continue; \
 		cp -a $$t/. work/.py-gate/; \
@@ -381,7 +375,7 @@ work/.py-gate.tgz: FORCE
 	@tar -czf $@ -C work/.py-gate bin lib
 
 # The CPython 3.13 the build cross-compiles, on the printer's own kernel.
-# Needs the recipe outputs under work/pkg, which bin/patch.sh fills -- the same
+# Needs the recipe outputs under work/pkg, which `make packages` fills -- the same
 # relationship test-supervisor has to work/pkg/s6. See the header of
 # case-python.sh for why this has a gate of its own.
 test-python: image work/.py-gate.tgz

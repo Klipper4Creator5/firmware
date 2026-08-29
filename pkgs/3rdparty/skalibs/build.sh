@@ -7,19 +7,15 @@
 # answers are the printer's: /dev/urandom exists, posix_spawn does not return
 # early, /proc/self/exe is readable, and select() accepts an infinite timeout.
 #
-# THEY ARE ANSWERS ABOUT THE LIBC, WHICH IS WHY THIS IS A PACKAGE. When the
-# supervision stack moved from musl to the printer's glibc, these had to be
-# re-settled rather than reused -- and a private sysroot inside the s6 recipe
-# would have been reused, because nothing about it had a version. As a package
-# it has a stamp, the stamp contains the toolchain, and a toolchain change
-# rebuilds it. The failure that shipped once was exactly this shape.
+# THEY ARE ANSWERS ABOUT THE LIBC, WHICH IS WHY THIS IS A PACKAGE: change the
+# toolchain and they have to be re-settled rather than reused. As a package it
+# has a stamp, the stamp contains the toolchain, and a toolchain change rebuilds
+# it. A private sysroot inside the s6 recipe would have been reused, because
+# nothing about it had a version, and that failure shipped once.
 #
-# --enable-static-libc IS NOT PASSED, AND USED TO BE. bin/patch.sh handed it to
-# skalibs for as long as section 5b existed. skalibs has no such option: its
-# configure ends the argument loop with `-*) echo "$0: unknown option"`, a
-# warning, and patch.sh sent configure's output to /dev/null. It has been a
-# no-op the whole time. The real static/dynamic decision is made by the
-# consumers, and they now link libc dynamically against the printer's own.
+# The static/dynamic decision is not made here -- skalibs has no option for it
+# (its configure warns on an unknown flag and carries on) -- it is made by the
+# consumers, which link libc dynamically against the printer's own.
 set -euo pipefail
 . ./bin/common.sh
 . pkgs/lib.sh

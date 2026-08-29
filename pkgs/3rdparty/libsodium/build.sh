@@ -1,20 +1,13 @@
 #!/usr/bin/env bash
 # libsodium, cross-compiled for the printer into $SODIUM_BUILD.
 #
-# This was bin/patch.sh section 5d, and then it was that same block moved into
-# a file; it is now the block with everything generic taken out of it and put
-# in pkgs/lib.sh. What is left is the facts that are actually about libsodium.
-# patch.sh runs this and stages what it leaves behind, so the tarball's copy
-# and the .ipk's copy are one build.
+# One build and one vehicle: the .ipk this produces is what bin/patch.sh
+# installs into the payload, so there is no second copy to drift from.
 #
-# WHOSE INTERPRETER DLOPENS IT, corrected: libnacl reaches libsodium through
+# WHOSE INTERPRETER DLOPENS IT: libnacl reaches libsodium through
 # ctypes.cdll.LoadLibrary, and the process doing that is OUR CPython 3.13, not
-# FlashForge's 3.8.2. Moonraker moved onto our interpreter and
-# /usr/prog/libsodium left ANVIL_LIBS with it -- payload/anvil-env.sh has the
-# account. This comment used to say the opposite, which mattered because it was
-# the stated reason for the toolchain choice. The real reason is simpler and
-# still points the same way: it has to match whatever interpreter loads it, and
-# that interpreter is built by this toolchain.
+# FlashForge's 3.8.2 (see payload/anvil-env.sh). It has to match whatever
+# interpreter loads it, and that interpreter is built by this toolchain.
 #
 # WHY IT CANNOT BE STATIC, when the interpreter's seven dependencies all are:
 # you cannot dlopen an archive. Moonraker's `authorization` component signs its

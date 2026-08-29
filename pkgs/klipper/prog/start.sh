@@ -15,11 +15,11 @@
 #     their bootloaders. Stock never needed it here because firmwareExe did
 #     all three itself; replacing firmwareExe left two of them stranded, and
 #     the third was covered by checkEboard.
-#   * checkEboard is no longer called. It is one function, hard wired to
-#     /dev/ttyS5, and an older build of the routine ff_mcu_bringup.py already
+#   * checkEboard is deliberately not called. It is one function, hard wired
+#     to /dev/ttyS5, and an older build of the routine ff_mcu_bringup.py
 #     reimplements -- one that treats ANY byte from that port as a bootloader
-#     banner and so sends 'A' at an eboard already running Klipper. The
-#     binary is still on the firmware partition; nothing runs it.
+#     banner and so sends 'A' at an eboard already running Klipper. The binary
+#     is still on the firmware partition; nothing runs it.
 #   * the /tmp/uds idempotence guard below, so S70klipper's retry loop cannot
 #     start a second klippy against the same MCU.
 
@@ -57,19 +57,15 @@ fi
 # This runs on every klippy start, including the restarts S70klipper issues
 # when a board missed its window.
 #
-# $FF_PYTHON is the absolute path anvil-env.sh sets, not a `python3` lookup:
-# this is the one step Klipper cannot start without. It used to fall back to a
-# bare `python3` when the absolute path was missing, which never helped -- the
-# base rootfs ships no other interpreter, so that either resolved to the same
-# binary or to something untested. LD_LIBRARY_PATH still matters: this
-# interpreter does not start without it, which is exactly how moonrakerDaemon
-# used to fail.
+# $FF_PYTHON is the absolute path anvil-env.sh sets, with no `python3`
+# fallback: the base rootfs ships no other interpreter, so a fallback would
+# resolve either to the same binary or to something untested. LD_LIBRARY_PATH
+# matters too -- this interpreter does not start without it.
 #
 # Test -f, not -x. The script is handed to the interpreter by path, so its
 # execute bit is irrelevant -- and it is not always set: the payload carries
 # mode 644 in git, and the +x only happens if the file arrived through
-# patch.sh or run-append.sh. A hand-copied file is perfectly runnable and
-# used to be skipped with a "missing" message while sitting right there.
+# patch.sh or run-append.sh. A hand-copied file is perfectly runnable.
 #
 # FF_SKIP_MCU_BRINGUP=1 says the caller has already done it. bin/ff-startup.py
 # sets that: it owns the boot sequence, so it does the bring-up itself, in

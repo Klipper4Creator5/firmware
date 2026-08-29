@@ -1,20 +1,14 @@
 #!/bin/sh
 # Does an update delete what it installed -- and ONLY what it installed?
 #
-# WHY THIS EXISTS -- run-append.sh used to begin an update with
+# WHY THIS EXISTS. Deleting whole directories at the start of an update is
+# right only while every file under them is ours -- $MODDIR/bin holds the
+# supervisor and the interpreter, and is the obvious place for someone to put a
+# script of their own. So bin/patch.sh ships a manifest of the paths the
+# payload installs, and the next update deletes what the PREVIOUS list named
+# and nothing else.
 #
-#     rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen \
-#            $MODDIR/config $MODDIR/moonraker $MODDIR/init.d
-#
-# which is right only while every file under those seven directories is ours.
-# $MODDIR/bin is where a supervisor and later a Python are going to live, and
-# it is the obvious place for someone to put a script of their own; all of it
-# was destroyed on every update, silently, by the installer. The fix is a
-# manifest: bin/patch.sh ships the list of paths the payload installs, and the
-# next update deletes what the PREVIOUS list named, nothing else.
-#
-# The property that must not be lost in the trade is the one the rm -rf was
-# written for. S60web was once split into S60nginx and S62moonraker, and on a
+# The property that must not be lost in that trade: S60web was once split into S60nginx and S62moonraker, and on a
 # printer that already had the mod the old S60web survived the update and sat
 # beside both new scripts -- firmwareExe runs every executable
 # $MODDIR/init.d/S* in filename order, so nginx and moonraker were each

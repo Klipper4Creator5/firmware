@@ -1,22 +1,20 @@
 #!/bin/sh
 # Does the web stack actually start on this printer?
 #
-# This gate used to read S60web with grep -- for a library directory, for the
-# string "TMPDIR", for the order of two paths. That kind of check passes on a
-# script that cannot start anything and fails on a rename, and it could never
-# answer the only question worth asking: does the printer end up running the
-# moonraker we shipped, on the interpreter we meant, and does it come up?
+# NOTHING HERE GREPS A SHIPPED SCRIPT. A grep passes on a script that cannot
+# start anything and fails on a rename, and it cannot answer the only question
+# worth asking: does the printer end up running the moonraker we shipped, on
+# the interpreter we meant, and does it come up?
 #
-# So this installs the payload the way an update does and then drives the
-# shipped tools -- anvil-env.sh, anvil-service.sh and init.d/S62moonraker --
-# and then looks at what happened. Only the printer can answer: these are its
-# libraries, its interpreter, its busybox start-stop-daemon and its moonraker.
+# So this installs the payload the way an update does, drives the shipped tools
+# -- anvil-env.sh, anvil-service.sh and init.d/S62moonraker -- and then looks
+# at what happened. Only the printer can answer: these are its libraries, its
+# interpreter, its busybox start-stop-daemon and its moonraker.
 #
-# S60web is gone: nginx and moonraker are two scripts now, because they fail
-# separately and are debugged separately. That split is itself a claim about
-# behaviour -- stopping one must leave the other alone -- so it is checked
-# here too, at step 10. Both of them are supervised services now, so that
-# claim involves two s6 services as well as two scripts.
+# nginx and moonraker are two scripts and two supervised services, because they
+# fail separately and are debugged separately. That split is itself a claim
+# about behaviour -- stopping one must leave the other alone -- so step 10
+# checks it.
 #
 # WHAT PHASE 5 ADDED, and why this case grew rather than being replaced.
 # moonraker is supervised by s6: $MODDIR/etc/s6/moonraker/ holds a `run` script
@@ -236,12 +234,10 @@ else
 fi
 
 # ---- 7. every component this printer is configured for imports -------------
-# This used to be moonraker-preflight.py, shipped to the printer and run by
-# the installer to decide whether to install our Moonraker at all. It is here
-# now, and it decides nothing: by the time a user is flashing a machine it is
-# much too late to find out the Moonraker in the package does not load, and
-# there is no second build to fall back to. The question belongs to the build,
-# and this is the build.
+# Asked HERE, at build time, rather than by the installer on the printer: by
+# the time a user is flashing a machine it is far too late to find out the
+# Moonraker in the package does not load, and there is no second build to fall
+# back to.
 #
 # The component list is NOT written down here. It comes from Moonraker's own
 # CORE_COMPONENTS plus every section in the printer's moonraker.conf and
@@ -399,12 +395,11 @@ fi
 echo
 
 # ---- 8. S62moonraker starts moonraker, and it comes up ---------------------
-# WHERE THE PID COMES FROM NOW. Under s6 there is no pidfile at all: the
-# supervisor holds the process and s6-svstat -p is the answer to "which
-# moonraker is this printer running" that /run/moonraker.pid used to give -- and
-# it is a better one, because it cannot be stale. The fallback path still writes
-# the pidfile, so both are read here, and every check below is written in terms
-# of moonraker_pid so that the two paths prove the same things.
+# WHERE THE PID COMES FROM. Under s6 there is no pidfile: the supervisor holds
+# the process and s6-svstat -p answers "which moonraker is this printer
+# running" without ever being stale. The fallback path still writes a pidfile,
+# so both are read here and every check below is written in terms of
+# moonraker_pid, so the two paths prove the same things.
 moonraker_pid() {
     if [ "$S6_REAL" = 1 ]; then
         p=`$S6/s6-svstat -p $SVCDIR 2>/dev/null`
@@ -698,8 +693,8 @@ else
 fi
 
 # ---- 11. a missing tree is reported, not routed around ---------------------
-# There is no stock moonraker to fall back to any more, so the one thing this
-# must never do is fail silently.
+# There is no stock moonraker to fall back to, so the one thing this must never
+# do is fail silently.
 if [ -f "$MOONRAKER_MAIN" ]; then
     mv "$MOONRAKER_MAIN" "$MOONRAKER_MAIN.hidden"
     $S62 start > /tmp/s62-missing.out 2>&1

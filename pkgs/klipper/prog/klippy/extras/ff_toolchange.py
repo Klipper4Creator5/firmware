@@ -62,9 +62,9 @@ ERR_RELEASE_STATE = 144         # E0144    state error after release verify
 #                                                        via SAVE_CONFIG
 #   [ff_tool_offset] station_x/y/z <- TOOL_LOCATE_SENSOR  via SAVE_CONFIG
 #   [ff_toolchange]  feeds, x_correction, temp_offset, staging positions
-# firmwareExe's JSON (extruder.json / test.json / zoffset.json) is no longer
-# read at runtime; ff_legacy.py's FF_IMPORT_FIRMWARE_CONFIG copies the
-# factory numbers into the layout above once.
+# firmwareExe's JSON (extruder.json / test.json / zoffset.json) is never read
+# at runtime: ff_legacy.py's FF_IMPORT_FIRMWARE_CONFIG copies the factory
+# numbers into the layout above once.
 # ---------------------------------------------------------------------------
 
 

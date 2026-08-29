@@ -1,11 +1,10 @@
 #!/bin/sh
 # Install the stock package into /parts ONCE, at image build time.
 #
-# Every replica run used to do this itself, and it costs 37 seconds -- the
-# stock installer is shell, running under qemu, and it sleeps for real. Doing
-# it here means the published image already IS a machine that has had this
-# firmware installed by FlashForge's own updater, and a test run starts in
-# under a second.
+# Doing it per-run costs 37 seconds -- the stock installer is shell, running
+# under qemu, and it sleeps for real. Doing it here means the published image
+# already IS a machine that has had this firmware installed by FlashForge's own
+# updater, and a test run starts in under a second.
 #
 # This cannot happen in a `docker build` step: the install needs binfmt_misc
 # and chroot, so it needs --privileged. test/integration/build-printer-image.sh

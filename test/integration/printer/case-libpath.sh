@@ -2,19 +2,13 @@
 # Is every directory in ANVIL_LIBS actually load-bearing, and is every one
 # that was taken out actually dead?
 #
-# WHY THIS EXISTS. anvil-env.sh used to put TEN /usr/prog library directories
-# on LD_LIBRARY_PATH for every process the mod starts, and the comment
-# defending that said the list was "the union, deliberately" -- the idea being
-# that what moonraker links against is a property of the component set in
-# moonraker.conf, which a user edits, so a caller handed everything could not
-# be broken by a config change. That was an argument, not a measurement. Six
-# of the ten turned out to have no Python consumer at all on this firmware;
-# the single consumer of ffmpeg, x264, opencv, nim and libzip between them was
-# FlashForge's own firmwareExe, which this mod replaces with a shell script,
-# and curl (through pycurl) cannot be reached because pycurl does not import
-# here at all. A seventh, libsodium, went the same way once FF_PYTHON switched
-# to our 3.13: it existed only for 3.8's libnacl, which nothing running under
-# $FF_PYTHON imports any more -- see below.
+# WHY THIS EXISTS. ANVIL_LIBS is a measured list, not the union of what
+# FlashForge exports, and a measurement has to be re-checked or it rots. Of the
+# seven entries dropped, the only consumer of ffmpeg, x264, opencv, nim and
+# libzip between them was FlashForge's own firmwareExe, which this mod replaces
+# with a shell script; curl is reachable only through pycurl, which does not
+# import on this firmware at all; and libsodium existed only for 3.8's libnacl,
+# which nothing under $FF_PYTHON imports.
 #
 # WHO STILL USES THIS PATH AT ALL. Not Moonraker: it runs on our 3.13 now,
 # proven mapping zero /usr/prog libraries in
@@ -52,9 +46,9 @@
 #   actually take.
 #
 # And that the printer still works on three: the interpreter runs and ctypes
-# imports. Moonraker's own component set is Moonraker's own interpreter's
-# problem now, checked in case-moonraker313-s6.sh -- not this file's, since
-# the printer never runs Moonraker on Python-3.8.2 any more.
+# imports. Moonraker's own component set belongs to Moonraker's own
+# interpreter, checked in case-moonraker313-s6.sh -- the printer never runs
+# Moonraker on Python-3.8.2.
 #
 # The payload under test is mounted at /tmp/payload.
 FAIL=0
@@ -67,10 +61,10 @@ MODDIR=/usr/data/anvil
 PAYLOAD=/tmp/payload
 PY=/usr/prog/Python-3.8.2/bin/python3
 
-# THE SEVEN THAT WENT. They are written down here and nowhere else, because
-# they are no longer in the shipped file to be read out of it -- that is the
-# whole point. If one of them is ever put back, this list and the check at
-# section 6 are what make somebody say out loud which process maps it.
+# THE SEVEN THAT WENT, written down here because they are deliberately absent
+# from the shipped file and so cannot be read out of it. If one is ever put
+# back, this list and the check at section 6 are what make somebody say out
+# loud which process maps it.
 GONE="/usr/prog/curl-7.55.1/lib
 /usr/prog/ffmpeg-402/lib
 /usr/prog/x264/lib

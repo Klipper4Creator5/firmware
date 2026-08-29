@@ -2,27 +2,22 @@
 # s6 -- the supervisor, cross-compiled against the packaged skalibs and
 # execline and linked dynamically against the printer's own glibc.
 #
-# WHAT SHIPS IS A SUBSET, AND THE SUBSET GREW. s6 installs about 40 binaries.
-# Thirteen of them are the supervision machinery this mod has always shipped:
-# the scanner and its control channel, one supervisor per service and the verb
-# that talks to it, "is it up", the readiness wait that is the whole reason for
-# s6, the listening verbs those exec, and the fifodir tools they need.
+# WHAT SHIPS IS A SUBSET of the ~40 binaries s6 installs. Thirteen are the
+# supervision machinery: the scanner and its control channel, one supervisor
+# per service and the verb that talks to it, "is it up", the readiness wait,
+# the listening verbs those exec, and the fifodir tools they need.
 #
-# Eight more are here because s6-rc's generated scripts exec them, which is not
-# something you can tell by reading s6's own documentation -- it was found by
-# running a real s6-rc up/down cycle with a PATH containing only the
-# candidates and adding whatever the next failure named. s6rc-oneshot-runner's
-# run script needs the ipcserver chain and s6-sudod; s6-rc itself execs s6-sudo
-# on the client side, which execs s6-sudoc; the fdholder servicedir, which
-# s6-rc-compile writes into EVERY database whether or not our services use it,
-# needs s6-fdholder-daemon and s6-ipcclient. Leaving any of them out gives
-# "s6-rc: warning: unable to spawn subprocess" at boot.
+# Eight more are here because s6-rc's GENERATED scripts exec them, which s6's
+# own documentation does not say -- it was found by running a real s6-rc
+# up/down cycle with a PATH containing only the candidates. s6rc-oneshot-runner
+# needs the ipcserver chain and s6-sudod; s6-rc execs s6-sudo, which execs
+# s6-sudoc; the fdholder servicedir, which s6-rc-compile writes into EVERY
+# database whether our services use it or not, needs s6-fdholder-daemon and
+# s6-ipcclient. Leaving any out gives "s6-rc: warning: unable to spawn
+# subprocess" at boot.
 #
-# NOT --disable-execline ANY MORE. s6 links execline by default and the flag
-# used to turn that off, on the argument that we ship no execline. We do now:
-# s6-rc has no equivalent flag and needs an execline-enabled s6.
-#
-# THE PTHREAD LINE IS NOT OPTIONAL. See PKG_MAKE_ARGS below.
+# Execline is deliberately left enabled: s6-rc has no flag to disable it and
+# needs an execline-enabled s6.
 set -euo pipefail
 . ./bin/common.sh
 . pkgs/lib.sh
@@ -51,10 +46,8 @@ pkg_build "s6-$S6_VERSION" \
 
 PKG_STRIP_ARGS=""
 
-# The list lives here and nowhere else. bin/patch.sh used to hold it as
-# S6_BINS/S6_LIBEXEC and check the count after staging; it is checked below
-# instead, which means `make packages` catches a missing binary too rather
-# than only a full firmware build.
+# The list lives here and nowhere else, and is checked below, so `make
+# packages` catches a missing binary rather than only a full firmware build.
 S6_BINS="s6-svscan s6-svscanctl s6-supervise s6-svc s6-svstat s6-svwait s6-svok
          s6-svlisten s6-svlisten1 s6-ftrig-listen1 s6-mkfifodir s6-cleanfifodir
          s6-notifyoncheck
@@ -77,7 +70,7 @@ done
 # THE LINK HAS TO BE WHAT IT WAS ASKED TO BE. A statically linked s6 would run
 # here and be four times the size on the printer; one that picked up a shared
 # libskarnet would fail at the first missing .so, naming a library rather than
-# a link flag. libc and libpthread are expected, everything else is not.
+# a link flag.
 _needed=$(readelf -d "$PKG_OUT/bin/s6-svscan" 2>/dev/null \
     | awk '/NEEDED/{gsub(/[][]/,"",$5); print $5}')
 case "$_needed" in

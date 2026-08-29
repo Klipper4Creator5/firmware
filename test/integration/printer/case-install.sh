@@ -137,9 +137,10 @@ if head -c 2 "$FE" 2>/dev/null | grep -q '#!'; then
 elif head -c 4 "$FE" | grep -q 'ELF'; then
     # bin/patch.sh installs the wrapper unconditionally and HelixScreen is the
     # only UI, so the genuine binary sitting here means the install did not
-    # take. This used to print ok, which also switched off the wrapper parse,
-    # the HelixScreen check, the Klipper-service check and the whole boot-3 UI
-    # block -- making "the install produced nothing" a passing run.
+    # take. It must be a failure: treating it as ok also switches off the
+    # wrapper parse, the HelixScreen check, the Klipper-service check and the
+    # whole boot-3 UI block, making "the install produced nothing" a passing
+    # run.
     bad "BRICK: stock firmwareExe binary in place -- the wrapper was not installed"
 else
     bad "BRICK: firmwareExe is neither the wrapper nor the stock binary"
@@ -461,14 +462,11 @@ killall sleep 2>/dev/null
 # WHERE IT HAS TO BE, AND WHERE IT MUST NOT BE. The mod's tree rides in the
 # payload and is installed by being EXTRACTED, so the entry point lands at
 # /usr/data/anvil/moonraker/moonraker.py and nothing is written to /usr/prog.
-# These checks used to assert the opposite: that run-append.sh had copied our
-# build over /usr/prog/moonraker/moonraker/moonraker, that the install log said
-# so, and that no .modold rollback tree was left beside it. That copy is gone.
-# It was a second full tree on the one partition with no room to spare -- the
-# only step of the install that could fail on disk space, failing as "no
-# working web UI" -- and because a stock FlashForge flash overwrites /usr/prog
-# while /usr/data/anvil survives one, it made "which Moonraker is this printer
-# running?" depend on what was flashed last. So the assertions are inverted:
+# A copy there would be a second full tree on the one partition with no room to
+# spare -- the only install step that can fail on disk space, failing as "no
+# working web UI" -- and since a stock FlashForge flash overwrites /usr/prog
+# while /usr/data/anvil survives one, it would make "which Moonraker is this
+# printer running?" depend on what was flashed last. So:
 # ours must be on the data partition, and FlashForge's must be exactly as
 # untouched as we found it.
 MRMOD=/usr/data/anvil/moonraker
@@ -493,8 +491,8 @@ if [ -d $MRMOD ]; then
             ok "moonraker: FlashForge's own tree on /usr/prog is untouched"
         fi
     fi
-    # No rollback tree either -- there is nothing to roll back from any more,
-    # and a leftover .modold is a second full tree on the small partition.
+    # No rollback tree either: there is nothing to roll back from, and a
+    # leftover .modold is a second full tree on the small partition.
     if [ -e $MRSTOCK.modold ] || [ -e /usr/prog/moonraker/moonraker.modold ]; then
         bad "moonraker: a .modold rollback tree was left on the firmware partition"
     else
@@ -504,11 +502,12 @@ else
     echo "  (skip) moonraker: this package ships none (BUILD_MOONRAKER=0)"
 fi
 
-# The config has to actually LAND. /usr/data/config/moonraker.conf is on
-# the factory image, so the compare-and-.mod-new rule used to leave the
-# factory file in place forever and write ours beside it -- Mainsail then
-# shows no camera, which is the entire reason the Moonraker swap exists.
-# Assert the live file is ours, not that a .mod-new appeared next to it.
+# The config has to actually LAND. /usr/data/config/moonraker.conf is on the
+# factory image, so a compare-and-.mod-new rule that does not recognise the
+# pristine factory file leaves it in place forever and writes ours beside it --
+# Mainsail then shows no camera, which is the entire reason the Moonraker swap
+# exists. Assert the live file is ours, not that a .mod-new appeared beside
+# it.
 if grep -q '^\[webcam' /usr/data/config/moonraker.conf 2>/dev/null; then
     ok "moonraker.conf: the shipped config is live (has a [webcam] block)"
 else

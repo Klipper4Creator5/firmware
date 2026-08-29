@@ -120,14 +120,6 @@ fi
 # them, so there is no BUILD_ flag here -- these come down on every build, not
 # on request. Four tarballs, well under a megabyte between them.
 #
-# THE musl CROSS-TOOLCHAIN USED TO BE FETCHED HERE and is gone with the second
-# libc. It was ~71MB, conditional on a work/.s6 stamp this file spelled with
-# two of its three fields while patch.sh wrote all three -- so the condition
-# could never be false and it was re-hashed on every single run for months.
-# The fix at the time was to move the stamp into bin/common.sh; the fix now is
-# that there is no such stamp to spell, because all four of these are recipes
-# and the Ingenic toolchain they need is gated on pkg_needs above, which asks
-# pkg_stale rather than re-deriving anything.
 get "https://skarnet.org/software/skalibs/skalibs-$SKALIBS_VERSION.tar.gz" \
     "$SKALIBS_TGZ" "$SKALIBS_SHA256"
 get "https://skarnet.org/software/execline/execline-$EXECLINE_VERSION.tar.gz" \
@@ -262,13 +254,10 @@ say "cached  opkg-utils $OPKG_UTILS_VERSION ($OPKG_UTILS_COMMIT)"
 # with this compiler is a recipe under pkgs/ now -- the interpreter, its
 # eighteen site-packages, libsodium, the s6 family and the rest.
 #
-# IT USED TO BE THREE HAND-WRITTEN COMPARISONS and each of them had gone, or was
-# going, wrong. libsodium's compared $SODIUM_VERSION against
-# work/pkg/libsodium/.version, which stopped matching the moment a recipe's key
-# grew to include its toolchain and its dependencies -- so the test was true
-# forever and nobody noticed. The two CPython ones re-derived a stamp
-# bin/patch.sh also derived, and agreed with it by luck. Asking the code that
-# WRITES the stamp is the only spelling that cannot drift.
+# A hand-written comparison here would be a second spelling of a recipe's cache
+# key -- which has to include its toolchain and its dependencies -- and the
+# second spelling is the one that drifts. Asking the code that WRITES the stamp
+# is the only spelling that cannot.
 #
 # Getting this wrong is not a slow build, it is a stopped one: patch.sh would
 # get 53MB of sdists and then halt for want of a compiler, halfway through,

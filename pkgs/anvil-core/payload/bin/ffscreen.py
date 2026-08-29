@@ -14,13 +14,11 @@
 # framebuffer -- the stock installer draws its own splash with
 # `cat start.img > /dev/fb0`.
 #
-# THE GEOMETRY IS HARDCODED, NOT READ FROM SYSFS, and that used to be the
-# other way round: sysfs is the "right" source in principle, but measured on
-# real hardware it reports a geometry that does not match this panel, so
-# trusting it drew a sheared or wrong-sized frame instead of drawing nothing.
+# THE GEOMETRY IS HARDCODED, NOT READ FROM SYSFS. sysfs is the "right" source
+# in principle, but measured on real hardware it reports a geometry that does
+# not match this panel, and trusting it drew a sheared or wrong-sized frame.
 # The default below is the known Creator5Pro panel; a printer whose geometry
-# genuinely differs needs --fb-geometry (see main()) until sysfs is trusted
-# again, which needs its own measurement before it happens.
+# genuinely differs needs --fb-geometry (see main()).
 #
 # EVERY failure here is swallowed and turns the screen off, never into an
 # error: this is decoration on top of a migration that must finish regardless.
