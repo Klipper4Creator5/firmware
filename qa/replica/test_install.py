@@ -154,7 +154,7 @@ def test_the_stock_paths_are_symlinks_into_the_payload(box):
     $MODDIR.
 
     klipperDaemon is here for a second reason. It was hand-copied by the
-    installer until the nice value moved to anvil.conf, and the guard on that
+    installer until the nice value it carried went away, and the guard on that
     copy named a path the file had stopped shipping at -- so for several
     releases the block was skipped in silence and every printer kept
     FlashForge's own, whose `start` forks a second unsupervised klippy beside

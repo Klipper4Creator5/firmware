@@ -23,7 +23,6 @@
 
 MODDIR=/usr/data/anvil
 
-[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 mkdir -p /usr/data/logs
 exec >>/usr/data/logs/anvil-boot.log 2>&1
 echo "=== mod firmwareExe `date 2>/dev/null` ==="
@@ -73,7 +72,6 @@ scanner_up() {
 # only two lines that would display it, both in app_startup.sh, are commented
 # out. FF_PYTHON and LD_LIBRARY_PATH come from anvil-env.sh.
 splash() {
-    [ "${MOD_SPLASH:-1}" = 1 ] || return 0
     [ -f $MODDIR/bin/ffscreen.py ] || return 0
     "$FF_PYTHON" $MODDIR/bin/ffscreen.py "$@" 2>/dev/null || true
 }
@@ -168,31 +166,14 @@ fi
 # A transition carries on past a service it could not start, and only what
 # DEPENDS on that service is skipped.
 #
-# THE BOOT SET is the ok-all bundle minus what anvil.conf switched off. The
-# bundle is read out of the compiled database rather than written here, so
-# there is one statement of what a default printer runs; the switches are read
-# at runtime, because a database built on a build host cannot read a file the
-# user edits over ssh. THIS IS THE ONLY PLACE THE MOD_* SERVICE GATES EXIST.
-# `contents`, not `list`: `list` takes a class of service.
+# THE BOOT SET is the ok-all bundle, whole. Every service in it is brought up
+# because every component is installed -- there is no per-service switch to
+# read, and nothing to read one from. A printer that should not run a component
+# does not have it: `opkg remove`, or a stock FlashForge package.
 #
 # mcu-bringup is deliberately not in the bundle -- it arrives as klipper's
 # dependency, which is the point of having one.
-BOOT_SET=""
-for name in `"$S6BIN/s6-rc-db" -c "$S6DB" contents ok-all 2>/dev/null`; do
-    case "$name" in
-        nginx|moonraker) [ "${MOD_WEB:-1}" = 1 ] || continue ;;
-        camera)          [ "${MOD_CAM:-1}" = 1 ] || continue ;;
-        wifi)            [ "${MOD_WIFI:-1}" = 1 ] || continue ;;
-        ui)              [ "${MOD_UI:-1}" = 1 ] || continue ;;
-    esac
-    BOOT_SET="$BOOT_SET $name"
-done
-if [ -z "$BOOT_SET" ]; then
-    # No database, or a renamed bundle. Asking for it whole beats a printer
-    # with no services and an honoured MOD_CAM.
-    echo "s6-rc: !! cannot read the ok-all bundle from $S6DB -- asking for it whole"
-    BOOT_SET=ok-all
-fi
+BOOT_SET=ok-all
 
 # THIS BLOCKS FOR THE WHOLE BOOT, on purpose: moonraker and the camera are
 # waited for until READY, and ff-startup is a oneshot that waits for the boards
@@ -203,14 +184,6 @@ fi
 echo "s6-rc: bringing up:$BOOT_SET"
 "$S6BIN/s6-rc" -t "$S6RC_BOOT_T" -u change $BOOT_SET \
     || echo "s6-rc: !! at least one service did not come up (see above)"
-
-# The one thing a service that is not running cannot do: say so on the panel.
-if [ "${MOD_UI:-1}" != 1 ]; then
-    splash --title "REFORGE" \
-           --status "NO SCREEN" \
-           --detail "MAINSAIL AND SSH ARE RUNNING. SET MOD_UI=1 IN ANVIL.CONF TO TURN THE SCREEN ON."
-    echo "ui: MOD_UI=0 -- headless on purpose"
-fi
 
 # ---- the foreground, and the recovery path -------------------------------
 #

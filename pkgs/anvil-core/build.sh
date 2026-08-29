@@ -7,16 +7,13 @@
 # becomes $MODDIR/etc/s6-rc/source/nginx and nothing here has to say so. A file
 # added to that tree is shipped without an edit here.
 #
-# THE ONE SIBLING DIRECTORY THAT IS NOT SHIPPED:
-#
-#   pkgs/anvil-core/seed/     anvil.conf.in, which is TEMPLATED at build time
-#       from config.env's MOD_* and NICE_* values and then PRESERVED across
-#       updates by installer/run-append.sh. Those two facts make it user
-#       state that happens to ship with a default rather than a package
-#       member: the first `opkg upgrade` would overwrite a printer's
-#       settings. The answer is a shipped anvil.conf.default plus a seeder
-#       that copies it only when the real file is absent -- which needs
-#       maintainer-script support that pkgs/lib.sh does not have yet.
+# EVERY DIRECTORY HERE IS SHIPPED. There used to be a seed/ beside payload/
+# holding anvil.conf.in, templated at build time and preserved across updates
+# by installer/run-append.sh -- user state that happened to ship with a
+# default, and the one thing in this recipe an `opkg upgrade` could not simply
+# overwrite. anvil.conf is gone and so is the exception: what it configured is
+# stated once each in the service that uses it, under payload/etc/s6-rc/source/,
+# and ships as an ordinary package member like everything else.
 #
 # WHAT LIVES UNDER ANOTHER RECIPE, because ownership follows the component.
 # This package used to hold all of it, for no better reason than being the

@@ -17,21 +17,20 @@
 # (glibc's dlopen falls back to LD_LIBRARY_PATH for a bare name) but not on
 # real hardware.
 MODDIR=/usr/data/anvil
-# anvil.conf is read HERE, not inherited. s6-supervise starts this script from
-# the SCANNER's environment, which is whatever firmwareExe had at boot -- and
-# on a `s6-svc -u` typed over ssh it is whatever that ssh session had, which is
-# not the same thing at all. Reading the file in the run script is what makes
-# MOD_CAM_RES/FPS/PORT mean the same on both paths, and it is why editing
-# anvil.conf and restarting the service is enough to change the resolution.
-[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
+# anvil-env.sh is read HERE, not inherited. s6-supervise starts this script
+# from the SCANNER's environment, which is whatever firmwareExe had at boot --
+# and on a `s6-svc -u` typed over ssh it is whatever that ssh session had,
+# which is not the same thing at all.
 [ -f $MODDIR/anvil-env.sh ] && . $MODDIR/anvil-env.sh
 
 CAMDIR=/usr/prog/mjpg-streamer
 VIDEO=/dev/video0
 LOG=/usr/data/logs/mjpg.log
-RES="${MOD_CAM_RES:-1280x720}"
-FPS="${MOD_CAM_FPS:-30}"
-PORT="${MOD_CAM_PORT:-8080}"
+# The shape of the stream, stated here and nowhere else. Edit and restart the
+# service (`s6-svc -r /usr/data/anvil/etc/s6/camera`) to change it.
+RES=1280x720
+FPS=30
+PORT=8080
 
 # The same log file the hand-rolled loop wrote to, for the same reason: it is
 # the file the troubleshooting notes name, and mjpg_streamer is chatty enough
@@ -76,7 +75,7 @@ fi
 # THE BOOT PAYS FOR IT. s6-rc waits for this service's readiness notification,
 # bounded by `timeout-up` (40s) next to this file, so a printer with no camera
 # spends that on every boot. Nothing depends on the camera, so nothing else is
-# held back; MOD_CAM=0 is the answer for a printer that has none. The
+# held back; `opkg remove` is the answer for a printer that has none. The
 # alternative was a service that lies about being ready.
 waited=0
 while [ ! -e "$VIDEO" ] && [ $waited -lt 30 ]; do
@@ -137,8 +136,9 @@ PORTHEX=`printf '%04X' "$PORT"`
 # ONE argv entry and splits it itself, so those quotes are load-bearing.
 #
 # `nice` execs the target in its own place, so s6 still holds the streamer's
-# own pid. NICE_CAM (anvil.conf): the streamer is pure background work and the
-# most deserving of the services that yield to klippy. 0 or unset = normal.
-exec nice -n "${NICE_CAM:-0}" "$CAMDIR/mjpg_streamer" \
+# own pid. The streamer is pure background work and the most deserving of the
+# services that yield to klippy, so it is the largest nice value here. 0 would
+# be normal priority.
+exec nice -n 10 "$CAMDIR/mjpg_streamer" \
     -i "$CAMDIR/input_uvc.so -d $VIDEO -r $RES -f $FPS" \
     -o "$CAMDIR/output_http.so -p $PORT -w $CAMDIR/www" 3>&-

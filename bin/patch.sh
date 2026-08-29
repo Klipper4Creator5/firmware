@@ -138,16 +138,7 @@ fi
 say "firmwareExe + start.sh: dropped from the component (anvil-core owns both)"
 rm -f "$SOFTWARE_DIR/firmwareExe" "$SOFTWARE_DIR/start.sh"
 
-# --- 10. anvil.conf
-# anvil.conf is not in anvil-core and is the whole of what is left here:
-# preserved across updates by run-append.sh, which makes it user state rather
-# than a package member. Only the two values with a RANGE are substituted.
-sed -e "s/^NICE_MOONRAKER=.*/NICE_MOONRAKER=${NICE_MOONRAKER:-5}/" \
-    -e "s/^NICE_CAM=.*/NICE_CAM=${NICE_CAM:-10}/" \
-    -e "s/^NICE_KLIPPER=.*/NICE_KLIPPER=${NICE_KLIPPER:-0}/" \
-    pkgs/anvil-core/seed/anvil.conf.in > "$PAYLOAD_DIR/anvil.conf"
-
-# --- 10b. the install manifest
+# --- 10. the install manifest
 # Every path this payload installs, so the next update deletes exactly what this
 # one left behind -- a renamed init script leaves no stale twin. It names
 # ITSELF, and is moved in from a temp file so `find` cannot list a

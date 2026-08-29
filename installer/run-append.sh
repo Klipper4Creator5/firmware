@@ -27,7 +27,11 @@ if [ -n "$MODTAR" ]; then
         echo "!! not enough space on /usr/data -- skipping mod payload"
     else
         # Keep user-editable state; replace everything we own.
-        [ -f $MODDIR/anvil.conf ] && cp -f $MODDIR/anvil.conf /tmp/anvil.conf.keep
+        #
+        # anvil.conf IS NOT KEPT. A printer upgrading from a release that
+        # had one keeps nothing of it: the settings it held are gone, and it
+        # is removed unconditionally further down -- see the note there.
+        #
         # HelixScreen keeps every user setting INSIDE its own install tree.
         # firmwareExe exports HELIX_DATA_DIR=$MODDIR/helixscreen and the binary
         # resolves its settings as config/settings.json relative to that root,
@@ -132,22 +136,30 @@ if [ -n "$MODTAR" ]; then
             rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen $MODDIR/config $MODDIR/moonraker $MODDIR/init.d
             echo "previous install removed (no manifest -- pre-manifest layout)"
         fi
-        # init.d/ AND anvil-service.sh ARE GONE, and go unconditionally rather
-        # than by manifest. The payload ships neither any more: s6-rc is the
-        # CLI, and the tree is started by firmwareExe. A leftover S70klipper is
-        # a script that starts an UNSUPERVISED klippy next to the supervised
-        # one, and a leftover anvil-service.sh is a library something stale
-        # could still source, so neither may be left to a diff that only knows
-        # about files the LAST manifest tracked -- a script planted by hand, or
-        # surviving the one pre-manifest jump every printer takes, is invisible
-        # to that.
+        # init.d/, anvil-service.sh AND anvil.conf ARE GONE, and go
+        # unconditionally rather than by manifest. The payload ships none of
+        # them any more: s6-rc is the CLI, the tree is started by firmwareExe,
+        # and every setting anvil.conf held is now stated in the service that
+        # uses it. A leftover S70klipper is a script that starts an
+        # UNSUPERVISED klippy next to the supervised one, and a leftover
+        # anvil-service.sh is a library something stale could still source, so
+        # neither may be left to a diff that only knows about files the LAST
+        # manifest tracked -- a script planted by hand, or surviving the one
+        # pre-manifest jump every printer takes, is invisible to that.
+        #
+        # anvil.conf is here for the second reason rather than the first: it
+        # is inert now, nothing reads it, and the manifest branch would take
+        # it anyway. What it must not do is SURVIVE the pre-manifest path,
+        # where the sweep above removes directories and would leave this file
+        # sitting at the top of $MODDIR looking like something an owner could
+        # still edit to change how the printer boots.
         #
         # No hot migration is attempted. The install runs from app_startup.sh
         # DURING BOOT, before firmwareExe starts, so there is no supervision
         # tree up while this runs and the new one comes up from scratch a
         # moment later. A `sh run.sh` typed over ssh instead is the exception:
         # that printer needs a reboot, and nothing here forces one.
-        rm -rf $MODDIR/init.d $MODDIR/anvil-service.sh
+        rm -rf $MODDIR/init.d $MODDIR/anvil-service.sh $MODDIR/anvil.conf
         mkdir -p $MODDIR
         # Try xz first (FlashForge's own factory installer uses `xz -dc`, so
         # it exists), then fall back to plain tar in case a build shipped it
@@ -159,7 +171,6 @@ if [ -n "$MODTAR" ]; then
         else
             echo "!! could not extract $MODTAR"
         fi
-        [ -f /tmp/anvil.conf.keep ] && mv -f /tmp/anvil.conf.keep $MODDIR/anvil.conf
         # Put HelixScreen's settings back over the tarball's defaults. The
         # user's copy wins outright: these are settings, not a config file the
         # mod owns, and there is no include-and-override seam to move an edit
@@ -207,7 +218,8 @@ if [ -n "$MODTAR" ]; then
         # and therefore unlinkable -- and the guard on that block named
         # $MODDIR/bin/klipperDaemon, a path it stopped shipping at in 057a3a1,
         # so it was skipped in silence for several releases and every printer
-        # kept FlashForge's own. The number is NICE_KLIPPER in anvil.conf now.
+        # kept FlashForge's own. There is no such number now: klipper/run starts
+        # klippy at normal priority.
         echo "mod payload installed"
         # Point the stock boot path at the payload's own copies. This has to
         # be HERE and not earlier: FlashForge's run.sh distributed the

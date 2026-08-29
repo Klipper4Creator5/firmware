@@ -46,8 +46,9 @@
 # remember to do it -- including s6 restarting klippy after a crash, which is a
 # path no script of ours is on. `ff-startup` is steps 2-4 (--no-bringup
 # --no-klipper) and depends on klipper and moonraker; the UI depends on it. See
-# the `up` scripts in payload/etc/s6-rc/source/, which assemble both command
-# lines out of anvil.conf.
+# the `up` scripts in payload/etc/s6-rc/source/. They pass only which STEPS to
+# run: the timeout and the retry count are this program's own defaults, stated
+# once here, so there is nowhere for the two to disagree.
 #
 # WHAT THAT DEPENDENCY DOES NOT GIVE US, and why the waiting below stays. s6-rc
 # counts a longrun up as soon as it is forked unless its servicedir carries a

@@ -190,6 +190,8 @@ class Replica:
         ONE SOURCE NOW. It used to stage four -- anvil-core's overlay, its
         anvil.conf template, Klipper's launcher and the installer block --
         because case-moonraker.sh and case-upgrade.sh read the last three.
+        (anvil.conf has since been removed outright, so that template is not
+        a thing to stage again.)
         Those cases are qa/ modules now, so only the overlay is left, and the
         only file any surviving case opens under here is bin/ffscreen.py.
         """

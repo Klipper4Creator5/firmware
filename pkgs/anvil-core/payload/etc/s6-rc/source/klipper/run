@@ -22,11 +22,6 @@ else
     echo "klipper/run: !! no $MODDIR/anvil-env.sh -- klippy will not find its libraries"
 fi
 
-# anvil.conf is read HERE and not inherited, the same way camera/run and
-# moonraker/run read theirs: it is user state, so editing it and restarting the
-# service is enough to change the number.
-[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
-
 # BOTH HALVES ARE OURS AND BOTH ARE UNDER $MODDIR: the klippy tree anvil-klipper
 # installs, on the CPython 3.13 anvil-python installs. There is no /usr/prog in
 # this command line any more.
@@ -82,18 +77,16 @@ if [ -x /usr/prog/klipper/klipper_pri.sh ]; then
     ) >/dev/null 2>&1 &
 fi
 
-# NICE_KLIPPER (anvil.conf), and 0 -- klippy at normal priority -- is both the
-# default and what FlashForge shipped. This used to grep KLIPPER_NICENESS out of
-# /usr/prog/klipper/klipperDaemon, whose value the installer carried forward off
-# the stock file. That made the shim machine-specific, which is the one reason
-# it could not be a symlink like the other two files in prog/. It is ours now,
-# it lives with NICE_MOONRAKER and NICE_CAM, and klipperDaemon is a link.
+# NO NICE VALUE: klippy runs at normal priority, which is what FlashForge
+# shipped. The number was briefly a NICE_KLIPPER knob in anvil.conf, and before
+# that the installer grepped KLIPPER_NICENESS out of the stock klipperDaemon --
+# which is what made that shim machine-specific and kept it from being a symlink
+# like the other two files in prog/. Neither is true now.
 #
-# Two branches because `-N 0` is not the same as no -N to every busybox
-# start-stop-daemon, and 0 is the common case.
-if [ "${NICE_KLIPPER:-0}" = 0 ]; then
-    exec start-stop-daemon -S --exec "$FF_PYTHON" -- \
-        "$KLIPPY" "$PRINTER_CFG" -l "$PRINTER_LOG" -a "$UDS"
-fi
-exec start-stop-daemon -S -N "$NICE_KLIPPER" --exec "$FF_PYTHON" -- \
+# Renicing klippy is nearly always the wrong lever anyway: klipper_pri.sh puts
+# its main thread on SCHED_FIFO 50, which outranks every nice value there is,
+# and its serial reader thread calls os.nice(-20) itself. The two services that
+# DO carry a nice value are the ones that yield to klippy -- moonraker/run and
+# camera/run, each stating its own.
+exec start-stop-daemon -S --exec "$FF_PYTHON" -- \
     "$KLIPPY" "$PRINTER_CFG" -l "$PRINTER_LOG" -a "$UDS"

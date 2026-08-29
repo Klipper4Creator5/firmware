@@ -25,7 +25,6 @@ MODDIR=/usr/data/anvil
 # environment, which is firmwareExe's at boot but whatever an ssh session had
 # when the service is restarted by hand. moonraker is the process that dies on
 # "libpython3.8.so.1.0: cannot open shared object file" when that is wrong.
-[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 [ -f $MODDIR/anvil-env.sh ] && . $MODDIR/anvil-env.sh
 
 # One moonraker, on the DATA partition -- /usr/prog is what a stock flash
@@ -145,5 +144,7 @@ MOONRAKER_PORT=`awk '
 #
 # `nice` sets its own priority and then execs in place (verified: the pid s6
 # holds is the interpreter's, not nice's), so this is still one process.
-# NICE_MOONRAKER protects klippy from this process; 0 or unset = normal.
-exec nice -n "${NICE_MOONRAKER:-0}" "$FF_PYTHON" "$MOONRAKER_MAIN" -d "$MOONRAKER_DATA" 3>&-
+# The nice value protects klippy from this process. Modest on purpose: this is
+# the print path -- HelixScreen and Mainsail both start jobs through it -- so
+# starving it delays the UI, not just background work. 0 would be normal.
+exec nice -n 5 "$FF_PYTHON" "$MOONRAKER_MAIN" -d "$MOONRAKER_DATA" 3>&-

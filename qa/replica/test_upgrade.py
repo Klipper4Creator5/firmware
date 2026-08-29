@@ -171,6 +171,8 @@ def first_install(installer):
         "echo '#!/bin/sh' > %(build)s/v1/bin/anvil-hello\n"
         "echo '#!/bin/sh' > %(build)s/v1/bin/helper-v1\n"
         "echo '#!/bin/sh' > %(build)s/v1/share/web-launcher\n"
+        # v1 stands in for a release that still shipped an anvil.conf, so
+        # that the upgrade below is the real jump a printer takes.
         "echo 'MOD_WEB=1'  > %(build)s/v1/anvil.conf\n"
         "echo v1 > %(build)s/v1/www/index.html\n"
         "echo v1 > %(build)s/v1/oldskin/index.html\n"
@@ -219,7 +221,9 @@ def upgraded(first_install):
         "echo '#!/bin/sh' > %(build)s/v2/bin/anvil-hello\n"
         "echo '#!/bin/sh' > %(build)s/v2/share/nginx-launcher\n"
         "echo '#!/bin/sh' > %(build)s/v2/share/moonraker-launcher\n"
-        "echo 'MOD_WEB=1'  > %(build)s/v2/anvil.conf\n"
+        # NO anvil.conf in v2, deliberately: the payload ships none any more,
+        # which is what makes the printer's copy something to remove rather
+        # than something to put back.
         "echo v2 > %(build)s/v2/www/index.html\n"
         % {"build": BUILD, "mod": MODDIR})
     if not planted.ok:
@@ -375,12 +379,21 @@ def test_init_d_and_anvil_service_go_unconditionally(upgraded):
         "%s/anvil-service.sh survived the update" % MODDIR)
 
 
-def test_anvil_conf_keeps_the_users_edit(upgraded):
-    """anvil.conf IS in the manifest -- the payload ships one -- so it is
-    deleted and then put back from /tmp by the installer. What matters is the
-    contents that come out the other end, not the file."""
-    live = upgraded.file(MODDIR + "/anvil.conf").text
-    assert "edited by hand" in live, "anvil.conf lost its edit: %r" % live
+def test_anvil_conf_is_removed_rather_than_kept(upgraded):
+    """The payload ships no anvil.conf any more, so the upgrade takes the
+    printer's away -- edit and all.
+
+    This is the reversal of the property this test used to hold. The file was
+    user state, preserved across updates through /tmp; it is now inert, and
+    an inert file at the top of $MODDIR that still looks editable is worse
+    than no file. The edit planted by the fixture is what makes the deletion
+    provable: a file that merely still exists could be the shipped default.
+    """
+    conf = upgraded.file(MODDIR + "/anvil.conf")
+    assert not conf.exists, (
+        "%s/anvil.conf survived the upgrade with %r in it -- nothing reads "
+        "it any more, so it is a file inviting an edit that does nothing"
+        % (MODDIR, conf.text))
 
 
 def test_config_installed_survives_the_payload_swap(upgraded):
@@ -451,10 +464,21 @@ def test_the_payload_extracted_over_the_pre_manifest_layout(legacy):
         "the new payload did not install over the pre-manifest layout")
 
 
-def test_anvil_conf_keeps_its_edit_on_the_legacy_path(legacy):
-    live = legacy.file(MODDIR + "/anvil.conf").text
-    assert "edited by hand" in live, (
-        "anvil.conf lost its edit on the legacy path: %r" % live)
+def test_anvil_conf_is_removed_on_the_legacy_path(legacy):
+    """The path that could most easily have left it behind.
+
+    The pre-manifest sweep removes seven DIRECTORIES, and anvil.conf is a file
+    at the top of $MODDIR, so nothing in that branch touches it. It goes only
+    because run-append.sh removes it unconditionally alongside init.d and
+    anvil-service.sh -- which is exactly why it is removed there and not left
+    to the manifest.
+    """
+    conf = legacy.file(MODDIR + "/anvil.conf")
+    assert not conf.exists, (
+        "%s/anvil.conf survived the pre-manifest path with %r in it -- the "
+        "directory sweep does not reach a top-level file, so the "
+        "unconditional removal is the only thing that takes it"
+        % (MODDIR, conf.text))
 
 
 def test_config_installed_survives_the_legacy_sweep(legacy):

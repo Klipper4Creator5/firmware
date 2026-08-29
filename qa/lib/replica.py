@@ -564,11 +564,11 @@ def start(config=None, base_pkg=None, packages=None, setup_timeout=600,
         "-v", "%s/pkgs:/pkgs:ro" % stage,
         "-v", "%s/case.sh:/case.sh:ro" % stage,
         # THE PRINTER'S FILES, FROM THE RECIPES THAT OWN THEM. This used to
-        # be one mount of a top-level payload/ directory. It is three now, and
+        # be one mount of a top-level payload/ directory. It is two now, and
         # entrypoint.sh reassembles /tmp/payload out of them, because the
-        # files a case script reaches for are split across two recipes and two
-        # roles: anvil-core's $MODDIR overlay, its anvil.conf template, and
-        # Klipper's launcher, which goes to /usr/prog.
+        # files a case script reaches for are split across two roles:
+        # anvil-core's $MODDIR overlay, and Klipper's launcher, which goes to
+        # /usr/prog. A third mount of anvil-core's seed/ went with anvil.conf.
         #
         # Reassembled rather than re-pointed on purpose. Every case script
         # copies out of /tmp/payload with `2>/dev/null` -- a path that stops
@@ -576,7 +576,6 @@ def start(config=None, base_pkg=None, packages=None, setup_timeout=600,
         # green against an empty $MODDIR. Keeping the assembled tree byte-for
         # -byte what it was means none of those copies had to be touched.
         "-v", "%s/pkgs/anvil-core/payload:/payload:ro" % ROOT,
-        "-v", "%s/pkgs/anvil-core/seed:/payload-seed:ro" % ROOT,
         # entrypoint.sh reads start.sh out of here. It lived in
         # pkgs/klipper/prog until the recipes were reorganised; docker
         # CREATES a missing bind source as a root-owned empty dir, so a

@@ -102,28 +102,41 @@ and then re-runs the end-to-end install against the exact `dist/*.tgz` files
 that get attached — not against a package built from the same tree, but those
 files. Releases are marked pre-release.
 
-## Two kinds of flag
+## One kind of flag
 
-This distinction is the one to keep straight:
+There used to be two, and the distinction was the thing to keep straight.
+There is one now:
 
 * **`BUILD_*`** decides what goes *into* a package. Read at build time only,
   defaulted in `bin/common.sh`, never present on the printer.
   (`BUILD_TOOLCHANGE`, `BUILD_MAINSAIL`, `BUILD_MOONRAKER`,
   `BUILD_HELIX`.)
-* **`MOD_*`** are runtime tunables. They are written into
-  `/usr/data/anvil/anvil.conf`, which the printer re-reads at every boot, so
-  they can be changed over ssh afterwards and survive a mod update.
-  (`MOD_SPLASH`, `MOD_STARTUP`, `MOD_IMPORT`, `MOD_S6`, the `MOD_CAM_*` camera
-  settings and the `NICE_*` priorities.)
 
-  There used to be five more — `MOD_WEB`, `MOD_CAM`, `MOD_UI`, `MOD_SSH`,
-  `MOD_WIFI` — and they are gone. Each was an on/off switch that defaulted to
-  on, and what each described was a half-installed printer: Mainsail with no
-  moonraker behind it, a screen dark on purpose, a root password deliberately
-  not set on a machine whose recovery story is ssh. The web stack, the camera,
-  the screen and wifi now run because they are installed. **To leave a piece
-  out, leave it out** — that is what the `BUILD_*` flags are for — or
-  `opkg remove` it on the printer.
+The other kind was `MOD_*`: runtime switches written into
+`/usr/data/anvil/anvil.conf`, which the printer re-read at every boot. **That
+file is gone**, and so is every switch that lived in it — the whole of
+`MOD_SPLASH`, `MOD_STARTUP`, `MOD_IMPORT`, `MOD_S6`, the `MOD_CAM_*` camera
+settings, the `NICE_*` priorities, and before them `MOD_WEB`, `MOD_CAM`,
+`MOD_UI`, `MOD_SSH` and `MOD_WIFI`.
+
+Every one of them defaulted to on, and what each described was a
+half-installed printer: Mainsail with no moonraker behind it, a screen dark on
+purpose, a camera installed and switched off, a root password deliberately not
+set on a machine whose recovery story is ssh. Nobody chose that state on
+purpose, and everything downstream had to carry a second answer for it.
+
+So the components run because they are installed, and the settings that were
+worth keeping — the startup timeout, the camera's resolution, the nice values
+— are each stated once, in the service that uses them, under
+`pkgs/anvil-core/payload/etc/s6-rc/source/`. Changing one is an edit there and
+a rebuild, not a file on the printer.
+
+**To leave a piece out, leave it out** — that is what the `BUILD_*` flags are
+for — or `opkg remove` it on the printer.
+
+Upgrading a printer that has an `anvil.conf` needs nothing: the installer
+deletes it, edits and all, because nothing reads it any more and a file that
+still looks editable is worse than no file.
 
 ## Third-party pieces are downloaded, not vendored
 
@@ -243,7 +256,6 @@ pkgs/anvil-core/            what makes the machine ours, and nothing else
                               the absolute paths the stock scripts read
             prog/firmwareExe  the wrapper that replaces the stock binary
             prog/start.sh     replaces the stock Klipper launcher
-  seed/     anvil.conf.in     runtime switches, preserved across mod updates
 pkgs/klipper/
   payload/  klipper/klippy/extras/  ff_*.py
 pkgs/klipper-config/        every Klipper config the mod owns
@@ -260,13 +272,12 @@ pkgs/helixscreen/
                               the entry that makes it a toolchanger
 ```
 
-The init scripts stay with `anvil-core` and do NOT move to the components
-they start, which looks inconsistent and is not. Those services are gated at
-RUNTIME by flags in `anvil.conf`; the packages that would own the scripts are
-gated at BUILD time by `BUILD_HELIX`. A
-`BUILD_HELIX=0` tarball has no `anvil-helixscreen` package, so it would carry
-no `S80ui`, and nothing would decide about the screen at all. The script that
-reads a flag must not itself sit behind a second, different flag.
+The service definitions stay with `anvil-core` and do NOT move to the
+components they start, which looks inconsistent and is not. They are one
+source tree, and `bin/patch.sh` compiles the whole of it into a single s6-rc
+database on the build host. A tree split across packages would be a database
+assembled from whichever of them happened to be installed — and there is no
+compiler on the printer to assemble it with.
 
 **Builds it** — host-side, never installed:
 

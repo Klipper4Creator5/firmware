@@ -477,12 +477,11 @@ def test_every_payload_file_is_owned_by_a_package():
         # update deletes by. Cannot be a package member -- it describes the
         # payload, so it is not finished until the payload is.
         MODDIR + "/.install-manifest",
-        # User state, both of them. anvil.conf is templated from config.env
-        # and preserved across updates by installer/run-append.sh;
-        # moonraker-custom.conf is created once and never overwritten. A
-        # package member is overwritten on every upgrade by definition, which
-        # is exactly what these two must not be.
-        MODDIR + "/anvil.conf",
+        # User state: created once and never overwritten. A package member is
+        # overwritten on every upgrade by definition, which is exactly what
+        # this must not be. $MODDIR/anvil.conf was the other entry here until
+        # it was removed outright -- it is not merely unshipped, so it must
+        # not reappear under any exemption.
         MODDIR + "/config/moonraker-custom.conf",
         # opkg's own scaffolding, made by opkg as it installs.
         MODDIR + "/var",

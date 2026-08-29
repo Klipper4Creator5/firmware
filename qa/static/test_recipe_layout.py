@@ -28,11 +28,10 @@ Inside a recipe, each kind of file is a directory name:
                             $MODDIR. payload/etc/s6-rc/source/nginx/run
                             becomes $MODDIR/etc/s6-rc/source/nginx/run and no
                             recipe says so.
-    pkgs/<recipe>/seed/      templated or seeded user state -- anvil.conf.in,
-                            moonraker-custom.conf. Not package members,
-                            because a package member is overwritten on every
-                            upgrade by definition and these are the files a
-                            printer's owner edits.
+    pkgs/<recipe>/seed/      seeded user state -- moonraker-custom.conf. Not
+                            package members, because a package member is
+                            overwritten on every upgrade by definition and
+                            these are the files a printer's owner edits.
 
 This file holds that to being true. The failure it exists to catch is not a
 misfiled file -- it is a fourth directory appearing with no rule attached to
