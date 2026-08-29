@@ -259,22 +259,17 @@ for r in "${RECIPES[@]}"; do
 
             # Maintainer scripts, for the one recipe that has any. A file in
             # $PKG_DIR/control/ is copied in verbatim -- opkg-build already
-            # knows what to do with postinst, prerm and conffiles, so there is
-            # nothing here to teach it.
+            # knows what to do with postinst, prerm and conffiles.
             #
             # RUNTIME PACKAGE ONLY. The -dev half is headers and a static
             # library; a postinst there would run on a machine that installed
             # them by accident and act on a payload that is not its own.
             #
-            # WHAT A POSTINST HERE DOES AT BUILD TIME, because it is not
-            # nothing: bin/patch.sh installs with a host opkg under
-            # --offline-root --force-postinstall, and that combination RUNS
-            # maintainer scripts, with IPKG_INSTROOT empty -- so the absolute
-            # paths in one are taken exactly as written, NOT rebased onto the
-            # offline root. That happens inside the build image, which has no
-            # /usr/prog and is thrown away (LOCAL=1 is the exception: then it
-            # is the host). A script put here guards itself on something only
-            # a printer has; see pkgs/anvil-core/control/postinst.
+            # A postinst runs wherever the package is installed, and that
+            # includes the build: opkg runs maintainer scripts with
+            # IPKG_INSTROOT empty, so absolute paths are taken as written
+            # rather than rebased. One put here guards itself on something
+            # only a printer has -- see pkgs/anvil-core/control/postinst.
             if [ "$_nm" = "$PKG_NAME" ] && [ -d "$PKG_DIR/control" ]; then
                 for _cs in "$PKG_DIR"/control/*; do
                     [ -f "$_cs" ] || continue

@@ -5,26 +5,14 @@
 
 Writes the installed tree to $PAYLOAD_DIR, replacing whatever was there.
 
-WHY THIS EXISTS. bin/patch.sh used to assemble the payload with a HOST opkg
-against an --offline-root. That works, and it is wrong in two ways that only
-show up later:
+The printer's OWN opkg installs onto the printer's own filesystem, under
+qemu-mipsel, and the tree is tarred back out -- so maintainer scripts run
+where they will run on a machine, and the install that ships is the install
+that was tested.
 
-  * it cannot run maintainer scripts. opkg under offline_root leaves every
-    package Status: unpacked, so patch.sh passed --force-postinstall to make
-    the database say installed -- a claim about work that had not happened.
-    A postinst that only works on a build host had nowhere to fail.
-  * it is not the printer. The host opkg is an x86-64 binary resolving paths
-    against a staging directory; a printer's opkg is a MIPS binary resolving
-    them against /. Anything that depends on the difference -- and a postinst
-    is exactly that -- was untested until a machine ran it.
-
-Here the printer's OWN opkg installs onto the printer's own filesystem, under
-qemu-mipsel, and the tree is tarred back out. The install that ships is the
-install that was tested.
-
-WHAT IT COSTS. A privileged container and the printer image, where the old
-path needed neither -- so `make build` now goes through the replica lane. The
-feed itself (bin/build-packages.sh) still needs nothing but a checkout.
+WHAT IT COSTS. A privileged container and the printer image, which is why
+`make build` has its own docker lane. The feed itself
+(bin/build-packages.sh) still needs nothing but a checkout.
 """
 import os
 import subprocess
@@ -47,8 +35,8 @@ CASE = "test/integration/printer/case-build-payload.sh"
 def _sh(var, default=""):
     """One value out of bin/common.sh, asked of the shell that defines it.
 
-    Re-deriving MODDIR or IPK_ARCH here would be a second place for them to be
-    wrong, and they would agree right up until somebody edited one.
+    Re-deriving IPK_ARCH or PKG_FEED here would be a second place for them to
+    be wrong, and the two would agree until somebody edited one.
     """
     out = subprocess.run(
         ["bash", "-c", '. "%s/bin/common.sh" >/dev/null 2>&1; printf "%%s" "${%s:-%s}"'
@@ -103,7 +91,7 @@ def run():
     # --strip-components=1 drops the leading anvil/ the case tarred with.
     # No -p and no --same-owner: the archive carries the printer's root, this
     # runs as the build user, and run-append.sh extracts as root on the
-    # machine anyway -- ownership in the payload has never meant anything.
+    # machine -- ownership in the payload means nothing.
     subprocess.run(["tar", "-xf", str(tar), "-C", str(payload_dir),
                     "--strip-components=1"], check=True)
     subprocess.run(["rm", "-rf", str(out)], check=True)

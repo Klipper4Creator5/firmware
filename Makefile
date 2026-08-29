@@ -32,14 +32,17 @@ DOCKER_SOCK := /var/run/docker.sock
 # elsewhere:  make ASSET_ROOT=/path/to/parent build
 ASSET_ROOT ?= $(firstword $(wildcard /mnt/c /Users /home))
 
-# Two runners, because the two lanes need different things:
+# Three runners, because the lanes need different things:
 #
-#   RUN     builds the thing you flash. No docker socket, no replica settings.
-#   RUNSIM  runs the test replica. It starts SIBLING containers through the
-#           mounted socket, so it needs that plus the replica's own knobs.
+#   RUN       the parts of a build that touch no daemon: the feed, unpack,
+#             pack. No docker socket, no replica settings.
+#   RUNSIM    the test replica. It starts SIBLING containers through the
+#             mounted socket, so it needs that plus the replica's own knobs.
+#   RUNBUILD  `make build`, which needs both: the payload is assembled inside
+#             the replica, and the output has to belong to you. Defined below
+#             the two it borrows from.
 #
-# Keeping them apart is the point of the split: a build cannot reach the docker
-# daemon, and test-only variables never enter a build.
+# Test-only variables never enter a build, which is the point of the split.
 DOCKER_BASE = $(DOCKER) run --rm -i \
           -v "$(CURDIR)":"$(CURDIR)" -w "$(CURDIR)" \
           $(if $(ASSET_ROOT),-v "$(ASSET_ROOT)":"$(ASSET_ROOT)",) \
@@ -195,17 +198,15 @@ passwd: image
 vendor: image config.env
 	@$(RUN) ./bin/fetch-assets.sh --all
 
-# A THIRD LANE, and it exists because the build now needs both halves of the
-# split above. bin/patch.sh assembles the payload by starting the printer
-# replica and letting the machine's own opkg install the feed, so this lane
-# needs the docker socket -- and it still has to run AS YOU, or every build
-# leaves a root-owned work/ that the next one cannot delete.
+# A THIRD LANE, because the build needs both halves of the split above.
+# bin/patch.sh assembles the payload by starting the printer replica, so this
+# lane needs the docker socket -- and it still has to run AS YOU, or every
+# build leaves a root-owned work/ the next one cannot delete.
 #
-# --group-add is what makes those compatible. RUNSIM keeps root purely because
-# the socket is root:docker and a --user container has no supplementary
-# groups; handing it the socket's own gid answers that without handing it
-# root. The gid is read from the socket rather than assumed, because it is
-# 999 on some distributions and 1001 here.
+# --group-add is what makes those compatible: the socket is root:docker and a
+# --user container has no supplementary groups, so it gets the socket's own
+# gid instead of root. Read from the socket rather than assumed -- it is 999
+# on some distributions and 1001 here.
 RUNBUILD = $(DOCKER_BASE) $(DOCKER_USER) \
           --group-add $(shell stat -c %g $(DOCKER_SOCK)) \
           -v $(DOCKER_SOCK):$(DOCKER_SOCK) \

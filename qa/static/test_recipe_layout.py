@@ -11,12 +11,9 @@ Three kinds of file lived in there and looked identical:
   * files that never ship as files at all -- run-pre.sh and run-append.sh are
     spliced into FlashForge's own run.sh at build time.
 
-There used to be a third kind: files that went to /usr/prog and could not be
-in a package, because every path in one of ours lands under $MODDIR. There are
-none left. They are package files under payload/prog/ now, and
-anvil-link-prog.sh symlinks them from $MODDIR to the absolute paths
-FlashForge's scripts read -- so the rule is kept by a script on the printer
-rather than by a directory in the recipe.
+Files bound for /usr/prog are the first kind: they are package files under
+payload/prog/, and anvil-link-prog.sh symlinks them from $MODDIR to the
+absolute paths FlashForge's scripts read.
 
 Recipes themselves live at two depths, and pkgs/lib.sh's pkg_dir is the only
 thing that knows it:
@@ -107,9 +104,8 @@ def test_every_recipe_subtree_is_one_of_the_three():
 def test_each_subtree_is_used_by_someone(sub):
     """If one empties out, this fails and the rule can be deleted.
 
-    That is the good outcome, not a defect: it already happened once. prog/
-    emptied when firmwareExe and start.sh became package files, and the rule
-    went with it. seed/ empty will mean the seeder landed.
+    That is the good outcome, not a defect: seed/ empty will mean the seeder
+    landed and nothing is templated at build time any more.
     """
     users = [n for n, d in recipes() if os.path.isdir(os.path.join(d, sub))]
     assert users, (

@@ -127,15 +127,10 @@ class Replica:
             # ASSEMBLED ON THIS SIDE, and mounted as the one directory
             # every case script already reads. See stage_payload.
             "-v", "%s/payload:/payload:ro" % stage,
-            # THE ONE WRITABLE MOUNT, and the only way anything the replica
-            # built comes back. Everything else here is :ro on purpose -- a
-            # case script must not be able to edit the checkout it is testing
-            # -- but the payload build runs the printer's own opkg inside the
-            # replica and has to hand the resulting tree back out.
-            #
-            # Under the stage dir because that is already inside the repo,
-            # which is the one path a sibling container resolves to the same
-            # place the daemon does. See stage_dir.
+            # THE ONE WRITABLE MOUNT: everything else is :ro so a case cannot
+            # edit the checkout it is testing. Under the stage dir because
+            # that is inside the repo, the one path a sibling container
+            # resolves to the same place the daemon does -- see stage_dir.
             "-v", "%s/out:/out" % stage,
             "-e", "FF_KEY=%s" % config.ff_key,
             "-e", "BASE_PKG=%s" % ("/pkgs/base.tgz" if base_pkg else ""),
@@ -152,9 +147,8 @@ class Replica:
         else:
             argv += ["-e", "PROG_DUMP="]
 
-        # Anything the caller needs the case to see. Sorted so two runs of
-        # one build produce the same argv, which is what makes `command`
-        # worth diffing.
+        # Anything the caller needs the case to see. Sorted so two runs
+        # produce the same argv, which is what makes `command` worth diffing.
         for key in sorted(env or {}):
             argv += ["-e", "%s=%s" % (key, env[key])]
 
@@ -202,13 +196,10 @@ class Replica:
         a printer at all (bin/patch.sh splices it into FlashForge's run.sh)
         but which case-upgrade.sh runs directly as the thing under test.
 
-        THE LAUNCHER MOVED. start.sh was pkgs/klipper/prog/start.sh, a file in
-        no package; it is anvil-core's payload/prog/start.sh now, so it also
-        arrives via the copytree above -- but at prog/start.sh, and the cases
-        read it flat. Hence the explicit copy, still. Note the `is_file`
-        guard below: a source that moves and is not updated here vanishes
-        SILENTLY, which is the same failure this docstring already describes
-        once.
+        start.sh arrives via the copytree too, at prog/start.sh, but the cases
+        read it flat -- hence the explicit copy. Mind the `is_file` guard: a
+        source that moves and is not updated here vanishes SILENTLY, which is
+        the failure this docstring opens with.
         """
         out = stage / "payload"
         shutil.copytree(str(self.root / "pkgs" / "anvil-core" / "payload"), str(out))

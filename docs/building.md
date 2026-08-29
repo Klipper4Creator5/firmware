@@ -235,16 +235,19 @@ pkgs/anvil-core/            what makes the machine ours, and nothing else
                               wifi-action.sh
             etc/s6/           the s6 scandir, one directory per service
             nginx/nginx.conf
-  prog/     firmwareExe       the wrapper that replaces the stock binary
+            bin/anvil-link-prog.sh  links the two below, and the configs, into
+                              the absolute paths the stock scripts read
+            prog/firmwareExe  the wrapper that replaces the stock binary
+            prog/start.sh     replaces the stock Klipper launcher
   seed/     anvil.conf.in     runtime switches, preserved across mod updates
 pkgs/klipper/
-  prog/     start.sh          replaces the stock Klipper launcher
-            config/           printer.base.cfg
-            klippy/extras/    ff_*.py
-pkgs/klipper-config/        the toolchanger's Klipper includes
-  payload/  config/ff-*.cfg
-pkgs/klipper-creator5-config/ , pkgs/klipper-creator5pro-config/
-  payload/  config/printer.chamber.cfg   one per model; exactly one installed
+  payload/  klipper/klippy/extras/  ff_*.py
+pkgs/klipper-config/        every Klipper config the mod owns
+  payload/  config/ff-*.cfg          the toolchanger's includes
+            config/printer.base.cfg  the hub the rest hang off
+            config/chamber/Creator5.cfg , Creator5Pro.cfg
+                              both ship; anvil-link-prog.sh symlinks the one
+                              app_startup.sh's MACHINE names
 pkgs/moonraker/
   payload/  config/moonraker.conf   the server's own config, with the server
   seed/     moonraker-custom.conf   the user's own Moonraker settings

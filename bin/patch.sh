@@ -3,7 +3,7 @@
 # Idempotent: safe to re-run after editing config.env or assets.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
-# lib.sh for pkg_recipes, pkg_ipk, pkg_buildopkg and pkg_die. Not pkg_out:
+# lib.sh for pkg_recipes, pkg_ipk and pkg_die. Not pkg_out:
 # nothing here reads work/pkg, and qa/static/test_ipk.py asserts it.
 . "$ROOT/pkgs/lib.sh"
 
@@ -28,49 +28,22 @@ skip() { printf '   (skip) %s\n' "$*"; }
 # overflow on ~100MB of Mainsail and HelixScreen. The payload rides in the
 # outer package instead and lands on /usr/data.
 #
-# THE WHOLE ROOT GOES, not just the payload inside it. A surviving
-# var/lib/opkg would make opkg think these packages are already installed and
-# take its upgrade path, removing files from a tree it is still building.
-rm -rf "$PAYLOAD_ROOT" "$SOFTWARE_DIR/mod"   # $SOFTWARE_DIR/mod: leftover from an older layout
-# The prefix root's directories, created here rather than left to whichever
-# package happens to fill them -- FOR THE MANIFEST'S SAKE. The manifest is a
-# find over this tree, so a directory that only ever appeared on the printer
-# would be one no update can account for. libexec/ and etc/s6/ are spelled
-# exactly this way because s6 resolves both from the --prefix baked into its
-# binaries: the names are ABI, not preference.
-mkdir -p "$PAYLOAD_DIR/bin" "$PAYLOAD_DIR/lib" "$PAYLOAD_DIR/libexec" \
-         "$PAYLOAD_DIR/nginx" \
-         "$PAYLOAD_DIR/www" "$PAYLOAD_DIR/config" "$PAYLOAD_DIR/etc/s6"
+# bin/build-payload.py replaces $PAYLOAD_DIR itself; this clears anything
+# beside it and a stale directory from an older layout.
+rm -rf "$PAYLOAD_ROOT" "$SOFTWARE_DIR/mod"
 
 # ------------------------------------------------- 0. the payload, installed
 # Every file bound for $MODDIR comes from a package, installed by the
 # PRINTER'S OWN opkg out of the feed bin/build-packages.sh indexed, inside the
 # replica. `opkg list-installed` answers "what does this release install?" off
 # the payload itself.
-#
-# There is no host opkg here any more -- pkg_buildopkg built one, configured
-# --disable-curl and --prefix=$MODDIR so its compiled-in database path was
-# right, purely so an x86-64 binary could pretend to be the machine's. The
-# machine is available; it does its own installing.
 say "payload: installing the feed with the printer's own opkg"
 
-# THE MODEL IS NOT CHOSEN HERE ANY MORE. It used to be the one fact opkg
-# could not work out for itself: anvil-klipper-creator5-config and
-# -creator5pro-config each owned config/printer.chamber.cfg, so they Conflicted,
-# opkg refused the pair with exit 255, and this build had to pick one from
-# TARGET_MACHINE -- which made the payload model-specific for the sake of a
-# single file.
-#
-# anvil-klipper-config ships both, under config/chamber/<Machine>.cfg, and
-# anvil-link-prog.sh symlinks the right one on the printer. It reads the model
-# from FlashForge's own app_startup.sh, which carries MACHINE= at its top and
-# is restored by any stock flash -- so the machine answers the question about
-# itself, instead of a build being told the answer and having to be right.
-#
-# TARGET_MACHINE still names the OUTPUT: runFirmwareExe.sh refuses a package
-# whose machine is not its own and app_startup.sh globs for the model prefix,
-# so bin/pack.sh keeps stamping it on the filename. What it no longer decides
-# is what goes inside.
+# The payload is not model-specific: anvil-klipper-config ships both chamber
+# configs and anvil-link-prog.sh symlinks the one the printer names.
+# TARGET_MACHINE still names the OUTPUT, because runFirmwareExe.sh refuses a
+# package whose machine is not its own and app_startup.sh globs for the model
+# prefix, so bin/pack.sh stamps it on the filename.
 
 # WHAT THE RELEASE IS, not the closure of it. Depends brings the rest, and
 # whether it does is the same question an `opkg install anvil-moonraker` on a
@@ -108,15 +81,10 @@ for _p in $MOD_ROOTS; do
     done
 done
 
-# THE PAYLOAD IS BUILT ON THE PRINTER, not here. bin/build-payload.py starts
-# the replica, lets the printer's own opkg install the feed onto the printer's
-# own filesystem, and tars the result back -- see its header for why the host
-# opkg under --offline-root was the wrong tool.
-#
-# What that removes from this file: the generated opkg.conf, the offline_root
-# and lists_dir paths, --force-postinstall, and the Installed-Time fixup. What
-# it adds is a privileged container and the printer image, which is why
-# `make build` runs in the replica lane now.
+# Built on the printer: bin/build-payload.py starts the replica, lets the
+# machine's own opkg install the feed onto the machine's own filesystem, and
+# tars the result back. That needs a privileged container and the printer
+# image, which is why `make build` has its own docker lane.
 # shellcheck disable=SC2086
 ./bin/build-payload.py $MOD_INSTALL
 
@@ -204,22 +172,11 @@ if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
         cp -f "$_ffx/$(basename "$_f")" "$SOFTWARE_DIR/klipper/extras/"
     done
 
-    # NO .cfg IS WRITTEN HERE, and the software component's klipper/config is
-    # left exactly as FlashForge shipped it.
-    #
-    # printer.base.cfg used to be copied over the stock one at this point.
-    # anvil-klipper-config carries it now, beside the ff-*.cfg and the two
-    # chamber configs, and anvil-link-prog.sh symlinks it into
-    # /usr/data/config on the printer -- which is where it was read from
-    # anyway, because the stock run.sh copies klipper/config/* there.
-    #
-    # That is what lets the seven configs we do NOT modify stay stock and
-    # unpackaged: Klipper resolves [include] against the directory of the file
-    # doing the including, by the path as opened rather than the resolved
-    # target, so a symlinked printer.base.cfg still finds them beside it.
-    #
-    # What is left in this section is the residue that cannot be a package:
-    # the ff_*.py above, and two paths under /usr/prog.
+    # NO .cfg IS WRITTEN HERE: the software component's klipper/config is left
+    # exactly as FlashForge shipped it. anvil-klipper-config carries every
+    # config the mod owns and anvil-link-prog.sh symlinks them into
+    # /usr/data/config, which is where the stock run.sh puts that directory
+    # anyway. The ff_*.py above are what is left that cannot be a package.
 else
     skip "Toolchange"
 fi
@@ -255,58 +212,22 @@ fi
 # from v0.9.0 on keeps its database in sqlite. This one has a working sqlite3,
 # measured on the replica (case-python.sh).
 #
-# The dev half is not installed, so the PKG_DEV_FILES deletion this section
-# used to perform is gone: verify.sh's "no headers in the payload" check
-# passes because they were never put there.
+# The dev half is not installed, so verify.sh's "no headers in the payload"
+# check passes because they were never put there.
 
-# THE GATES THAT WERE HERE ARE THE RECIPES' NOW. pkgs/3rdparty/python/build.sh
-# already asked for _sqlite3 by name, so this file was asking a second time,
-# later, about the same bytes. The "at least twelve extension modules" count
-# was not a duplicate and did not simply go: it is now a per-recipe assertion
-# in the seven python-* recipes that ship a .so, because an aggregate could
-# say that A native package had fallen back to a pure-python wheel but never
-# WHICH, and each of those recipes can say it about itself.
+# THE GATES ARE THE RECIPES'. pkgs/3rdparty/python/build.sh asks for _sqlite3
+# by name, and the seven python-* recipes that ship a .so each assert their
+# own extension -- an aggregate count could say that A native package had
+# fallen back to a pure-python wheel but never WHICH.
 #
-# WHAT THAT COSTS, stated because it is the argument against moving them: a
-# gate inside build.sh does not run on a cache hit, and none of the python
-# recipes sets PKG_STAMP_EXTRA, so editing one of them does not rebuild it.
-# A gate here ran over the shipped tree every time. That is a property of
-# pkg_stamp rather than of where a gate lives -- it is equally true of the
-# _sqlite3 check that was already there -- and the answer is to make the
-# stamp see the recipe, not to keep a second copy of every check in this file.
+# WHAT THAT COSTS: a gate inside build.sh does not run on a cache hit, and
+# none of the python recipes sets PKG_STAMP_EXTRA, so editing one does not
+# rebuild it. That is a property of pkg_stamp rather than of where a gate
+# lives; the answer is to make the stamp see the recipe, not to keep a second
+# copy of every check here.
 du -sh "$PAYLOAD_DIR/lib/python$PY_MM" | awk '{print "   "$1"\tlib/python'"$PY_MM"'/"}'
 du -sh "$PAYLOAD_DIR/lib/python$PY_MM/site-packages" \
     | awk '{print "   "$1"\tlib/python'"$PY_MM"'/site-packages/"}'
-
-# ------------------------------------------------- 5d. what is no longer here
-# THREE SECTIONS ENDED AT THIS LINE, and they ended for one reason: every file
-# in the payload now arrives inside an .ipk, so every claim this file used to
-# make about the payload is a claim some recipe can make about its own build.
-#
-#   libsodium's symlink check. lib/libsodium.so must be a SYMLINK, because
-#     libnacl's dlopen fallback constructs that exact name -- it is
-#     __file__[0:__file__.find("lib")+3] + "/libsodium.so", which resolves
-#     $MODDIR/lib/libsodium.so by absolute path and costs anvil-env.sh nothing.
-#     pkgs/3rdparty/libsodium/build.sh asserts it, and has all along; this was
-#     the second copy. The half of it that was NOT a duplicate -- that
-#     opkg-build puts a symlink in the archive and opkg restores it as one --
-#     is a claim about the packaging tools rather than about libsodium, and it
-#     is qa/static/test_ipk.py's now.
-#
-#   busybox. config.env's BUSYBOX_BIN was copied in here, which made it the
-#     one file in the payload that no package owned: an allowance in the
-#     "every file is owned" test, an ABI gate of its own, and a file no
-#     `opkg remove` could take away. It is pkgs/busybox now, PKG_WHEN-gated on
-#     BUSYBOX_BIN, and section 0 installs it like anything else.
-#
-#   the payload-wide ABI gate. It walked $PAYLOAD_DIR for ELF and checked
-#     every object was nan2008/o32/mips32r2. bin/build-packages.sh runs that
-#     same rule over each PKG_ROOT on the way into each .ipk -- and it runs it
-#     on cached trees too, because it is in the packaging loop rather than in
-#     a build.sh. The one thing this gate could see that the per-package one
-#     cannot was a file no package put here, and busybox was the only such
-#     file. There is none now, so this was walking three thousand files to
-#     re-answer a question already answered about each of them.
 
 # ------------------------------------------------------------------- 6. SSH
 # Nothing to install. The stock rootfs (kernel-*.tar.xz -> rootfs.squashfs)
@@ -379,8 +300,7 @@ chmod +x "$SOFTWARE_DIR/firmwareExe"
 # THE MOD'S OWN FILES ARE anvil-core, INSTALLED BY SECTION 0: the shared
 # environment and service libraries every init script sources, the init
 # scripts themselves, the helper programs, the nginx config and the s6
-# scandir. What used to be eight copies and three chmods here, and then one
-# copy of a recipe's build tree, is now a line in a package list.
+# scandir.
 #
 # ANVIL.CONF IS NOT IN THAT PACKAGE, and this is the whole of what is left
 # here. It is templated from config.env and then preserved across updates by

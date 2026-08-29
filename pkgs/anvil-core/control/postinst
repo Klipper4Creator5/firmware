@@ -1,17 +1,11 @@
 #!/bin/sh
-# Re-point the stock boot path after an on-printer `opkg upgrade anvil-core`.
+# Re-point the stock boot path after `opkg upgrade anvil-core` on a printer.
+# Without it the upgrade writes a new $MODDIR/prog/firmwareExe and the printer
+# goes on running the copy /usr/prog already had.
 #
-# Without this, an upgrade writes a new $MODDIR/prog/firmwareExe and the
-# printer goes on running the copy the last .tgz left on /usr/prog. The .tgz
-# path gets the same treatment from installer/run-append.sh; this is the same
-# script, for the case where opkg is the thing doing the installing.
-#
-# It must be safe to run where it makes no sense. bin/patch.sh installs this
-# package with a host opkg under --offline-root --force-postinstall, which
-# runs maintainer scripts with IPKG_INSTROOT empty -- inside the docker build
-# image, which has no /usr/prog. anvil-link-prog.sh's own
-# /usr/prog/app_startup.sh guard is what makes that a quiet no-op instead of
-# an error, and it is the reason a postinst can exist here at all.
+# The same script runs from installer/run-append.sh on the .tgz path. Its own
+# /usr/prog/app_startup.sh guard is what makes this a no-op when the build
+# installs this package rather than a printer.
 set -e
 
 MODDIR=/usr/data/anvil

@@ -264,13 +264,12 @@ if [ -d $MODDIR/config ]; then
             # Ours, and NOT COPIED: anvil-link-prog.sh symlinks these into
             # /usr/data/config after this loop, so the file the printer reads
             # is the one the package owns and an `opkg upgrade` changes it
-            # without a .tgz. Copying here as well would only put a real file
-            # in the way of the link that is about to replace it.
+            # without a .tgz. A copy here would only put a real file in the
+            # way of the link about to replace it.
             #
-            # printer.chamber.cfg is not in $MODDIR/config at all any more --
-            # config/chamber/ holds one per model and the link picks. `chamber`
-            # is in this pattern so the directory itself is skipped rather
-            # than falling through to the compare below.
+            # printer.chamber.cfg is not a file in $MODDIR/config: chamber/
+            # holds one per model. The directory is named here so it is
+            # skipped rather than falling through to the compare below.
             continue
             ;;
         esac

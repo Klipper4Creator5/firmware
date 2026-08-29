@@ -93,21 +93,17 @@ pkg_die()  { printf '   !! %s\n' "$*" >&2; exit 1; }
 # does sitting in the cache.
 #
 # It hashes payload/ and control/, because those two are what a recipe ships:
-# the files themselves and the maintainer scripts that travel with them. seed/
-# is placed by bin/patch.sh, is in no package, and must not invalidate one.
+# the files themselves and the maintainer scripts that travel with them. An
+# edited postinst changes what the .ipk does and nothing else would notice --
+# the version is a date and the payload bytes are unchanged, so the stamp
+# would read "already current". seed/ is placed by bin/patch.sh, is in no
+# package, and must not invalidate one.
 #
-# control/ is in here for the same reason payload/ is. An edited postinst
-# changes what the .ipk does and nothing else would notice -- the version is a
-# date and the payload bytes are unchanged, so the stamp would read "already
-# current" and the feed would keep the old script.
-#
-# TWO find CALLS AND AN `|| true`, not one find over both paths. Only one
-# recipe has a control/ at all, and `find a b` where b is missing exits
-# non-zero -- which, under the `set -euo pipefail` every recipe runs with,
-# fails the command substitution and kills the build. Silently: the 2>/dev/null
-# that is there to hide find's own noise hides that message too, so what a
-# recipe without control/ printed was nothing at all, between its own last
-# line and make's Error 1.
+# TWO find CALLS AND AN `|| true`, not one find over both paths: most recipes
+# have no control/, and `find a b` with b missing exits non-zero -- which under
+# the `set -euo pipefail` every recipe runs with fails the command
+# substitution and kills the build. Silently, because the 2>/dev/null that
+# hides find's own noise hides that too.
 pkg_payload_hash() {
     {   find "$PKG_DIR/payload" -type f -print0 2>/dev/null || true
         find "$PKG_DIR/control" -type f -print0 2>/dev/null || true
@@ -483,95 +479,6 @@ pkg_buildpython() {
     # one.
     echo "$_hpstamp" > "$PKG_HOSTPY_ROOT/.version"
     pkg_say "$PKG_ID: build-python ready ($("$HOSTPY" -V 2>&1))"
-}
-
-# ------------------------------------------------------------ pkg_buildopkg
-#
-# The x86-64 opkg bin/patch.sh assembles the payload with. Cached at
-# work/.opkg-host, keyed on the pinned version and its sha256 -- outside
-# $PKG_WORK so nothing deletes it. pkg_buildpython's twin, deliberately.
-#
-# A REAL opkg AND NOT pkgs/ipk-install, which exists because the PRINTER has
-# no opkg and no `ar`. Neither is true in this container, and ipk-install
-# resolves no Depends, enforces no Conflicts, reads no Provides and handles no
-# conffiles -- all of which decide what a payload should contain. It also
-# means the database is written by the program that later reads it.
-#
-# --prefix=$MODDIR IS THE TRAP, and pkgs/3rdparty/opkg/build.sh spells it out:
-# opkg bakes its state directory in at compile time, so any other prefix looks
-# for its status file elsewhere whatever --offline-root it is handed, comes up
-# believing nothing is installed, and reinstalls the world. Hence DESTDIR, and
-# hence the binary at $PKG_HOSTOPKG_ROOT$MODDIR/bin/opkg -- that path looks
-# redundant and is load-bearing.
-#
-# --disable-curl / --disable-ssl-curl / --disable-gpg: nothing here fetches
-# over a network; every .ipk it installs is a local file.
-pkg_buildopkg() {
-    PKG_HOSTOPKG_ROOT="$PWD/work/.opkg-host"
-    HOSTOPKG="$PKG_HOSTOPKG_ROOT$MODDIR/bin/opkg"
-    export HOSTOPKG
-
-    _hostamp="$OPKG_VERSION $OPKG_SHA256 $MODDIR"
-    if [ "$(cat "$PKG_HOSTOPKG_ROOT/.version" 2>/dev/null || true)" = "$_hostamp" ]; then
-        pkg_skip "build-opkg $OPKG_VERSION is already at work/.opkg-host"
-        return 0
-    fi
-
-    [ -f "${OPKG_TGZ:-}" ] || pkg_die \
-        "the host opkg needs the opkg source and '${OPKG_TGZ:-}' is missing. Run ./bin/fetch-assets.sh."
-    command -v gcc >/dev/null || pkg_die \
-        "the host opkg needs a host gcc. Run through 'make packages' or 'make build'."
-    pkg-config --exists libarchive || pkg_die \
-        "the host opkg needs libarchive (opkg's configure.ac says 'Require libarchive'). Install libarchive-dev in docker/Dockerfile.build."
-
-    pkg_say "building the x86-64 build-opkg $OPKG_VERSION (once, then cached)"
-    rm -rf "$PKG_HOSTOPKG_ROOT" work/.opkg-hostsrc
-    mkdir -p work/.opkg-hostsrc "$PKG_HOSTOPKG_ROOT"
-    tar -xf "$OPKG_TGZ" -C work/.opkg-hostsrc \
-        || pkg_die "could not untar $OPKG_TGZ"
-
-    # The log lives beside the cache and not under $PKG_WORK: this verb is
-    # called from bin/patch.sh, which runs no recipe and so has neither
-    # PKG_LOG nor PKG_ID.
-    _holog="$PKG_HOSTOPKG_ROOT/build.log"
-    (
-        set -e
-        # Removed, not avoided by calling order: a configure inheriting CC
-        # and a mipsel sysroot builds an opkg this machine cannot execute,
-        # and finds out at the first install.
-        unset CC CXX AR RANLIB STRIP NM OBJCOPY OBJDUMP LD
-        unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS LIBS CONFIG_SITE
-        unset PKG_CONFIG_LIBDIR PKG_CONFIG_PATH PKG_CONFIG_SYSROOT_DIR
-        cd "work/.opkg-hostsrc/opkg-$OPKG_VERSION"
-        # --disable-shared is not a size decision: the prefix is baked into
-        # libopkg too, so a shared build looks for libopkg.so.1 at a path
-        # that exists on the printer and not here.
-        ./configure --prefix="$MODDIR" \
-            --disable-curl --disable-ssl-curl --disable-gpg \
-            --disable-shared --enable-static \
-            --disable-dependency-tracking
-        make -j"$(nproc 2>/dev/null || echo 4)"
-        make install DESTDIR="$PKG_HOSTOPKG_ROOT"
-    ) > "$_holog" 2>&1 || pkg_die "the host opkg failed to build -- see $_holog"
-
-    [ -x "$HOSTOPKG" ] || pkg_die \
-        "the host opkg built but is not at $HOSTOPKG -- check --prefix and DESTDIR; see $_holog"
-
-    # The one thing here that fails silently: a wrongly-prefixed opkg runs
-    # perfectly and writes its database where nobody looks. libopkg/Makefile.am
-    # compiles in -DVARDIR="@localstatedir@", so the prefix is a literal string
-    # in the binary and the question goes to the file rather than to the
-    # configure line meant to produce it.
-    grep -q -- "$MODDIR/var" "$HOSTOPKG" || pkg_die \
-        "the host opkg has no '$MODDIR/var' baked in -- it was configured with the wrong --prefix and would keep its database somewhere the printer never reads. See $_holog."
-    "$HOSTOPKG" print-architecture >/dev/null 2>&1 || pkg_die \
-        "the host opkg built but cannot run -- see $_holog"
-
-    rm -rf work/.opkg-hostsrc
-    # Written LAST, so an interrupted build leaves a cache that is stale
-    # rather than one that lies.
-    echo "$_hostamp" > "$PKG_HOSTOPKG_ROOT/.version"
-    pkg_say "build-opkg ready ($("$HOSTOPKG" --version 2>&1 | head -n1))"
 }
 
 # ----------------------------------------------------------------- pkg_deps

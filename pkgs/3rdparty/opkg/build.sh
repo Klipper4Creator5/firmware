@@ -22,9 +22,11 @@
 # /usr/data/anvil/var/lib/opkg, which is where pkgs/ipk-install writes and
 # where the payload's own database goes. Same trap as s6's baked-in
 # libexecdir and execline's shebangdir, and the reason $MODDIR lives in
-# bin/common.sh where a recipe cannot spell it differently -- and the reason
-# pkg_buildopkg, which builds the x86-64 opkg that assembles the payload,
-# configures itself the same way and checks the result.
+# bin/common.sh where a recipe cannot spell it differently.
+#
+# THIS IS THE ONLY opkg. bin/build-payload.py assembles the payload with it,
+# in the replica, so the binary that builds the payload is the binary that
+# ships.
 #
 # DYNAMIC AGAINST THE PRINTER'S glibc, STATIC FOR EVERYTHING ELSE. zlib and
 # libarchive exist in the sysroot only as .a, so they end up inside the binary

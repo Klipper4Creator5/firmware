@@ -480,16 +480,11 @@ def test_the_payload_is_the_feed_installed():
         "bin/patch.sh names work/pkg -- see pkg_out above")
 
     # And it must install them the one supported way. pkgs/ipk-install is for
-    # WHICH opkg, and this assertion flipped once already. It used to demand
-    # an --offline-root, because a HOST opkg unpacking into a staging tree was
-    # how the payload got built. That opkg could not run maintainer scripts --
-    # patch.sh passed --force-postinstall to make the database claim work that
-    # had not happened -- so the payload shipped a postinst nothing had ever
-    # executed.
-    #
-    # bin/build-payload.py runs the PRINTER'S opkg inside the replica, against
-    # /, and tars the result back. So the offline root is what must now be
-    # absent, and the replica step is what must be present.
+    # WHICH opkg. bin/build-payload.py runs the PRINTER'S, inside the replica,
+    # against / -- so maintainer scripts execute where they will on a machine.
+    # An offline root here would mean they are not running at all, and
+    # --force-postinstall would mean the database claims work that never
+    # happened.
     assert "offline_root" not in body and "--offline-root" not in body, (
         "bin/patch.sh points an opkg at an offline root again. The payload is "
         "installed on the printer now (bin/build-payload.py) -- an offline "
@@ -520,17 +515,15 @@ def test_the_payload_is_the_feed_installed():
 def _mod_roots():
     """MOD_ROOTS as bin/patch.sh's own shell reads it.
 
-    There is no model substitution left to resolve. The two chamber packages
-    were one per model and Conflicted, so patch.sh had to pick one into
-    MOD_ROOTS from TARGET_MACHINE; anvil-klipper-config ships both now and
-    anvil-link-prog.sh symlinks the right one on the printer.
+    No model substitution to resolve: anvil-klipper-config carries both
+    chamber configs and anvil-link-prog.sh picks on the printer.
     """
     patch = (ROOT / "bin" / "patch.sh").read_text()
     m = re.search(r'^MOD_ROOTS="(.*?)"', patch, re.M | re.S)
     assert m, "bin/patch.sh has no MOD_ROOTS -- has section 0 been rewritten?"
     assert "$MODEL_PKG" not in m.group(1), (
-        "MOD_ROOTS still expands $MODEL_PKG -- the chamber configs are one "
-        "package now, chosen on the printer rather than by the build")
+        "MOD_ROOTS expands $MODEL_PKG -- the chamber configs are one package, "
+        "chosen on the printer rather than by the build")
     return m.group(1).split()
 
 
@@ -569,53 +562,22 @@ def test_the_payload_roots_stay_a_short_list():
         "recipe's PKG_DEPENDS, not here:\n  %s"
         % (len(roots), "\n  ".join(roots)))
 
-def test_the_host_opkg_is_built_for_the_prefix():
-    """pkg_buildopkg's two flags, both of which fail silently if dropped.
-
-    opkg compiles its state directory in (-DVARDIR="@localstatedir@"), so any
-    other --prefix looks for its status file elsewhere whatever --offline-root
-    it is handed: it runs perfectly and writes a database nobody reads.
-    --disable-shared is the second half -- the prefix goes into libopkg too.
-
-    pkg_buildopkg checks both against the binary it produced; this checks the
-    flags are still asked for, since that check is only reachable if the build
-    gets that far.
-    """
-    lib = (ROOT / "pkgs" / "lib.sh").read_text()
-    fn = lib.split("pkg_buildopkg() {", 1)
-    assert len(fn) == 2, "pkgs/lib.sh has no pkg_buildopkg"
-    body = fn[1].split("\n}", 1)[0]
-
-    assert '--prefix="$MODDIR"' in body, (
-        "pkg_buildopkg does not configure --prefix=$MODDIR. opkg bakes its "
-        "state directory in at compile time; built anywhere else it keeps its "
-        "database where nothing reads it and says nothing about it")
-    assert "--disable-shared" in body, (
-        "pkg_buildopkg does not configure --disable-shared. The prefix is "
-        "baked into libopkg as well, so the binary would look for "
-        "libopkg.so.1 at a printer path")
-    assert '"$MODDIR/var"' in body, (
-        "pkg_buildopkg no longer checks that the prefix reached the binary. "
-        "That check is the only thing standing between a wrong --prefix and a "
-        "payload whose database is invisible")
-
-
 def test_ipk_install_is_not_on_the_build_path():
     """The printer's installer installs on the printer, and nowhere else.
 
-    pkgs/ipk-install walks an ar archive by hand because the printer has no
-    opkg and no ar. The build container has both, so using the imitation here
-    would mean arguing that its result matches what opkg would have done --
-    and it resolves no Depends, enforces no Conflicts, reads no Provides and
-    handles no conffiles.
+    pkgs/ipk-install walks an ar archive by hand, for a printer that has no
+    opkg on it yet. The build path has a real one -- the PRINTER'S, running in
+    the replica -- so using the imitation here would mean arguing that its
+    result matches what opkg would have done, and it resolves no Depends,
+    enforces no Conflicts, reads no Provides and handles no conffiles.
     """
     for script in sorted((ROOT / "bin").glob("*.sh")):
         body = "\n".join(ln for ln in script.read_text().splitlines()
                          if not ln.lstrip().startswith("#"))
         assert "ipk-install" not in body, (
             "bin/%s calls pkgs/ipk-install. That is the printer's hand-repair "
-            "tool; the build path uses the opkg pkg_buildopkg builds"
-            % script.name)
+            "tool; the build path installs with the printer's own opkg inside "
+            "the replica (bin/build-payload.py)" % script.name)
 
 
 # --------------------------------------------------- the assembled payload

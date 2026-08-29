@@ -25,11 +25,9 @@ _n=$(find "$PKG_WORK/stage$MODDIR/config" -name 'ff-*.cfg' | wc -l)
 [ -f "$PKG_WORK/stage$MODDIR/config/printer.base.cfg" ] || pkg_die \
     "klipper-config: no printer.base.cfg under $PKG_DIR/payload/config"
 
-# BOTH CHAMBER CONFIGS, one per model, and the installer picks. They used to
-# be two packages that Conflicted -- each owned config/printer.chamber.cfg, so
-# opkg refused the pair and bin/patch.sh had to choose from TARGET_MACHINE.
-# Named by machine and symlinked into place by anvil-link-prog.sh, they stop
-# conflicting and the feed stops being model-specific.
+# BOTH CHAMBER CONFIGS, one per model. Named by machine rather than both
+# called printer.chamber.cfg, so one package can carry them; anvil-link-prog.sh
+# symlinks whichever the printer names into place.
 for _m in Creator5 Creator5Pro; do
     [ -f "$PKG_WORK/stage$MODDIR/config/chamber/$_m.cfg" ] || pkg_die \
         "klipper-config: no chamber/$_m.cfg -- anvil-link-prog.sh resolves this name from app_startup.sh"

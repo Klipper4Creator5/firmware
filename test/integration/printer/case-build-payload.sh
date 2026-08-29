@@ -1,12 +1,9 @@
 #!/bin/sh
 # Build $MODDIR the way a printer would, and hand it back on /out.
 #
-# This is bin/patch.sh's section 0, moved onto the machine it is for. The old
-# one installed the feed with a HOST opkg against an --offline-root, which
-# cannot run maintainer scripts (hence its --force-postinstall) and resolves
-# every path against a directory that is not the one the files will live in.
-# Here the printer's own opkg installs onto the printer's own filesystem: the
-# postinsts run, for real, under qemu-mipsel, against /usr/data/anvil.
+# bin/patch.sh's section 0, run on the machine it is for: the printer's own
+# opkg installs onto the printer's own filesystem, so the postinsts execute
+# under qemu-mipsel against the paths they will see on a machine.
 #
 # The feed arrives on the simulated USB stick at /mnt -- .ipk files and the
 # Packages index that bin/build-packages.sh wrote beside them.

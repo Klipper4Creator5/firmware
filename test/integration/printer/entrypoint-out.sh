@@ -1,26 +1,21 @@
 #!/bin/sh
 # The replica's stock entrypoint, with a writable /out inside the chroot.
 #
-# WHY A WRAPPER AT ALL. /opt/printer/entrypoint.sh assembles the machine and
-# then, as the last thing it does, runs the case script under `chroot
-# /printer`. Everything it mounts is arranged before that; there is no hook
-# afterwards and nothing of ours inside. So a case that BUILDS something --
-# the payload, installed by the printer's own opkg -- has no way to hand it
-# back.
+# WHY A WRAPPER. /opt/printer/entrypoint.sh assembles the machine and then, as
+# the last thing it does, runs the case under `chroot /printer`. There is no
+# hook afterwards, so a case that BUILDS something has no way to hand it back.
 #
-# WHY THE MOUNT CANNOT SIMPLY BE `docker run -v ...:/printer/out`. assemble.sh
-# binds /printer-src onto /printer and remounts it read-only, and a bind mount
-# does not carry the submounts underneath it. A docker mount at /printer/out
-# is buried the moment the machine is assembled: the directory is still there,
-# still empty, and nothing reports an error. Mounting at /printer-src/out
-# instead trips the `rm -rf /printer-src` assemble.sh opens with, which cannot
-# unlink a busy mountpoint and takes the run down with it.
+# AND WHY THE MOUNT IS NOT `docker run -v ...:/printer/out`. assemble.sh binds
+# /printer-src onto /printer and remounts it read-only, and a bind does not
+# carry the submounts underneath it -- a docker mount at /printer/out is
+# buried the moment the machine is assembled, silently, leaving an empty
+# directory. Mounting at /printer-src/out instead trips the `rm -rf
+# /printer-src` assemble.sh opens with, which cannot unlink a busy mountpoint.
 #
-# So the mount has to happen AFTER assemble.sh and BEFORE the case, and the
-# stock entrypoint offers no seam between the two. Running it with a case that
-# does nothing makes one: it leaves the assembled machine behind at /printer,
-# and the mount and the real case follow. Only the last four lines are copied
-# from it -- everything that builds the replica is still the stock script.
+# So the mount belongs between assemble.sh and the case, and the stock
+# entrypoint has no seam there. Running it with a case that does nothing makes
+# one: it leaves the assembled machine at /printer, and the mount and the real
+# case follow.
 set -e
 
 CASE="${1:?usage: entrypoint-out.sh <script-to-run-inside-chroot>}"

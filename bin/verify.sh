@@ -136,21 +136,14 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
                                           || bad "mod payload missing init.d services"
     grep -q 'init.d/S70klipper' <<<"$LIST" && ok "mod payload owns Klipper startup" \
                                           || bad "mod payload missing S70klipper -- Klipper would never start"
-    # THE KLIPPER CONFIG, WHICH IS THREE PACKAGES AND ONE DIRECTORY. Both
-    # halves are checked because they fail differently and neither failure is
-    # visible until klippy starts.
+    # THE KLIPPER CONFIG. printer.base.cfg has a bare
+    # [include printer.chamber.cfg] and Klipper treats a missing include as
+    # fatal, so a payload without a chamber config is a printer that comes up
+    # with no motion and no heaters.
     #
-    # printer.base.cfg has a bare [include printer.chamber.cfg] and Klipper
-    # treats a missing include as fatal, so a payload without a chamber config
-    # is a printer that comes up with no motion and no heaters -- and the file
-    # keeps moving, which is exactly when a staging line gets dropped. It rode
-    # the software component to /usr/prog, then became a package per model,
-    # and is now one package carrying BOTH under config/chamber/, with
-    # anvil-link-prog.sh symlinking the one app_startup.sh's MACHINE names.
-    #
-    # So both halves are checked: the configs are in the payload, and the
-    # script that resolves them is too. Either alone installs a printer that
-    # cannot start klippy, and neither says so until it does.
+    # Both the configs and the script that resolves which one are checked:
+    # either alone installs a printer that cannot start klippy, and neither
+    # says so until it does.
     #
     # The ff-*.cfg are the toolchanger itself: without them klippy starts fine
     # and the machine is a single-tool printer that reports no error anywhere.
