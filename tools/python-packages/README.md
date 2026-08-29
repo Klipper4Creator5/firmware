@@ -19,9 +19,11 @@ with no gate and no Makefile target, and the questions it asked are settled.
 18 sdists, 12 mipsel extension modules, from a 56-second clean build in one
 throwaway `debian:bookworm`. (This said 19 for a while; the list below is 18,
 and `versions.env` -- which is now the list that matters -- pins 18.) Every
-`.so` is gated at `e_flags=0x70001407`,
-`nan2008/o32/mips32r2` -- shared objects carry `EF_MIPS_PIC`, so they read
-`…07` where an executable reads `…05`.
+`.so` comes out `nan2008/o32/mips32r2` at `e_flags=0x70001407` -- shared
+objects carry `EF_MIPS_PIC`, so they read `…07` where an executable reads
+`…05`. This script no longer gates that itself; `qa/replica/test_abi.py`
+reads every ELF on the installed filesystem, which is the one place the
+question is asked now.
 
 Native: cffi, greenlet, lmdb, markupsafe, streaming-form-data, tornado
 speedups, pillow. Pure: jinja2, distro, inotify-simple, libnacl, dbus-next,
@@ -144,7 +146,7 @@ purpose, so that a failure would be the interpreter and not an init script.
 ## libsodium: built into the prefix, and it costs anvil-env.sh nothing
 
 `build-libsodium.sh` cross-builds libsodium 1.0.20 with the Ingenic toolchain
-(24s), gated at `0x70001407` nan2008/o32/mips32r2, SONAME `libsodium.so.26`,
+(24s), producing `0x70001407` nan2008/o32/mips32r2, SONAME `libsodium.so.26`,
 needing only libpthread, libc and the loader. 406KB stripped, into
 `$MODDIR/lib`.
 

@@ -110,24 +110,17 @@ STAGE=$W/stage-sodium
 rm -rf "$STAGE"; mkdir -p "$STAGE"
 make install DESTDIR="$STAGE" >> "$W/sodium-make.log" 2>&1
 
-# ---- the ABI gate, on the object that ships -------------------------------
-log "ABI gate"
+# ---- what shipped, described rather than gated -----------------------------
+# The ABI ASSERTIONS that were here (e_flags == 0x70001407, and the Flags line
+# decoding to nan2008/o32/mips32r2) are gone: qa/replica/test_abi.py reads
+# every ELF on the installed filesystem, which is where this .so ends up and
+# where four other partial copies of the same rule used to disagree. The
+# readelf output stays because a build log that says what it produced is worth
+# having -- it just no longer decides anything.
+log "what the build produced"
 SO=$(readlink -f "$STAGE$PREFIX/lib/libsodium.so")
 file "$SO"
 mips-linux-gnu-readelf -h "$SO" | sed -n '/Class\|Data\|Type\|Flags/p'
-F=$(eflags "$SO")
-[ "$F" = "0x70001407" ] || { echo "!! e_flags $F, expected 0x70001407" >&2; exit 1; }
-# The words that matter are decoded by readelf out of e_flags itself, on the
-# header's Flags line -- `.MIPS.abiflags` (readelf -A) reports the ISA and the
-# FP ABI but not the NaN encoding, so the header is where nan2008 is read.
-FLAGLINE=$(mips-linux-gnu-readelf -h "$SO" | sed -n 's/.*Flags: *//p')
-echo "  decoded: $FLAGLINE"
-for w in nan2008 o32 mips32r2; do
-    case ",$FLAGLINE," in
-        *"$w"*) ;;
-        *) echo "!! e_flags does not decode to $w: $FLAGLINE" >&2; exit 1 ;;
-    esac
-done
 mips-linux-gnu-readelf -A "$SO" | sed -n '/ISA\|FP ABI/p'
 echo "-- SONAME / NEEDED"
 mips-linux-gnu-readelf -d "$SO" | sed -n '/SONAME\|NEEDED/p'

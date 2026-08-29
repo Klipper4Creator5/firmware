@@ -328,29 +328,13 @@ rm -rf "$STAGE"
 make install DESTDIR="$STAGE" 2>&1 | tail -20
 
 # ============================================ 4. gates + package ============
-log "ABI gate on every ELF in the stage"
-# The measured target word is 0x70001405 for an EXECUTABLE.  Shared objects
-# additionally carry EF_MIPS_PIC (0x2) and so read 0x70001407 -- that is
-# correct and unavoidable for a DYN, and klippy's own c_helper.so has it too.
-# So gate on the ABI ATTRIBUTES, which is also what bin/patch.sh does
-# (`readelf -h | grep -q nan2008`), and pin the whole word per ELF type.
-BAD=0; N=0
-while IFS= read -r f; do
-    case "$(file -b "$f")" in *ELF*) ;; *) continue;; esac
-    hdr=$(mips-linux-gnu-readelf -h "$f" 2>/dev/null)
-    fl=$(echo "$hdr" | awk '/Flags:/{print $2}' | tr -d ,)
-    typ=$(echo "$hdr" | awk '/^  Type:/{print $2}')
-    want=0x70001405; [ "$typ" = "DYN" ] && want=0x70001407
-    case "$hdr" in
-        *nan2008*o32*mips32r2*) ;;
-        *) echo "!! $f  not nan2008/o32/mips32r2"; BAD=1; continue;;
-    esac
-    if [ "$fl" != "$want" ]; then
-        echo "!! $f  type=$typ flags=$fl want=$want"; BAD=1
-    fi
-    N=$((N+1))
-done < <(find "$STAGE" -type f)
-[ $BAD -eq 0 ] && echo "$N ELF objects, all nan2008/o32/mips32r2 (EXEC 0x70001405, DYN 0x70001407)" || exit 1
+# NO ABI GATE HERE. This used to walk every ELF in the install stage and pin e_flags per ELF
+# type -- 0x70001405 for an EXEC, 0x70001407 for a DYN. It was one of five
+# implementations of that rule and the strictest of them, strict enough to be
+# wrong: the low three bits are NOREORDER/PIC/CPIC and vary between objects of
+# identical ABI, so an exact-word compare refuses files the kernel loads
+# happily. qa/replica/test_abi.py asks the question once, over the installed
+# filesystem, masking those bits off.
 
 # _sqlite3 is the reason this build exists.  Its absence must be a hard error,
 # not a line in a 400-line make log that nobody reads.

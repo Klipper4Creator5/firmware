@@ -380,23 +380,13 @@ find "$SP" -name '*.dist-info' -prune -exec rm -rf {} + 2>/dev/null || true
 rm -rf "$SP"/bin "$SP"/*.data 2>/dev/null || true
 
 # ============================================================= gates ========
-log "ABI gate on every .so in the tree"
-BAD=0; N=0
-while IFS= read -r f; do
-    case "$(file -b "$f")" in *ELF*) ;; *) continue;; esac
-    hdr=$(mips-linux-gnu-readelf -h "$f" 2>/dev/null)
-    fl=$(echo "$hdr" | awk '/Flags:/{print $2}' | tr -d ,)
-    typ=$(echo "$hdr" | awk '/^  Type:/{print $2}')
-    want=0x70001405; [ "$typ" = "DYN" ] && want=0x70001407
-    case "$hdr" in
-        *nan2008*o32*mips32r2*) ;;
-        *) echo "!! $f  not nan2008/o32/mips32r2"; BAD=1; continue;;
-    esac
-    [ "$fl" = "$want" ] || { echo "!! $f type=$typ flags=$fl want=$want"; BAD=1; }
-    N=$((N+1))
-done < <(find "$SP" -type f -name '*.so')
-[ $BAD -eq 0 ] || exit 1
-echo "$N mipsel extension modules, all nan2008/o32/mips32r2 DYN 0x70001407"
+# NO ABI GATE HERE. This used to walk every .so in the site-packages tree and pin e_flags per ELF
+# type -- 0x70001405 for an EXEC, 0x70001407 for a DYN. It was one of five
+# implementations of that rule and the strictest of them, strict enough to be
+# wrong: the low three bits are NOREORDER/PIC/CPIC and vary between objects of
+# identical ABI, so an exact-word compare refuses files the kernel loads
+# happily. qa/replica/test_abi.py asks the question once, over the installed
+# filesystem, masking those bits off.
 
 echo
 echo "-- NEEDED of each extension module (nothing may want a /usr/prog soname) --"

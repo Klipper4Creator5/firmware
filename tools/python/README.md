@@ -57,7 +57,9 @@ binary file" -- and explains nothing.
     loader  = /lib/ld-linux-mipsn8.so.1      rootfs glibc 2.33
 
 Both words are correct and any ABI gate must accept both, or it fails on every
-one of the 56 extension modules in the tree. `c_helper.so` reads `0x70001407`
+one of the 56 extension modules in the tree. `qa/replica/test_abi.py` -- the
+only ABI gate there is now -- masks the low three bits off for exactly this
+reason. `c_helper.so` reads `0x70001407`
 too, for the same reason.
 
 **`-EL -mnan=2008` are mandatory in CFLAGS *and* in LDFLAGS.** This toolchain

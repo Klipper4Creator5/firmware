@@ -567,21 +567,75 @@ def test_the_payload_keeps_libsodium_as_a_symlink():
         % (lib, os.readlink(lib)))
 
 
+# Scripts that build or ship something, and could therefore host a gate.
+def _buildish_scripts():
+    named = ["bin/common.sh", "bin/build-packages.sh", "bin/verify.sh",
+             "bin/patch.sh", "bin/pack.sh", "pkgs/lib.sh",
+             "tools/python/build.sh", "tools/python-packages/build.sh",
+             "tools/python-packages/build-libsodium.sh"]
+    found = [ROOT / n for n in named]
+    found += sorted(ROOT.glob("pkgs/*/build.sh"))
+    found += sorted(ROOT.glob("pkgs/3rdparty/*/build.sh"))
+    return [f for f in found if f.is_file()]
+
+
+# The compiler wrapper check is NOT a second gate and these four files may
+# keep it. It compiles a hello-world and reads THAT object's header, so what
+# it judges is the toolchain, not anything the build produced -- a question
+# qa/replica/test_abi.py structurally cannot answer, because a filesystem
+# sweep cannot see a compiler. It also fails in a second, before a whole feed
+# is built on a wrapper that quietly lost -mnan=2008.
+#
+# They are allowed the raw e_flags words and nothing else: an artefact gate
+# needs to say nan2008/o32/mips32r2 (or call mips_abi_gate) to do its job, and
+# the wrapper checks never do, so that vocabulary stays forbidden everywhere.
+WRAPPER_CHECK_OK = {
+    "pkgs/lib.sh",
+    "tools/python/build.sh",
+    "tools/python-packages/build.sh",
+    "tools/python-packages/build-libsodium.sh",
+}
+
+# "nan2008" and not "mips32r2": an artefact gate has to read the NaN encoding
+# out of the header, and only a gate ever says that word -- whereas mips32r2
+# is ALSO the name of an ISA compiler flag, and pkgs/3rdparty/openssl/build.sh
+# legitimately passes -mips32r2 to put the ISA back where the printer is. A
+# guard word that collides with a build flag reports the flag, which is a
+# false alarm and, once it is tuned out, a guard nobody reads.
+GATE_WORDS = ("nan2008", "mips_abi_gate")
+
+# The raw e_flags words. Forbidden outside the four files allowed the wrapper
+# check -- inside them a hex-only gate would still slip past, which is a known
+# and accepted limit: two of those four are the superseded standalone trees
+# under tools/ and nothing they build reaches a printer.
+GATE_FLAGS = "0x7000140"
+
+# The decision the wrapper check makes, not the message it prints: a test
+# pinned to the message goes green the moment someone edits the wording, and
+# pkgs/lib.sh mentions both words again in its pkg_die string.
+WRAPPER_CASE = "0x70001405|0x70001407)"
+
+
 def test_there_is_exactly_one_abi_gate_and_it_is_the_replica_one():
-    """The ABI question is asked once, of the installed filesystem.
+    """The ABI question is asked of one thing, in one place: the filesystem
+    the kernel will actually load from.
 
-    It used to be asked in four places: mips_abi_gate in bin/common.sh, called
-    at the packaging boundary by bin/build-packages.sh and again by two
-    recipes that did not trust it, plus a narrower readelf|grep in
-    bin/verify.sh. Four implementations of one rule, each over a different
-    subset of the files -- and the largest binary we ship, HelixScreen, went
-    through a route (bin/patch.sh) that none of them read.
+    It used to be asked in six. mips_abi_gate in bin/common.sh, called at the
+    packaging boundary by bin/build-packages.sh and again by two recipes that
+    did not trust it; a narrower readelf|grep in bin/verify.sh over a single
+    .so; two tests in qa/replica/test_install.py reading one header a byte at
+    a time; and two more in tools/, which pinned the e_flags word EXACTLY and
+    were therefore strict enough to be wrong -- the low three bits are
+    NOREORDER/PIC/CPIC and vary between objects of identical ABI.
 
-    qa/replica/test_abi.py replaces all of it by sweeping the filesystem the
-    kernel will actually load from, which is the only place every route is
-    visible at once. This test exists so that a build-time gate cannot quietly
-    grow back beside it: two gates disagreeing about which files are exempt is
-    how the old set ended up with a hole in it.
+    Six implementations of one rule, each over a different subset of the
+    files, and between them they still could not see the largest binary we
+    ship: bin/patch.sh unpacks HelixScreen into /usr/prog and none of them
+    read that tree.
+
+    This test is the ratchet. Two gates that disagree about which files are
+    exempt is how the first six ended up with a hole in them, so a seventh
+    must not be able to grow back quietly.
     """
     gate = ROOT / "qa" / "replica" / "test_abi.py"
     assert gate.is_file(), (
@@ -592,23 +646,45 @@ def test_there_is_exactly_one_abi_gate_and_it_is_the_replica_one():
             "qa/replica/test_abi.py no longer mentions %s, so it is not the "
             "gate this test thinks it is" % name)
 
-    shell = [ROOT / "bin" / "common.sh", ROOT / "bin" / "build-packages.sh",
-             ROOT / "bin" / "verify.sh", ROOT / "bin" / "patch.sh",
-             ROOT / "pkgs" / "lib.sh"]
-    shell += sorted(ROOT.glob("pkgs/*/build.sh"))
-    shell += sorted(ROOT.glob("pkgs/3rdparty/*/build.sh"))
     back = []
-    for f in shell:
-        if not f.is_file():
-            continue
+    for f in _buildish_scripts():
+        rel = str(f.relative_to(ROOT))
+        # Comments are stripped: a file is allowed to EXPLAIN where the gate
+        # went, and several of them now do.
         body = "\n".join(ln for ln in f.read_text().splitlines()
                           if not ln.lstrip().startswith("#"))
-        if "nan2008" in body or "mips_abi_gate" in body:
-            back.append(str(f.relative_to(ROOT)))
+        hit = [w for w in GATE_WORDS if w in body]
+        # The hex words are the wrapper check's, and only in the four files
+        # that are allowed to make it.
+        if GATE_FLAGS in body and rel not in WRAPPER_CHECK_OK:
+            hit.append(GATE_FLAGS)
+        if hit:
+            back.append("%s (%s)" % (rel, ", ".join(hit)))
     assert not back, (
-        "a build-time ABI gate is back in %s. There is one gate and it is "
-        "qa/replica/test_abi.py; a second one over a different subset of the "
-        "files is what the first set of four was." % ", ".join(back))
+        "an ABI gate is back in the build path: %s. There is one gate and it "
+        "is qa/replica/test_abi.py, which reads the installed filesystem; a "
+        "second one over a different subset of the files is what the first "
+        "six were. The toolchain wrapper check is the one exception and is "
+        "allowed only in %s."
+        % ("; ".join(back), ", ".join(sorted(WRAPPER_CHECK_OK))))
+
+
+def test_the_toolchain_wrapper_is_still_checked_before_anything_is_built():
+    """The check that survived the consolidation, kept honest from the side
+    that matters: it has to still be there.
+
+    A wrapper that lost -mnan=2008 produces a tree that compiles, links and
+    passes every test on the build host, and is refused by the printer's
+    kernel at exec(). qa/replica/test_abi.py would eventually say so -- about
+    several hundred files at once, minutes later, in the replica lane. This
+    says it about the compiler, in a second, before the feed is built.
+    """
+    body = (ROOT / "pkgs" / "lib.sh").read_text()
+    assert WRAPPER_CASE in body, (
+        "pkgs/lib.sh no longer checks what its cross compiler emits, so a "
+        "wrapper that lost -mnan=2008 would build an entire feed of objects "
+        "the printer's kernel refuses, and nothing would say so until the "
+        "replica lane ran")
 
 
 def test_the_archives_are_built_by_upstream():
