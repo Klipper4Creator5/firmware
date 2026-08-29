@@ -90,3 +90,14 @@ NICE_MOONRAKER=5
 # was the cause: stop it (`S65camera stop`) or unplug it, rather than reaching
 # for a nicer number.
 NICE_CAM=10
+# klippy ITSELF, which is the odd one out: the two above yield TO klippy, this
+# one is klippy. 0 -- normal priority -- is what FlashForge shipped and what you
+# want; it is here because the number has to live somewhere, and a nice value
+# belongs with the other nice values rather than inside the klipperDaemon shim,
+# where it used to be and where it made that file machine-specific.
+#
+# A NEGATIVE value is the only one worth considering and it is mostly redundant:
+# klipper_pri.sh already puts klippy's main thread on SCHED_FIFO 50, which
+# outranks every nice value there is, and its serial reader thread calls
+# os.nice(-20) itself. Set this only if the log says the chrt did not take.
+NICE_KLIPPER=0

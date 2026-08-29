@@ -66,9 +66,9 @@ say "payload: $(grep -c '^Package:' "$PAYLOAD_DIR/var/lib/opkg/status") packages
 # Nothing is staged here any more: anvil-klipper installs the whole klippy tree
 # at $MODDIR/klipper/klippy and the klipper s6-rc service execs it there on our
 # own $FF_PYTHON, so the package IS the printer's Klipper. /usr/prog/klipper
-# keeps FlashForge's stock klippy, unread -- except klipper_pri.sh (their
-# SCHED_FIFO helper) and klipperDaemon, our shim, which the service greps
-# KLIPPER_NICENESS out of.
+# keeps FlashForge's stock klippy, unread -- the only file still read there is
+# klipper_pri.sh, their SCHED_FIFO helper. klipperDaemon at that path is a
+# symlink to our shim, pointed there by anvil-link-prog.sh.
 #
 # The assertion is all that is left, and it is cheap: an anvil-klipper that did
 # not install is now a printer with no Klipper at all, with no component copy
@@ -144,6 +144,7 @@ rm -f "$SOFTWARE_DIR/firmwareExe" "$SOFTWARE_DIR/start.sh"
 # than a package member. Only the two values with a RANGE are substituted.
 sed -e "s/^NICE_MOONRAKER=.*/NICE_MOONRAKER=${NICE_MOONRAKER:-5}/" \
     -e "s/^NICE_CAM=.*/NICE_CAM=${NICE_CAM:-10}/" \
+    -e "s/^NICE_KLIPPER=.*/NICE_KLIPPER=${NICE_KLIPPER:-0}/" \
     pkgs/anvil-core/seed/anvil.conf.in > "$PAYLOAD_DIR/anvil.conf"
 
 # --- 10b. the install manifest

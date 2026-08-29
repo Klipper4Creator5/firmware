@@ -22,6 +22,11 @@ else
     echo "klipper/run: !! no $MODDIR/anvil-env.sh -- klippy will not find its libraries"
 fi
 
+# anvil.conf is read HERE and not inherited, the same way camera/run and
+# moonraker/run read theirs: it is user state, so editing it and restarting the
+# service is enough to change the number.
+[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
+
 # BOTH HALVES ARE OURS AND BOTH ARE UNDER $MODDIR: the klippy tree anvil-klipper
 # installs, on the CPython 3.13 anvil-python installs. There is no /usr/prog in
 # this command line any more.
@@ -40,7 +45,6 @@ KLIPPY=$MODDIR/klipper/klippy/klippy.py
 PRINTER_CFG=/usr/data/config/printer.cfg
 PRINTER_LOG=/usr/data/logs/printer.log
 UDS=/tmp/uds
-DAEMON=/usr/prog/klipper/klipperDaemon
 
 # klippy does not unlink its socket on exit, and everything on this printer
 # reads that socket as "klipper is running". Swept here rather than in a stop()
@@ -78,15 +82,18 @@ if [ -x /usr/prog/klipper/klipper_pri.sh ]; then
     ) >/dev/null 2>&1 &
 fi
 
-# FlashForge's nice value, read out of the klipperDaemon the mod ships in its
-# place -- run-append.sh carries the number forward off the file it replaces,
-# so it is never guessed. A grep rather than a source, because sourcing stock's
-# klipperDaemon would run the daemon.
-KLIPPER_NICENESS=`sed -n 's/^ *KLIPPER_NICENESS= *\([-0-9][0-9]*\).*/\1/p' \
-    "$DAEMON" 2>/dev/null | head -n 1`
-if [ -z "$KLIPPER_NICENESS" ] || [ "$KLIPPER_NICENESS" = 0 ]; then
+# NICE_KLIPPER (anvil.conf), and 0 -- klippy at normal priority -- is both the
+# default and what FlashForge shipped. This used to grep KLIPPER_NICENESS out of
+# /usr/prog/klipper/klipperDaemon, whose value the installer carried forward off
+# the stock file. That made the shim machine-specific, which is the one reason
+# it could not be a symlink like the other two files in prog/. It is ours now,
+# it lives with NICE_MOONRAKER and NICE_CAM, and klipperDaemon is a link.
+#
+# Two branches because `-N 0` is not the same as no -N to every busybox
+# start-stop-daemon, and 0 is the common case.
+if [ "${NICE_KLIPPER:-0}" = 0 ]; then
     exec start-stop-daemon -S --exec "$FF_PYTHON" -- \
         "$KLIPPY" "$PRINTER_CFG" -l "$PRINTER_LOG" -a "$UDS"
 fi
-exec start-stop-daemon -S -N "$KLIPPER_NICENESS" --exec "$FF_PYTHON" -- \
+exec start-stop-daemon -S -N "$NICE_KLIPPER" --exec "$FF_PYTHON" -- \
     "$KLIPPY" "$PRINTER_CFG" -l "$PRINTER_LOG" -a "$UDS"

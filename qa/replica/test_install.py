@@ -55,8 +55,9 @@ pytestmark = pytest.mark.replica
 
 MODDIR = "/usr/data/anvil"
 FE = "/usr/prog/PROGRAM/software/firmwareExe"
-# The other stock path anvil-link-prog.sh owns. klipperDaemon starts from here.
+# The other two stock paths anvil-link-prog.sh owns.
 START = "/usr/prog/klipper/start.sh"
+DAEMON = "/usr/prog/klipper/klipperDaemon"
 APP = "/usr/prog/app_startup.sh"
 SOURCE = MODDIR + "/etc/s6-rc/source"
 DB = MODDIR + "/etc/s6-rc/compiled/current"
@@ -145,13 +146,21 @@ def test_the_stock_paths_are_symlinks_into_the_payload(box):
     """The property the whole seam rests on since the software component
     stopped carrying firmwareExe and start.sh.
 
-    anvil-core installs both at $MODDIR/prog/ and anvil-link-prog.sh points the
-    stock paths at them -- from run-append.sh on a flash and from the postinst
-    on `opkg upgrade anvil-core`. A REGULAR FILE at either path means the link
-    step did not run, and the printer would go on executing whatever the last
-    install happened to leave there while an upgrade quietly rewrote $MODDIR.
+    anvil-core installs all three at $MODDIR/prog/ and anvil-link-prog.sh points
+    the stock paths at them -- from run-append.sh on a flash and from the
+    postinst on `opkg upgrade anvil-core`. A REGULAR FILE at any of these means
+    the link step did not run, and the printer would go on executing whatever
+    the last install happened to leave there while an upgrade quietly rewrote
+    $MODDIR.
+
+    klipperDaemon is here for a second reason. It was hand-copied by the
+    installer until the nice value moved to anvil.conf, and the guard on that
+    copy named a path the file had stopped shipping at -- so for several
+    releases the block was skipped in silence and every printer kept
+    FlashForge's own, whose `start` forks a second unsupervised klippy beside
+    the s6 one. A link cannot be skipped in silence.
     """
-    for path in (FE, START):
+    for path in (FE, START, DAEMON):
         target = box.sh("readlink %s 2>/dev/null" % path).out.strip()
         assert target, (
             "%s is not a symlink -- anvil-link-prog.sh did not run, so an "
@@ -163,6 +172,24 @@ def test_the_stock_paths_are_symlinks_into_the_payload(box):
         assert box.file(path).exists, (
             "%s -> %r dangles: the link is there but the payload is not"
             % (path, target))
+
+
+def test_the_klipper_daemon_shim_refuses_to_start_a_second_klippy(box):
+    """The whole point of shipping it. Stock's `start` runs start-stop-daemon
+    -b, which would put an unsupervised klippy next to the supervised one,
+    fighting for /dev/ttyS4 and /tmp/uds. Asked by RUNNING it, because the file
+    being in place says nothing about what it does."""
+    got = box.sh("%s start 2>&1; echo rc=$?" % DAEMON)
+    assert "rc=0" in got.text, (
+        "`klipperDaemon start` did not exit 0 -- a caller that treats failure "
+        "as fatal would break on it: %s" % got.text)
+    assert "supervised" in got.text, (
+        "`klipperDaemon start` did not report that klipper is supervised, so "
+        "this is probably FlashForge's own: %s" % got.text)
+    running = box.pgrep("klippy.py")
+    assert len(running) <= 1, (
+        "`klipperDaemon start` left %d klippy processes running -- the shim "
+        "forked one: %s" % (len(running), [p.cmdline for p in running]))
 
 
 def test_every_installed_script_parses_under_the_printers_busybox(box):

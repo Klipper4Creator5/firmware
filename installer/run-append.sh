@@ -201,31 +201,13 @@ if [ -n "$MODTAR" ]; then
         # /run is a tmpfs, so this matters only for a `sh run.sh` typed over
         # ssh: a live s6-rc state points at the database just replaced.
         rm -rf /run/s6-rc
-        # klipperDaemon, replaced: stock's `start` forks a second, unsupervised
-        # klippy beside the s6 one. It cannot ride in the software component --
-        # FlashForge's run.sh copies a fixed list of files and klipperDaemon is
-        # not on it -- so it is installed from here.
-        #
-        # $MODDIR/prog, NOT $MODDIR/bin. It moved there in 057a3a1 and this
-        # guard did not, so the whole block was skipped in silence: every
-        # printer since kept FlashForge's klipperDaemon, whose `start` is the
-        # second unsupervised klippy this exists to prevent. A `[ -f ]` that
-        # can only be false is why it never said so.
-        #
-        # KLIPPER_NICENESS is carried forward off the file being replaced, so
-        # FlashForge's number survives without being guessed. On later updates
-        # that reads our own copy, which is how the value persists.
-        if [ -f $MODDIR/prog/klipperDaemon ] && [ -d /usr/prog/klipper ]; then
-            KN=`sed -n 's/^ *KLIPPER_NICENESS= *\([-0-9][0-9]*\).*/\1/p' \
-                /usr/prog/klipper/klipperDaemon 2>/dev/null | head -n 1`
-            [ -n "$KN" ] || KN=0
-            sed "s/^KLIPPER_NICENESS=.*/KLIPPER_NICENESS=$KN/" \
-                $MODDIR/prog/klipperDaemon > /usr/prog/klipper/klipperDaemon.new \
-                && mv -f /usr/prog/klipper/klipperDaemon.new /usr/prog/klipper/klipperDaemon \
-                && chmod +x /usr/prog/klipper/klipperDaemon \
-                && echo "klipperDaemon: replaced (start is a no-op; niceness $KN)" \
-                || echo "!! could not replace klipperDaemon -- it can still fork a second klippy"
-        fi
+        # klipperDaemon is anvil-link-prog.sh's now, below, like the other two
+        # files in $MODDIR/prog. It used to be hand-copied here with the stock
+        # KLIPPER_NICENESS seded into it, which is what made it machine-specific
+        # and therefore unlinkable -- and the guard on that block named
+        # $MODDIR/bin/klipperDaemon, a path it stopped shipping at in 057a3a1,
+        # so it was skipped in silence for several releases and every printer
+        # kept FlashForge's own. The number is NICE_KLIPPER in anvil.conf now.
         echo "mod payload installed"
         # Point the stock boot path at the payload's own copies. This has to
         # be HERE and not earlier: FlashForge's run.sh distributed the

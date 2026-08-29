@@ -8,12 +8,11 @@
 # `start` does nothing, and exits 0 so a caller that treats failure as fatal is
 # not broken by it.
 #
-# KLIPPER_NICENESS is FlashForge's tuning and this file is still where it lives:
-# etc/s6-rc/source/klipper/run reads the line below, and payload/run-append.sh
-# carries the value forward off the file it replaces, so a printer that has
-# never seen the stock number does not get a guessed one.
-KLIPPER_NICENESS=0
-
+# NOTHING MACHINE-SPECIFIC LIVES HERE, which is what lets anvil-link-prog.sh
+# symlink this file like the other two in prog/. KLIPPER_NICENESS used to, and
+# the installer seded the stock value into it on every flash; it is NICE_KLIPPER
+# in anvil.conf now, beside the other two nice values, and etc/s6-rc/source/
+# klipper/run reads it from there.
 MODDIR=/usr/data/anvil
 S6RC=$MODDIR/bin/s6-rc
 

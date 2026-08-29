@@ -59,8 +59,12 @@ link_one() {
     echo "link-prog: $dst -> $src"
 }
 
-link_one prog/firmwareExe /usr/prog/PROGRAM/software/firmwareExe
-link_one prog/start.sh    /usr/prog/klipper/start.sh
+link_one prog/firmwareExe   /usr/prog/PROGRAM/software/firmwareExe
+link_one prog/start.sh      /usr/prog/klipper/start.sh
+# Stock's `start` forks a second, unsupervised klippy beside the s6 one, so
+# this shim has to win. Whether the stock file is there at all does not matter:
+# link_one replaces whatever it finds, and this runs after the payload landed.
+link_one prog/klipperDaemon /usr/prog/klipper/klipperDaemon
 
 # The configs land in /usr/data/config because that is where printer.cfg is,
 # and Klipper resolves [include] against the directory of the file doing the
