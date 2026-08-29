@@ -94,11 +94,7 @@ class Replica:
     # ------------------------------------------------------------ execution
 
     def command(self, case, packages=None, want_out=False, env=None):
-        """The exact `docker run` argv for this case.
-
-        Split out from run() so it can be inspected and diffed against what
-        the shell launcher produced, without a docker daemon anywhere near it.
-        """
+        """The exact `docker run` argv for this case."""
         packages = packages or {}
         stage = self.stage_dir()
         config = self.config
@@ -187,35 +183,18 @@ class Replica:
 
         ASSEMBLED HERE RATHER THAN IN entrypoint.sh, which is where
         qa/lib/replica.py leaves it. That works only when the image is current,
-        and the published one (test.env's PRINTER_IMAGE) predates the split:
-        its entrypoint.sh knows /payload and nothing else, so the seed and the
-        Klipper launcher never arrive and case-moonraker.sh fails on an
-        anvil.conf that was never copied. Doing it on this side needs nothing
-        of the image but the mount it has always had.
+        and the published one (test.env's PRINTER_IMAGE) predates the split.
+        Doing it on this side needs nothing of the image but the mount it has
+        always had.
 
-        Four sources, four roles: anvil-core's $MODDIR overlay, its anvil.conf
-        template -- the unrendered defaults are exactly what the cases want --
-        Klipper's launcher, and the installer block, which is never a file on
-        a printer at all (bin/patch.sh splices it into FlashForge's run.sh)
-        but which case-upgrade.sh runs directly as the thing under test.
-
-        start.sh arrives via the copytree too, at prog/start.sh, but the cases
-        read it flat -- hence the explicit copy. Mind the `is_file` guard: a
-        source that moves and is not updated here vanishes SILENTLY, which is
-        the failure this docstring opens with.
+        ONE SOURCE NOW. It used to stage four -- anvil-core's overlay, its
+        anvil.conf template, Klipper's launcher and the installer block --
+        because case-moonraker.sh and case-upgrade.sh read the last three.
+        Those cases are qa/ modules now, so only the overlay is left, and the
+        only file any surviving case opens under here is bin/ffscreen.py.
         """
         out = stage / "payload"
         shutil.copytree(str(self.root / "pkgs" / "anvil-core" / "payload"), str(out))
-        for src, name in (
-                (self.root / "pkgs" / "anvil-core" / "seed" / "anvil.conf.in",
-                 "anvil.conf"),
-                (self.root / "pkgs" / "anvil-core" / "payload" / "prog" / "start.sh",
-                 "start.sh"),
-                (self.root / "installer" / "run-append.sh",
-                 "run-append.sh"),
-        ):
-            if src.is_file():
-                shutil.copy(str(src), str(out / name))
         return out
 
     def run_case(self, case, packages=None, on_output=None, out_dir=None,

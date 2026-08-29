@@ -17,8 +17,8 @@ work for with a save-and-restore dance around the sourcing. An empty
 silently did nothing and the run tested a different image than the one it was
 told to. Note the rule is about being SET, not about being non-empty: an empty
 string in the environment is still a decision, and `PRINTER_IMAGE= make
-test-install` deliberately means "build locally", not "use whatever the file
-says".
+boot-screen-sim` deliberately means "build locally", not "use whatever the
+file says".
 """
 import os
 import subprocess
@@ -28,7 +28,6 @@ from . import Fail, repo_root
 # What the harness reads. Anything else in those files belongs to the build.
 WANTED = (
     "FF_KEY",
-    "STOCK_TGZ", "STOCK_TGZ_CREATOR5PRO", "STOCK_TGZ_CREATOR5",
     "PRINTER_IMAGE", "PROG_DUMP", "PROG_MB", "DATA_MB",
 )
 
@@ -54,11 +53,9 @@ done
 class Config:
     """What the two files say, with the environment layered back on top."""
 
-    def __init__(self, values, root, config_env, test_env):
+    def __init__(self, values, root):
         self.values = values
         self.root = root
-        self.config_env = config_env
-        self.test_env = test_env
 
     @classmethod
     def load(cls, root=None):
@@ -72,7 +69,7 @@ class Config:
         if dumped.returncode != 0:
             # A syntax error in config.env is a BROKEN harness, not a missing
             # precondition. The shell version could not tell the two apart:
-            # the half-sourced file left STOCK_TGZ_* empty, the launcher
+            # the half-sourced file left the settings empty, the launcher
             # concluded there was nothing to test, and it reported a clean
             # skip. Naming the file that failed is the entire point.
             which = {91: config_env, 92: test_env}.get(dumped.returncode)
@@ -92,7 +89,7 @@ class Config:
             if key in os.environ:
                 values[key] = os.environ[key]
 
-        return cls(values, root, config_env, test_env)
+        return cls(values, root)
 
     def get(self, key, default=""):
         return self.values.get(key, default) or default
@@ -100,26 +97,3 @@ class Config:
     @property
     def ff_key(self):
         return self.get("FF_KEY", "FFP0331&*%root")
-
-    def stock_for(self, package_name=None):
-        """The stock package that is the authentic baseline for this build.
-
-        With a package name, pick by its model prefix the way the launchers
-        always have -- the two models ship different firmwareExe binaries and
-        each refuses to install on the other, so the baseline has to match.
-        """
-        if package_name:
-            if package_name.startswith("Creator5Pro-"):
-                keys = ("STOCK_TGZ_CREATOR5PRO",)
-            elif package_name.startswith("Creator5-"):
-                keys = ("STOCK_TGZ_CREATOR5",)
-            else:
-                keys = ("STOCK_TGZ",)
-        else:
-            keys = ("STOCK_TGZ_CREATOR5PRO", "STOCK_TGZ")
-
-        for k in keys:
-            path = self.get(k)
-            if path and os.path.isfile(path):
-                return path
-        return ""

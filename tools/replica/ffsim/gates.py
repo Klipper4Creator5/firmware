@@ -18,6 +18,7 @@ import tarfile
 
 from . import Fail
 
+
 def extract_rootfs(config, on_output=None):
     """Pull the printer's real root filesystem out of the stock package.
 
@@ -27,7 +28,7 @@ def extract_rootfs(config, on_output=None):
     Never committed: it is FlashForge's proprietary firmware.
     """
     root = config.root
-    if not shutil_which("unsquashfs"):
+    if not shutil.which("unsquashfs"):
         raise Fail("need squashfs-tools (the build image has it)")
 
     outer = root / "work" / "outer"
@@ -83,12 +84,12 @@ def extract_rootfs(config, on_output=None):
 def _python_trees(config):
     """Every recipe output that makes up the printer's python prefix.
 
-    NINETEEN TREES, NOT ONE, for the same reason _s6_tarball reads three. This
-    used to be work/.py313, the single directory bin/patch.sh cross-built the
-    interpreter and its site-packages into together. CPython is pkgs/3rdparty/python now
-    and each of the eighteen third-party packages is a pkgs/3rdparty/python-* of its own,
-    so what a printer sees is the union of their bin/ and lib/ -- which is
-    exactly what the payload's python packages provide, in this order.
+    NINETEEN TREES, NOT ONE. This used to be work/.py313, the single directory
+    bin/patch.sh cross-built the interpreter and its site-packages into
+    together. CPython is pkgs/3rdparty/python now and each of the eighteen
+    third-party packages is a pkgs/3rdparty/python-* of its own, so what a
+    printer sees is the union of their bin/ and lib/ -- which is exactly what
+    the payload's python packages provide, in this order.
 
     The interpreter comes first so that a half-built checkout fails on the
     thing the caller actually needs rather than on a package that depends on it.
@@ -103,9 +104,8 @@ def _python_tarball(config):
     The interpreter is configured --prefix=/usr/data/anvil and its stdlib lives
     in lib/python3.13/, so a tarball of the merged bin/ + lib/ unpacks straight
     into $MODDIR and every file lands where it was compiled to expect itself.
-    Returns None when nothing has built it yet; the same shape as _s6_tarball
-    above, and for the same reason: whether that is a Skip or a fallback is the
-    caller's question.
+    Returns None when nothing has built it yet: whether that is a Skip or a
+    fallback is the caller's question.
 
     THE DEV HALF RIDES ALONG and is deliberately not filtered out. work/pkg/python
     holds the whole build -- headers, lib/pkgconfig and config-3.13-* included --
@@ -134,13 +134,9 @@ def _python_tarball(config):
             if (staged / sub).is_dir():
                 tar.add(str(staged / sub), arcname=sub)
     return str(out)
-def shutil_which(name):
-    import shutil
-    return shutil.which(name)
 
 
 def _rmtree(path):
-    import shutil
     shutil.rmtree(str(path), ignore_errors=True)
 
 
