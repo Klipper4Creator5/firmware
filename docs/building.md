@@ -301,11 +301,8 @@ pkgs/           package recipes: one directory per component, each a
   libsodium/      bin/patch.sh section 5d's build, moved. patch.sh runs it,
                   so the payload's copy and the packaged copy are one build.
   opkg/           the package manager itself: static musl, with zlib and
-                  libarchive as build-only dependencies linked into it.
-  ipk-install     the exception in here: POSIX sh, runs ON the printer, and
-                  needs no opkg and no `ar`. It is how the first packages get
-                  onto a machine that has neither. Not in a recipe's
-                  payload/ because it does not ship yet.
+                  libarchive as build-only dependencies linked into it. This
+                  is what installs packages on the printer.
 ```
 
 **Tests it** — never ships, and never touched by a build:

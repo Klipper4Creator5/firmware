@@ -160,7 +160,7 @@ for r in "${RECIPES[@]}"; do
         # packages own, and opkg resolves that by letting whichever installed
         # last win -- silently. The dev half is a partition of the build, not a
         # view onto it, so every path lands in exactly one archive and
-        # `ipk-install remove` can never delete a file the other package still
+        # removing either package can never delete a file the other still
         # needs.
         #
         # WHAT IT BUYS: the headers and .a files stop being installed on a

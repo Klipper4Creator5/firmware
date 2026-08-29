@@ -143,10 +143,10 @@ Each of these was run, not assumed. They constrain the phases below.
   guarantee the sha256s give, in git's spelling — and `bin/fetch-assets.sh`
   verifies `HEAD` against it and refuses a dirty checkout.
 * **The printer's busybox cannot be assumed to have `ar`.** It is 1.31.1 built
-  small — no `timeout`, no `nc`, no `ionice`, all measured on the replica. So
-  `pkgs/ipk-install` walks the ar headers itself with `tail`/`head` and needs
-  only `tar` and `gzip`, which the stock FlashForge installer already proves
-  are present.
+  small — no `timeout`, no `nc`, no `ionice`, all measured on the replica.
+  That is why the printer gets a real cross-built opkg (`pkgs/3rdparty/opkg/`),
+  which reads `.ipk` through its own linked-in libarchive rather than shelling
+  out to tools the busybox may not have.
 * **All four packages are reproducible.** `rm -rf work/pkg work/packages` and a
   full recompile produce byte-identical `.ipk` files. That is a measurement of
   *these* packages and this toolchain, not a property of the build system — a
@@ -210,9 +210,8 @@ proprietary firmware is and stops being a gate.
 | `pkgs/3rdparty/libarchive/` | what opkg reads `.ipk` files with; builds against `anvil-zlib` |
 | `pkgs/3rdparty/opkg/` | opkg itself; builds against both of the above |
 | `pkgs/3rdparty/libsodium/` | `build.sh` + `pkg.conf`. **`bin/patch.sh` section 5d's build, moved.** |
-| `pkgs/ipk-install` | installs/removes `.ipk` with no opkg present, writing opkg's own database layout |
 | `bin/build-packages.sh` | orders the recipes, lays out each tree, drives `opkg-build`, indexes the feed |
-| `qa/static/test_ipk.py` | 29 tests, no toolchain needed |
+| `qa/static/test_ipk.py` | 112 tests, no toolchain needed |
 
 ### One recipe builds one package
 
@@ -510,14 +509,11 @@ payload diff.
 
 ### What it is assembled with
 
-**A host opkg, not `pkgs/ipk-install`.** `pkg_buildopkg` (`pkgs/lib.sh`) builds
-an x86-64 opkg from the same pinned tarball the mipsel one comes from, cached
-at `work/.opkg-host`, shaped as `pkg_buildpython`'s twin. `ipk-install` exists
-because the *printer* has no opkg and no `ar`; neither is true in the build
-container, and the imitation resolves no `Depends`, enforces no `Conflicts`,
-reads no `Provides` and handles no `conffiles`. It keeps its job — repairing a
-machine by hand — and is off the build path, which
-`test_ipk_install_is_not_on_the_build_path` now enforces.
+**A host opkg.** `pkg_buildopkg` (`pkgs/lib.sh`) builds an x86-64 opkg from
+the same pinned tarball the mipsel one comes from, cached at `work/.opkg-host`,
+shaped as `pkg_buildpython`'s twin. It resolves `Depends`, enforces
+`Conflicts`, reads `Provides` and handles `conffiles` — all of which decide
+what the payload should contain.
 
 The database is therefore written by the same program that will later read it
 on the printer, which is what makes "phase 2 is a swap rather than a

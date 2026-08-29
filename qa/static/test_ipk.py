@@ -1,11 +1,11 @@
-"""The packages we build, and the installer that reads what upstream writes.
+"""The packages we build, and the recipes and payload they come out of.
 
 WHAT IS AND IS NOT UNDER TEST HERE. The .ipk archives are built by opkg-build,
 which is upstream's tool and upstream's problem -- these tests do not re-derive
 the format, they check the things that are OURS and that upstream cannot know
 about: that the layout we hand it puts every path under $MODDIR, that the
 architecture string is one no public feed can satisfy, that a package is
-reproducible, and that pkgs/ipk-install can install and remove what comes out.
+reproducible, and that the payload is exactly the feed installed.
 Plus one structural gate per worry that has already cost time once -- a recipe
 growing its own copy of the cross-build, or a package escaping the ABI check.
 
@@ -43,12 +43,10 @@ pytestmark = pytest.mark.static
 
 OPKG_UTILS = ROOT / "vendor" / "opkg-utils"
 OPKG_BUILD = OPKG_UTILS / "opkg-build"
-INSTALLER = ROOT / "pkgs" / "ipk-install"
 
-# The prefix every package this repo builds installs into, and the one
-# pkgs/ipk-install hardcodes. Spelled out rather than read out of common.sh
-# because a test that derives its expectation from the thing under test cannot
-# fail when the thing under test changes.
+# The prefix every package this repo builds installs into. Spelled out rather
+# than read out of common.sh because a test that derives its expectation from
+# the thing under test cannot fail when the thing under test changes.
 MODDIR = "/usr/data/anvil"
 ARCH = "mipsel_xburst2"
 
@@ -116,10 +114,8 @@ def ipk(tmp_path):
 def _ar_members(path):
     """(name, bytes) per member, walking the 60-byte ASCII headers.
 
-    Written out here rather than shelled out to `ar t` because pkgs/ipk-install
-    walks the same headers by hand -- the printer's busybox has no ar applet to
-    bet on -- and a test that used the real ar would not notice if the two
-    disagreed about where a member starts.
+    Written out here rather than shelled out to `ar t` so the test reads the
+    member boundaries itself, the way opkg does when it streams the archive.
     """
     raw = open(path, "rb").read()
     assert raw[:8] == b"!<arch>\n", "not an ar archive"
@@ -236,122 +232,6 @@ def test_two_builds_of_one_tree_are_byte_identical(tmp_path):
     b = _build(tree, tmp_path / "b")
     assert hashlib.sha256(open(a, "rb").read()).hexdigest() == \
         hashlib.sha256(open(b, "rb").read()).hexdigest()
-
-
-# ------------------------------------------------------- the installer, on it
-
-def _run_installer(*args, root=None):
-    cmd = ["sh", str(INSTALLER)] + [str(a) for a in args]
-    if root is not None:
-        cmd += ["--root", str(root)]
-    return subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
-
-
-def test_install_then_remove_is_a_round_trip(tmp_path, ipk):
-    """Everything the package brought, and nothing else, goes away again.
-
-    This is the property installer/run-append.sh's install manifest exists to
-    give the tarball, and the reason it exists there is written down in that
-    file: the installer used to `rm -rf` seven whole directories, which is
-    correct only while every file under them is ours.
-    """
-    root = tmp_path / "root"
-    # A file that is not ours, in a directory the package will also use.
-    (root / MODDIR.lstrip("/") / "lib").mkdir(parents=True)
-    bystander = root / MODDIR.lstrip("/") / "lib" / "not-ours.so"
-    bystander.write_text("someone else's")
-
-    done = _run_installer("install", ipk, root=root)
-    assert done.returncode == 0, done.stderr
-    lib = root / MODDIR.lstrip("/") / "lib"
-    assert (lib / "libtest.so.1.2.3").is_file()
-    assert os.readlink(lib / "libtest.so") == "libtest.so.1.2.3"
-
-    done = _run_installer("remove", "libtest", root=root)
-    assert done.returncode == 0, done.stderr
-    assert not (lib / "libtest.so.1.2.3").exists()
-    assert not (lib / "libtest.so").exists()
-    # The directory survived because something else is in it, and that
-    # something else survived too.
-    assert bystander.read_text() == "someone else's"
-
-
-def test_reinstall_leaves_one_stanza(tmp_path, ipk):
-    """An upgrade is a remove and an install, not an unpack over the top.
-
-    Two stanzas for one package is not cosmetic: the status file is read
-    first-match, so `list` and `remove` start answering about different
-    installs of the same name.
-    """
-    root = tmp_path / "root"
-    assert _run_installer("install", ipk, root=root).returncode == 0
-    second = _run_installer("install", ipk, root=root)
-    assert second.returncode == 0, second.stderr
-    status = (root / MODDIR.lstrip("/") / "var/lib/opkg/status").read_text()
-    assert status.count("Package: libtest") == 1
-    assert _run_installer("list", root=root).stdout.strip() == "libtest - 1.2.3-1"
-
-
-def test_the_database_is_where_opkg_looks_for_it(tmp_path, ipk):
-    """$MODDIR/var/lib/opkg, with opkg's own file names.
-
-    Not a homage: it is what makes pkgs/3rdparty/opkg a swap rather than a migration.
-    Verified from the other side too -- our cross-built opkg, run under qemu,
-    puts its status file at exactly this path, because it was configured
-    --prefix=/usr/data/anvil. opkg resolves that directory from its COMPILE
-    TIME prefix and not from --offline-root, which is the trap pkgs/3rdparty/opkg/build.sh
-    exists to document.
-    """
-    root = tmp_path / "root"
-    assert _run_installer("install", ipk, root=root).returncode == 0
-    db = root / MODDIR.lstrip("/") / "var" / "lib" / "opkg"
-    assert (db / "status").is_file()
-    assert (db / "info" / "libtest.control").is_file()
-    listed = (db / "info" / "libtest.list").read_text().split()
-    assert MODDIR + "/lib/libtest.so.1.2.3" in listed
-    # Absolute, every one of them: pkgs/ipk-install refuses a relative entry
-    # rather than pasting $ROOT onto the front of it and finding out.
-    assert all(p.startswith("/") for p in listed)
-
-
-def test_a_foreign_architecture_is_refused(tmp_path):
-    """An OpenWrt mipsel_24kc package must not install on this printer.
-
-    Same ISA, same ABI, musl libc. It would unpack perfectly and produce a
-    library nothing can load, and the report would come back as an ImportError
-    from Moonraker with no mips in it anywhere.
-    """
-    foreign = _build(_tree(tmp_path), tmp_path / "packages", arch="mipsel_24kc")
-    done = _run_installer("install", foreign, root=tmp_path / "root")
-    assert done.returncode != 0
-    assert "mipsel_24kc" in done.stderr and "mipsel_xburst2" in done.stderr
-
-
-def test_the_installer_needs_no_ar(tmp_path, ipk):
-    """It walks the ar headers itself, because busybox here may have no ar.
-
-    The printer's busybox is 1.31.1 built small -- no `timeout`, no `nc`, no
-    `ionice`, all measured on the replica rather than assumed. Betting the
-    installer on an applet nobody has checked for is how a firmware update
-    fails at the last step. The test runs it with ar removed from PATH.
-    """
-    if shutil.which("ar") is None:
-        pytest.fail("this machine has no ar, so the test proves nothing -- "
-                    "install binutils")
-    fake = tmp_path / "nobin"
-    fake.mkdir()
-    for tool in ("sh", "tar", "gzip", "sed", "awk", "cut", "tr", "sort",
-                 "head", "tail", "rm", "mkdir", "cp", "mv", "date", "wc",
-                 "cat", "grep", "rmdir", "find", "ln"):
-        src = shutil.which(tool)
-        if src:
-            os.symlink(src, fake / tool)
-    done = subprocess.run(
-        ["sh", str(INSTALLER), "install", str(ipk),
-         "--root", str(tmp_path / "root")],
-        capture_output=True, text=True, cwd=str(ROOT),
-        env={"PATH": str(fake), "HOME": os.environ.get("HOME", "/tmp")})
-    assert done.returncode == 0, done.stderr
 
 
 # ------------------------------------------------- the recipes and the payload
@@ -479,10 +359,10 @@ def test_the_payload_is_the_feed_installed():
     assert "work/pkg" not in body, (
         "bin/patch.sh names work/pkg -- see pkg_out above")
 
-    # And it must install them the one supported way. pkgs/ipk-install is for
-    # WHICH opkg. bin/build-payload.py runs the PRINTER'S, inside the replica,
-    # against / -- so maintainer scripts execute where they will on a machine.
-    # An offline root here would mean they are not running at all, and
+    # And it must install them the one supported way. WHICH opkg:
+    # bin/build-payload.py runs the PRINTER'S, inside the replica, against /,
+    # so maintainer scripts execute where they will on a machine. An offline
+    # root here would mean they are not running at all, and
     # --force-postinstall would mean the database claims work that never
     # happened.
     assert "offline_root" not in body and "--offline-root" not in body, (
@@ -496,9 +376,6 @@ def test_the_payload_is_the_feed_installed():
         "bin/patch.sh still forces postinstall. That flag existed to make an "
         "offline-root database say installed; the printer's own opkg "
         "configures for real and needs no such claim")
-    assert "ipk-install" not in body, (
-        "bin/patch.sh uses pkgs/ipk-install. That is the printer's fallback "
-        "installer for a machine with no opkg; the replica has the real one")
 
     # And the reverse direction: patch.sh must not grow its own copy of a build
     # it delegates. A `./configure` anywhere in it would mean some component is
@@ -562,22 +439,6 @@ def test_the_payload_roots_stay_a_short_list():
         "recipe's PKG_DEPENDS, not here:\n  %s"
         % (len(roots), "\n  ".join(roots)))
 
-def test_ipk_install_is_not_on_the_build_path():
-    """The printer's installer installs on the printer, and nowhere else.
-
-    pkgs/ipk-install walks an ar archive by hand, for a printer that has no
-    opkg on it yet. The build path has a real one -- the PRINTER'S, running in
-    the replica -- so using the imitation here would mean arguing that its
-    result matches what opkg would have done, and it resolves no Depends,
-    enforces no Conflicts, reads no Provides and handles no conffiles.
-    """
-    for script in sorted((ROOT / "bin").glob("*.sh")):
-        body = "\n".join(ln for ln in script.read_text().splitlines()
-                         if not ln.lstrip().startswith("#"))
-        assert "ipk-install" not in body, (
-            "bin/%s calls pkgs/ipk-install. That is the printer's hand-repair "
-            "tool; the build path installs with the printer's own opkg inside "
-            "the replica (bin/build-payload.py)" % script.name)
 
 
 # --------------------------------------------------- the assembled payload
@@ -803,9 +664,9 @@ def test_an_arch_all_package_has_no_native_code():
 
     Three packages claim it -- anvil-mainsail, anvil-moonraker and anvil-core
     -- on the grounds that they are JavaScript, Python and shell. The claim
-    matters because pkgs/ipk-install accepts `all` on any printer without
-    consulting the ABI, so an ELF object that slipped into one of them would
-    be the one path into $MODDIR that nothing checks. mips_abi_gate passes a
+    matters because opkg accepts `all` on any printer without consulting the
+    ABI, so an ELF object that slipped into one of them would be the one path
+    into $MODDIR that nothing checks. mips_abi_gate passes a
     tree with no ELF in it by returning zero, which is correct and is also
     why it cannot be the thing that catches this.
 
@@ -836,9 +697,8 @@ def test_a_dev_split_partitions_the_build():
 
     A path in both the runtime and the dev package is a path two packages
     own. opkg resolves that by letting whichever installed last win, and
-    `ipk-install remove` on either one deletes a file the other still lists --
-    so the damage shows up as a missing file long after the install that
-    caused it. The split is a partition, and this is what says so.
+    removing either one deletes a file the other still lists -- so the damage
+    shows up as a missing file long after the install that caused it. The split is a partition, and this is what says so.
 
     Checked against the built feed when there is one; a checkout that has not
     run `make packages` has nothing to compare.

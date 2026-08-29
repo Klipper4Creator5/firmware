@@ -19,8 +19,8 @@
 # compile time, so one configured --prefix=/usr/local looks for its status
 # file in /usr/local/var/lib/opkg whatever --offline-root it is handed at
 # runtime. Measured from both sides. Built this way it lands at
-# /usr/data/anvil/var/lib/opkg, which is where pkgs/ipk-install writes and
-# where the payload's own database goes. Same trap as s6's baked-in
+# /usr/data/anvil/var/lib/opkg, which is where the payload's own database
+# goes. Same trap as s6's baked-in
 # libexecdir and execline's shebangdir, and the reason $MODDIR lives in
 # bin/common.sh where a recipe cannot spell it differently.
 #

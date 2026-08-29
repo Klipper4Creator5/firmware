@@ -65,8 +65,7 @@ SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh", "pkgs/*/payload/init.d/S*",
                 # files does not fail, it just checks less. _files() now
                 # refuses a pattern that matches nothing, so the next one
                 # fails instead of quietly shrinking.
-                "pkgs/*.sh", "pkgs/*/build.sh", "pkgs/3rdparty/*/build.sh",
-                "pkgs/ipk-install")
+                "pkgs/*.sh", "pkgs/*/build.sh", "pkgs/3rdparty/*/build.sh")
 
 # The subset executed by the printer's busybox ash. bin/ and test/ are
 # deliberately absent: they run on the build image, where bash is the shell and
@@ -78,12 +77,8 @@ SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh", "pkgs/*/payload/init.d/S*",
 # hold.sh would fail at container start and read as "the replica is broken on
 # this machine" -- a harness failure wearing a machine failure's clothes, which
 # is the hardest kind to diagnose.
-# pkgs/ipk-install is here and pkgs/*/build.sh is deliberately not. The recipes
-# are build-host bash, like everything in bin/; the installer is the one file
-# under pkgs/ that the PRINTER runs, so it is as exposed to busybox ash as
-# anything a recipe ships -- and it is not under a recipe's payload/ only
-# because the PoC does not ship it yet (docs/notes/85-packaging.md, phase 2).
-# A bashism in it would be found by the printer rather than by this lane.
+# pkgs/*/build.sh is deliberately not here: the recipes are build-host bash,
+# like everything in bin/, and a bashism in one is not a defect.
 #
 # installer/ is here too: run-pre.sh and run-append.sh are spliced into
 # FlashForge's own run.sh and execute inside the stock installer's shell,
@@ -96,8 +91,7 @@ SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh", "pkgs/*/payload/init.d/S*",
 # with the fix, not with a move.
 ASH_GLOBS = ("pkgs/*/payload/*.sh", "pkgs/*/payload/init.d/S*",
              "pkgs/*/payload/prog/*.sh", "pkgs/*/payload/prog/firmwareExe",
-                "installer/*.sh",
-             "qa/replica/actions/*.sh", "pkgs/ipk-install")
+             "installer/*.sh", "qa/replica/actions/*.sh")
 
 PY_GLOBS = ("bin/*.py", "pkgs/*/payload/bin/*.py",
             "pkgs/*/payload/klipper/klippy/extras/*.py", "test/*.py", "test/ffsim/*.py",
