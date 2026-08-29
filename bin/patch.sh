@@ -98,8 +98,9 @@ done
 #
 #   offline_root  where opkg unpacks to. NOT where it keeps its database --
 #                 that is compiled in (pkg_buildopkg), with this prefixed.
-#   lists_dir     offline_root-relative too, and outside $MODDIR on purpose:
-#                 the fetched index is build scratch, not payload.
+#   lists_dir     offline_root-relative too, so it and cache_dir are put
+#                 outside $MODDIR: bin/pack.sh tars $PAYLOAD_DIR, so scratch
+#                 parked beside it cannot ship and needs no cleaning up.
 #   ignore_uid    clears libarchive's EXTRACT_OWNER. The build lane runs as
 #                 the invoking user, so without this all ~3000 entries warn
 #                 that they could not be chowned to root. Payload ownership
@@ -136,15 +137,12 @@ mod_opkg update
 # shellcheck disable=SC2086
 mod_opkg --force-postinstall install $MOD_INSTALL
 
-# opkg takes Installed-Time from time() and honours SOURCE_DATE_EPOCH only
-# for a man-page date, so two builds of one commit differ by a line per
-# package. Normalised rather than patched: upstream is right about a real
-# install, and this is an image being baked.
+# The one clock left in the payload: opkg stamps Installed-Time from time(),
+# where bin/build-packages.sh builds every .ipk with SOURCE_DATE_EPOCH=1.
+# Normalised so two builds of one commit can be diffed.
 sed -i "s/^Installed-Time: .*/Installed-Time: ${SOURCE_DATE_EPOCH:-1}/" \
     "$PAYLOAD_DIR/var/lib/opkg/status"
 
-rm -rf "$MOD_OPKG_CONF" "$PAYLOAD_ROOT/.opkg.log" \
-       "$PAYLOAD_ROOT/.opkg-lists" "$PAYLOAD_ROOT/.opkg-cache"
 say "payload: $(grep -c '^Package:' "$PAYLOAD_DIR/var/lib/opkg/status") packages installed ($MODEL_PKG for $TARGET_MACHINE)"
 
 # The one file whose absence is silent and fatal: printer.base.cfg includes
