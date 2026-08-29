@@ -375,3 +375,42 @@ printer, with a traceback that names cffi and not the build. Both a stale
 prebuilt .so (v0.12 binary under a v0.13 tree) and a package that skipped
 the fork entirely (v20260824-nova-kakhovka) have shipped; the compile-fresh
 rule plus these gates are what make the third time structurally hard.
+
+## The docs site
+
+These pages are the site at
+[reforge.readthedocs.io](https://reforge.readthedocs.io/). Read the Docs
+builds `mkdocs.yml` out of this repo on every push to `master` and once per
+tag, so a page and the code it describes move in the same commit and the same
+review, and an owner running an older package can read that package's docs
+from the version switcher rather than master's.
+
+To preview locally:
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install -r docs/requirements.txt
+.venv/bin/mkdocs serve          # http://127.0.0.1:8000
+.venv/bin/mkdocs build --strict # what CI and RTD run
+```
+
+Three things about it are worth knowing before you add a page.
+
+**The nav is split by audience, and the split is the point.** `mkdocs.yml` has
+a *Using Reforge* section for someone who owns the printer and a *For
+contributors* section for someone building or testing the firmware, with the
+`docs/notes/` internals nested inside the second. A new page that is not in
+that nav is built but unreachable. Put it in the section its reader is
+standing in.
+
+**Links stay repo-relative.** Write `../payload/klipper/extras/ff_tool.py` and
+`notes/40-offsets.md` exactly as you would for someone reading the page on
+GitHub; `hooks/mkdocs_readme.py` turns the ones that leave `docs/` into GitHub
+URLs at build time. Anchors use GitHub's slug rules, so `#runout--clog` for
+`## Runout / clog` works in both places. The same hook generates
+`docs/index.md` from `README.md` on every build — edit the README, never that
+file, which is gitignored.
+
+**A dead link fails the build.** CI's `docs` job and RTD both build with
+`--strict`, so renaming a file in `payload/` breaks the build rather than
+leaving a doc pointing at nothing. It cannot check that the prose is still
+true; only a reader can.

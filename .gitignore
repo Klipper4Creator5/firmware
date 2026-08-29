@@ -11,3 +11,7 @@ __pycache__/
 
 # Agent worktrees (Claude Code scratch), never part of a build.
 .claude/worktrees/
+
+# Generated from README.md by hooks/mkdocs_readme.py at docs build time.
+docs/index.md
+site/

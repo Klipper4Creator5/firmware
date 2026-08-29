@@ -1,0 +1,4 @@
+# Docs toolchain. Pinned for the same reason the stock packages in CI are
+# pinned by sha: an unpinned build can change under us and start rendering
+# something other than what was reviewed.
+mkdocs-material==9.7.7

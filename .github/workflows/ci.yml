@@ -340,3 +340,27 @@ jobs:
             -v /var/run/docker.sock:/var/run/docker.sock \
             creator5-fw-build \
             python3 -m pytest ./qa -q
+
+  # The docs make claims about a machine that can be left unbootable, and the
+  # pages cross-link each other and the payload sources heavily -- 30+ links
+  # between README.md, docs/*.md and docs/notes/. This is the cheap half of
+  # keeping them true: --strict fails on a link whose target has moved or been
+  # deleted, so a rename in payload/ cannot quietly leave a doc pointing at
+  # nothing. It cannot check that the prose is still right; only a reader can.
+  #
+  # Read the Docs builds the same mkdocs.yml with fail_on_warning, so this job
+  # going red is also the warning that the published site is about to fail.
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"          # what .readthedocs.yaml builds with
+
+      - name: Install the docs toolchain
+        run: pip install -r docs/requirements.txt
+
+      - name: Build the site
+        run: mkdocs build --strict

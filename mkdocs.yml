@@ -1,0 +1,116 @@
+# The docs are built from this repo, not a wiki, so a page and the code it
+# describes move in the same commit and the same review. CI builds this with
+# --strict (see .github/workflows/ci.yml): a cross-link that stops resolving
+# fails the build rather than rotting in place.
+site_name: Reforge
+site_description: >-
+  Custom firmware for the FlashForge Creator 5 and Creator 5 Pro.
+site_url: https://reforge.readthedocs.io/
+repo_url: https://github.com/Klipper4FlashForge/firmware
+repo_name: Klipper4FlashForge/firmware
+edit_uri: edit/master/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections   # the public/contributor split, always visible
+    - navigation.indexes   # a section can have a page of its own
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Dark
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Light
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html          # the <img> pairs in README.md and toolchange.md
+  - tables
+  - toc:
+      permalink: true
+      # GitHub's heading slugs, so an anchor written for the repo view --
+      # `#runout--clog` for `## Runout / clog` -- resolves on the site too.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify {kwds: {case: lower}}
+  - pymdownx.details
+  - pymdownx.superfences
+  # The status checkboxes on the front page, and the checklists in
+  # is-this-for-you.md and first-print.md.
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+# docs/index.md is generated from README.md at build time; see the hook.
+hooks:
+  - hooks/mkdocs_readme.py
+
+# Release notes are published on the Releases page, which is where the README
+# sends people. They are built but stay out of the nav rather than growing it
+# by one entry per tag.
+not_in_nav: |
+  releases/*
+  printing.md
+  upgrading.md
+
+# Three audiences, and a reader should never fall from one into the next: the
+# printer's owner, someone who knows Klipper and wants to change what the
+# machine does, and someone building or testing the firmware. What belongs in
+# each is .claude/skills/reforge-docs/SKILL.md.
+nav:
+  - Home: index.md
+
+  # Ordered by what the reader is doing, not by subsystem: someone whose
+  # printer will not boot should not have to know which subsystem owns the
+  # symptom table.
+  - Using Reforge:
+      - Is this for you: is-this-for-you.md
+      - Installing: installing.md
+      - Your first print: first-print.md
+      - Calibration:
+          - Read first: calibration-overview.md
+          - XYZ tool calibration: calibration.md
+          - Bed mesh: bed-mesh.md
+      - Support: support.md
+      - Versions: versions.md
+
+  # Past the manual, short of the build system: how the machine behaves and
+  # how to change it, for someone who already knows Klipper.
+  - For experienced users:
+      - How a print runs: how-a-print-runs.md
+      - How calibration works: how-calibration-works.md
+
+  # Not yet redesigned -- these are the pages as they stand, regrouped.
+  - For contributors:
+      - Building packages: building.md
+      - Testing: testing.md
+      - The printer replica: printer-replica.md
+      - Validating a build on hardware: hardware-testing.md
+      - How it works: how-it-works.md
+      - Internals:
+          - The toolchanger mod: toolchange.md
+          - The print pipeline: print-pipeline.md
+          - Error code table: notes/70-error-codes.md
+          - Overview: notes/00-overview.md
+          - Hardware and MCU topology: notes/10-hardware.md
+          - The FlashForge Klipper fork: notes/20-klipper-fork.md
+          - firmwareExe vs Klipper: notes/25-app-vs-klipper-ownership.md
+          - Toolchange sequences: notes/30-toolchange.md
+          - Offsets and per-unit config: notes/40-offsets.md
+          - Offset calibration, the port: notes/45-tool-offset-calibration.md
+          - Offset calibration, recovered: notes/46-offset-calibration-recovered.md
+          - Filament load, recovered: notes/47-filament-load-recovered.md
+          - Filament load, the port: notes/48-filament-load-port.md
+          - Runout and clog handling: notes/49-runout-recovered.md
+          - Print lifecycle: notes/50-print-lifecycle.md
+          - Nozzle clean, recovered: notes/50a-nozzle-clean-recovered.md
+          - Nozzle clean, the port: notes/50b-nozzle-clean-port.md
+          - Filament, calibration, persistent state: notes/60-background.md
+          - Migrating to s6: notes/80-s6-migration.md
