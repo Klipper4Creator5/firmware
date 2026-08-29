@@ -25,7 +25,7 @@ work/rootfs/          rootfs.squashfs, extracted from the stock package's
 1. registers a `binfmt_misc` handler so MIPS binaries execute (see below),
 2. builds the machine's mount layout,
 3. installs the **stock FlashForge package** with FlashForge's own installer —
-   only when `BASE_PKG` is set. `make test-mcu` does not set it, so the MCU
+   only when `BASE_PKG` is set. The bring-up module does not need it, so the MCU
    gate skips this step,
 4. `chroot`s in and runs the test case.
 
@@ -208,14 +208,13 @@ logged instead.
 
 ```sh
 make rootfs          # once -- extracts rootfs.squashfs from the stock package
-make test-install    # install the built package into the replica
-make test-recovery   # mod in, stock package back out
-make test-mcu        # ff_mcu_bringup.py on the printer's own Python
+make qa-replica      # the replica suite: install, upgrade, boot, supervision
 make test-py         # klipper config, and rootfs paths when one is present
-make test            # all of it
 ```
 
-`make test` skips the replica half with a loud message if no stock package is
-configured. `REQUIRE_PRINTER_SIM=1` turns that skip into a failure — which is
-what `.github/workflows/release.yml` sets, so a release cannot ship without
-it.
+`make qa-replica` does not skip when a stock package is missing: it fails at
+the point that needs one, with the command that fixes it in the message. There
+is no flag and nothing for a workflow to remember to set, which is why
+`ALLOW_SKIP` is gone entirely. `REQUIRE_PRINTER_SIM` survives only for the two
+single-purpose wrappers that can still skip — `make rootfs` and
+`make boot-screen-sim`.

@@ -5,7 +5,7 @@
 # is mounted through so the simulation targets can start sibling containers.
 #
 #   make build                  build the firmware package
-#   make test                   full brick-safety suite
+#   make qa                     full brick-safety suite
 #   make shell                  interactive shell in the build container
 #
 # Escape hatch: LOCAL=1 make <target> runs the scripts directly on the host.
@@ -83,12 +83,8 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
 
 .DEFAULT_GOAL := help
 .PHONY: help image shell passwd build vendor packages \
-        rootfs verify test test-py test-install \
+        rootfs verify test-py \
         printer-image printer-image-push \
-        test-recovery test-mcu test-boot-screen test-moonraker test-services \
-        test-libpath \
-        test-upgrade test-supervisor test-nginx test-camera test-python \
-        test-moonraker313 test-priority \
         boot-screen boot-screen-sim \
         qa qa-static qa-replica \
         release clean distclean
@@ -111,50 +107,27 @@ help:
 	@echo 'other one. MODEL=Creator5 make build  builds the non-Pro variant.'
 	@echo
 	@echo 'Recovery: keep a copy of the STOCK FlashForge .tgz on a spare stick.'
-	@echo 'Flashing it restores every file the mod touches (see make test-recovery).'
+	@echo 'Flashing it restores every file the mod touches.'
 	@echo
-	@echo 'Test (qa/ -- the new suite, one framework, per-assertion results):'
+	@echo 'Test:'
 	@echo '  make qa               both lanes'
-	@echo '  make qa-static        needs nothing: parses, bashisms, names, probes'
-	@echo '  make qa-replica       needs docker + the firmware'
+	@echo '  make qa-static        needs nothing: parses, names, packaging, the boot graph'
+	@echo '  make qa-replica       needs docker + the firmware: install, upgrade, boot'
+	@echo '  make test-py          the host-side pytest tree under test/'
 	@echo '                        pytest selection works: -k, -m, a single test id'
-	@echo
-	@echo 'Test (test/ -- the old suite, still the release gate; being migrated):'
-	@echo '  make test             all of them, and the shell/bashism/packaging'
-	@echo '                        passes that have no target of their own'
-	@echo '  make test-py          pytest: the whole test/ tree'
-	@echo '  make test-install     end-to-end: USB stick -> update -> reboot'
-	@echo '  make test-mcu         ff_mcu_bringup.py runs on the printer own python'
-	@echo '  make test-boot-screen the first-boot screen draws on the replica fb0'
-	@echo '  make test-moonraker   S62moonraker starts moonraker on the printer own python'
-	@echo '  make test-services    every init.d service dispatches the same way'
-	@echo '  make test-libpath     every library on LD_LIBRARY_PATH is one something maps'
-	@echo '  make test-upgrade     an update deletes what it installed, and only that'
-	@echo '  make test-supervisor  the s6 we cross-compiled supervises and waits'
-	@echo '  make test-nginx       nginx runs under s6, and a stop stays stopped'
-	@echo '  make test-camera      readiness gates: ready means serving, not forked'
-	@echo '  make test-python      the cross-built CPython 3.13 runs, with a real sqlite3'
-	@echo '  make test-moonraker313 the real moonraker on that 3.13, supervised by s6'
-	@echo '  make test-priority    services start at the nice value anvil.conf sets'
-	@echo '  make test-recovery    install mod -> flash stock -> back to stock'
 	@echo
 	@echo 'Look at things:'
 	@echo '  make boot-screen      render the first-boot screen to work/boot-screen/*.png'
 	@echo '  make boot-screen-sim  the same, drawn by the printer own python in the replica'
 	@echo
 	@echo 'test-py needs python3, pytest and jinja2; its rootfs checks skip'
-	@echo 'until make rootfs has run. The other'
-	@echo 'three run inside a replica of the printer: the real rootfs.squashfs'
-	@echo 'under qemu-mipsel, with /usr/prog installed by FlashForge own updater.'
-	@echo 'test-install goes the whole way -- the package sits on a real FAT'
-	@echo 'filesystem at /dev/sda1 and the printer own app_startup.sh finds it,'
-	@echo 'installs it, and boots. They need make rootfs first (or PRINTER_IMAGE),'
-	@echo 'which needs the stock package.'
+	@echo 'until make rootfs has run. qa-replica runs inside a replica of the'
+	@echo 'printer: the real rootfs.squashfs under qemu-mipsel, with the package'
+	@echo 'installed by the printer own app_startup.sh off a real FAT filesystem'
+	@echo 'at /dev/sda1. It needs make build, plus make rootfs or PRINTER_IMAGE.'
 	@echo
-	@echo 'A gate that cannot run is reported SKIP, not ok, and make test then'
-	@echo 'fails. ALLOW_SKIP=1 accepts any gap; ALLOW_SKIP="a,b" accepts only'
-	@echo 'the gates named, which is what CI uses. Either way every skip is'
-	@echo 'listed again at the end, with its reason.'
+	@echo 'qa has no ALLOW_SKIP: a missing tool, daemon or image FAILS at the'
+	@echo 'point that needs it, so a gate that did not run cannot look green.'
 	@echo
 	@echo 'Other:'
 	@echo '  make passwd       a ROOT_PW_HASH for config.env (prompts, echoes the hash)'
@@ -262,11 +235,13 @@ rootfs: image config.env
 	@$(RUN) ./bin/unpack.sh >/dev/null
 	@$(RUN) ./test/integration/extract-rootfs.py
 
-test: image
-	@$(RUNSIM) ./test/run-tests.py
+# `make test` used to be here, running test/run-tests.py -- a bespoke harness
+# that wrapped pytest, re-parsed its JUnit XML, and drove thirteen replica case
+# scripts. Every one of those is a module under qa/ now, so the runner had
+# nothing left to run and is gone. `make qa` is the suite.
 
 # ---------------------------------------------------------------------------
-#  THE qa SUITE -- the replacement, running beside the one above.
+#  THE qa SUITE
 #
 #  Same machine, same gates, one framework. See qa/conftest.py for the lanes
 #  and docs/qa-migration.md for what moves when. Both suites run in CI until a
@@ -329,99 +304,6 @@ printer-image-push: image
 test-py: image
 	@$(RUN) python3 -m pytest ./test -q
 
-test-mcu: image
-	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-mcu-bringup.sh
-
-# The first-boot screen, drawn by the printer's own python onto the replica's
-# /dev/fb0. `make boot-screen` needs nothing but this checkout and renders the
-# same frames to PNGs you can look at.
-test-boot-screen: image
-	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-boot-screen.sh
-
-test-moonraker: image
-	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-moonraker.sh
-
-test-services: image
-	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-services.sh
-
-# ANVIL_LIBS, asked of the loader rather than of the file. Needs no s6 and no
-# tarball: what is under test is which libraries a running process maps.
-test-libpath: image
-	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-libpath.sh
-
-# THE SUPERVISION TARBALL, merged from three recipe outputs -- execline, s6 and
-# s6-rc (skalibs ships nothing). The .version stamps are dropped on the way:
-# they are build artefacts, and one arriving on the replica would be a file
-# under $MODDIR that no install manifest accounts for.
-work/.s6-gate.tgz: FORCE
-	@rm -rf work/.s6-gate && mkdir -p work/.s6-gate
-	@for t in work/pkg/execline work/pkg/s6 work/pkg/s6-rc; do \
-		[ -d $$t ] || { echo "!! $$t is missing -- run 'make packages' first" >&2; exit 1; }; \
-		cp -a $$t/. work/.s6-gate/; \
-	done
-	@rm -f work/.s6-gate/.version
-	@tar -czf $@ -C work/.s6-gate bin libexec
-FORCE:
-
-# s6 itself, as the build produced it -- not a stand-in. Needs the recipe
-# outputs under work/pkg, which `make packages` fills; the full suite builds this
-# tarball for itself, this target is for running the one gate on its own.
-test-supervisor: image work/.s6-gate.tgz
-	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-supervisor.sh sup.tgz=work/.s6-gate.tgz
-
-# The two services that moved into the scandir. Same tarball, same reason:
-# what is under test is s6 supervising OUR service definitions, so a stand-in
-# supervisor would be testing the wrong half.
-test-nginx: image work/.s6-gate.tgz
-	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-nginx.sh sup.tgz=work/.s6-gate.tgz
-
-test-camera: image work/.s6-gate.tgz
-	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-camera.sh sup.tgz=work/.s6-gate.tgz
-
-# EVERY PYTHON RECIPE OUTPUT, MERGED, exactly as work/.s6-gate.tgz merges
-# three. CPython is pkgs/3rdparty/python and each third-party package a
-# pkgs/3rdparty/python-* of its own, so what a printer sees is the union of
-# their bin/ and lib/ -- which is what the payload gets by installing them
-# and what test/ffsim/gates.py packs for the suite.
-work/.py-gate.tgz: FORCE
-	@rm -rf work/.py-gate && mkdir -p work/.py-gate
-	@[ -d work/pkg/python ] || { echo "!! work/pkg/python is missing -- run 'make packages' first" >&2; exit 1; }
-	@for t in work/pkg/python work/pkg/python-*; do \
-		[ -d $$t ] || continue; \
-		cp -a $$t/. work/.py-gate/; \
-	done
-	@rm -f work/.py-gate/.version
-	@tar -czf $@ -C work/.py-gate bin lib
-
-# The CPython 3.13 the build cross-compiles, on the printer's own kernel.
-# Needs the recipe outputs under work/pkg, which `make packages` fills -- the same
-# relationship test-supervisor has to work/pkg/s6. See the header of
-# case-python.sh for why this has a gate of its own.
-test-python: image work/.py-gate.tgz
-	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-python.sh py.tgz=work/.py-gate.tgz
-
-# The real Moonraker, on the 3.13 we built, under the s6 we built, started by
-# init.d/S62moonraker. Three build outputs and no stand-ins, which is why it
-# needs three tarballs where every other target needs one or none: the s6
-# recipes, the python recipes + work/.sodium, and the pinned Moonraker sdist in
-# vendor/. Two of
-# the three are assembled by test/ffsim/gates.py rather than by a `tar -czf`
-# here, so this runs the gate through a thin wrapper instead of calling
-# printer-exec.py -- see sim-moonraker313.py for that argument written out.
-test-moonraker313: image
-	@$(RUNSIM) ./test/integration/sim-moonraker313.py
-
-# The installer, run for real over two payloads: what the last one shipped
-# goes, what nobody shipped stays.
-test-upgrade: image
-	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-upgrade.sh
-
-# Every service's nice value, read back out of /proc/<pid>/stat on the
-# printer's own busybox -- see anvil-service.sh's svc_start_daemon for why
-# this cannot be a grep for "-N".
-test-priority: image
-	@$(RUNSIM) ./test/integration/printer-exec.py ./test/integration/printer/case-priority.sh
-
 boot-screen:
 	@./bin/preview-boot-screen.py
 
@@ -429,28 +311,6 @@ boot-screen:
 # and the only render that proves what the panel would really show.
 boot-screen-sim: image
 	@$(RUNSIM) ./test/integration/sim-boot-screen.py
-
-# Packages land in dist/ after `make release` and in work/out after a single
-# build (pack.sh clears work/out each run, so only the last model survives
-# there). Look in both.
-test-install: image
-	@$(RUNSIM) bash -c 'pkg=$$(ls -1 dist/$(or $(MODEL),Creator5Pro)-*.tgz work/out/$(or $(MODEL),Creator5Pro)-*.tgz 2>/dev/null | head -1); \
-	   [ -n "$$pkg" ] || { echo "build a package first: make build (or make release)"; exit 1; }; \
-	   echo "package: $$pkg"; ./test/integration/sim-install.py "$$pkg"'
-
-# Recovery = flash the stock package you already have. This proves it works.
-#
-# It builds its own package rather than reusing whatever is lying around: the
-# test is only meaningful against a package that really does replace the UI,
-# and whatever is in work/out may be anything.
-test-recovery: image config.env
-	@MODEL=$(or $(MODEL),Creator5Pro) $(RUNSIM) bash -c '. ./bin/common.sh; \
-	   ./bin/build.sh $(PACKARGS) >/dev/null || exit 1; \
-	   m=$$(ls -1 work/out/$$TARGET_MACHINE-*.tgz 2>/dev/null | head -1); \
-	   [ -n "$$m" ] || { echo "no package built for $$TARGET_MACHINE"; exit 1; }; \
-	   [ -f "$$STOCK_TGZ" ] || { echo "no stock package for $$TARGET_MACHINE"; exit 1; }; \
-	   echo "mod:   $$m"; echo "stock: $$STOCK_TGZ"; \
-	   ./test/integration/sim-roundtrip.py "$$m" "$$STOCK_TGZ"'
 
 clean:
 	@rm -rf work/stage work/out work/modpayload-root

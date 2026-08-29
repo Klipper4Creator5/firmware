@@ -80,11 +80,10 @@ def test_upward_walks_land_on_the_repo_root(root):
 def test_every_harness_file_compiles(root, tmp_path):
     """Byte-compile the whole harness, including the parts nothing else runs.
 
-    run-tests.py imports ffsim, so a syntax error there shows up immediately.
-    The single-gate wrappers -- sim-install.py, sim-roundtrip.py,
-    printer-exec.py, extract-rootfs.py -- are only executed by `make
-    test-install` and friends, which need docker and the firmware. Without
-    this, a typo in one of them would wait quietly until release day.
+    What is left of the old harness is only reached through `make rootfs`
+    (extract-rootfs.py) and `make boot-screen-sim` (sim-boot-screen.py), both
+    of which need docker and the firmware. Without this, a typo in one of them
+    would wait quietly until release day.
     """
     files = python_files(root)
     assert files, "no python files found -- the walk is broken"

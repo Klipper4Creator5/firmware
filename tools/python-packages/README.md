@@ -11,7 +11,8 @@ input, called by `patch.sh` for greenlet.
 
 Everything below was run in the printer replica on the real
 `rootfs.squashfs`, not read off a project page.
-`test/integration/printer/case-pyext.sh` is that run, kept.
+That run was `case-pyext.sh`, since retired -- it was a phase-6 spike
+with no gate and no Makefile target, and the questions it asked are settled.
 
 ## What builds
 
@@ -113,9 +114,9 @@ decision, not a correctness one.
 
 ## Moonraker SERVES on 3.13 -- settled, not assumed
 
-Importing is not serving, so it was run. `test/integration/printer/case-moonraker313.sh`
-starts Moonraker on the exact command line `payload/etc/s6/moonraker/run`
-execs, only with our interpreter, against the mod's own `assets/moonraker.conf`:
+Importing is not serving, so it was run. `case-moonraker313.sh` (since retired)
+started Moonraker on the exact command line the moonraker service execs, only
+with our interpreter, against the mod's own `assets/moonraker.conf`:
 
 * bound :7125 in 3s, `/proc/PID/cmdline` confirming our interpreter and our
   entry point
@@ -217,8 +218,8 @@ libsodium is ours -- and packaging and integration followed:
    mips32r5el toolchain (nan2008 by construction), same rule as everything
    else in 5b.
 3. ~~**Run it through `S62moonraker` under s6 on 3.13.**~~ **Done.**
-   `test/integration/printer/case-moonraker313-s6.sh` drives the real boot
-   path -- S40s6's scandir, S62moonraker, readiness gating on `:7125`
+   `case-moonraker313-s6.sh` (since retired with the S* wrappers it drove)
+   ran the real boot path -- the scandir, S62moonraker, readiness gating on `:7125`
    actually listening rather than the process forking, a `kill -9` respawn
    back onto 3.13, and a stop that stays stopped -- and all of it passed on
    the replica.

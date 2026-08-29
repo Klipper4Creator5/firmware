@@ -1,0 +1,378 @@
+"""What the machine's own installer produced, asked of the machine it produced.
+
+The port of `case-install.sh` (579 lines, one bit) -- the gate that decides
+whether a package bricks a printer.
+
+WHY THIS MODULE LOOKS SO DIFFERENT FROM THE CASE SCRIPT. Most of that file was
+DRIVING the install: attach the stick, run app_startup.sh, wait for it to
+settle, do it twice more. None of that is here, because the `printer` fixture
+already IS the result -- the package installed by `/usr/prog/app_startup.sh`,
+verbatim, off a genuine FAT filesystem on `/dev/sda1`, exactly as a user
+installs it from a USB stick (see qa/replica/conftest.py). What is left is the
+part that was always the point: the assertions.
+
+That is also why nothing here replays the install by hand. The case script's
+own header records that lesson being learned once already:
+
+    An earlier version of this file replayed app_startup.sh by hand -- which
+    meant a bug in our reading of it could never be caught.
+
+THREE OF THE CASE'S ASSERTIONS WERE STALE AND ARE NOT REPRODUCED. They are why
+the gate was red, and each is replaced by the question that means the same
+thing today:
+
+  * `grep helix firmwareExe` -- the wrapper used to exec HelixScreen itself.
+    It does not: it starts s6 and the UI is the `ui` service. Replaced by
+    test_the_wrapper_starts_the_supervisor and
+    test_the_ui_is_a_service_in_the_compiled_database.
+  * `[ -d $MODDIR/init.d ]`, else "no service dir exists to start Klipper" --
+    there is no init.d. Replaced by test_klipper_is_a_service_in_the_database.
+  * grepping the boot log for `S60nginx S62moonraker S70klipper S80ui`.
+    NOT replaced by grepping it for the new names. That log line reads
+    `s6-rc: bringing up: camera klipper moonraker nginx ui ff-startup wifi`
+    and names every service in the boot set INCLUDING THE ONES THAT THEN FAIL,
+    so grepping it would pass on a machine where klipper never started -- a
+    green assertion that cannot go red. The database is asked instead, which
+    is a fact about what was installed rather than an intention.
+
+WHAT A REPLICA CANNOT ANSWER, so it is not asked here:
+
+  * boot 2, the re-install: the bake deletes `/stick.img` once the install has
+    landed, so there is no stick to install from a second time. The property
+    that matters -- an update keeps what the user edited and drops only what
+    the last package shipped -- is asserted directly in test_upgrade.py, which
+    drives run-append.sh over two payloads.
+  * boot 3's UI liveness: `ok-all` is unreachable on a replica (no
+    /dev/ttyS4,5,7, no /dev/video*), so "the UI is running and the stock
+    watchdog is satisfied" cannot be asked. The static half of it -- that the
+    wrapper holds the foreground and keeps its name -- is in test_s6rc.py.
+"""
+import re
+
+import pytest
+
+pytestmark = pytest.mark.replica
+
+MODDIR = "/usr/data/anvil"
+FE = "/usr/prog/PROGRAM/software/firmwareExe"
+APP = "/usr/prog/app_startup.sh"
+SOURCE = MODDIR + "/etc/s6-rc/source"
+DB = MODDIR + "/etc/s6-rc/compiled/current"
+CHELPER = "/usr/prog/klipper/klippy/chelper/c_helper.so"
+INSTALL_LOG = "/usr/data/anvil-install.log"
+
+
+@pytest.fixture(scope="module")
+def box(printer):
+    """The installed machine, checked once for the one thing that would make
+    every assertion below meaningless."""
+    if not printer.file(MODDIR).is_dir:
+        pytest.fail(
+            "there is no %s, so the install did not land. The `printer` "
+            "fixture bakes an image by running the machine's own "
+            "app_startup.sh over a package from work/out -- `make build` "
+            "first." % MODDIR)
+    return printer
+
+
+# ------------------------------------------------- the stock boot chain is stock
+
+def test_app_startup_is_unmodified(box):
+    """Replacing firmwareExe owns the whole userspace boot, which is what lets
+    app_startup.sh, rcS and the init chain stay stock and never be patched. A
+    mod marker in here means that claim has quietly stopped being true."""
+    text = box.file(APP).text
+    assert text, "no %s -- there is no stock baseline on this machine" % APP
+    for marker in ("anvil", "MODDIR", "/usr/data/anvil"):
+        assert marker not in text, (
+            "%s carries the mod marker %r -- the boot scripts must stay stock"
+            % (APP, marker))
+
+
+def test_app_startup_still_parses(box):
+    """Under the printer's own busybox ash, not the host's shell."""
+    parsed = box.sh("sh -n %s 2>&1" % APP)
+    assert parsed.ok, "BRICK: %s has a syntax error: %s" % (APP, parsed.text)
+
+
+def test_app_startup_still_loads_the_kernel_modules(box):
+    """The insmod lines are what bring up wifi and the touch panel. An
+    installer that trimmed them would leave a printer with no screen."""
+    assert "insmod" in box.file(APP).text, (
+        "BRICK: no insmod lines left in %s" % APP)
+
+
+# ------------------------------------------------------------- the wrapper
+
+def test_the_wrapper_is_installed(box):
+    """A shebang, not an ELF. The stock binary still sitting here means the
+    install did not take -- and that must fail rather than be tolerated,
+    because tolerating it turns "the install produced nothing" into a pass."""
+    head = box.sh("head -c 2 %s" % FE).out
+    assert head == "#!", (
+        "BRICK: %s is not the mod wrapper (starts %r) -- the install did not "
+        "replace it" % (FE, head))
+
+
+def test_the_wrapper_is_executable(box):
+    assert box.file(FE).executable, "BRICK: %s is not executable" % FE
+
+
+def test_the_wrapper_parses(box):
+    parsed = box.sh("sh -n %s 2>&1" % FE)
+    assert parsed.ok, "BRICK: wrapper syntax error: %s" % parsed.text
+
+
+def test_the_wrapper_starts_the_supervisor(box):
+    """Replaces the case script's `grep helix`. The wrapper no longer execs a
+    UI: it starts s6-svscan and brings the boot set up, and the UI is one
+    service in that set. Asking for HelixScreen by name here would be asking
+    about an architecture that has been gone since phase 8."""
+    text = box.file(FE).text
+    assert "s6-svscan" in text, (
+        "BRICK: the wrapper starts no supervisor -- nothing would bring the "
+        "printer up")
+    assert "s6-rc" in text, (
+        "BRICK: the wrapper never asks s6-rc for a transition, so no service "
+        "would start")
+
+
+def test_every_installed_script_parses_under_the_printers_busybox(box):
+    """Every shell script the mod put on the machine, with the shell that will
+    actually run it. A bashism here is a service that dies at boot."""
+    listed = box.sh(
+        "find %s -name '*.sh' -type f 2>/dev/null; "
+        "find %s -type f 2>/dev/null" % (MODDIR, SOURCE))
+    scripts = [s for s in listed.out.split() if s]
+    assert scripts, "found no installed scripts to parse -- the find is wrong"
+
+    broken = box.sh(
+        "for f in %s; do head -c 2 \"$f\" | grep -q '#!' || continue; "
+        "sh -n \"$f\" 2>&1 >/dev/null || echo \"BAD $f\"; done"
+        % " ".join(scripts))
+    assert "BAD" not in broken.text, (
+        "syntax errors under the printer's ash:\n%s" % broken.text)
+
+
+# ------------------------------------------------ what actually starts klipper
+
+def test_klipper_is_a_service_in_the_database(box):
+    """Replaces `[ -d $MODDIR/init.d ]`. Asked of the COMPILED database rather
+    than of the source tree, because s6-rc-compile is free to reject or drop
+    what it was given -- a `down` file in a definition directory is accepted
+    and discarded, which is how this bit us once."""
+    listed = box.sh("%s/bin/s6-rc-db -c %s list services 2>&1" % (MODDIR, DB))
+    assert listed.ok, "could not read the compiled database: %s" % listed.text
+    assert "klipper" in listed.out.split(), (
+        "nothing starts Klipper -- the UI would boot with no motion and no "
+        "heaters. Services in the database: %s" % listed.out.split())
+
+
+def test_the_ui_is_a_service_in_the_compiled_database(box):
+    """The other half of the retired `grep helix`: the UI still gets started by
+    something, it is just the `ui` service now rather than a line in the
+    wrapper."""
+    listed = box.sh("%s/bin/s6-rc-db -c %s list services 2>&1" % (MODDIR, DB))
+    assert "ui" in listed.out.split(), (
+        "BRICK: no `ui` service -- the printer would boot with no interface. "
+        "Services: %s" % listed.out.split())
+
+
+def test_klipper_depends_on_the_mcu_bringup(box):
+    """The ordering the whole s6-rc graph exists for: the boards must be out of
+    their bootloaders before klippy opens the ports, on EVERY start, which is
+    what having it as a dependency buys over calling it once at boot."""
+    deps = box.sh("%s/bin/s6-rc-db -c %s dependencies klipper 2>&1"
+                  % (MODDIR, DB))
+    assert deps.ok, "could not read klipper's dependencies: %s" % deps.text
+    assert "mcu-bringup" in deps.out.split(), (
+        "klipper does not depend on mcu-bringup, so klippy could open the "
+        "ports before the boards are handed over. Dependencies: %s"
+        % deps.out.split())
+
+
+# --------------------------------------------------------------- klippy itself
+
+def test_klippy_is_present(box):
+    assert box.file("/usr/prog/klipper/klippy/klippy.py").exists, (
+        "klippy.py missing -- there is nothing to start")
+
+
+def _bytes_at(box, path, skip, count):
+    """`count` bytes of `path` at offset `skip`, as lowercase hex strings.
+
+    MEASURED on this machine: /usr/bin/od takes neither `-A` nor `-t` (it is
+    not busybox's, and `busybox od` resolves to the same binary), so the usual
+    `od -An -tx1` returns nothing but a usage error -- which, read as bytes,
+    is an empty list rather than a loud failure. `xxd -p` is there and does
+    exactly this job, so it is used instead of teaching a parser to cope with
+    an od that cannot be asked.
+    """
+    out = box.sh("xxd -s %d -l %d -p %s 2>&1" % (skip, count, path)).out.strip()
+    digits = "".join(out.split())
+    if len(digits) < count * 2 or any(c not in "0123456789abcdef" for c in digits):
+        return []
+    return [digits[n:n + 2] for n in range(0, count * 2, 2)]
+
+
+def test_the_chelper_is_a_32_bit_little_endian_mips_object(box):
+    """klippy loads this through cffi at connect time, so a wrong-architecture
+    build is not caught until the printer is already trying to print."""
+    # dd, not `od -N`: the printer's busybox od does not take the skip/length
+    # flags GNU od does, and an od that ignored them would return the whole
+    # 47KB object and make the slice comparisons below pass on the wrong bytes.
+    head = _bytes_at(box, CHELPER, 0, 20)
+    assert len(head) == 20, (
+        "%s missing or unreadable -- klippy will not start (got %r)"
+        % (CHELPER, head))
+    assert head[:4] == ["7f", "45", "4c", "46"], (
+        "%s is not an ELF object (starts %s)" % (CHELPER, head[:4]))
+    assert head[4] == "01", "%s is not 32-bit (EI_CLASS %s)" % (CHELPER, head[4])
+    assert head[5] == "01", (
+        "%s is not little-endian (EI_DATA %s)" % (CHELPER, head[5]))
+    assert head[18:20] == ["08", "00"], (
+        "%s is not MIPS (e_machine %s)" % (CHELPER, head[18:20]))
+
+
+def test_the_chelper_is_nan2008(box):
+    """The printer's toolchain is nan2008; a legacy-NaN object dies on import.
+    e_flags bit 0x400 is EF_MIPS_NAN2008, read out of the 32-bit LE header at
+    offset 36."""
+    raw = _bytes_at(box, CHELPER, 36, 4)
+    assert len(raw) == 4, "could not read e_flags from %s (got %r)" % (CHELPER, raw)
+    flags = int("".join(reversed(raw)), 16)          # 32-bit little-endian
+    assert flags & 0x400, (
+        "BRICK: %s is not nan2008 (e_flags 0x%08x) -- klippy dies on import"
+        % (CHELPER, flags))
+
+
+# ------------------------------------------------------- the mod's own config
+
+def test_the_config_include_set_is_wired_up(box):
+    """printer.base.cfg must include every ff-*.cfg the package shipped, and
+    each one must be there. A shipped-but-unincluded file is a feature that
+    silently does nothing."""
+    base = box.file("/usr/data/config/printer.base.cfg")
+    assert base.exists, "no printer.base.cfg -- the mod's config is not wired up"
+    included = set(re.findall(r"\[include\s+(ff-[\w.-]+\.cfg)\]", base.text))
+    assert included, "printer.base.cfg includes no ff-*.cfg at all"
+
+    shipped = set(box.sh("ls %s/config/ff-*.cfg 2>/dev/null" % MODDIR).out.split())
+    shipped = {p.rsplit("/", 1)[-1] for p in shipped}
+    assert shipped, "the package shipped no ff-*.cfg"
+    assert shipped <= included, (
+        "shipped but never included: %s" % sorted(shipped - included))
+
+    missing = [name for name in included
+               if not box.file("/usr/data/config/" + name).exists]
+    assert not missing, "included but not installed: %s" % missing
+
+
+def test_the_user_printer_cfg_was_not_clobbered(box):
+    """The one file on the machine that is the owner's, not ours."""
+    cfg = box.file("/usr/data/config/printer.cfg")
+    assert cfg.exists, "user printer.cfg was clobbered by the install"
+
+
+# ---------------------------------------------------------- the rollback copy
+
+def test_a_pristine_snapshot_was_kept(box):
+    """run-pre.sh copies the first install's backup to backup/stock and never
+    overwrites it, so there is always one snapshot taken before the mod ever
+    touched the machine -- later backups are of an already-modded printer."""
+    stock = box.file(MODDIR + "/backup/stock")
+    assert stock.is_dir, (
+        "no pristine snapshot at %s/backup/stock -- there is nothing taken "
+        "before the mod to restore from" % MODDIR)
+    assert box.sh("ls %s/backup/stock" % MODDIR).out.split(), (
+        "%s/backup/stock is empty" % MODDIR)
+
+
+# ------------------------------------------------------------ the install log
+
+def test_the_installer_said_it_installed(box):
+    """The anti-vacuity guard. Every assertion above describes a machine the
+    installer built; if the installer never ran, they would be describing
+    something else entirely and several would still pass."""
+    log = box.file(INSTALL_LOG)
+    assert log.exists, (
+        "no %s -- run-append.sh never ran, so nothing here is asserting "
+        "against an install" % INSTALL_LOG)
+    assert "mod payload installed" in log.text, (
+        "the install log does not say the payload was installed:\n%s"
+        % log.text[-1500:])
+
+
+def test_the_installer_left_no_payload_in_the_scratch_directory(box):
+    """/usr/data/update is the STOCK installer's scratch space -- run-append.sh
+    reads anvil.tar.xz out of it. MEASURED: the directory itself survives the
+    install, empty, so its mere existence is not the question the case script
+    thought it was asking. What must not survive is its CONTENTS: an ~80MB
+    half-unpacked tree on the data partition that a later install could trip
+    over."""
+    left = box.sh("ls -A /usr/data/update 2>/dev/null").out.split()
+    assert not left, (
+        "the installer left its unpacked payload behind in /usr/data/update: %s"
+        % left)
+
+
+def test_the_root_password_was_dealt_with_exactly_once(box):
+    """A random root password is generated on the FIRST install only. Doing it
+    again on every update would mean a printer whose password changes under its
+    owner each time they upgrade."""
+    # NOT a raw count. FlashForge's own run.sh runs under `set -x` and
+    # run-append.sh is spliced into it, so every echo appears twice -- once as
+    # the `+ echo ...` trace and once as its output. Counting the raw string
+    # says two on a single generation.
+    log = box.file(INSTALL_LOG).text
+    generated = len([ln for ln in log.splitlines()
+                     if "root password set (random" in ln
+                     and not ln.lstrip().startswith("+")])
+    assert generated <= 1, (
+        "the installer generated a root password %d times -- an update must "
+        "preserve it, not reroll it" % generated)
+
+
+# ------------------------------------- no stick, no update (the case's boot 3)
+
+def test_a_boot_with_no_stick_does_not_try_to_update(box):
+    """case-install.sh's third boot. The bake removes /stick.img once the
+    install has landed, so this machine IS the "stick pulled" case:
+    app_startup.sh must go straight to a normal boot rather than hunting for a
+    package that is no longer there.
+
+    `find update file` is app_startup.sh's own marker for entering the update
+    block -- the same string the case script keyed on, rather than a fuzzy
+    search for the word "update", which appears in a healthy boot too.
+
+    firmwareExe is neutered for the run, because the real one holds the
+    foreground forever by design. What is under test is the update block's
+    decision, not the boot that follows it.
+    """
+    box.sh("cp %s /tmp/fe.real && printf '#!/bin/sh\\nexit 0\\n' > %s"
+           % (FE, FE))
+    try:
+        box.sh("sh %s > /tmp/boot-nostick.log 2>&1; echo rc=$?" % APP,
+               timeout=300)
+        log = box.file("/tmp/boot-nostick.log").text
+    finally:
+        box.sh("cp /tmp/fe.real %s && chmod +x %s" % (FE, FE))
+
+    assert log.strip(), "app_startup.sh produced no output at all"
+    assert "find update file" not in log, (
+        "app_startup.sh entered the update block with no stick present:\n%s"
+        % log[-1500:])
+
+
+def test_a_boot_with_no_stick_hits_no_missing_commands(box):
+    """The boot log from the run above. A `not found` here is a command the
+    payload assumed and the printer has not got -- which on a real machine is
+    a step of the boot silently not happening."""
+    log = box.file("/tmp/boot-nostick.log").text
+    assert log.strip(), (
+        "no boot log -- test_a_boot_with_no_stick_does_not_try_to_update must "
+        "run first; it is the one that produces this")
+    bad = [ln for ln in log.splitlines()
+           if "not found" in ln or "Syntax error" in ln]
+    assert not bad, "missing commands or syntax errors in the boot:\n%s" % (
+        "\n".join(bad[:5]))

@@ -25,8 +25,9 @@ thing that knows it:
 Inside a recipe, each kind of file is a directory name:
 
     pkgs/<recipe>/payload/   staged into the .ipk, laid out as it lands under
-                            $MODDIR. payload/init.d/S60nginx becomes
-                            $MODDIR/init.d/S60nginx and no recipe says so.
+                            $MODDIR. payload/etc/s6-rc/source/nginx/run
+                            becomes $MODDIR/etc/s6-rc/source/nginx/run and no
+                            recipe says so.
     pkgs/<recipe>/seed/      templated or seeded user state -- anvil.conf.in,
                             moonraker-custom.conf. Not package members,
                             because a package member is overwritten on every

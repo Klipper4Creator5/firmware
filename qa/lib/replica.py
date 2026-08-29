@@ -48,6 +48,7 @@ two per call and most tests do not need it.
 """
 import hashlib
 import os
+import pathlib
 import shutil
 import subprocess
 import time
@@ -406,6 +407,21 @@ def mod_package(config):
     mystery. Missing means missing, and the message says which command makes
     one.
     """
+    # REAL_PKG names one package explicitly, which is how the release workflow
+    # asks about the EXACT file it is going to attach to the release rather
+    # than about whatever the tree last built. Two models ship per release and
+    # they are not interchangeable, so "the newest" is the wrong question
+    # there.
+    named = os.environ.get("REAL_PKG", "").strip()
+    if named:
+        chosen = pathlib.Path(named)
+        if not chosen.is_file():
+            raise ReplicaMissing(
+                "REAL_PKG=%s is not a file, so the package it names cannot be "
+                "installed. Unset it to test the newest build in work/out."
+                % named)
+        return chosen
+
     out = ROOT / "work" / "out"
     found = [p for p in out.glob("*-*.tgz") if p.is_file()]
     if not found:
@@ -560,7 +576,13 @@ def start(config=None, base_pkg=None, packages=None, setup_timeout=600,
         # -byte what it was means none of those copies had to be touched.
         "-v", "%s/pkgs/anvil-core/payload:/payload:ro" % ROOT,
         "-v", "%s/pkgs/anvil-core/seed:/payload-seed:ro" % ROOT,
-        "-v", "%s/pkgs/klipper/prog:/payload-klipper:ro" % ROOT,
+        # entrypoint.sh reads start.sh out of here. It lived in
+        # pkgs/klipper/prog until the recipes were reorganised; docker
+        # CREATES a missing bind source as a root-owned empty dir, so a
+        # stale path here did not fail -- it silently mounted nothing and
+        # grew a pkgs/klipper/prog that no recipe owned and no user could
+        # delete.
+        "-v", "%s/pkgs/anvil-core/payload/prog:/payload-klipper:ro" % ROOT,
         "-e", "FF_KEY=%s" % config.ff_key,
         "-e", "BASE_PKG=%s" % ("/pkgs/base.tgz" if base_pkg else ""),
         "-e", "PKGS=%s" % "".join(" %s=/pkgs/%s" % (n, n) for n in packages),
@@ -637,6 +659,17 @@ def logs(printer):
 
 
 def stop(printer):
+    # DETACH THE STICK'S LOOP FIRST. assemble.sh attaches /stick.img with
+    # `losetup`, which does not autoclear, and loop devices belong to the HOST
+    # kernel rather than to the container. entrypoint.sh detaches on its way
+    # out, but these containers never take that path -- hold.sh sleeps and we
+    # `rm -f` them -- so without this every module leaks one, and a WSL2 kernel
+    # has thirteen. The symptom is the NEXT run failing to set up a loop
+    # device, which looks like a docker fault and is not.
+    subprocess.run(
+        [printer.docker, "exec", printer.container, "sh", "-c",
+         '[ -f /stick.loop ] && losetup -d "$(cat /stick.loop)" || true'],
+        capture_output=True)
     subprocess.run([printer.docker, "rm", "-f", printer.container],
                    capture_output=True)
     stage = getattr(printer, "_stage", None)

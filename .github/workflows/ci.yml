@@ -62,8 +62,8 @@ jobs:
             python3-pytest python3-jinja2 python3-pyflakes \
             gcc pkg-config perl zlib1g-dev patch make
 
-      # Syntax and the brick lint are the first thing run-tests.py does, so
-      # they are not repeated here.
+      # The shell parse and the bashism pass live in qa/static/test_shell_syntax.py
+      # now; this step is the repo-wide shellcheck, which is a wider net.
       - name: shellcheck
         run: |
           sudo apt-get install -y shellcheck
@@ -104,10 +104,8 @@ jobs:
           # their own BUILD_ flags, unset here) and fetches what s6, CPython
           # and the Klipper fork need, none of which has a BUILD_ flag of its
           # own any more -- BUILD_KLIPPER is gone and the fork is the only
-          # Klipper, so its 27MB tarball comes down here with the rest. run-tests.py's own fixture
-          # harness writes its own throwaway config.env for the actual suite
-          # run below, with synthetic Mainsail/HelixScreen/Moonraker
-          # stand-ins -- this one never reaches patch.sh, only fetch-assets.sh.
+          # Klipper, so its 27MB tarball comes down here with the rest. This
+          # config.env never reaches patch.sh, only fetch-assets.sh.
           # The actual cross-build of s6 and CPython happens inside the suite,
           # in bin/patch.sh sections 5b/5c, the first time it runs against a
           # vendor/ that now has what those sections need.
@@ -132,27 +130,12 @@ jobs:
       - name: qa -- static lane
         run: python3 -m pytest ./qa/static -q
 
-      # This job has no stock package on purpose, so exactly two gates cannot
-      # run: the tests that read the real rootfs, and the replica itself. The
-      # suite refuses to call a gate it did not run a pass, so they have to be
-      # accepted explicitly -- BY NAME. `ALLOW_SKIP=1` would accept them and
-      # also every future skip, which would make this job green while it
-      # quietly stopped testing things. Naming them means a third skip fails
-      # here, and both are still printed and annotated on every run.
-      #
-      # The job that must not skip at all is printer-sim below, and
-      # release.yml; both set REQUIRE_PRINTER_SIM=1 and no ALLOW_SKIP.
-      - name: Full test suite (fixture-based)
-        run: ALLOW_SKIP="pytest,the printer replica" ./test/run-tests.py
-
-      - name: Upload built fixture packages
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: fixture-packages
-          path: work/out/*.tgz
-          if-no-files-found: ignore
-          retention-days: 7
+      # The host-side tree. No ALLOW_SKIP and no runner around it: run-tests.py
+      # is gone, and with it the JUnit-XML round trip that turned 185 results
+      # into one gate. This job has no stock package on purpose, so the handful
+      # of tests that read the real rootfs skip themselves and say so.
+      - name: pytest -- the host-side tree
+        run: python3 -m pytest ./test -q
 
   # The real check: install the package into a replica of the printer -- the
   # actual rootfs.squashfs under qemu-mipsel, on the printer's own busybox --
@@ -299,40 +282,29 @@ jobs:
       # The replica starts sibling containers through the docker socket and
       # needs loop devices for the simulated USB stick; both work on a stock
       # ubuntu-latest runner.
-      - name: Brick-safety suite on the printer replica
+      # BUILD THE PACKAGE THE SUITE INSTALLS. The qa replica lane installs for
+      # real -- the printer's own app_startup.sh, off a FAT stick -- so it
+      # needs a package in work/out, and it never builds one on demand: that
+      # would turn "the suite is slow today" into a mystery. This step used to
+      # be a side effect of run-tests.py, which ran unpack/patch/pack before
+      # its own install gate; that runner is gone, so the build is explicit
+      # now, exactly as the comment here predicted it would have to be.
+      #
+      # It also supplies the cross-built s6 and CPython, because both ship
+      # INSIDE the package; there is no separate build tree to track.
+      - name: Build the package
         run: |
           docker build -q -t creator5-fw-build -f docker/Dockerfile.build docker
           docker run --rm \
             -v "$PWD":"$PWD" -w "$PWD" \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            -e REQUIRE_PRINTER_SIM=1 \
-            creator5-fw-build ./test/run-tests.py
+            creator5-fw-build \
+            sh -c './bin/unpack.sh && ./bin/patch.sh && ./bin/pack.sh'
 
-      # The qa suite, on the same machine the gate above just used.
-      #
-      # It runs after the old suite rather than instead of it. Every assertion
-      # in qa/replica is currently also made by a case-*.sh, on purpose: a
-      # case script is deleted only once its replacement here has been green,
-      # so there is never a window where coverage drops. As those deletions
-      # land this step grows and the one above shrinks.
-      #
-      # ORDER IS LOAD-BEARING, and not only for tidiness. The qa replica lane
-      # INSTALLS the package for real -- the printer's own app_startup.sh, off
-      # a FAT stick -- so it needs a built package in work/out. The step above
-      # produces one (run-tests.py runs unpack/patch/pack before its install
-      # gate). So this step depends on that one having RUN, not merely on it
-      # having passed.
-      #
-      # That also supplies the cross-built s6, because s6 ships INSIDE the
-      # package; there is no separate s6 build tree to track.
-      #
-      # WHEN THE OLD SUITE IS DELETED, this needs an explicit
-      # `./bin/unpack.sh && ./bin/patch.sh && ./bin/pack.sh` (or `make build`)
-      # step before it, or it goes red for a reason that has nothing to do
-      # with the code under test.
-      #
-      # Not `if: always()` -- if the release gate above failed, the machine is
-      # in a state neither suite is describing any more.
+      # The brick-safety gate. No ALLOW_SKIP and no REQUIRE_PRINTER_SIM: qa has
+      # no skip mode at all, so a missing docker, daemon, image or package
+      # fails at the point that needs it rather than being reported as a gap
+      # somebody has to remember to accept.
       - name: qa suite on the printer replica
         run: |
           docker run --rm \

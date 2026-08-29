@@ -130,8 +130,7 @@ in `anvil-env.sh` names a CPython 3.13 of our own, cross-built for mipsel by
 recipe and one `.ipk` each — and libsodium in `$MODDIR/lib`; none of it
 borrowed from `/usr/prog`. Measured through the
 real boot path (the scandir, the moonraker service, readiness gating on `:7125`
-actually listening, a `kill -9` respawn, a stop that stays stopped) in
-`test/integration/printer/case-moonraker313-s6.sh`. klippy is not part of
+actually listening, a `kill -9` respawn, a stop that stays stopped). klippy is not part of
 this: it stays on FlashForge's 3.8.2, started independently by
 `/usr/prog/klipper/start.sh`.
 
@@ -140,8 +139,9 @@ has changed.** FlashForge built python 3.8.2 without the `_sqlite3` module,
 and Moonraker moved its database from lmdb to sqlite in v0.9.0, so on 3.8.2
 every release from there on got as far as loading the database component and
 died with `ModuleNotFoundError: No module named '_sqlite3'`. Our 3.13 has a
-working `_sqlite3` (measured in `case-python.sh`: create, insert, select,
-reopen), which is what unpins this -- but the pin has not moved yet: nobody
+working `_sqlite3` (measured: create, insert, select, reopen -- and exercised
+for real every run, since Moonraker itself comes up on it in
+`qa/replica/test_web.py`), which is what unpins this -- but the pin has not moved yet: nobody
 has taken a newer Moonraker through this build and its replica gates, and a
 version bump is exactly the kind of change that wants its own measurement,
 not a side effect of an interpreter switch. Until it does, the printer's lmdb
@@ -210,10 +210,11 @@ printer picks the file up and then refuses it. `make verify` and
 
 Recovery is the stock FlashForge package for your model. Flashing it restores
 the files the mod replaced out of that package; the payload under
-`/usr/data/anvil` survives but is inert. `make test-recovery` does exactly that
-inside the replica and compares `firmwareExe`, `app_startup.sh` and
-`klipper/start.sh` byte for byte, and checks that nothing stock still
-references the leftovers.
+`/usr/data/anvil` survives but is inert. `make test-recovery` used to do exactly
+that inside the replica -- comparing `firmwareExe`, `app_startup.sh` and
+`klipper/start.sh` byte for byte and checking that nothing stock still
+referenced the leftovers -- but that gate has been retired without a
+replacement; see [qa-migration.md](qa-migration.md).
 
 One thing it does not cover, worth knowing before you rely on it:
 

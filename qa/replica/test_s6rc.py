@@ -5,14 +5,12 @@ proves the printer DOES it: the scanner comes up, s6-rc-init lays the live
 servicedirs down, one transition brings the boot set up, and s6 puts a killed
 daemon back.
 
-NOTHING HERE HAS RUN YET. There is no stock FlashForge package on the machine
-this was written on, so `make build` is impossible and the replica image holds
-a pre-s6-rc payload. The `box` fixture below fails with one clear message
-rather than letting forty assertions fail for the same reason.
+RUN, on a real replica off a real package. The four tests that ask only about
+what was installed pass. The eight that need a booted tree cannot pass here and
+say why: the replica has no MCUs and no camera, so `ok-all` never comes up --
+see the `booted` fixture for the measurement.
 """
 import pytest
-
-from lib import replica
 
 pytestmark = pytest.mark.replica
 
@@ -23,6 +21,13 @@ DB = MODDIR + "/etc/s6-rc/compiled/current"
 
 BOOT_SET = {"wifi", "nginx", "moonraker", "camera", "klipper", "ff-startup",
             "ui"}
+
+# EVERY s6-rc-init HERE NEEDS THIS, for the reason firmwareExe needs it: the
+# default deadline is TAIN_INFINITE_RELATIVE, which does not fit this printer's
+# 32-bit time_t, so s6-rc-init fails with EOVERFLOW ("Value too large for
+# defined data type") before it reaches the thing under test. Matches
+# firmwareExe's own S6RC_T.
+S6RC_T = 30000
 
 
 @pytest.fixture(scope="module")
@@ -56,13 +61,27 @@ def booted(box):
     """
     box.sh("setsid /usr/prog/PROGRAM/software/firmwareExe >/dev/null 2>&1 &")
     for _ in range(60):
-        if "ok-all" in box.sh("%s/bin/s6-rc -l %s -a list 2>/dev/null"
-                              % (MODDIR, LIVE)).text:
+        listed = box.sh("%s/bin/s6-rc -l %s -a list 2>&1" % (MODDIR, LIVE))
+        if "ok-all" in listed.text:
             return box
         box.sh("sleep 2")
+
+    # MEASURED, and the reason this reports rather than just timing out: on a
+    # replica `ok-all` is UNREACHABLE, so the poll above can only ever expire.
+    # There are no /dev/ttyS4,5,7, so mcu-bringup fails and klippy never gets
+    # past "disconnected"; there is no /dev/video*, so camera hits its 40s
+    # timeout-up and s6-rc reports "command exited 99". ff-startup then sits
+    # out its own timeout-up (300000ms) waiting for klipper, and it holds the
+    # s6-rc lock the whole time -- which is why the poll's own `s6-rc -a list`
+    # comes back "unable to take locks: Device or resource busy" rather than
+    # with a short list. Both blockers are real hardware, so the fix is the
+    # simulated-MCU lane docs/qa-migration.md leaves out of scope, not a
+    # longer deadline here.
     pytest.fail(
-        "the tree never came up within 120s. Boot log:\n%s"
-        % box.file("/usr/data/logs/anvil-boot.log").text[-2000:])
+        "the boot set never came up within 120s.\nlast `s6-rc -a list`: %s\n"
+        "boot log:\n%s"
+        % (listed.text.strip(),
+           box.file("/usr/data/logs/anvil-boot.log").text[-2000:]))
 
 
 def _up(box):
@@ -147,8 +166,8 @@ def test_a_database_moved_aside_is_reported(box):
     own container: it breaks the machine it runs on."""
     box.sh("mv %s %s.moved" % (DB, DB))
     try:
-        got = box.sh("%s/bin/s6-rc-init -c %s -l /run/probe %s 2>&1"
-                     % (MODDIR, DB, SCANDIR))
+        got = box.sh("%s/bin/s6-rc-init -t %d -c %s -l /run/probe %s 2>&1"
+                     % (MODDIR, S6RC_T, DB, SCANDIR))
         assert not got.ok, "s6-rc-init accepted a database that is not there"
     finally:
         box.sh("mv %s.moved %s" % (DB, DB))
@@ -161,8 +180,8 @@ def test_a_populated_scandir_is_swept_not_collided_with(box):
     and camera sitting there, so run-append.sh sweeps -- this is that sweep,
     asked of the machine."""
     box.sh("mkdir -p %s/nginx && rm -rf /run/probe2" % SCANDIR)
-    got = box.sh("%s/bin/s6-rc-init -c %s -l /run/probe2 %s 2>&1"
-                 % (MODDIR, DB, SCANDIR))
+    got = box.sh("%s/bin/s6-rc-init -t %d -c %s -l /run/probe2 %s 2>&1"
+                 % (MODDIR, S6RC_T, DB, SCANDIR))
     assert "File exists" in got.text or got.ok, (
         "expected either a clean init or the documented collision, got: %s"
         % got.text)

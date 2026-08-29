@@ -130,13 +130,16 @@ jobs:
         run: make rootfs ASSET_ROOT=$PWD
 
       - name: Brick-safety suite, replica required
+        # No REQUIRE_PRINTER_SIM and no ALLOW_SKIP: qa has no skip mode, so a
+        # missing docker, image or package fails at the point that needs it.
         run: |
           docker build -q -t creator5-fw-build -f docker/Dockerfile.build docker
           docker run --rm \
             -v "$PWD":"$PWD" -w "$PWD" \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            -e REQUIRE_PRINTER_SIM=1 \
-            creator5-fw-build ./test/run-tests.py
+            creator5-fw-build \
+            sh -c './bin/unpack.sh && ./bin/patch.sh && ./bin/pack.sh \
+                   && python3 -m pytest ./qa -q'
 
       - name: Build both models
         run: make release ASSET_ROOT=$PWD
@@ -150,15 +153,20 @@ jobs:
         # the replica -- which stages into work/.sim-* -- cannot create its
         # own scratch directory as the runner user. It also needs the docker
         # socket, because each case starts a printer replica container.
+        #
+        # REAL_PKG points the replica lane at one exact package instead of the
+        # newest thing in work/out. Two models ship per release and they are
+        # not interchangeable, so each is installed and asserted against in
+        # turn -- 22 named results per package where sim-install.py gave one
+        # exit code.
         run: |
           docker run --rm \
             -v "$PWD":"$PWD" -w "$PWD" \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            -e REQUIRE_PRINTER_SIM=1 \
             creator5-fw-build sh -c '
               for p in dist/*.tgz; do
                 echo "=== $p ==="
-                ./test/integration/sim-install.py "$p" || exit 1
+                REAL_PKG="$p" python3 -m pytest ./qa/replica -q || exit 1
               done'
 
       - uses: actions/upload-artifact@v4

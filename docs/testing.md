@@ -1,114 +1,73 @@
 # Testing: how we know it does not brick
 
-> **There is a second suite.** `qa/` is the replacement for everything below,
-> built beside it rather than inside it, and both run in CI. It is one
-> framework (pytest), and its results are per-assertion rather than per-case.
-> Run `make qa` / `make qa-static` / `make qa-replica`.
->
-> **Several gates below are now RED and cannot be fixed by editing them.**
-> Phase 8 of [notes/80-s6-migration.md](notes/80-s6-migration.md) deleted
-> `payload/init.d/` and `payload/anvil-service.sh`, so the cases that assert
-> the `S*` wrapper contract or the `MOD_S6=0` fallback are asserting something
-> that no longer exists. [qa-migration.md](qa-migration.md) lists which, what
-> each one asserted, and where that assertion lives now. Retiring them needs a
-> stock package and a real run -- not a reading.
->
-> The rest of this page describes the suite being migrated away from.
-
-Everything lives in `test/integration`, and `test/run-tests.py` runs it. There
-is still a real seam inside it, though — what needs the proprietary firmware
-and what does not — and it is worth knowing which side of that seam a failure
-is on.
-
-**Without firmware.** A synthetic fixture
-(`test/integration/make-stock-fixture.sh`) reproduces the package *structure*,
-so shell syntax, the bashism pass, the pytest config gate and the whole
-packaging pipeline run in CI on a clean machine. This is the half that catches
-a chamber heater declared on a machine
-that has no element for it — the replica cannot, because it never starts
-klippy.
-
-These used to live in a directory of their own, `test/unit`. The split was
-there so a plain pull request had something to run; this repo has one
-maintainer who always has the firmware to hand, so it was a boundary being
-maintained for a contributor who never arrived. The tests moved rather than
-went away.
-
-**With firmware — the printer replica.** The real
-`rootfs.squashfs`, extracted from
-the stock package, chrooted under `qemu-mipsel`, with `/usr/prog` installed by
-FlashForge's own updater. The installer under test runs on the printer's
-busybox, tar, md5sum and `unTar` — not on Debian stand-ins — with a read-only
-root and writable prog/data partitions, exactly like the machine, and the
-package reaches it the way it reaches a real printer: on a FAT filesystem that
-the machine's own boot script finds and mounts. This is the
-half that can catch a brick, it needs the stock package, and
-`.github/workflows/release.yml` refuses to publish without it.
-
-With `PROG_DUMP` (in `test.env`) pointed at a factory image, the replica has
-essentially nothing invented left: the klipper daemons, `nginx`, `python3`,
-`moonraker` and the printer's **own OpenSSL 1.0.2d** are all genuine, so
-package decryption is verified against the real implementation. What remains
-substituted is `insmod`/`reboot`/`cmd_mcu`, neutered because they would act on
-the host kernel or real hardware, and the partition sizes.
-
-See **[printer-replica.md](printer-replica.md)** for what is authentic, what
-is stubbed, and what it still cannot tell you.
-
-## The tests
+**`qa/` is the suite.** One framework (pytest), two lanes, and a result per
+assertion rather than per case script.
 
 ```sh
-make test            # the gates below, and more besides
+make qa            # both lanes
+make qa-static     # seconds, any machine, any clone -- no docker
+make qa-replica    # the gates that decide whether a package bricks a printer
 ```
 
-`make test` does not invoke these targets: `test/run-tests.py` re-implements
-the work inline, and adds three things the table has no row for — a shell
-syntax parse, a `shellcheck -s dash` bashism pass over the on-printer payload,
-and a full unpack/patch/pack/verify build on a synthetic stock fixture.
+Selection is pytest's: `-k nginx`, `-m static`, or a single test id.
+[qa-migration.md](qa-migration.md) is the design and the history.
 
-| Gate | What it does | Replica |
-|---|---|:-:|
-| `test-py` | pytest, the whole `test/` tree — 186 tests in twelve files (five of them skip until `make rootfs` has run). The Klipper config gate (`test_chamber.py`): every `ff-*.cfg` gcode body parses in **Klipper's** Jinja dialect, and the chamber macros are rendered per model to prove a chamber target is refused on a Creator 5 that has no heating element. Plus `test_paths.py` (every absolute path the payload names exists on the printer, once a rootfs has been extracted), `test_includes.py` (the `[include ff-*.cfg]` block is exactly the expected set, in order), `test_config_ownership.py` (every mod-owned config carries its DO-NOT-EDIT banner and `moonraker.conf` does not), `test_gcode.py` (every command in `gcode/*.gcode` is one our configs define) and `test_harness.py` (the harness's own self-checks) | partly |
-| `test-install` | **End-to-end.** The package sits on a real FAT filesystem exposed as `/dev/sda1`, and the machine's own `app_startup.sh` runs verbatim through three boots: stick in -> it installs; stick still in -> it installs again (idempotence); stick pulled -> the machine boots with the mod running and the stock `ps`-watchdog satisfied. Asserts along the way: UI present and executable, boot scripts unmodified and still parsing, every installed script `sh -n`-clean under the printer's own busybox, Klipper owned by a service, `c_helper.so` still nan2008 MIPS, user `printer.cfg` preserved, the wrapper unchanged by a re-install | yes |
-| `test-moonraker` | Installs the payload the way an update does and then **runs** the shipped tools, on our own CPython 3.13 (`FF_PYTHON`). `anvil-env.sh` must produce a working interpreter; moonraker's `authorization` component must import on it. Then `init.d/S62moonraker` must actually start moonraker from `/usr/data/anvil/moonraker/moonraker.py` (checked in `/proc/<pid>/cmdline`, along with `TMPDIR` off the ramdisk), answer on :7125, report itself in `status`, clear its pidfile on `stop`, come back on a **new** pid after `restart` — and stopping it must leave `S60nginx` running, which is what splitting `S60web` in two was for | yes |
-| `test-mcu` | Runs `ff_mcu_bringup.py` on our own CPython 3.13 (`FF_PYTHON`) in the exact environment `start.sh` sets — the gate that pins the `LD_LIBRARY_PATH` regression that shipped broken once, and now also proves the bring-up script survives the interpreter switch | yes |
-| `test-recovery` | Installs the mod, then flashes the **stock** package, and asserts `firmwareExe`, `app_startup.sh` and `klipper/start.sh` are back byte-for-byte and the leftover payload is inert. It does not check `shadow`, the klippy tree or Moonraker — and Moonraker genuinely is not restored, see how-it-works | yes |
+## The lanes
 
-Few entry points, deliberately. `test-install` boots the machine, so it independently
-covers what `verify.sh` checks, parses every installed script with the same
-busybox that `test-ash` used, and reads `c_helper.so`'s ELF header the way
-`test-abi` did — the separate checks were the weaker copies.
+| Lane | Needs | What it asks |
+|---|---|---|
+| `static` | nothing but the checkout | every shipped script parses and is free of bashisms, every name resolves, the recipe layout holds, the `.ipk`s are what we mean to ship, and the boot graph *says* the right thing |
+| `replica` | docker + qemu + the firmware | what the printer *does* -- on a machine the real `app_startup.sh` installed the real package onto |
 
-The replica gates need `make rootfs` first, which extracts the printer's
-genuine root filesystem from the stock package's `kernel-*.tar.xz`. It is
-never committed — it is FlashForge's firmware. `make test` skips the replica
-half with a loud message when no stock package is configured;
-`REQUIRE_PRINTER_SIM=1` turns that skip into a failure.
+The replica lane needs a built package in `work/out/*.tgz` (`make build`) and a
+base image: put `PRINTER_IMAGE` in `test.env`, or let it build one from
+`work/rootfs` after `make rootfs`. The install is baked into an image once per
+package, keyed on the package's md5, so rebuilding gets you a fresh bake and
+not yesterday's.
 
-**A skip is not a pass.** `run-tests.py` counts skips separately and exits
-non-zero if any gate did not run. This matters more the fewer gates there are
-— and it is not hypothetical, see `test-abi` below.
+### The replica lane, module by module
 
-Accepting a gap is deliberate and has two forms:
+| module | asks |
+|---|---|
+| `test_install.py` | what the machine's own installer produced: the stock boot chain is untouched and still parses, the wrapper is installed and starts the supervisor, every installed script is `sh -n`-clean under the printer's own busybox, `c_helper.so` is still nan2008 MIPS, klipper and the UI are services in the compiled database, klipper depends on the bring-up, the config include set is wired up, the user's `printer.cfg` survived, a pristine `backup/stock` was kept, and a boot with no stick does not go looking for an update |
+| `test_upgrade.py` | an update deletes what the last package shipped and **only** that -- the user's edits, their `moonraker-custom.conf`, their HelixScreen settings and anything nobody shipped all survive, over both the manifest path and the pre-manifest sweep |
+| `test_supervisor.py` | the s6 we cross-compiled: all 13 binaries load on the printer's kernel, and `s6-svwait -U` really waits for readiness rather than returning on the fork |
+| `test_boot_screen.py` | the first-boot screen renders on our own CPython 3.13, one screen's worth of correctly packed bytes, and degrades to "no screen" rather than raising when there is no panel |
+| `test_web.py` | nginx and moonraker come up under s6, nginx comes back from a kill and stays down after a stop, and moonraker serves on `:7125` on our interpreter |
+| `test_s6rc.py` | the boot itself -- the scanner answers, `s6-rc-init` lays the scandir down, a killed daemon comes back |
+| `test_mcu_bringup.py` | `ff_mcu_bringup.py` runs on `FF_PYTHON` in the shipped environment and names every port it could not open |
+
+**Eight of `test_s6rc.py`'s twelve cannot pass on a replica**, and that is
+hardware, not a bug: there are no `/dev/ttyS4,5,7` and no `/dev/video*`, so
+klippy never connects, `camera` times out, and the `ok-all` bundle is
+unreachable. See [qa-migration.md](qa-migration.md). Everything else is green.
+
+## What is left in `test/`
+
+`test/run-tests.py` is **gone**, and `make test` with it. What remains is not a
+suite:
 
 ```sh
-ALLOW_SKIP=1                              accept any gate that did not run
-ALLOW_SKIP="pytest,the printer replica"   accept exactly these
+make test-py   # the host-side pytest tree
 ```
 
-Use the named form anywhere the setting outlives the moment — CI does. `1` is
-a standing promise never to notice a skip again: put it in a workflow and a
-replica gate that starts skipping on a machine that has the firmware is
-accepted in silence, forever. The named form fails on anything else.
+- **`test/integration/test_*.py`** -- 185 host-side tests over the Klipper
+  configs, the gcode, `ff-startup.py`, `ffscreen.py`, the toolchange transform
+  and the offset sampling. Already pytest, already well-seamed; they were never
+  part of the migration and can be adopted by pointing `qa/` at them.
+- **`test/ffsim/`** -- 678 lines and no longer a framework. `extract_rootfs` is
+  what `make rootfs` runs; `Replica` is what `make boot-screen-sim` uses.
+- **`test/integration/printer/`** -- the `Dockerfile`, `entrypoint.sh`,
+  `assemble.sh`, `binfmt.sh` and `seed-prog.sh` that BUILD the replica. `qa/`
+  uses them unmodified; they were never the problem.
+- **`test/test-chelper.py`** -- in neither suite: `bin/patch.sh` and
+  `bin/verify.sh` call it directly at build time.
 
-Either way **every skip is listed again in the summary, with its reason and
-whether it was accepted**, and under GitHub Actions each becomes an
-annotation. Nobody reads a green job's log, so a gap that exists only in
-stdout is a gap accepted invisibly — which is the failure this whole harness
-is built around. The pytest gate names the individual tests that skipped
-rather than reporting a count.
+> **The build path is not tested.** The packaging build on a synthetic stock
+> package -- `unpack`/`patch`/`pack`/`verify` -- went with `run-tests.py` and
+> has no counterpart in `qa/`. That is the path producing the `.tgz` a user
+> flashes. See [qa-migration.md](qa-migration.md).
 
-<a name="why-the-harness-is-python"></a>
 ## Why the harness is Python
 
 The host half of the harness — the orchestrator and the replica launchers —
@@ -210,11 +169,13 @@ Tests that cannot fail are worse than no tests, because they read as coverage:
 - **`test-install`'s hand-written replay of `app_startup.sh`.** It re-derived
   the glob, `MACHINE` and `PID` with `sed` and then called the installer
   itself — so a mistake in our reading of the boot script could never be
-  caught. It now runs the boot script.
+  caught. The replica now runs the boot script itself, and
+  `qa/replica/test_install.py` asserts against what it produced.
 - **The release workflow's final `sim-install` loop** ignored the exit status
-  of every run, so the last gate before publishing could not fail. It now
-  stops on the first failure and runs with `REQUIRE_PRINTER_SIM=1`, which
-  turns a skip into a failure too.
+  of every run, so the last gate before publishing could not fail. It stops on
+  the first failure now, and it is `REAL_PKG=<pkg> pytest ./qa/replica` per
+  model -- 22 named results for each package that ships, where the loop gave
+  one exit code it was throwing away.
 - **`test-printer-db`, all of it.** It began as a re-implementation of
   PrinterDetector's scoring formula, mirroring `printer_detector.cpp` line for
   line, so a change to the HelixScreen fork's formula left the test passing
@@ -235,21 +196,22 @@ Tests that cannot fail are worse than no tests, because they read as coverage:
     `work/modpayload` immediately before it ran and CI set `KLIPPER_FORK=""`,
     so it had no targets on any run, skipped, exited 0 and was printed as
     `ok`. `bin/patch.sh` refuses to build a non-nan2008 `c_helper.so` anyway,
-    and `test-install` reads the ELF header of the file that actually landed.
+    and `qa/replica/test_install.py` reads the ELF header of the file that
+    actually landed.
   - `test-macros` used `jinja2.Environment()` — the default `{{ }}` syntax.
     The configs contain **no** `{{` at all, only single-brace expressions, so
     it validated `{% %}` block structure and never once looked inside an
     expression. `test_default_delimiters_are_blind` now pins that.
   - `test-ash-conformance` parsed the payload with the printer's busybox;
-    `test-install` runs `sh -n` over every *installed* script with the same
-    qemu'd busybox and then greps the boot log for `Syntax error`.
+    `qa/replica/test_install.py` runs `sh -n` over every *installed* script
+    with the same qemu'd busybox.
   - `test-model-gate` checked what `verify.sh` §8b/§9 checks and what
     `pack.sh` already refuses to build. Its header claimed it proved the two
     models ship different files; no such check existed in it.
   - `test-base-cfg` compared our `printer.base.cfg` against
     `work/software/.../printer.base.cfg` — which `bin/patch.sh` overwrites
     *with our own file* before the test reads it. It had been diffing our file
-    against itself: green on a cold tree, red on a second `make test`, and
+    against itself: green on a cold tree, red on a second build, and
     blind to real drift either way. The comparison moved into `bin/unpack.sh`,
     where a pristine stock tree actually exists.
   - `test-applets`' command-word scan only extracted the first word of a

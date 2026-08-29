@@ -159,4 +159,17 @@ set +e
 chroot $R /bin/sh /tmp/case.sh
 RC=$?
 set -e
+
+# DETACH THE STICK'S LOOP DEVICE. assemble.sh attaches /stick.img with
+# `losetup -f --show` and records the device in /stick.loop, and until this
+# existed nothing ever read that file. Loop devices are the HOST's -- they are
+# not namespaced -- so every USB_STICK=1 run leaked one permanently, and a
+# WSL2 kernel has thirteen. Once they were gone every replica run failed with
+# "failed to setup loop device", which looks like a docker problem and is not.
+# `mount -o loop` would autoclear; `losetup` does not, so it has to be here.
+if [ -f /stick.loop ]; then
+    umount "$R/mnt" 2>/dev/null || true
+    losetup -d "$(cat /stick.loop)" 2>/dev/null || true
+fi
+
 exit $RC

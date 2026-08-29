@@ -13,7 +13,7 @@ exactly one definition of what these files mean.
 THE ENVIRONMENT WINS OVER BOTH FILES, which is a rule the shell version had to
 work for with a save-and-restore dance around the sourcing. An empty
 `PRINTER_IMAGE=` sitting in test.env used to overwrite an explicit
-`PRINTER_IMAGE=foo ./test/integration/sim-install.py ...`, so the override
+`PRINTER_IMAGE=foo make boot-screen-sim`, so the override
 silently did nothing and the run tested a different image than the one it was
 told to. Note the rule is about being SET, not about being non-empty: an empty
 string in the environment is still a decision, and `PRINTER_IMAGE= make

@@ -10,9 +10,13 @@ There is one flash: the firmware package for your model.
 
 **Rule: have the stock FlashForge package for your model on a spare stick
 before you flash anything.** Flashing it back is the uninstall, and it is the
-only recovery step that needs nothing but a USB port — no ssh, no screen. It
-is proven by `make test-recovery`, which installs the mod into the printer
-replica and then flashes the stock package over it.
+only recovery step that needs nothing but a USB port — no ssh, no screen.
+
+It used to be proven by `make test-recovery`, which installed the mod into the
+replica and flashed the stock package over it. **That gate has been retired
+and nothing has replaced it yet** — see
+[qa-migration.md](qa-migration.md). It passed on its last run, but treat the
+rollback as unverified against the current build.
 
 ---
 
@@ -50,13 +54,13 @@ you unpack.
 
 - [ ] Put a copy of the **stock FlashForge package for your model** on a spare
       USB stick and keep it physically separate. That is your recovery image:
-      flashing it restores every file the mod touches (proven by
-      `make test-recovery`). Check it is the right model first — see above.
+      flashing it restores every file the mod touches. Check it is the right
+      model first — see above.
 - [ ] Note your printer's serial number (Settings → About). The factory image
       restores a placeholder serial and you may need to put yours back.
 - [ ] Confirm you can reach the printer's IP.
-- [ ] `make test` passes.
-- [ ] `make rootfs && make test-install` passes — this parses every script that
+- [ ] `make qa` passes.
+- [ ] `make rootfs && make qa-replica` passes — this parses every script that
       will run on the printer using the printer's own busybox ash.
 
 Two USB sticks, FAT32, both packages at the **root** of the stick (not in a

@@ -178,11 +178,18 @@ def args(tmp_path, **over):
     jsondir = tmp_path / "firmwareRes"
     jsondir.mkdir(exist_ok=True)
     (jsondir / "extruder.json").write_text('{"t0_offset_x": 1.0}\n/* tail */\n')
+    # Mirrors main()'s parser in ff-startup.py. It is spelled out rather than
+    # built by calling the parser so a test can ask for a combination the
+    # command line cannot produce -- but that means a new flag has to be added
+    # here too, and one that is missing surfaces as AttributeError deep inside
+    # run(), not as a helpful failure.
     ns = imp.argparse.Namespace(
         stamp=str(tmp_path / "stamp"), dir=str(jsondir),
         moonraker="http://127.0.0.1:7125", timeout=60.0,
         mcu_timeout=5.0, klipper_tries=3, no_klipper=True,
-        start_sh="/nonexistent/start.sh", daemon="/nonexistent/daemon",
+        s6_svc="/nonexistent/s6-svc",
+        klipper_svcdir="/nonexistent/svc/klipper",
+        only_bringup=False, no_bringup=False,
         no_import=False, fb=None, fb_geometry=None, no_screen=True,
         dry_run=False)
     for k, v in over.items():
@@ -663,35 +670,34 @@ def test_an_error_naming_no_board_still_reports_something(tmp_path, stack,
 
 # -- owning klipper's start ------------------------------------------------
 #
-# Owned here rather than by init.d/S70klipper tailing printer.log, which is the
-# only signal a shell script has: the retry that actually fixes a stranded
+# Owned here rather than by a shell wrapper tailing printer.log, which is the
+# only signal such a script has: the retry that actually fixes a stranded
 # board is "hand it over again, then reopen the port", so the thing doing the
 # handshake has to be the thing restarting klippy.
 
 
 class FakeKlipper:
-    """start.sh and klipperDaemon, as a pair of recorded commands."""
+    """klipper's supervisor, as the one command ff-startup runs against it.
+
+    There is no start.sh and no separate stop any more: under s6-rc the retry
+    is a single `s6-svc -wr -t` on klipper's live servicedir, which terminates
+    klippy and does not return until s6 has it running again. One restart is
+    one call, so there is nothing left to count stops with.
+    """
 
     def __init__(self, stack, comes_up=True, after=1):
         self.stack = stack
         self.comes_up = comes_up
-        self.after = after          # how many starts before it is ready
-        self.starts = 0
-        self.stops = 0
-        self.env = []
+        self.after = after          # how many restarts before it is ready
+        self.restarts = 0
         self.running = False
 
     def run(self, argv, **kw):
-        if argv[-1].endswith("start.sh"):
-            self.starts += 1
-            self.env.append(kw.get("env", {}).get("FF_SKIP_MCU_BRINGUP"))
+        if "-t" in argv and argv[-1].endswith("klipper"):
+            self.restarts += 1
             self.running = True
-            if self.comes_up and self.starts >= self.after:
+            if self.comes_up and self.restarts >= self.after:
                 self.stack.klippy_state = "ready"
-            return _Completed(b"start.sh: klippy started")
-        if argv[-1] == "stop":
-            self.stops += 1
-            self.running = False
             return _Completed(b"")
         raise AssertionError("unexpected command %r" % (argv,))
 
@@ -709,11 +715,12 @@ def with_klipper(monkeypatch, fake):
 
 
 def klipper_args(tmp_path, **over):
-    """Args pointing at a start.sh that really exists -- the program checks."""
-    start_sh = tmp_path / "start.sh"
-    start_sh.write_text("#!/bin/sh\nexit 0\n")
+    """Args pointing at an s6-svc that really exists -- the program checks."""
+    s6_svc = tmp_path / "s6-svc"
+    s6_svc.write_text("#!/bin/sh\nexit 0\n")
     over.setdefault("no_klipper", False)
-    over.setdefault("start_sh", str(start_sh))
+    over.setdefault("s6_svc", str(s6_svc))
+    over.setdefault("klipper_svcdir", str(tmp_path / "svc" / "klipper"))
     return args(tmp_path, **over)
 
 
@@ -723,9 +730,7 @@ def test_it_starts_klipper_and_tells_it_the_bringup_is_done(tmp_path, stack,
     fake = with_klipper(monkeypatch, FakeKlipper(stack))
     with_bringup(monkeypatch, FakeBringup())
     assert imp.run(klipper_args(tmp_path)) == 0
-    assert fake.starts == 1
-    # start.sh must not redo the handshake we just did in process.
-    assert fake.env == ["1"]
+    assert fake.restarts == 1
 
 
 def test_klipper_already_running_is_not_started_again(tmp_path, stack,
@@ -734,7 +739,7 @@ def test_klipper_already_running_is_not_started_again(tmp_path, stack,
     fake.running = True
     with_bringup(monkeypatch, FakeBringup())
     assert imp.run(klipper_args(tmp_path)) == 0
-    assert fake.starts == 0
+    assert fake.restarts == 0
 
 
 def test_a_failed_connect_is_retried_with_a_fresh_handover(tmp_path, stack,
@@ -746,8 +751,7 @@ def test_a_failed_connect_is_retried_with_a_fresh_handover(tmp_path, stack,
     fake = with_klipper(monkeypatch, FakeKlipper(stack, after=3))
     bringups = with_bringup(monkeypatch, FakeBringup())
     assert imp.run(klipper_args(tmp_path, klipper_tries=3)) == 0
-    assert fake.starts == 3
-    assert fake.stops == 2
+    assert fake.restarts == 3
     assert len(bringups.calls) == 3
 
 
@@ -757,7 +761,7 @@ def test_it_gives_up_after_the_configured_tries(tmp_path, stack, monkeypatch):
     with_bringup(monkeypatch, FakeBringup())
     a = klipper_args(tmp_path, klipper_tries=2, timeout=30.0)
     assert imp.run(a) == 1
-    assert fake.starts == 2
+    assert fake.restarts == 2
     assert not os.path.exists(a.stamp)
 
 
@@ -779,16 +783,17 @@ def test_the_fault_frame_only_appears_once_at_the_end(tmp_path, stack,
     assert any("RETRYING" in s for _, s, _, _ in screen.frames)
 
 
-def test_start_sh_that_is_not_there_is_reported_not_ignored(tmp_path, stack,
-                                                            monkeypatch):
-    # A missing start.sh means no klipper at all, which is the worst outcome
-    # the mod has. It must reach the panel, not just the log.
+def test_an_s6_svc_that_is_not_there_is_reported_not_ignored(tmp_path, stack,
+                                                             monkeypatch):
+    # No s6-svc means klippy cannot be restarted, so a board that missed its
+    # window never gets a second chance -- the worst outcome the mod has. It
+    # must reach the panel, not just the log.
     stack.klippy_state = "startup"
     screen = with_screen(monkeypatch, FakeScreen())
     with_bringup(monkeypatch, FakeBringup())
     monkeypatch.setattr(imp, "klippy_running", lambda: False)
     a = args(tmp_path, no_screen=False, no_klipper=False, timeout=20.0,
-             start_sh=str(tmp_path / "absent.sh"))
+             s6_svc=str(tmp_path / "absent-s6-svc"))
     assert imp.run(a) == 1
     assert any("KLIPPER COULD NOT BE STARTED" in d for d in _details(screen))
 
@@ -798,7 +803,7 @@ def test_no_klipper_only_waits(tmp_path, stack, monkeypatch):
     fake = with_klipper(monkeypatch, FakeKlipper(stack))
     with_bringup(monkeypatch, FakeBringup())
     assert imp.run(args(tmp_path, no_klipper=True)) == 0
-    assert fake.starts == 0
+    assert fake.restarts == 0
 
 
 # -- the imports resolve when it is run the way the wrapper runs it ---------
