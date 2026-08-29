@@ -8,6 +8,15 @@ Each phase below is independently shippable and independently revertable, and
 each names the gate that proves it. Do not start a phase whose predecessor's
 gate is not passing.
 
+**Where this ended up.** The plan is kept as written. Two things about it have
+since gone the other way, so read the phases as a record rather than as a
+description of the tree: `anvil.conf` and every `MOD_*` switch in it were
+removed outright — a component runs because it is installed, and the settings
+worth keeping are stated in the service that uses them — so the phases below
+that read `anvil.conf` at runtime describe an intermediate state that no longer
+exists. The gates named as `test/integration/printer/case-*.sh` are modules
+under `qa/replica/` now.
+
 ## Why, in one paragraph
 
 `pkgs/anvil-core/payload/anvil-service.sh` hand-rolls in `ash` what a supervisor does in C:

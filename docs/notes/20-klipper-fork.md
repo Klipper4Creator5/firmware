@@ -40,10 +40,11 @@ when `pa_enable == 1` (479-487). `ff_toolchange.py` used to issue
 ### `c_helper.so` is built from the tree it ships with
 
 `pkgs/klipper` cross-compiles the .so from the chelper sources of the tree
-being shipped, using the Ingenic toolchain pinned in `versions.env`, and gates
-the result on both the ELF flags (MIPS32r2/nan2008/o32) and
-`test/test-chelper.py`'s symbol check. There is one source: the commit pinned
-in `versions.env`. `KLIPPER_FORK` — the `config.env` knob that pointed the
+being shipped, using the Ingenic toolchain pinned in `versions.env`. There is
+one source: the commit pinned in `versions.env`, and that single-source rule is
+now the whole defence — the recipe itself checks nothing about the object. The
+ELF flags (MIPS32r2/nan2008/o32) are asked once of the installed filesystem in
+`qa/replica/test_abi.py`, and the symbol check went with the `test/` tree. `KLIPPER_FORK` — the `config.env` knob that pointed the
 build at a local checkout instead — is gone with the move to `pkgs/`, because a
 recipe names its source exactly once and the second source is precisely what
 went wrong below.

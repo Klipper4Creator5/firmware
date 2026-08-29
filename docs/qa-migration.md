@@ -459,7 +459,7 @@ Three gates were dropped rather than ported, as a coverage decision:
 
 | dropped | was | consequence |
 |---|---|---|
-| the pytest gate | `run-tests.py` ran pytest and re-parsed its XML | none -- `make test-py` and CI run pytest directly |
+| the pytest gate | `run-tests.py` ran pytest and re-parsed its XML | none at the time -- `make test-py` and CI ran pytest directly; both went when `test/` was deleted |
 | the rootfs extraction | ran `unpack.sh` + `extract_rootfs` inline | none -- `make rootfs` does exactly this, and the replica lane already fails with that command in the message |
 | **the packaging build on a synthetic stock package** | `make-stock-fixture.sh`, then `unpack`/`patch`/`pack`/`verify.sh` | **real: `bin/unpack.sh`, `patch.sh`, `pack.sh` and `verify.sh` now have no test at all** |
 
@@ -486,17 +486,24 @@ klippy tree still went out on the firmware partition; the tree lives at
 `$MODDIR/klipper` now and neither that section nor the `chelper.tar` exists. Recover both from git history rather than from a fresh reading of
 a stock package.
 
-### What survives in test/
+### What survived in test/, and then did not
+
+Two things did, for a while. Both are gone now and `test/` with them:
 
 - **`test/integration/test_*.py`** -- 28 host-side unit tests in five files,
-  down from 186; see *The second cut* below.
-- **`test/test-chelper.py`** -- in neither suite. `bin/patch.sh` and
-  `bin/verify.sh` call it directly at build time.
+  down from 186; see *The second cut* below. Deleted, with nothing taking over
+  the tool-frame arithmetic, the chamber macros' per-model branching, the stamp
+  discipline in `ff-startup.py`, or the verification G-code.
+- **`test/test-chelper.py`** -- in neither suite; `pkgs/klipper/build.sh` and
+  `bin/verify.sh` called it directly at build time. Deleted with the tree, and
+  its callers with it. What keeps a stale `c_helper.so` out now is that
+  `pkgs/klipper` compiles the .so from the chelper sources of the tree it
+  ships.
 
 And two things that were under `test/` and are not tests, now at
 **`tools/replica/`**:
 
-- **`ffsim/`** -- 678 lines, down from 1,657, and no longer a test framework.
+- **`ffsim/`** -- 630 lines, down from 1,657, and no longer a test framework.
   `extract_rootfs` is what `make rootfs` runs; `Replica` is what
   `make boot-screen-sim` and, more to the point, **`bin/patch.sh`** use --
   the payload is assembled by running the printer's own `opkg` inside a

@@ -364,10 +364,11 @@ Two things the recipe took with it. `KLIPPER_FORK` — the `config.env` knob
 that pointed the build at a local checkout instead of the pin — is **gone**: a
 recipe names its source exactly once, a checkout beside a pinned tarball is
 the second source that rule forbids, and it is the *same* variable that let
-v20260824 ship a klippy tree nobody had built. And `test/test-chelper.py` no
-longer falls back to reading `KLIPPER_FORK` out of `config.env` when given no
-argument — that fallback printed `SKIP: no KLIPPER_FORK configured`, a green
-line for a check that had not run.
+v20260824 ship a klippy tree nobody had built. `test/test-chelper.py` had
+already stopped falling back to reading `KLIPPER_FORK` out of `config.env` when
+given no argument — that fallback printed `SKIP: no KLIPPER_FORK configured`, a
+green line for a check that had not run — and the script itself is gone now,
+deleted with the rest of `test/`.
 
 The package installs the tree under `$MODDIR/klipper`, where nothing reads it
 yet: klippy is still started by the stock `/usr/prog/klipper/klipperDaemon`,
@@ -438,11 +439,12 @@ which is the failure this layout is actually for — a misfiled file is caught
 by a build, an unruled directory is caught by nothing.
 
 **prog/ and seed/ are the not-yet-packaged residue, and that is the point of
-naming them.** Both empty out on the way to the end state: `seed/` when
-maintainer-script support lands and a postinst seeds `anvil.conf.default` only
-when the real file is absent; `prog/` when a postinst run against a STAGING
-ROOT places `/usr/prog/PROGRAM/software/firmwareExe` as a symlink into
-`$MODDIR`. The second is the interesting one, and it is only possible because
+naming them.** Both empty out on the way to the end state. `seed/` got there
+first and by a route this section did not predict: rather than a postinst
+seeding `anvil.conf.default` when the real file is absent, `anvil.conf` was
+removed outright and `seed/` left `anvil-core` with it. `prog/` empties when a
+postinst run against a STAGING ROOT places
+`/usr/prog/PROGRAM/software/firmwareExe` as a symlink into `$MODDIR`. The second is the interesting one, and it is only possible because
 `/usr/prog` is written by a tarball this repo bakes, not by a flash we do not
 control: the install can happen in the build container, which is what "the
 tarball becomes a view of the feed" below already assumes. The trap there is
@@ -656,10 +658,11 @@ payload's contents is what surfaced it.
 
 **Still owed by this phase**, and the allowlist in
 `test_every_payload_file_is_owned_by_a_package` is the list: `.install-manifest`
-(generated), `anvil.conf` and `config/moonraker-custom.conf` (user state, and
-arguably `conffiles` once the on-printer half lands), `bin/busybox` (optional,
-from `config.env`), and opkg's own `var`, `var/lib`, `var/run`. Six entries,
-three of them opkg's.
+(generated), `config/moonraker-custom.conf` (user state, and arguably
+`conffiles` once the on-printer half lands), and opkg's own `var`, `var/lib`,
+`var/run`. Five entries, three of them opkg's. `anvil.conf` was a sixth until
+it was removed outright -- the test says so where the entry used to be, so it
+cannot come back under an exemption.
 
 ## Phase 3 — a feed  *(~2–3 days)*
 
