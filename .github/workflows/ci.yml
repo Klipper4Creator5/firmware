@@ -99,11 +99,12 @@ jobs:
       - name: Fetch the s6 + CPython 3.13 build inputs
         run: |
           set -euo pipefail
-          # BUILD_KLIPPER=stock only -- this config.env exists purely to let
-          # fetch-assets.sh see a config at all; it skips Mainsail, HelixScreen
-          # and the Klipper fork (all still gated on their own BUILD_ flags,
-          # unset here) and fetches only what s6 and CPython need, since
-          # neither has a BUILD_ flag of its own. run-tests.py's own fixture
+          # This config.env exists purely to let fetch-assets.sh see a
+          # config at all; it skips Mainsail and HelixScreen (still gated on
+          # their own BUILD_ flags, unset here) and fetches what s6, CPython
+          # and the Klipper fork need, none of which has a BUILD_ flag of its
+          # own any more -- BUILD_KLIPPER is gone and the fork is the only
+          # Klipper, so its 27MB tarball comes down here with the rest. run-tests.py's own fixture
           # harness writes its own throwaway config.env for the actual suite
           # run below, with synthetic Mainsail/HelixScreen/Moonraker
           # stand-ins -- this one never reaches patch.sh, only fetch-assets.sh.
@@ -111,7 +112,6 @@ jobs:
           # in bin/patch.sh sections 5b/5c, the first time it runs against a
           # vendor/ that now has what those sections need.
           cat > config.env <<'CFG'
-          BUILD_KLIPPER=stock
           BUILD_MAINSAIL=0
           BUILD_HELIX=0
           BUILD_MOONRAKER=0

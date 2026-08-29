@@ -554,9 +554,8 @@ somebody tries it.
 still resolve a feed.
 
 **The gates reach here by absence.** A `PKG_WHEN`-gated recipe leaves no
-`.ipk` in the feed, so `BUILD_KLIPPER=stock` simply has no `anvil-klipper` to
-install — 30 packages instead of 31, with no `BUILD_*` flag restated outside
-the `pkg.conf` that owns it. The cost is that a *misspelled* root drops out
+`.ipk` in the feed, so `BUILD_HELIX=0` simply has no `anvil-helixscreen` to
+install, with no `BUILD_*` flag restated outside the `pkg.conf` that owns it. The cost is that a *misspelled* root drops out
 just as quietly, which is what `test_the_payload_roots_name_real_packages`
 exists for. A missing **dependency** is still a hard error, raised by opkg.
 

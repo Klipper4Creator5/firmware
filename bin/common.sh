@@ -20,6 +20,13 @@ fi
 # forked Klipper with toolchanger support, Mainsail/Moonraker, ssh, and
 # HelixScreen driving the touchscreen in place of FlashForge's UI.
 #
+# KLIPPER IS NOT ON THIS LIST any more. BUILD_KLIPPER=stock kept FlashForge's
+# v0.12 tree, and every other thing we ship is now written against the fork:
+# the ff_*.py extras are anvil-klipper's own files, the ff-*.cfg declare
+# sections only they implement, and c_helper.so is built from the tree beside
+# it. A stock build was a printer with the mod's configuration and none of the
+# code behind it.
+#
 # Plain defaults, overridable from config.env, which is sourced above. Not an
 # exhaustive list: MOD_CAM and MOD_WIFI are defaulted where they are used, in
 # bin/patch.sh, and appear here only if config.env sets them.
@@ -31,7 +38,6 @@ fi
 # everything that came out of a package (`make test-recovery`). Moonraker is
 # the exception: it lives only on the factory image, so a reflash cannot put
 # FlashForge's back -- see BUILD_MOONRAKER and docs/how-it-works.md.
-BUILD_KLIPPER="${BUILD_KLIPPER:-fork}"
 BUILD_TOOLCHANGE="${BUILD_TOOLCHANGE:-1}"
 BUILD_MAINSAIL="${BUILD_MAINSAIL:-1}"
 BUILD_MOONRAKER="${BUILD_MOONRAKER:-1}"

@@ -232,6 +232,20 @@ def run_pytest(reporter):
 
 # ------------------------------------------- packaging, on a synthetic stock
 
+def _versions():
+    """versions.env as a dict. It is plain KEY="value" lines, and the fixture
+    needs two of them by name -- reading the file beats a second copy of the
+    pins that can drift from it."""
+    out = {}
+    for line in (ROOT / "versions.env").read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+
 def make_fixture(reporter, tmp):
     """Build the synthetic stock package and the throwaway config for it.
 
@@ -274,37 +288,39 @@ def make_fixture(reporter, tmp):
     # verify gate then reads is a stump: no init.d, no HelixScreen, no
     # Moonraker. That is exactly how it failed in CI while `make test` was
     # green locally against a populated vendor/.
-    moonraker_fixture = assets / "mr" / "moonraker-fixture" / "moonraker"
+    #
+    # THE TOP DIRECTORY IS moonraker-$MOONRAKER_VERSION, not a fixed name.
+    # pkgs/moonraker/build.sh looks for exactly that, the way GitHub's
+    # generated tarballs are named, and a "moonraker-fixture" top level meant
+    # this lane could never build anvil-moonraker at all -- it passed only
+    # while work/pkg/moonraker happened to hold a tree from a REAL build,
+    # because pkg_stamp keys on the version and not on the tarball. The first
+    # run after that cache was cold failed with "no moonraker/moonraker.py",
+    # which is a true statement about a tarball nobody could have made work.
+    mr_top = "moonraker-%s" % _versions()["MOONRAKER_VERSION"]
+    moonraker_fixture = assets / "mr" / mr_top / "moonraker"
     (moonraker_fixture / "components").mkdir(parents=True, exist_ok=True)
     (moonraker_fixture / "moonraker.py").write_text("# moonraker fixture\n")
     (moonraker_fixture / "components" / "webcam.py").write_text(
         '# "enabled"\n')
     subprocess.run(["tar", "-czf", str(assets / "moonraker.tar.gz"),
-                    "-C", str(assets / "mr"), "moonraker-fixture"], check=True)
+                    "-C", str(assets / "mr"), mr_top], check=True)
 
     # A throwaway config, passed through CONFIG_ENV rather than written over
     # ./config.env -- which would put the config you edited one crashed run
     # away from being replaced by a fixture one.
     config_file = Path(tmp) / "config.env"
-    # BUILD_KLIPPER=stock, BY NAME: this job must not need the network, and
-    # the fork path needs the pinned tarball plus the ~203MB toolchain from
-    # vendor/. Named explicitly because patch.sh refuses to fall back silently
-    # -- a fork build that quietly kept the stock tree is how v20260824 shipped
-    # without its Klipper. The fork path is exercised where vendor/ exists: the
-    # printer-sim job and the release workflow.
+    # THE FORK IS THE ONLY KLIPPER now, so this lane builds it. It used to say
+    # BUILD_KLIPPER=stock to keep off the network, and that reason had already
+    # expired: since the payload became the feed installed, this lane runs
+    # build-packages first and that needs the ~203MB Ingenic toolchain out of
+    # vendor/ for CPython alone. The Klipper tarball is 27MB beside it, cached
+    # on versions.env like everything else.
     config_file.write_text(
         "MOD_NAME=anvil\n"
         "MOD_VER=ci\n"
         'SW_VER=""\n'
         'STOCK_TGZ="%s"\n'
-        "BUILD_KLIPPER=stock\n"
-        # AND THEREFORE BUILD_TOOLCHANGE=0. The ff_*.py extras are
-        # anvil-klipper's now, so BUILD_KLIPPER=stock builds nothing that
-        # carries them -- and they are written against the fork's v0.13
-        # klippy, so dropping them onto FlashForge's v0.12 is the mixture that
-        # shipped as v20260824. patch.sh refuses the pair rather than shipping
-        # ff-*.cfg whose sections nothing implements.
-        "BUILD_TOOLCHANGE=0\n"
         'HELIX_TGZ="%s"\n'
         'MAINSAIL_ZIP="%s"\n'
         'MOONRAKER_TGZ="%s"\n'

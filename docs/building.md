@@ -108,7 +108,7 @@ This distinction is the one to keep straight:
 
 * **`BUILD_*`** decides what goes *into* a package. Read at build time only,
   defaulted in `bin/common.sh`, never present on the printer.
-  (`BUILD_KLIPPER`, `BUILD_TOOLCHANGE`, `BUILD_MAINSAIL`, `BUILD_MOONRAKER`,
+  (`BUILD_TOOLCHANGE`, `BUILD_MAINSAIL`, `BUILD_MOONRAKER`,
   `BUILD_HELIX`.)
 * **`MOD_*`** are runtime switches. They are written into
   `/usr/data/anvil/anvil.conf`, which the printer re-reads at every boot, so
@@ -250,9 +250,9 @@ pkgs/helixscreen/
 The init scripts stay with `anvil-core` and do NOT move to the components
 they start, which looks inconsistent and is not. Those services are gated at
 RUNTIME by flags in `anvil.conf`; the packages that would own the scripts are
-gated at BUILD time by `BUILD_KLIPPER` and `BUILD_HELIX`. A
-`BUILD_KLIPPER=stock` tarball has no `anvil-klipper` package, so it would
-carry no `S70klipper`, and nothing would start Klipper at all. The script that
+gated at BUILD time by `BUILD_HELIX`. A
+`BUILD_HELIX=0` tarball has no `anvil-helixscreen` package, so it would carry
+no `S80ui`, and nothing would decide about the screen at all. The script that
 reads a flag must not itself sit behind a second, different flag.
 
 **Builds it** — host-side, never installed:

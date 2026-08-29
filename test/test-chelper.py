@@ -81,8 +81,9 @@ def main():
     fork = sys.argv[1]
     so = os.path.join(fork, "klippy", "chelper", "c_helper.so")
     init_py = os.path.join(fork, "klippy", "chelper", "__init__.py")
-    # Still a skip rather than a failure: bin/verify.sh runs this over a
-    # BUILD_KLIPPER=stock package too, where there is no fork tree to check.
+    # Still a skip rather than a failure: the synthetic stock fixture has a
+    # klipper tree with no real c_helper.so in it, and this program is also
+    # pointed at hand-made trees from the command line.
     if not os.path.exists(so) or not os.path.exists(init_py):
         print("  SKIP: no c_helper.so / __init__.py under %s" % fork)
         return 0

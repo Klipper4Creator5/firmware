@@ -85,10 +85,10 @@ fi
 # gone, because pkgs/klipper is a recipe and a recipe names its source exactly
 # once. A checkout is no longer a second way in; re-pin KLIPPER_VERSION and
 # KLIPPER_SHA256 at your own tarball to build something else.
-if [ "$ALL" = 1 ] || [ "${BUILD_KLIPPER:-0}" = "fork" ]; then
-    get "https://github.com/Klipper4FlashForge/klipper/archive/$KLIPPER_VERSION.tar.gz" \
-        "$KLIPPER_TGZ" "$KLIPPER_SHA256"
-fi
+# No BUILD_ flag: the fork is the only Klipper, so this comes down on every
+# build like s6 and CPython do.
+get "https://github.com/Klipper4FlashForge/klipper/archive/$KLIPPER_VERSION.tar.gz" \
+    "$KLIPPER_TGZ" "$KLIPPER_SHA256"
 
 # The Ingenic glibc toolchain -- ~203MB, and shared by every recipe that
 # compiles: the interpreter and its seven libraries, the supervision stack,
@@ -100,8 +100,7 @@ fi
 # recipe at once, so the fetcher computes the cache key with the code that
 # writes it -- which is exactly what went wrong with the s6 stamp below. The
 # separate Klipper clause went with them: chelper is pkgs/klipper now, so
-# pkg_needs already covers it, and the clause would have been the fourth place
-# in this file that knew what BUILD_KLIPPER means.
+# pkg_needs already covers it.
 if [ "$ALL" = 1 ] || pkg_needs; then
     get "https://github.com/ballaswag/k1-discovery/releases/download/$MIPS_TOOLCHAIN_VERSION/$MIPS_TOOLCHAIN_FILE" \
         "$MIPS_TOOLCHAIN_TGZ" "$MIPS_TOOLCHAIN_SHA256"
@@ -134,12 +133,11 @@ get "https://skarnet.org/software/s6-rc/s6-rc-$S6RC_VERSION.tar.gz" \
 # every build. They are ~40MB in total and cached by sha256 like everything
 # else, so that is a first-build cost and nothing after it.
 #
-# The Ingenic toolchain that compiles them is fetched further up, but ONLY on
-# the Klipper-fork path -- so it is asked for again here, on the condition
-# that decides whether patch.sh has to compile at all. Without this a
-# BUILD_KLIPPER=stock build would download 40MB of source and then stop
-# because there is no compiler for it, and it would stop halfway through
-# patch.sh rather than here where the fix is one command.
+# The Ingenic toolchain that compiles them is fetched further up, on
+# pkg_needs -- so it is asked for again here, on the condition that decides
+# whether patch.sh has to compile at all. Without this a build could download
+# 40MB of source and then stop because there is no compiler for it, halfway
+# through patch.sh rather than here where the fix is one command.
 #
 # The condition is the same version stamp patch.sh writes: work/.py313 holds
 # the cross-built tree and names the versions it came from, so a checkout that

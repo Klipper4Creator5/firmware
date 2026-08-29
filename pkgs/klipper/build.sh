@@ -57,9 +57,9 @@ pkg_stage "$PKG_WORK/src/$_top/klippy" "klipper/klippy"
 # NOT gated on BUILD_TOOLCHANGE. An extra is inert until a config section
 # instantiates it and those sections are anvil-klipper-config's, where the
 # flag still applies -- so gating here bought nothing and cost the mismatch
-# that kept these five files on /usr/prog: this recipe answers to
-# BUILD_KLIPPER, they answered to BUILD_TOOLCHANGE, and a package cannot hold
-# files with a different gate from its own.
+# that kept these five files on /usr/prog: this recipe had a gate of its own
+# and they had a different one, and a package cannot hold files gated
+# differently from itself.
 for _e in "$PKG_DIR"/payload/klipper/klippy/extras/ff_*.py; do
     pkg_stage "$_e" "klipper/klippy/extras/$(basename "$_e")"
 done

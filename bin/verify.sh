@@ -82,18 +82,18 @@ if [ -f "$WORK/sw/app_startup.sh" ]; then
 fi
 
 # 7 ------------------------------------------------- MIPS ABI of any binaries
-# A fork build that ships no fork is a broken package, not an optional check:
-# the v20260824 release passed here precisely because everything below was
-# conditional on files that the broken build simply did not contain.
-if [ "${BUILD_KLIPPER:-fork}" = "fork" ]; then
-    if [ -f "$WORK/sw/klipper/klippy/chelper/__init__.py" ]; then
-        ok "package carries the fork klippy tree"
-    else
-        bad "BUILD_KLIPPER=fork but no klippy tree in the package -- this is the stock-overlay build that shipped as v20260824"
-    fi
-    [ -f "$WORK/sw/klipper/chelper.tar" ] \
-        || bad "BUILD_KLIPPER=fork but no chelper.tar in the package"
+# A package that ships no fork is a broken package, not an optional check: the
+# v20260824 release passed here precisely because everything below was
+# conditional on files that the broken build simply did not contain. It is
+# unconditional now for a second reason as well -- BUILD_KLIPPER is gone, so
+# there is no configuration in which a package legitimately has no klippy.
+if [ -f "$WORK/sw/klipper/klippy/chelper/__init__.py" ]; then
+    ok "package carries the fork klippy tree"
+else
+    bad "no klippy tree in the package -- this is the stock-overlay build that shipped as v20260824"
 fi
+[ -f "$WORK/sw/klipper/chelper.tar" ] \
+    || bad "no chelper.tar in the package"
 if [ -f "$WORK/sw/klipper/chelper.tar" ]; then
     mkdir -p "$WORK/ch" && tar -xf "$WORK/sw/klipper/chelper.tar" -C "$WORK/ch"
     CHELPER=$(find "$WORK/ch" -name 'c_helper.so' | head -n1)

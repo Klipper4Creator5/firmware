@@ -40,12 +40,11 @@
 # WHAT STAYS, AND WHY IT IS NOT THE SAME QUESTION. init.d/ and etc/s6/ look
 # like they belong to the services they start -- S62moonraker to Moonraker,
 # S70klipper to Klipper -- and moving them would brick a printer. Those
-# services are gated at RUNTIME by flags in anvil.conf, and the packages that
-# would own the scripts are gated at BUILD time by BUILD_KLIPPER and
-# BUILD_HELIX. A BUILD_KLIPPER=stock tarball has no anvil-klipper package, so
-# it would ship no S70klipper, and nothing would start Klipper at all. The
-# scripts that read a flag must not themselves be behind a second, different
-# flag. nginx.conf stays for a plainer reason: nginx is the rootfs's binary
+# services are gated at RUNTIME by flags in anvil.conf, while the package that
+# would own S80ui is gated at BUILD time by BUILD_HELIX. A BUILD_HELIX=0
+# tarball has no anvil-helixscreen package, so it would ship no S80ui and
+# nothing would decide about the screen at all. The scripts that read a flag
+# must not themselves be behind a second, different flag. nginx.conf stays for a plainer reason: nginx is the rootfs's binary
 # and there is no package here to give it to.
 #
 # THE s6 SERVICE DEFINITIONS ARE HERE, for now, and that is a decision with a

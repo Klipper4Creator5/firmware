@@ -65,7 +65,7 @@ esac
 # when somebody tries it. Naming the closure by hand would have hidden that.
 #
 # A root with no .ipk in the feed is skipped, which is how the PKG_WHEN gates
-# reach here: BUILD_KLIPPER=stock builds no anvil-klipper, so there is nothing
+# reach here: BUILD_HELIX=0 builds no anvil-helixscreen, so there is nothing
 # to install and no flag restated in this file. A missing DEPENDENCY is still
 # an error, and opkg raises it.
 #
@@ -146,84 +146,65 @@ sed -i "s/^Installed-Time: .*/Installed-Time: ${SOURCE_DATE_EPOCH:-1}/" \
 say "payload: $(grep -c '^Package:' "$PAYLOAD_DIR/var/lib/opkg/status") packages installed ($MODEL_PKG for $TARGET_MACHINE)"
 
 # ---------------------------------------------------------------- 1. Klipper
-# BUILD_KLIPPER=fork (the default) ships the creator5 Klipper tree; =stock
-# keeps FlashForge's, and has to be asked for by name. There is no silent
-# middle: a "fork" build quietly falling back to stock is exactly what
-# shipped as v20260824-nova-kakhovka -- KLIPPER_FORK was empty in CI, this
-# block skipped itself, and the stock 0.12-era overlay half-overwrote the
-# v0.13 tree on already-modded printers. klippy died at connect with
-# "'void(*)(struct stepper_kinematics *, double, double, double)' expects 4
-# arguments, got 3": a v0.12 extruder.py calling the v0.13 chelper cdef
-# (upstream c84d78f3f widened extruder_set_pressure_advance). KLIPPER_FORK is
-# gone -- the local-checkout seam it named would have been a second source for
-# a recipe that is allowed exactly one -- so "fork" now means the commit
-# pinned in versions.env and nothing else, and there is no configuration under
-# which this section can produce a tree it did not build.
+# THE BUILD LIVES IN pkgs/klipper, and this section copies what it produced --
+# the arrangement sections 3, 4, 5 and 5d have had since each became a recipe,
+# and for the same reason: the .ipk and the tarball have to contain the same
+# klippy tree and the same c_helper.so, or they are two different Klippers
+# wearing one version number and no test can tell which a printer got.
 #
-# THE BUILD LIVES IN pkgs/klipper, and this section copies what it
-# produced -- the arrangement sections 3, 4, 5 and 5d have had since each
-# became a recipe, and for the same reason: the .ipk and the tarball have to
-# contain the same klippy tree and the same c_helper.so, or they are two
-# different Klippers wearing one version number and no test can tell which a
-# printer got. What was here -- an unpacked toolchain, a hand-written gcc
-# line, an mtime cache and two gates -- is in pkgs/klipper/build.sh, where
-# `make packages` runs it too.
-case "${BUILD_KLIPPER:-fork}" in
-fork)
-    # THE TREE COMES OUT OF THE PAYLOAD, which is to say out of the installed
-    # anvil-klipper package -- not out of the recipe's build directory. That
-    # is the last place this script reached into work/pkg, and removing it is
-    # what makes "the tarball and the .ipk contain the same klippy" true by
-    # construction instead of by two copies of one cp -a agreeing.
-    _kl="$PAYLOAD_DIR/klipper"
-    [ -d "$_kl/klippy" ] || pkg_die \
-        "BUILD_KLIPPER=fork but the payload has no $MODDIR/klipper/klippy -- anvil-klipper is gated on BUILD_KLIPPER too (pkgs/klipper/pkg.conf), so the two disagree"
+# THERE IS NO STOCK PATH. BUILD_KLIPPER=stock kept FlashForge's v0.12 tree and
+# it is gone -- everything else the mod ships is written against the fork. The
+# flag's own history is why it went rather than gaining another guard: a
+# "fork" build silently falling back to stock is exactly what shipped as
+# v20260824-nova-kakhovka, where the 0.12-era overlay half-overwrote the v0.13
+# tree and klippy died at connect with "expects 4 arguments, got 3" -- a v0.12
+# extruder.py calling the v0.13 chelper cdef.
+#
+# THE TREE COMES OUT OF THE PAYLOAD, which is to say out of the installed
+# anvil-klipper package, not out of the recipe's build directory. That was the
+# last place this script reached into work/pkg, and removing it is what makes
+# "the tarball and the .ipk contain the same klippy" true by construction
+# rather than by two copies of one cp -a agreeing.
+_kl="$PAYLOAD_DIR/klipper"
+[ -d "$_kl/klippy" ] || pkg_die \
+    "the payload has no $MODDIR/klipper/klippy -- anvil-klipper did not install"
 
-    # THE FORK GOES TO THE SOFTWARE COMPONENT, not to $MODDIR, and that is why
-    # this is a copy rather than a line in the payload loop below. klippy is
-    # started by the stock /usr/prog/klipper/klipperDaemon, so it has to be
-    # where that binary looks. The package installs the same tree under
-    # $MODDIR/klipper, which is inert until phase 7 of
-    # docs/notes/80-s6-migration.md moves Klipper there and this mod starts it
-    # itself; see pkgs/klipper/pkg.conf.
-    #
-    # Stock ships only a handful of klippy files as an overlay; the fork is a
-    # different Klipper generation, so the WHOLE tree replaces it.
-    rm -rf "$SOFTWARE_DIR/klipper/klippy"
-    mkdir -p "$SOFTWARE_DIR/klipper"
-    cp -a "$_kl/klippy" "$SOFTWARE_DIR/klipper/klippy"
+# THE FORK GOES TO THE SOFTWARE COMPONENT, not to $MODDIR, and that is why
+# this is a copy rather than a line in the payload loop below. klippy is
+# started by the stock /usr/prog/klipper/klipperDaemon, so it has to be
+# where that binary looks. The package installs the same tree under
+# $MODDIR/klipper, which is inert until phase 7 of
+# docs/notes/80-s6-migration.md moves Klipper there and this mod starts it
+# itself; see pkgs/klipper/pkg.conf.
+#
+# Stock ships only a handful of klippy files as an overlay; the fork is a
+# different Klipper generation, so the WHOLE tree replaces it.
+rm -rf "$SOFTWARE_DIR/klipper/klippy"
+mkdir -p "$SOFTWARE_DIR/klipper"
+cp -a "$_kl/klippy" "$SOFTWARE_DIR/klipper/klippy"
 
-    # chelper.tar IS THE STOCK INSTALLER'S VEHICLE, not a second build. The
-    # software component's run.sh ends with
-    # `tar -xf $WORK_DIR/klipper/chelper.tar -C /usr/prog/klipper/klippy/`
-    # (see test/integration/make-stock-fixture.sh), so a package without it
-    # extracts nothing over the .so already inside klippy/ -- harmless today,
-    # and a missing file the moment FlashForge's installer stops copying
-    # klippy/ wholesale. bin/verify.sh fails a fork package that lacks it.
-    # Packing it here rather than in the recipe keeps it out of the .ipk,
-    # where a tarball of a file the package already contains would be 30KB of
-    # the same object under a second name.
-    rm -rf work/.chelper
-    mkdir -p work/.chelper/chelper
-    cp -f "$_kl/klippy/chelper/c_helper.so" work/.chelper/chelper/c_helper.so
-    tar -cf "$SOFTWARE_DIR/klipper/chelper.tar" -C work/.chelper chelper
-    rm -rf work/.chelper
+# chelper.tar IS THE STOCK INSTALLER'S VEHICLE, not a second build. The
+# software component's run.sh ends with
+# `tar -xf $WORK_DIR/klipper/chelper.tar -C /usr/prog/klipper/klippy/`
+# (see test/integration/make-stock-fixture.sh), so a package without it
+# extracts nothing over the .so already inside klippy/ -- harmless today,
+# and a missing file the moment FlashForge's installer stops copying
+# klippy/ wholesale. bin/verify.sh fails a fork package that lacks it.
+# Packing it here rather than in the recipe keeps it out of the .ipk,
+# where a tarball of a file the package already contains would be 30KB of
+# the same object under a second name.
+rm -rf work/.chelper
+mkdir -p work/.chelper/chelper
+cp -f "$_kl/klippy/chelper/c_helper.so" work/.chelper/chelper/c_helper.so
+tar -cf "$SOFTWARE_DIR/klipper/chelper.tar" -C work/.chelper chelper
+rm -rf work/.chelper
 
-    # klippy/ now contains the fork's own extras+kinematics, so the stock
-    # overlay dirs would only re-inject 0.12-era files on top. Drop them.
-    # extras/ is recreated empty because section 2 puts ff_*.py in it.
-    rm -rf "$SOFTWARE_DIR/klipper/extras" "$SOFTWARE_DIR/klipper/kinematics"
-    mkdir -p "$SOFTWARE_DIR/klipper/extras"
-    say "Klipper: fork tree from pinned commit ${KLIPPER_VERSION:0:8}"
-    ;;
-stock)
-    skip "Klipper: keeping stock tree (BUILD_KLIPPER=stock)"
-    ;;
-*)
-    echo "BUILD_KLIPPER must be 'fork' or 'stock' (got '${BUILD_KLIPPER:-}')" >&2
-    exit 1
-    ;;
-esac
+# klippy/ now contains the fork's own extras+kinematics, so the stock
+# overlay dirs would only re-inject 0.12-era files on top. Drop them.
+# extras/ is recreated empty because section 2 puts ff_*.py in it.
+rm -rf "$SOFTWARE_DIR/klipper/extras" "$SOFTWARE_DIR/klipper/kinematics"
+mkdir -p "$SOFTWARE_DIR/klipper/extras"
+say "Klipper: fork tree from pinned commit ${KLIPPER_VERSION:0:8}"
 
 # ----------------------------------------------------------- 2. Toolchanger
 # The configs are three packages, installed by section 0: anvil-klipper-config
@@ -235,13 +216,8 @@ if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
     say "Toolchange: ff_*.py + configs"
     # OUT OF THE PAYLOAD, like section 1's klippy tree and for the same
     # reason: anvil-klipper carries these now, so copying them from the
-    # recipe directory would be a second source for a file a package already
-    # holds. They ride the fork, so BUILD_KLIPPER=stock has none to copy --
-    # said out loud rather than left as five files silently missing from a
-    # printer that would then fail at klippy's first [ff_toolchange].
+    # recipe directory would be a second source for a file a package holds.
     _ffx="$PAYLOAD_DIR/klipper/klippy/extras"
-    [ -d "$_ffx" ] || pkg_die \
-        "BUILD_TOOLCHANGE=1 needs the ff_*.py extras and BUILD_KLIPPER=${BUILD_KLIPPER:-fork} built no anvil-klipper to carry them. Set BUILD_TOOLCHANGE=0, or BUILD_KLIPPER=fork"
     mkdir -p "$SOFTWARE_DIR/klipper/extras"
     # Named by the recipe, not globbed out of the payload: the fork ships an
     # ff_eddy.py of its own and `ff_*.py` cannot tell it from ours. It rides

@@ -516,7 +516,7 @@ def test_the_payload_roots_name_real_packages():
     """A typo in MOD_ROOTS is silent, so it gets a test instead.
 
     patch.sh skips a root with no .ipk in the feed, because that is how a
-    PKG_WHEN-gated recipe -- BUILD_HELIX=0, BUILD_KLIPPER=stock -- drops out
+    PKG_WHEN-gated recipe -- BUILD_HELIX=0, BUILD_TOOLCHANGE=0 -- drops out
     without the flags being restated here. The cost is that a misspelled root
     drops out the same way: no error, one package quietly missing from the
     release. Nothing downstream would notice; the payload would just be
