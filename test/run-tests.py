@@ -306,9 +306,19 @@ def make_fixture(reporter, tmp):
         "TARGET_MACHINE=Creator5Pro\n"
         "ROOT_PW_HASH='$6$ci$abcdefghijklmnopqrstuvwxyz'\n"
         "FF_KEY='FFP0331&*%%root'\n"
+        # A FEED OF ITS OWN, for the same reason the config is a throwaway.
+        # The payload is assembled by installing packages, so this lane builds
+        # them -- and it builds them from a config that renames every package
+        # carrying MOD_VER and points three recipes at fixture assets. Sharing
+        # work/packages would leave anvil-core_ci-1 where the developer's
+        # anvil-core_<date>-1 was, and bin/build-packages.sh's prune would
+        # delete the rest of their feed on the way past. Measured, the first
+        # time this lane ran: 44 packages became 43, all renamed.
+        'PKG_FEED="%s"\n'
         % (stock_package, assets / "helixscreen.tar.gz",
            assets / "mainsail.zip",
-           assets / "moonraker.tar.gz"))
+           assets / "moonraker.tar.gz",
+           fxdir / "packages"))
 
     return dict(os.environ, CONFIG_ENV=str(config_file),
                 TARGET_MACHINE="Creator5Pro")
@@ -378,7 +388,19 @@ def main():
             # build.
             failures_before = reporter.failed
             broken = False
-            for step in ("unpack", "patch", "pack"):
+            # build-packages FIRST, and under the FIXTURE's config. The payload
+            # is assembled by installing the feed, so patch.sh needs .ipk files
+            # that match the config it is running under -- and this config is
+            # not the developer's: MOD_VER=ci alone renames every package whose
+            # version is the release date, so a feed built from config.env
+            # resolves to filenames that do not exist here. It also points
+            # MAINSAIL_ZIP and friends at the tiny stand-ins make_fixture
+            # writes, which is what keeps this lane off the network.
+            #
+            # Cheap in practice: the pinned third-party recipes are keyed on
+            # their own versions and stay cached, so what actually rebuilds is
+            # the handful of packages carrying MOD_VER or a fixture asset.
+            for step in ("build-packages", "unpack", "patch", "pack"):
                 with reporter.gate(step):
                     reporter.run(["./bin/%s.sh" % step], cwd=ROOT, env=env)
                 if reporter.failed > failures_before:
@@ -397,7 +419,7 @@ def main():
     # those packages land in the same work/out a real build uses -- and a
     # 380KB Creator5Pro-anvil-ci.tgz sitting there is one `make test-install`
     # away from being mistaken for something shippable.
-    for d in ("out", "stage", "software", "outer", "modpayload"):
+    for d in ("out", "stage", "software", "outer", "modpayload-root"):
         shutil.rmtree(str(ROOT / "work" / d), ignore_errors=True)
 
     if not stock:

@@ -444,22 +444,28 @@ def test_a_recipe_does_not_rebuild_the_shared_parts(recipe):
             % (recipe, gone.strip()))
 
 
-def test_the_package_and_the_payload_share_one_build():
-    """libsodium is compiled once, whichever vehicle it ships in.
+def test_the_payload_is_the_feed_installed():
+    """Nothing ships twice, because the payload IS the packages.
 
-    bin/patch.sh stages $SODIUM_BUILD into the payload and pkgs/3rdparty/libsodium
-    packages $SODIUM_BUILD, and both get there by running
-    pkgs/3rdparty/libsodium/build.sh. While that is true the tarball's copy and the
-    package's copy cannot be different libraries wearing one version number.
-    It stops being true the moment somebody gives either side its own configure
-    line, which is a one-line edit and would be invisible in review.
+    This test used to assert the opposite of what it asserts now, and the
+    property it protects is the same one. bin/patch.sh used to run each recipe
+    and copy its build tree into the payload, so the risk was that the
+    tarball's copy and the packaged copy came from different code -- and the
+    test demanded that patch.sh run the recipe's own build.sh, which was the
+    cheapest way to make "one build, two vehicles" true.
+
+    There is one vehicle now. patch.sh installs the .ipk files into a staging
+    root and ships what lands there, so the payload cannot disagree with the
+    package: it is the package. What has to be checked instead is that nobody
+    reintroduces the second path, which is why the assertions below are
+    negative.
     """
     patch = (ROOT / "bin" / "patch.sh").read_text()
 
-    # Every recipe whose output bin/patch.sh stages into the payload. Listed
-    # rather than derived, because the property under test is that a HUMAN
-    # decided each of these ships both ways -- a list read off patch.sh would
-    # agree with patch.sh by construction and assert nothing.
+    # Every recipe whose output reaches the payload. Listed rather than
+    # derived, because the property under test is that a HUMAN decided each of
+    # these ships -- a list read off patch.sh would agree with patch.sh by
+    # construction and assert nothing.
     staged = ("libsodium", "mainsail", "moonraker", "helixscreen",
               "skalibs", "execline", "s6", "s6-rc", "anvil-core", "python",
               "klipper", "klipper-config", "klipper-creator5-config",
@@ -467,15 +473,35 @@ def test_the_package_and_the_payload_share_one_build():
     for recipe in staged:
         d = recipe_dir(recipe)
         assert d is not None, (
-            "bin/patch.sh is expected to run the %s recipe and there is no "
-            "such recipe" % recipe)
+            "the payload is expected to carry the %s recipe's package and "
+            "there is no such recipe" % recipe)
         rel = d.relative_to(ROOT)
-        assert "bash %s/build.sh" % rel in patch, (
-            "bin/patch.sh does not run %s/build.sh -- the payload's copy "
-            "and the packaged one are built by different code, and nothing "
-            "downstream can tell which a printer got" % rel)
         assert (d / "build.sh").is_file(), (
-            "bin/patch.sh runs %s/build.sh and there is no such file" % rel)
+            "%s has no build.sh, so bin/build-packages.sh cannot build the "
+            ".ipk the payload is assembled from" % rel)
+        assert "bash %s/build.sh" % rel not in patch, (
+            "bin/patch.sh runs %s/build.sh again. The payload is installed "
+            "from the feed now, so a recipe run here is a second build of "
+            "something already in an .ipk -- and the two can drift" % rel)
+
+    # The staging path itself, in the two spellings it would come back as.
+    body = "\n".join(ln for ln in patch.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "pkg_out" not in body, (
+        "bin/patch.sh reads a recipe's build tree through pkg_out. The payload "
+        "comes out of the .ipk; work/pkg is the packager's business")
+    assert "work/pkg" not in body, (
+        "bin/patch.sh names work/pkg -- see pkg_out above")
+
+    # And it must install them the one supported way. pkgs/ipk-install is for
+    # the printer, which has no opkg; the build host has one and uses it.
+    assert "--offline-root" in body or "offline_root" in body, (
+        "bin/patch.sh does not point opkg at an offline root -- how is the "
+        "payload being assembled?")
+    assert "ipk-install" not in body, (
+        "bin/patch.sh uses pkgs/ipk-install. That is the printer's installer, "
+        "written because the printer has no opkg and no ar; the build "
+        "container has both and pkg_buildopkg builds the real client")
 
     # And the reverse direction: patch.sh must not have grown its own copy of
     # a build it delegates. A `./configure` anywhere in it would mean some
@@ -896,8 +922,10 @@ def test_the_python_package_list_and_the_recipes_agree():
     versions.env alone is fetched, hashed and never built, and a recipe added
     alone has no source to build from.
 
-    bin/patch.sh checks the first direction at build time, one entry at a time.
-    This checks both, all at once, without building anything.
+    This checks both directions at once, without building anything. It used to
+    say that bin/patch.sh checked the first one at build time as it looped over
+    the list; patch.sh installs packages now and has no such loop, so this is
+    the only thing asking.
     """
     listed = set(_sh('printf "%s" "$PYPKG_LIST"').split())
     recipes = {d.name[len("python-"):] for d in (ROOT / "pkgs" / "3rdparty").glob("python-*")
@@ -928,23 +956,17 @@ def test_a_python_package_does_not_pin_its_version_twice():
             % (conf.relative_to(ROOT), want))
 
 
-def test_bin_patch_builds_every_python_package():
-    """The eighteen recipes are run by patch.sh, in a loop over the same list.
-
-    The other staged recipes appear in bin/patch.sh by name, and
-    test_the_package_and_the_payload_share_one_build checks each of those. The
-    python packages are too many for that and are driven from PYPKG_LIST
-    instead -- so what is checked here is that the loop exists and reaches the
-    recipe directory, rather than eighteen literal lines.
-    """
-    patch = (ROOT / "bin" / "patch.sh").read_text()
-    assert 'for p in $PYPKG_LIST; do' in patch, (
-        "bin/patch.sh no longer iterates PYPKG_LIST -- the python packages "
-        "are either not built or built from a list of their own")
-    assert 'bash "pkgs/3rdparty/python-$p/build.sh"' in patch, (
-        "bin/patch.sh iterates PYPKG_LIST but does not run pkgs/3rdparty/python-$p/"
-        "build.sh, so the payload's copy and the packaged one are built by "
-        "different code")
+# test_bin_patch_builds_every_python_package WAS HERE and is deleted rather
+# than rewritten. It asserted that bin/patch.sh contained
+# `for p in $PYPKG_LIST; do` and ran each pkgs/3rdparty/python-$p/build.sh,
+# which was how the eighteen wheels reached the payload. patch.sh installs
+# packages now and does not know which of them are wheels, so the loop is
+# gone.
+#
+# Nothing is lost: the property it was protecting -- a pin in PYPKG_LIST with
+# no recipe is fetched, hashed and never built -- is
+# test_the_python_package_list_and_the_recipes_agree above, which checks it in
+# BOTH directions and needs neither a build nor a shell script to read.
 
 def test_every_declared_dependency_is_a_package_this_feed_builds():
     """A Depends the feed cannot satisfy is an install that refuses itself.

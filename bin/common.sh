@@ -59,13 +59,22 @@ MODDIR="${MODDIR:-/usr/data/anvil}"
 # Where the payload -- everything bound for $MODDIR on the printer -- is
 # assembled, before bin/pack.sh tars it into anvil.tar.xz.
 #
-# Spelled here, once, for the same reason MODDIR is. It was a local assignment
-# in bin/patch.sh that bin/pack.sh, the Makefile's clean target and
+# TWO NAMES, BECAUSE ASSEMBLING IT TAKES TWO. bin/patch.sh builds the payload
+# by installing the .ipk feed with a real opkg, and opkg unpacks a package's
+# paths -- which are ./usr/data/anvil/... -- relative to the root it is given.
+# So the root and the payload are not the same directory: the payload is
+# $MODDIR deep inside the root. patch.sh needs both (it installs into the root
+# and then gates and finishes the payload); bin/pack.sh only ever tars the
+# payload and has no business knowing a root exists.
+#
+# Spelled here, once, for the same reason MODDIR is. This was a local
+# assignment in bin/patch.sh that bin/pack.sh, the Makefile's clean target and
 # test/run-tests.py's teardown each restated as a literal -- four files free to
 # disagree about where the payload is, and the three that do not create it
 # would have failed silently, leaving the next build to ship a mixture of two.
-MOD_PAYLOAD="${MOD_PAYLOAD:-$ROOT/work/modpayload}"
-export MOD_PAYLOAD
+PAYLOAD_ROOT="${PAYLOAD_ROOT:-$ROOT/work/modpayload-root}"
+PAYLOAD_DIR="${PAYLOAD_DIR:-$PAYLOAD_ROOT$MODDIR}"
+export PAYLOAD_ROOT PAYLOAD_DIR
 
 # The Ingenic GLIBC cross-toolchain and its tool prefix: gcc 7.2.0 / glibc
 # 2.29 for the X2000, the one that produces this printer's ABI. Used by
@@ -348,7 +357,7 @@ export TARGET_MACHINE TARGET_PID STOCK_TGZ PROG_DUMP
 # $PY_BUILD/lib -- the build cache. That was the whole tree while the
 # interpreter was the only thing this toolchain produced, and it stopped being
 # so the moment site-packages and libsodium arrived: a .so staged into
-# $MOD_PAYLOAD by a path the gate did not know about ships ungated, and the
+# $PAYLOAD_DIR by a path the gate did not know about ships ungated, and the
 # first machine to notice is a printer. So the rule did not change (it already
 # covers a DYN correctly) -- the REACH did, to the staged payload, which is
 # the only tree that is by definition everything that ships.

@@ -98,10 +98,11 @@ help:
 	@echo '                                  ssh and HelixScreen'
 	@echo '  make release      build BOTH models into dist/'
 	@echo '  make packages     .ipk packages + feed index into work/packages/'
-	@echo '                    (proof of concept -- docs/notes/85-packaging.md;'
-	@echo '                     needs no stock package, ships nothing.'
+	@echo '                    (make build INSTALLS these to make the payload,'
+	@echo '                     so run this first; needs no stock package.'
 	@echo '                     PKG=<name> builds that recipe and the ones'
-	@echo '                     it builds against)'
+	@echo '                     it builds against -- see'
+	@echo '                     docs/notes/85-packaging.md)'
 	@echo
 	@echo 'Models: packages are model-specific and refuse to install on the'
 	@echo 'other one. MODEL=Creator5 make build  builds the non-Pro variant.'
@@ -439,7 +440,7 @@ test-recovery: image config.env
 	   ./test/integration/sim-roundtrip.py "$$m" "$$STOCK_TGZ"'
 
 clean:
-	@rm -rf work/stage work/out work/modpayload
+	@rm -rf work/stage work/out work/modpayload-root
 	@echo cleaned
 
 distclean:

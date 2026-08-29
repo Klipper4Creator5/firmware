@@ -207,7 +207,7 @@ libsodium is ours -- and packaging and integration followed:
 2. ~~**Extend the ABI gate's reach.**~~ **Done**, as described: same rule,
    pointed at the staged payload instead of the build cache -- the
    interpreter, `lib/python3.13` (stdlib *and* site-packages) and libsodium's
-   resolved `.so`. Originally not `$MOD_PAYLOAD/bin/s6-*`: s6 was believed
+   resolved `.so`. Originally not `$PAYLOAD_DIR/bin/s6-*`: s6 was believed
    exempt, reading `e_flags=0x1007` (legacy-NaN) from a plain mips32r1 musl
    toolchain on the theory that a supervisor doing no floating point cannot
    care about NaN encoding. True of the arithmetic, false of exec() -- a
