@@ -209,7 +209,6 @@ logged instead.
 ```sh
 make rootfs          # once -- extracts rootfs.squashfs from the stock package
 make qa-replica      # the replica suite: install, upgrade, boot, supervision
-make test-py         # klipper config, and rootfs paths when one is present
 ```
 
 `make qa-replica` does not skip when a stock package is missing: it fails at

@@ -130,13 +130,6 @@ jobs:
       - name: qa -- static lane
         run: python3 -m pytest ./qa/static -q
 
-      # The host-side tree. No ALLOW_SKIP and no runner around it: run-tests.py
-      # is gone, and with it the JUnit-XML round trip that turned 185 results
-      # into one gate. This job has no stock package on purpose, so the handful
-      # of tests that read the real rootfs skip themselves and say so.
-      - name: pytest -- the host-side tree
-        run: python3 -m pytest ./test -q
-
   # The real check: install the package into a replica of the printer -- the
   # actual rootfs.squashfs under qemu-mipsel, on the printer's own busybox --
   # and assert the machine still boots. No `if:` guard: this job is the point

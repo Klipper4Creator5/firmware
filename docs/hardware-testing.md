@@ -89,11 +89,13 @@ verification files honest as the macros change.
 
 ## Keeping the verification files honest
 
-`make test-py` checks both files against the shipped macros and the configured
-axis limits: every command in them must be one the mod's Klipper config or
-`pkgs/klipper/payload/klipper/klippy/extras/` defines (bar an explicit allowlist of Klipper
-built-ins, currently just `SET_PRESSURE_ADVANCE`), `TOOLS=` must list every
-tool the feature print uses, and the safe file's own lines must stay cold and
-above Z50 — the check reads the file, so it does not see what an implicit
-`START_PRINT` does before it. A renamed macro breaks the suite rather than the
-print.
+Nothing checks them automatically any more. `make test-py` used to: every
+command in them had to be one the mod's Klipper config or
+`pkgs/klipper/payload/klipper/klippy/extras/` defines (bar an explicit
+allowlist of Klipper built-ins, currently just `SET_PRESSURE_ADVANCE`),
+`TOOLS=` had to list every tool the feature print uses, and the safe file's own
+lines had to stay cold and above Z50. That check went with the `test/` tree.
+
+So a renamed macro now breaks the print rather than the suite. If you rename or
+remove a macro, read `gcode/creator5-safe-moves.gcode` and
+`gcode/creator5-feature-test.gcode` before you ship it.

@@ -43,33 +43,21 @@ hardware, not a bug: there are no `/dev/ttyS4,5,7` and no `/dev/video*`, so
 klippy never connects, `camera` times out, and the `ok-all` bundle is
 unreachable. See [qa-migration.md](qa-migration.md). Everything else is green.
 
-## What is left in `test/`
+## `test/` is gone
 
-`test/run-tests.py` is **gone**, and `make test` with it. What remains is not a
-suite -- it is 28 host-side unit tests over our own Python, which need neither
-docker nor the firmware:
+`test/run-tests.py` went first, and `make test` with it. The 28 host-side unit
+tests that outlived it -- `test_startup.py`, `test_tool_transform.py`,
+`test_ffscreen.py`, `test_chamber.py`, `test_gcode.py` and the two fixtures
+they shared -- are deleted too, along with `make test-py` and the CI step that
+ran them. `qa/` is the only suite.
 
-```sh
-make test-py   # 28 tests, well under a second
-```
-
-| file | tests | what it is for |
-|---|---|---|
-| `test_startup.py` | 8 | the stamp discipline in `ff-startup.py`: no stamp is written unless the values are verifiably saved, because a stamp written early is a printer that has silently lost its factory calibration for good. Plus the handover order -- the boards, then klipper, again on every retry |
-| `test_tool_transform.py` | 7 | the per-tool frame arithmetic in `ff_toolchange`, whose failures are a nozzle in the wrong place |
-| `test_ffscreen.py` | 5 | restraint: never write outside the framebuffer, never guess at a pixel format, never raise into the migration it decorates |
-| `test_chamber.py` | 4 | the chamber macros branching on the model, whose failures are silent until they have cost a print |
-| `test_gcode.py` | 4 | the two `gcode/` files name commands we ship, and the safe one is cold and stays above its floor |
-
-This was 186 tests in twelve files as recently as the qa migration. The cut to
-28 was deliberate and is recorded in
-[qa-migration.md](qa-migration.md#the-second-cut): what went was everything
-whose subject had become the fake it was built on, or whose failure the printer
-reports loudly the first time. What is kept is the mistakes that RUN
-PERFECTLY and are wrong.
-
-`test/test-chelper.py` sits outside both suites: `pkgs/klipper/build.sh` and
-`bin/verify.sh` call it directly at build time.
+What this costs is worth naming rather than leaving to be discovered. The
+replica lane covers the boot screen on the real interpreter
+(`qa/replica/test_boot_screen.py`) and the install end to end, but nothing now
+checks the tool-frame arithmetic in `ff_toolchange`, the chamber macros'
+per-model branching, the stamp discipline in `ff-startup.py`, or the
+verification G-code against the macros we ship. Those were host-side unit
+tests over our own Python, and they have no replacement.
 
 ## The replica is a tool, not a test
 

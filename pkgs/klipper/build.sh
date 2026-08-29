@@ -70,23 +70,21 @@ done
 # shipping bytecode whenever a test had imported one of them.
 pkg_ship "klipper"
 
-# ------------------------------------------------------------------- the gate
-# Over $PKG_OUT rather than over the staging tree, so it reads the bytes that
-# actually ship -- pkg_ship strips ELF on the way out, and a gate that checked
-# the unstripped object would be checking a file no printer gets.
+# --------------------------------------------------------------- no gate here
+# This recipe checks nothing about the object it just built, and both halves of
+# what used to be here left for a reason.
 #
-# The ABI of this .so is NOT checked here. The kernel refuses anything that is
-# not o32/nan2008/mips32r2 and refuses it with ENOEXEC, and that question is
-# now asked once, of the installed filesystem, in qa/replica/test_abi.py --
-# which covers both vehicles this tree travels on (the .ipk and the SOFTWARE
-# component bin/patch.sh stages) instead of only the one a build.sh can see.
+# THE ABI -- o32/nan2008/mips32r2, which the kernel answers with ENOEXEC -- is
+# asked once now, of the installed filesystem, in qa/replica/test_abi.py. That
+# covers both vehicles this tree travels on (the .ipk and the SOFTWARE component
+# bin/patch.sh stages) rather than only the one a build.sh can see.
 #
-# Symbols, though, are a check the ABI one cannot make: a .so with a
-# perfect header and a missing symbol is exactly the stale build described at
-# the top of this file. It moved here from bin/patch.sh for the reason the s6
-# presence checks did -- it now runs on `make packages` too, so a bad object
-# fails the build that produced the .ipk rather than only a full firmware run.
-python3 "$ROOT/test/test-chelper.py" "$PKG_OUT/klipper" || pkg_die \
-    "klipper: c_helper.so does not export everything the shipped klippy declares"
+# THE SYMBOLS -- every function klippy cdefs, against the .so's dynamic symbol
+# table -- went with the test/ tree. cffi resolves lazily, so a .so built from
+# older sources than the klippy beside it imports cleanly and dies on the
+# printer at connect; that is the failure described at the top of this file.
+# What keeps it out is no longer a check but the shape of the recipe: the .so is
+# compiled from the chelper sources of the very tree it is about to ship, so a
+# .so older than its klippy is not something this build can produce.
 
 pkg_end

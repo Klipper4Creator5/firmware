@@ -2,8 +2,8 @@
 
 `qa/` is the test suite. It was built beside `test/` rather than inside it, and
 the migration is now done: every `case-*.sh` has been ported or retired, and
-what remains of `test/` is 28 host-side unit tests. The machinery that builds
-the replica has moved to `tools/replica/`, because it was never a test.
+`test/` has since been deleted outright. The machinery that builds the replica
+moved to `tools/replica/`, because it was never a test.
 
 This document says why it exists, what it proves, and what is still owed.
 

@@ -100,9 +100,9 @@ ASH_GLOBS = ("pkgs/*/payload/*.sh",
              "installer/*.sh", "qa/replica/actions/*.sh")
 
 PY_GLOBS = ("bin/*.py", "pkgs/*/payload/bin/*.py",
-            "pkgs/*/payload/klipper/klippy/extras/*.py", "test/*.py",
-            "test/integration/*.py", "tools/replica/*.py",
-            "tools/replica/ffsim/*.py", "qa/*.py", "qa/lib/*.py",
+            "pkgs/*/payload/klipper/klippy/extras/*.py",
+            "tools/replica/*.py", "tools/replica/ffsim/*.py",
+            "qa/*.py", "qa/lib/*.py",
             "qa/static/*.py", "qa/replica/*.py")
 
 

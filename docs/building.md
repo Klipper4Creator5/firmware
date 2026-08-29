@@ -325,14 +325,6 @@ pkgs/           package recipes: one directory per component, each a
 ```
 qa/             THE SUITE. static/ needs nothing but a checkout;
                 replica/ needs docker and the firmware. `make qa`
-test/           28 host-side unit tests over our own Python, and the two
-                fixtures they share. `make test-py`
-  conftest.py     the merged config tree the config gates read
-  ffcfg.py        Klipper config parsing, as klippy's own parser sees it
-  integration/    test_startup.py, test_tool_transform.py, test_ffscreen.py,
-                  test_chamber.py, test_gcode.py -- see docs/testing.md
-  test-chelper.py in neither suite: pkgs/klipper/build.sh and
-                  bin/verify.sh call it
 tools/replica/  THE REPLICA, which is a build tool as much as a test one --
                 bin/patch.sh assembles the payload inside it
   printer/        the machine: binfmt, the mount layout, its two Dockerfiles
@@ -377,15 +369,19 @@ sha256 in `versions.env` and fetched into `vendor/` like every other asset.
 You do not rebuild it by hand any more. `pkgs/klipper` compiles the .so from
 the chelper sources of the very tree it is about to ship — the fork tarball
 pinned in `versions.env`, which since the recipe landed is the only source
-there is. Two gates then run inside the recipe, so `make packages` enforces
-them as well as a firmware build: the ELF-flag check above, and
-`test/test-chelper.py`, which checks every function the klippy tree cdefs against the .so's dynamic
-symbol table. The symbol gate exists because cffi resolves lazily: a stale
-.so imports cleanly and dies only at `Internal error during connect` on the
-printer, with a traceback that names cffi and not the build. Both a stale
-prebuilt .so (v0.12 binary under a v0.13 tree) and a package that skipped
-the fork entirely (v20260824-nova-kakhovka) have shipped; the compile-fresh
-rule plus these gates are what make the third time structurally hard.
+there is. One gate then runs inside the recipe, so `make packages` enforces
+it as well as a firmware build: the ELF-flag check above.
+
+A symbol gate used to run beside it, comparing the .so's dynamic symbols
+against what klippy cdefs, because cffi resolves lazily -- a stale .so imports
+cleanly and dies only at `Internal error during connect` on the printer, with
+a traceback that names cffi and not the build. It is gone. What stands in its
+place is the compile-fresh rule itself: the .so is built from the chelper
+sources of the tree that ships, so a .so older than its klippy is not
+something this recipe can produce. Both a stale prebuilt .so (v0.12 binary
+under a v0.13 tree) and a package that skipped the fork entirely
+(v20260824-nova-kakhovka) have shipped, and that rule is what makes the third
+time structurally hard.
 
 ## The docs site
 

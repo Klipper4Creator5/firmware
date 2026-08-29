@@ -1,9 +1,8 @@
 """The qa suite: pytest is the only framework.
 
-This tree exists beside test/, not inside it, because the two answer different
-questions. test/ is host-side unit tests over our own Python and needs nothing;
-this is the suite that decides whether a package bricks a printer. The old
-harness that used to stand between them is gone -- see docs/qa-migration.md.
+This is the only suite. It decides whether a package bricks a printer. The
+harness that used to stand beside it, and the host-side test/ tree it wrapped,
+are both gone -- see docs/qa-migration.md.
 
 WHAT IS DIFFERENT HERE
 

@@ -83,7 +83,7 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
 
 .DEFAULT_GOAL := help
 .PHONY: help image shell passwd build vendor packages \
-        rootfs verify test-py \
+        rootfs verify \
         printer-image printer-image-push \
         boot-screen boot-screen-sim \
         qa qa-static qa-replica \
@@ -113,16 +113,13 @@ help:
 	@echo '  make qa               both lanes'
 	@echo '  make qa-static        needs nothing: parses, names, packaging, the boot graph'
 	@echo '  make qa-replica       needs docker + the firmware: install, upgrade, boot'
-	@echo '  make test-py          the host-side pytest tree under test/'
-	@echo '                        pytest selection works: -k, -m, a single test id'
 	@echo
 	@echo 'Look at things:'
 	@echo '  make boot-screen      render the first-boot screen to work/boot-screen/*.png'
 	@echo '  make boot-screen-sim  the same, drawn by the printer own python in the replica'
 	@echo
-	@echo 'test-py needs python3, pytest and jinja2; its rootfs checks skip'
-	@echo 'until make rootfs has run. qa-replica runs inside a replica of the'
-	@echo 'printer: the real rootfs.squashfs under qemu-mipsel, with the package'
+	@echo 'qa-replica runs inside a replica of the printer: the real'
+	@echo 'rootfs.squashfs under qemu-mipsel, with the package'
 	@echo 'installed by the printer own app_startup.sh off a real FAT filesystem'
 	@echo 'at /dev/sda1. It needs make build, plus make rootfs or PRINTER_IMAGE.'
 	@echo
@@ -162,7 +159,7 @@ passwd: image
 
 # ===========================================================================
 #  BUILD LANE -- produces the package you flash. Reads config.env, ships
-#  payload/ and assets/, and touches nothing under test/.
+#  payload/ and assets/, and touches nothing under qa/.
 # ===========================================================================
 
 # Mainsail, HelixScreen and Moonraker are not vendored in the repo. bin/build.sh fetches
@@ -235,10 +232,9 @@ rootfs: image config.env
 	@$(RUN) ./bin/unpack.sh >/dev/null
 	@$(RUN) ./tools/replica/extract-rootfs.py
 
-# `make test` used to be here, running test/run-tests.py -- a bespoke harness
-# that wrapped pytest, re-parsed its JUnit XML, and drove thirteen replica case
-# scripts. Every one of those is a module under qa/ now, so the runner had
-# nothing left to run and is gone. `make qa` is the suite.
+# `make test` and `make test-py` used to be here, over test/ -- run-tests.py,
+# then the pytest tree it wrapped. Every case it drove is a module under qa/
+# now, and the host-side units went with the tree. `make qa` is the suite.
 
 # ---------------------------------------------------------------------------
 #  THE qa SUITE
@@ -298,11 +294,6 @@ printer-image: image
 
 printer-image-push: image
 	@$(RUNSIM) ./tools/replica/build-printer-image.sh --push
-
-# The Python gate. The checks that read the printer's rootfs skip without one;
-# everything else runs on any checkout.
-test-py: image
-	@$(RUN) python3 -m pytest ./test -q
 
 boot-screen:
 	@./bin/preview-boot-screen.py

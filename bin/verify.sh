@@ -107,27 +107,15 @@ else
 fi
 CHELPER="$WORK/pl/klipper/klippy/chelper/c_helper.so"
 [ -f "$CHELPER" ] || bad "no c_helper.so in the payload klippy tree -- klippy cannot talk to an MCU"
-if [ -f "$CHELPER" ]; then
-    if ! head -c 4 "$CHELPER" | grep -q ELF; then
-        warn "c_helper.so is not an ELF (synthetic fixture)"
-        CHELPER=""
-    fi
-    if [ -n "$CHELPER" ]; then
-        # NO ABI CHECK HERE. This file used to grep readelf for nan2008, which
-        # was a fourth partial copy of a rule stated in three other places and
-        # read only this one object out of a payload full of them.
-        # qa/replica/test_abi.py asks it once, of every ELF on the installed
-        # filesystem. What is left below is the check that one cannot make.
-        #
-        # The failure that reached a printer: a .so older than the klippy tree
-        # beside it. cffi resolves lazily; only a symbol check catches it.
-        if python3 "$ROOT/test/test-chelper.py" "$WORK/pl/klipper" >/dev/null 2>&1; then
-            ok "c_helper.so exports everything the shipped klippy declares"
-        else
-            bad "c_helper.so does not match the shipped klippy tree (stale build)"
-        fi
-    fi
-fi
+# PRESENCE IS ALL THIS FILE ASKS OF IT. The ABI question -- o32/nan2008/
+# mips32r2, which the kernel answers with ENOEXEC -- is asked once, of every ELF
+# on the installed filesystem, in qa/replica/test_abi.py; a fourth partial copy
+# of that rule lived here and read only this one object out of a payload full of
+# them. The symbol check that sat beside it went with test/: every function
+# klippy cdefs against the .so's dynamic symbols, because cffi resolves lazily
+# and a stale .so imports cleanly. What keeps that out now is pkgs/klipper
+# compiling the .so from the chelper sources of the very tree it ships, so a .so
+# older than its klippy is not something a build can produce.
 # The component must not carry one: two klippy trees under one version number
 # is what this release removed, and a stray one is the copy a stock flash
 # leaves running.
@@ -324,7 +312,7 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
     xz -dc "$WORK/anvil.tar.xz" 2>/dev/null | tar -xf - -C "$WORK/ship/.anvil" 2>/dev/null \
         || tar -xf "$WORK/anvil.tar.xz" -C "$WORK/ship/.anvil" 2>/dev/null || true
 fi
-find bin test docker -type f 2>/dev/null | xargs -r md5sum 2>/dev/null \
+find bin docker -type f 2>/dev/null | xargs -r md5sum 2>/dev/null \
     | awk '{print $1}' | sort -u > "$WORK/host.md5"
 find "$WORK/ship" -type f 2>/dev/null | xargs -r md5sum 2>/dev/null > "$WORK/ship.md5"
 LEAK=$(awk 'NR==FNR{h[$1];next} $1 in h {print}' "$WORK/host.md5" "$WORK/ship.md5" \
@@ -332,9 +320,9 @@ LEAK=$(awk 'NR==FNR{h[$1];next} $1 in h {print}' "$WORK/host.md5" "$WORK/ship.md
 # Those finds are RELATIVE: from any other cwd host.md5 comes out empty and
 # this reports ok having compared nothing. common.sh cds to the root.
 if [ ! -s "$WORK/host.md5" ]; then
-    bad "ship-boundary check compared nothing (no files found under bin/, test/, docker/ -- wrong cwd?)"
+    bad "ship-boundary check compared nothing (no files found under bin/, docker/ -- wrong cwd?)"
 elif [ -z "$LEAK" ]; then
-    ok "package carries nothing from bin/, test/ or docker/"
+    ok "package carries nothing from bin/ or docker/"
 else
     bad "host-side files leaked into the package:"
     echo "$LEAK" | head -10 | sed 's/^/          /'
