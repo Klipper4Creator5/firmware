@@ -122,12 +122,6 @@ arch $IPK_ARCH 10
 src anvil file:$PKG_FEED
 EOF
 
-# --force-postinstall because opkg skips configuration under offline_root and
-# would leave every package Status: unpacked. Nothing runs opkg on the printer
-# after run-append.sh extracts the tarball -- the extraction IS the install --
-# so that would be a database arguing with the filesystem. It runs nothing
-# today; no recipe has a maintainer script, and opkg 0.7.0 sets no
-# IPKG_INSTROOT for one that did. See docs/notes/85-packaging.md.
 mod_opkg() {
     "$HOSTOPKG" --conf "$MOD_OPKG_CONF" "$@" \
         >> "$PAYLOAD_ROOT/.opkg.log" 2>&1 && return 0
@@ -136,6 +130,9 @@ mod_opkg() {
     exit 1
 }
 mod_opkg update
+# --force-postinstall: under offline_root opkg skips configuration and leaves
+# everything Status: unpacked. Extracting the tarball IS the install, so the
+# database has to say installed. It runs no script: there are none.
 # shellcheck disable=SC2086
 mod_opkg --force-postinstall install $MOD_INSTALL
 
