@@ -260,22 +260,17 @@ if [ -d $MODDIR/config ]; then
             fi
             continue
             ;;
-        ff-*.cfg|printer.chamber.cfg)
-            # Ours. Overwrite and say so when it had drifted, so the log
-            # explains where a local edit went.
+        ff-*.cfg|printer.base.cfg|printer.chamber.cfg|chamber)
+            # Ours, and NOT COPIED: anvil-link-prog.sh symlinks these into
+            # /usr/data/config after this loop, so the file the printer reads
+            # is the one the package owns and an `opkg upgrade` changes it
+            # without a .tgz. Copying here as well would only put a real file
+            # in the way of the link that is about to replace it.
             #
-            # printer.chamber.cfg joined this branch when it became a package
-            # of its own. It used to ride the software component to
-            # /usr/prog/klipper/config and reach /usr/data/config only because
-            # the stock run.sh copies that whole directory -- so it was
-            # replaced wholesale by every flash and needed no rule here. Now
-            # it installs to $MODDIR/config like the ff-*.cfg and is
-            # overwritten on the same terms, which is what it always was: mod
-            # -owned, with printer.cfg as the place to override it.
-            if [ -f "$live" ] && [ "`md5sum < "$live"`" != "`md5sum < "$source"`" ]; then
-                echo "config: $name overwritten (mod-owned; override it from printer.cfg)"
-            fi
-            cp -f "$source" "$live"
+            # printer.chamber.cfg is not in $MODDIR/config at all any more --
+            # config/chamber/ holds one per model and the link picks. `chamber`
+            # is in this pattern so the directory itself is skipped rather
+            # than falling through to the compare below.
             continue
             ;;
         esac

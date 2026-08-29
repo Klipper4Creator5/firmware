@@ -35,25 +35,31 @@ def root():
     return ROOT
 
 
-# The mod's Klipper config comes out of four recipes, one per thing it is:
-# the ff-*.cfg includes, one chamber config per model, and printer.base.cfg,
-# which is still placed on the firmware partition by bin/patch.sh and so sits
-# in prog/ rather than payload/.
+# The mod's Klipper config comes out of two recipes now: anvil-klipper-config
+# carries the ff-*.cfg, printer.base.cfg and both chamber configs, and
+# anvil-moonraker carries moonraker.conf.
 #
-# The two model files are BOTH NAMED printer.chamber.cfg, because each is what
-# its package installs and only one is ever installed. Merging them into one
-# directory would have one silently overwrite the other, so they are merged
-# back under the suffixed names the tests know them by -- which is exactly
-# what they were called when one recipe held both.
+# THE CHAMBER CONFIGS ARE NAMED BY MACHINE in the recipe -- chamber/Creator5.cfg
+# and chamber/Creator5Pro.cfg -- because one package now ships both and
+# anvil-link-prog.sh symlinks whichever the printer asks for to
+# printer.chamber.cfg. They used to be two packages that each installed a file
+# of that name and Conflicted so only one could land.
+#
+# The tests still know them by the suffixed names, because on the machine
+# there is exactly one printer.chamber.cfg and a test about include resolution
+# has to model where files END UP, not how the recipe files them.
 CFG_SOURCES = (
     (os.path.join(ROOT, "pkgs", "klipper-config", "payload", "config"), None),
-    (os.path.join(ROOT, "pkgs", "klipper-config", "prog", "config"), None),
     (os.path.join(ROOT, "pkgs", "moonraker", "payload", "config"), None),
-    (os.path.join(ROOT, "pkgs", "klipper-creator5-config",
-                  "payload", "config"), "creator5"),
-    (os.path.join(ROOT, "pkgs", "klipper-creator5pro-config",
-                  "payload", "config"), "creator5pro"),
 )
+
+# source basename -> the name the merged view uses.
+CHAMBER_DIR = os.path.join(ROOT, "pkgs", "klipper-config",
+                           "payload", "config", "chamber")
+CHAMBER_NAMES = {
+    "Creator5.cfg": "printer.chamber.cfg.creator5",
+    "Creator5Pro.cfg": "printer.chamber.cfg.creator5pro",
+}
 
 
 @pytest.fixture(scope="session")
@@ -71,6 +77,12 @@ def cfgdir(tmp_path_factory):
     In the repo, so this still needs no firmware.
     """
     d = tmp_path_factory.mktemp("cfg")
+    for name, dest in CHAMBER_NAMES.items():
+        path = os.path.join(CHAMBER_DIR, name)
+        assert os.path.isfile(path), (
+            "no %s -- anvil-link-prog.sh resolves this name from "
+            "app_startup.sh's MACHINE, so the recipe has to ship it" % path)
+        shutil.copy2(path, str(d / dest))
     for src, suffix in CFG_SOURCES:
         for name in sorted(os.listdir(src)):
             path = os.path.join(src, name)

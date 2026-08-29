@@ -8,10 +8,15 @@ comment at the top of pkgs/anvil-core/build.sh. A comment cannot be checked.
 Three kinds of file lived in there and looked identical:
 
   * files a recipe stages into its .ipk,
-  * files that go to /usr/prog and CANNOT be in a package, because every path
-    in one of ours lands under $MODDIR,
   * files that never ship as files at all -- run-pre.sh and run-append.sh are
     spliced into FlashForge's own run.sh at build time.
+
+There used to be a third kind: files that went to /usr/prog and could not be
+in a package, because every path in one of ours lands under $MODDIR. There are
+none left. They are package files under payload/prog/ now, and
+anvil-link-prog.sh symlinks them from $MODDIR to the absolute paths
+FlashForge's scripts read -- so the rule is kept by a script on the printer
+rather than by a directory in the recipe.
 
 Recipes themselves live at two depths, and pkgs/lib.sh's pkg_dir is the only
 thing that knows it:
@@ -25,10 +30,6 @@ Inside a recipe, each kind of file is a directory name:
     pkgs/<recipe>/payload/   staged into the .ipk, laid out as it lands under
                             $MODDIR. payload/init.d/S60nginx becomes
                             $MODDIR/init.d/S60nginx and no recipe says so.
-    pkgs/<recipe>/prog/      placed on /usr/prog by bin/patch.sh. The residue:
-                            files a recipe owns and cannot yet ship. It
-                            empties out when a postinst places them from a
-                            staging root (docs/notes/85-packaging.md phase 2).
     pkgs/<recipe>/seed/      templated or seeded user state -- anvil.conf.in,
                             moonraker-custom.conf. Not package members,
                             because a package member is overwritten on every
@@ -51,7 +52,6 @@ pytestmark = pytest.mark.static
 # the subtrees are its files.
 #
 #   payload/  what the .ipk installs under $MODDIR
-#   prog/     files bin/patch.sh places on /usr/prog, in no package
 #   seed/     user state templated by bin/patch.sh, in no package
 #   control/  maintainer scripts and conffiles, copied verbatim into the
 #             .ipk's CONTROL/ by bin/build-packages.sh. It is metadata rather
@@ -59,7 +59,7 @@ pytestmark = pytest.mark.static
 #             it runs at install time -- which is why it is its own directory
 #             and not a corner of payload/.
 RECIPE_FILES = {"build.sh", "pkg.conf"}
-RECIPE_DIRS = {"payload", "prog", "seed", "control"}
+RECIPE_DIRS = {"payload", "seed", "control"}
 
 
 THIRD = os.path.join(ROOT, "pkgs", "3rdparty")
@@ -89,7 +89,7 @@ def test_a_recipe_holds_nothing_but_a_recipe_and_its_files():
                 continue
             strays.append("%s: %s" % (name, entry))
     assert not strays, (
-        "a recipe may hold build.sh, pkg.conf, and payload/ prog/ seed/ -- "
+        "a recipe may hold build.sh, pkg.conf, and payload/ seed/ control/ -- "
         "nothing else, because the directory name is what says where a file "
         "goes: %s" % ", ".join(strays))
 
@@ -105,11 +105,11 @@ def test_every_recipe_subtree_is_one_of_the_three():
 
 @pytest.mark.parametrize("sub", sorted(RECIPE_DIRS))
 def test_each_subtree_is_used_by_someone(sub):
-    """If one of the three empties out, this fails and the rule can be deleted.
+    """If one empties out, this fails and the rule can be deleted.
 
-    That is the good outcome, not a defect: prog/ empty means every /usr/prog
-    file is placed by a package, seed/ empty means the seeder landed. The test
-    is here so the day it happens is noticed rather than silently carried.
+    That is the good outcome, not a defect: it already happened once. prog/
+    emptied when firmwareExe and start.sh became package files, and the rule
+    went with it. seed/ empty will mean the seeder landed.
     """
     users = [n for n, d in recipes() if os.path.isdir(os.path.join(d, sub))]
     assert users, (
@@ -179,7 +179,7 @@ def test_a_3rdparty_recipe_carries_no_files_of_ours():
 def test_a_first_party_recipe_carries_something():
     """The rule from the other side, so the levels cannot both drift empty.
 
-    A recipe at the top level with no payload/, prog/ or seed/ is
+    A recipe at the top level with no payload/ or seed/ is
     indistinguishable from a 3rdparty one and should move down -- otherwise
     the top level slowly refills and the split stops meaning anything.
     """

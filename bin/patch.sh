@@ -49,15 +49,23 @@ mkdir -p "$PAYLOAD_DIR/bin" "$PAYLOAD_DIR/lib" "$PAYLOAD_DIR/libexec" \
 say "payload: installing the feed into $PAYLOAD_ROOT"
 pkg_buildopkg
 
-# The model is the one fact opkg cannot work out for itself: both chamber
-# configs own config/printer.chamber.cfg and Conflict, so opkg refuses the
-# pair (exit 255) and the choice has to be made here.
-case "$TARGET_MACHINE" in
-    Creator5)    MODEL_PKG=anvil-klipper-creator5-config ;;
-    Creator5Pro) MODEL_PKG=anvil-klipper-creator5pro-config ;;
-    *) echo "no chamber-config package for TARGET_MACHINE=$TARGET_MACHINE" >&2
-       exit 1 ;;
-esac
+# THE MODEL IS NOT CHOSEN HERE ANY MORE. It used to be the one fact opkg
+# could not work out for itself: anvil-klipper-creator5-config and
+# -creator5pro-config each owned config/printer.chamber.cfg, so they Conflicted,
+# opkg refused the pair with exit 255, and this build had to pick one from
+# TARGET_MACHINE -- which made the payload model-specific for the sake of a
+# single file.
+#
+# anvil-klipper-config ships both, under config/chamber/<Machine>.cfg, and
+# anvil-link-prog.sh symlinks the right one on the printer. It reads the model
+# from FlashForge's own app_startup.sh, which carries MACHINE= at its top and
+# is restored by any stock flash -- so the machine answers the question about
+# itself, instead of a build being told the answer and having to be right.
+#
+# TARGET_MACHINE still names the OUTPUT: runFirmwareExe.sh refuses a package
+# whose machine is not its own and app_startup.sh globs for the model prefix,
+# so bin/pack.sh keeps stamping it on the filename. What it no longer decides
+# is what goes inside.
 
 # WHAT THE RELEASE IS, not the closure of it. Depends brings the rest, and
 # whether it does is the same question an `opkg install anvil-moonraker` on a
@@ -75,7 +83,7 @@ esac
 # (pkgs/moonraker argues them out of Depends), greenlet and cffi are klippy's,
 # which pkgs/klipper cannot declare while klippy still runs under
 # FlashForge's interpreter.
-MOD_ROOTS="anvil-core anvil-opkg anvil-s6-rc anvil-klipper $MODEL_PKG
+MOD_ROOTS="anvil-core anvil-opkg anvil-s6-rc anvil-klipper
            anvil-moonraker anvil-python-pillow anvil-python-preprocess-cancellation
            anvil-python-greenlet anvil-python-cffi
            anvil-mainsail anvil-helixscreen anvil-busybox"
@@ -134,7 +142,13 @@ mod_opkg() {
 mod_opkg update
 # --force-postinstall: under offline_root opkg skips configuration and leaves
 # everything Status: unpacked. Extracting the tarball IS the install, so the
-# database has to say installed. It runs no script: there are none.
+# database has to say installed.
+#
+# IT DOES RUN SCRIPTS NOW -- anvil-core has a postinst -- and it runs them
+# here, in the build image, with IPKG_INSTROOT empty, so their absolute paths
+# are taken as written rather than rebased onto $PAYLOAD_ROOT. That is why
+# anvil-link-prog.sh opens by checking for /usr/prog/app_startup.sh: there is
+# none in the build image, so it says so and exits 0.
 # shellcheck disable=SC2086
 mod_opkg --force-postinstall install $MOD_INSTALL
 
@@ -144,7 +158,7 @@ mod_opkg --force-postinstall install $MOD_INSTALL
 sed -i "s/^Installed-Time: .*/Installed-Time: ${SOURCE_DATE_EPOCH:-1}/" \
     "$PAYLOAD_DIR/var/lib/opkg/status"
 
-say "payload: $(grep -c '^Package:' "$PAYLOAD_DIR/var/lib/opkg/status") packages installed ($MODEL_PKG for $TARGET_MACHINE)"
+say "payload: $(grep -c '^Package:' "$PAYLOAD_DIR/var/lib/opkg/status") packages installed (both chamber configs; the printer picks)"
 
 # ---------------------------------------------------------------- 1. Klipper
 # THE BUILD LIVES IN pkgs/klipper, and this section copies what it produced --
@@ -228,21 +242,22 @@ if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
         cp -f "$_ffx/$(basename "$_f")" "$SOFTWARE_DIR/klipper/extras/"
     done
 
-    # Our printer.base.cfg is FlashForge's with the chamber block replaced by
-    # [include printer.chamber.cfg] -- Klipper can override an option but
-    # cannot un-declare a section, and the plain Creator 5 has no chamber
-    # heating element, so its heater has to be absent rather than neutralised.
-    # NOTE: this cp is why the stock-drift check lives in bin/unpack.sh and
-    # not in a test -- it overwrites the pristine copy, and the test that used
-    # to read it afterwards was comparing our file against itself.
-    cp -f pkgs/klipper-config/prog/config/printer.base.cfg "$SOFTWARE_DIR/klipper/config/printer.base.cfg"
-
-    # THE .cfg FILES ARE NOT HERE ANY MORE. anvil-klipper-config carries the
-    # ff-*.cfg and the chosen anvil-klipper-creator5*-config carries
-    # printer.chamber.cfg; both were installed into the payload by section 0,
-    # which is also where the model is chosen and where the gate on the result
-    # now lives. What is left in this section is the residue that cannot be a
-    # package: two paths under /usr/prog.
+    # NO .cfg IS WRITTEN HERE, and the software component's klipper/config is
+    # left exactly as FlashForge shipped it.
+    #
+    # printer.base.cfg used to be copied over the stock one at this point.
+    # anvil-klipper-config carries it now, beside the ff-*.cfg and the two
+    # chamber configs, and anvil-link-prog.sh symlinks it into
+    # /usr/data/config on the printer -- which is where it was read from
+    # anyway, because the stock run.sh copies klipper/config/* there.
+    #
+    # That is what lets the seven configs we do NOT modify stay stock and
+    # unpackaged: Klipper resolves [include] against the directory of the file
+    # doing the including, by the path as opened rather than the resolved
+    # target, so a symlinked printer.base.cfg still finds them beside it.
+    #
+    # What is left in this section is the residue that cannot be a package:
+    # the ff_*.py above, and two paths under /usr/prog.
 else
     skip "Toolchange"
 fi

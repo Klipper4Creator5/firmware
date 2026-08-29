@@ -19,5 +19,21 @@ pkg_stage "$PKG_DIR/payload/config" "config"
 _n=$(find "$PKG_WORK/stage$MODDIR/config" -name 'ff-*.cfg' | wc -l)
 [ "$_n" -gt 0 ] || pkg_die "klipper-config: no ff-*.cfg under $PKG_DIR/payload/config"
 
+# printer.base.cfg is the hub every other config hangs off -- it includes the
+# stock printer.*.cfg, the chamber config and the ff-*.cfg -- so a package
+# without it installs a set that includes nothing.
+[ -f "$PKG_WORK/stage$MODDIR/config/printer.base.cfg" ] || pkg_die \
+    "klipper-config: no printer.base.cfg under $PKG_DIR/payload/config"
+
+# BOTH CHAMBER CONFIGS, one per model, and the installer picks. They used to
+# be two packages that Conflicted -- each owned config/printer.chamber.cfg, so
+# opkg refused the pair and bin/patch.sh had to choose from TARGET_MACHINE.
+# Named by machine and symlinked into place by anvil-link-prog.sh, they stop
+# conflicting and the feed stops being model-specific.
+for _m in Creator5 Creator5Pro; do
+    [ -f "$PKG_WORK/stage$MODDIR/config/chamber/$_m.cfg" ] || pkg_die \
+        "klipper-config: no chamber/$_m.cfg -- anvil-link-prog.sh resolves this name from app_startup.sh"
+done
+
 pkg_ship "config"
 pkg_end

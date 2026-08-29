@@ -32,10 +32,13 @@
 # first recipe written:
 #
 #   moonraker.conf, moonraker-custom.conf     pkgs/moonraker
-#   ff-*.cfg                                  pkgs/klipper-config
-#   printer.chamber.cfg, per model            pkgs/klipper-creator5-config,
-#                                             pkgs/klipper-creator5pro-config
-#   start.sh, klippy extras, printer.base.cfg pkgs/klipper (in prog/)
+#   ff-*.cfg, printer.base.cfg,               pkgs/klipper-config
+#     chamber/<Machine>.cfg
+#   klippy extras                             pkgs/klipper
+#
+# WHAT CAME BACK: firmwareExe and start.sh, in payload/prog/. They are the two
+# files the printer reads from /usr/prog, and this package owns the script
+# that links them there -- see payload/bin/anvil-link-prog.sh.
 #
 # WHAT STAYS, AND WHY IT IS NOT THE SAME QUESTION. init.d/ and etc/s6/ look
 # like they belong to the services they start -- S62moonraker to Moonraker,

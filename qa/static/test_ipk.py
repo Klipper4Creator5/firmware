@@ -455,8 +455,7 @@ def test_the_payload_is_the_feed_installed():
     # construction and assert nothing.
     staged = ("libsodium", "mainsail", "moonraker", "helixscreen",
               "skalibs", "execline", "s6", "s6-rc", "anvil-core", "python",
-              "klipper", "klipper-config", "klipper-creator5-config",
-              "klipper-creator5pro-config")
+              "klipper", "klipper-config")
     for recipe in staged:
         d = recipe_dir(recipe)
         assert d is not None, (
@@ -503,13 +502,20 @@ def test_the_payload_is_the_feed_installed():
 
 
 def _mod_roots():
-    """MOD_ROOTS as bin/patch.sh's own shell reads it, model included."""
+    """MOD_ROOTS as bin/patch.sh's own shell reads it.
+
+    There is no model substitution left to resolve. The two chamber packages
+    were one per model and Conflicted, so patch.sh had to pick one into
+    MOD_ROOTS from TARGET_MACHINE; anvil-klipper-config ships both now and
+    anvil-link-prog.sh symlinks the right one on the printer.
+    """
     patch = (ROOT / "bin" / "patch.sh").read_text()
     m = re.search(r'^MOD_ROOTS="(.*?)"', patch, re.M | re.S)
     assert m, "bin/patch.sh has no MOD_ROOTS -- has section 0 been rewritten?"
-    models = re.findall(r'\bMODEL_PKG=([\w.+-]+)', patch)
-    assert models, "bin/patch.sh sets no MODEL_PKG -- which chamber config ships?"
-    return [w for w in m.group(1).split() if w != "$MODEL_PKG"] + models
+    assert "$MODEL_PKG" not in m.group(1), (
+        "MOD_ROOTS still expands $MODEL_PKG -- the chamber configs are one "
+        "package now, chosen on the printer rather than by the build")
+    return m.group(1).split()
 
 
 def test_the_payload_roots_name_real_packages():

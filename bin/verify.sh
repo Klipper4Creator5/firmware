@@ -143,19 +143,33 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
     # printer.base.cfg has a bare [include printer.chamber.cfg] and Klipper
     # treats a missing include as fatal, so a payload without a chamber config
     # is a printer that comes up with no motion and no heaters -- and the file
-    # moved recently, from riding the software component to /usr/prog into a
-    # package of its own per model, which is exactly when a staging line gets
-    # dropped. The ff-*.cfg are the toolchanger itself: without them klippy
-    # starts fine and the machine is a single-tool printer that reports no
-    # error anywhere.
+    # keeps moving, which is exactly when a staging line gets dropped. It rode
+    # the software component to /usr/prog, then became a package per model,
+    # and is now one package carrying BOTH under config/chamber/, with
+    # anvil-link-prog.sh symlinking the one app_startup.sh's MACHINE names.
+    #
+    # So both halves are checked: the configs are in the payload, and the
+    # script that resolves them is too. Either alone installs a printer that
+    # cannot start klippy, and neither says so until it does.
+    #
+    # The ff-*.cfg are the toolchanger itself: without them klippy starts fine
+    # and the machine is a single-tool printer that reports no error anywhere.
     #
     # Only when the toolchanger is in this build. BUILD_TOOLCHANGE=0 ships
     # neither these nor our printer.base.cfg, which is a coherent package and
     # not a broken one.
     if [ "${BUILD_TOOLCHANGE:-1}" = "1" ]; then
-        grep -q 'config/printer.chamber.cfg' <<<"$LIST" \
-            && ok "mod payload carries a chamber config (printer.base.cfg includes it unconditionally)" \
-            || bad "mod payload has no config/printer.chamber.cfg -- klippy will not start"
+        for _m in Creator5 Creator5Pro; do
+            grep -q "config/chamber/$_m.cfg" <<<"$LIST" \
+                && ok "mod payload carries the $_m chamber config" \
+                || bad "mod payload has no config/chamber/$_m.cfg -- that model will not start klippy"
+        done
+        grep -q 'config/printer.base.cfg' <<<"$LIST" \
+            && ok "mod payload carries printer.base.cfg (every other config hangs off it)" \
+            || bad "mod payload has no config/printer.base.cfg -- klippy will not start"
+        grep -q 'bin/anvil-link-prog.sh' <<<"$LIST" \
+            && ok "the linker is in the payload (it resolves chamber/<MACHINE>.cfg on the printer)" \
+            || bad "no bin/anvil-link-prog.sh -- nothing links a chamber config into /usr/data/config"
         grep -q 'config/ff-toolchange.cfg' <<<"$LIST" \
             && ok "mod payload carries the toolchanger config" \
             || bad "mod payload has no config/ff-*.cfg -- klippy starts as a single-tool printer, silently"
