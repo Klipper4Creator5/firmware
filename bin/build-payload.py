@@ -22,14 +22,14 @@ from pathlib import Path
 for _p in Path(__file__).resolve().parents:
     if (_p / "bin" / "common.sh").is_file():
         ROOT = _p
-        sys.path.insert(0, str(_p / "test"))
+        sys.path.insert(0, str(_p / "tools" / "replica"))
         break
 
 from ffsim import cli                            # noqa: E402
 from ffsim.config import Config                  # noqa: E402
 from ffsim.replica import Replica                # noqa: E402
 
-CASE = "test/integration/printer/case-build-payload.sh"
+CASE = "tools/replica/printer/case-build-payload.sh"
 
 
 def _sh(var, default=""):

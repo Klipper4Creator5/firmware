@@ -2,7 +2,7 @@
 
 WHAT CHANGED, AND WHY IT IS THE WHOLE POINT
 
-test/ffsim/replica.py runs one container per case script:
+tools/replica/ffsim/replica.py runs one container per case script:
 
     docker run --rm --privileged ... <image> /case.sh
 
@@ -373,7 +373,7 @@ def resolve_image(config, docker):
     image = config.get("PRINTER_IMAGE")
     if image:
         # A prebuilt image carries the firmware already -- rootfs, /usr/prog,
-        # /usr/data, baked by test/integration/build-printer-image.sh.
+        # /usr/data, baked by tools/replica/build-printer-image.sh.
         return image, True
 
     if not (ROOT / "work" / "rootfs" / "bin").is_dir():
@@ -385,7 +385,7 @@ def resolve_image(config, docker):
             "    from the stock package:  make rootfs")
 
     image = "creator5-printer-sim"
-    build_dir = ROOT / "test" / "integration" / "printer"
+    build_dir = ROOT / "tools" / "replica" / "printer"
     # Always rebuild: a cache hit takes about a second, and a stale image
     # silently testing yesterday's harness is not a trade worth making.
     built = subprocess.run(
@@ -450,7 +450,7 @@ def installed_image(config=None, on_output=None):
     """A replica image that IS a printer with our package installed.
 
     Baked once per package and cached under a tag derived from its md5, the
-    same trick test/integration/build-printer-image.sh uses for the stock
+    same trick tools/replica/build-printer-image.sh uses for the stock
     baseline and for the same reason: the install is the machine's own
     app_startup.sh running under qemu, it takes minutes, and it produces an
     identical result every time.
@@ -526,7 +526,8 @@ def start(config=None, base_pkg=None, packages=None, setup_timeout=600,
           image=None):
     """Start a replica and hold it open. Returns a Printer.
 
-    The argv is deliberately the same as test/ffsim/replica.py's, minus --rm
+    The argv is deliberately the same as tools/replica/ffsim/replica.py's,
+    minus --rm
     and plus -d: this must be the SAME machine the old suite tests, or the
     two suites running side by side during the migration prove nothing about
     each other.

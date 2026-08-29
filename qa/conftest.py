@@ -1,16 +1,16 @@
 """The qa suite: pytest is the only framework.
 
-This tree exists beside test/, not inside it, because the two answer to
-different runners and mixing them makes "which framework is this file in" a
-live question in every file. test/ keeps its own harness (test/run-tests.py +
-test/ffsim) until each of its gates has a replacement here; see
-docs/qa-migration.md for the order.
+This tree exists beside test/, not inside it, because the two answer different
+questions. test/ is host-side unit tests over our own Python and needs nothing;
+this is the suite that decides whether a package bricks a printer. The old
+harness that used to stand between them is gone -- see docs/qa-migration.md.
 
 WHAT IS DIFFERENT HERE
 
-The old suite runs one `docker run --privileged` per case script and gets one
-boolean back, because the assertions live in POSIX sh inside the qemu chroot.
-6,280 lines of case-*.sh report 13 bits between them. The rule here is:
+The suite this replaced ran one `docker run --privileged` per case script and
+got one boolean back, because the assertions lived in POSIX sh inside the qemu
+chroot. 6,280 lines of case-*.sh reported 13 bits between them. The rule here
+is:
 
     shell inside the chroot performs actions; python on the host asserts.
 

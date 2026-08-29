@@ -45,28 +45,51 @@ unreachable. See [qa-migration.md](qa-migration.md). Everything else is green.
 ## What is left in `test/`
 
 `test/run-tests.py` is **gone**, and `make test` with it. What remains is not a
-suite:
+suite -- it is 28 host-side unit tests over our own Python, which need neither
+docker nor the firmware:
 
 ```sh
-make test-py   # the host-side pytest tree
+make test-py   # 28 tests, well under a second
 ```
 
-- **`test/integration/test_*.py`** -- 185 host-side tests over the Klipper
-  configs, the gcode, `ff-startup.py`, `ffscreen.py`, the toolchange transform
-  and the offset sampling. Already pytest, already well-seamed; they were never
-  part of the migration and can be adopted by pointing `qa/` at them.
-- **`test/ffsim/`** -- 678 lines and no longer a framework. `extract_rootfs` is
-  what `make rootfs` runs; `Replica` is what `make boot-screen-sim` uses.
-- **`test/integration/printer/`** -- the `Dockerfile`, `entrypoint.sh`,
-  `assemble.sh`, `binfmt.sh` and `seed-prog.sh` that BUILD the replica. `qa/`
-  uses them unmodified; they were never the problem.
-- **`test/test-chelper.py`** -- in neither suite: `bin/patch.sh` and
-  `bin/verify.sh` call it directly at build time.
+| file | tests | what it is for |
+|---|---|---|
+| `test_startup.py` | 8 | the stamp discipline in `ff-startup.py`: no stamp is written unless the values are verifiably saved, because a stamp written early is a printer that has silently lost its factory calibration for good. Plus the handover order -- the boards, then klipper, again on every retry |
+| `test_tool_transform.py` | 7 | the per-tool frame arithmetic in `ff_toolchange`, whose failures are a nozzle in the wrong place |
+| `test_ffscreen.py` | 5 | restraint: never write outside the framebuffer, never guess at a pixel format, never raise into the migration it decorates |
+| `test_chamber.py` | 4 | the chamber macros branching on the model, whose failures are silent until they have cost a print |
+| `test_gcode.py` | 4 | the two `gcode/` files name commands we ship, and the safe one is cold and stays above its floor |
 
-> **The build path is not tested.** The packaging build on a synthetic stock
-> package -- `unpack`/`patch`/`pack`/`verify` -- went with `run-tests.py` and
-> has no counterpart in `qa/`. That is the path producing the `.tgz` a user
-> flashes. See [qa-migration.md](qa-migration.md).
+This was 186 tests in twelve files as recently as the qa migration. The cut to
+28 was deliberate and is recorded in
+[qa-migration.md](qa-migration.md#the-second-cut): what went was everything
+whose subject had become the fake it was built on, or whose failure the printer
+reports loudly the first time. What is kept is the mistakes that RUN
+PERFECTLY and are wrong.
+
+`test/test-chelper.py` sits outside both suites: `bin/patch.sh` and
+`bin/verify.sh` call it directly at build time.
+
+## The replica is a tool, not a test
+
+`tools/replica/` builds the machine both suites run against, and the build
+uses it too -- `bin/patch.sh` assembles the payload by running the printer's
+own `opkg` inside it. It is not under `test/` because nothing in it is a test:
+
+```
+tools/replica/
+  printer/                  the replica itself: the Dockerfile, binfmt.sh,
+                            assemble.sh, entrypoint.sh, seed-prog.sh, bake.sh
+  ffsim/                    the host half -- config loading and the docker
+                            plumbing. NOT a test framework; it was one, and
+                            what is left of it launches containers
+  build-printer-image.sh    bakes a prebuilt replica image
+  extract-rootfs.py         `make rootfs`
+  sim-boot-screen.py        `make boot-screen-sim`
+```
+
+`qa/lib/replica.py` drives `tools/replica/printer/` unmodified; it holds a
+container open where `ffsim` runs one case script and exits.
 
 ## Why the harness is Python
 
@@ -122,7 +145,7 @@ Almost all of a replica run used to be setup, repeated per test case:
 | **the test itself** (three boots, install, re-install) | ~30s |
 
 `make printer-image` does both of those once, at build time, and publishes the
-result. `test/integration/printer/bake.sh` is the part that cannot be a `docker build`
+result. `tools/replica/printer/bake.sh` is the part that cannot be a `docker build`
 step — the stock install needs `binfmt_misc` and `chroot`, so it runs in a
 privileged container and the result is committed. The md5 of the package that
 was installed is recorded in `/usr/prog/.BASELINE`; `entrypoint.sh` reinstalls
@@ -184,7 +207,7 @@ Tests that cannot fail are worse than no tests, because they read as coverage:
 - **The hand-rolled bashism grep in `run-tests.sh`.** It knew five constructs;
   `shellcheck -s dash` knows the whole SC3xxx family and now stands in its
   place. The same pass gave every replica launcher one shared home for the
-  docker plumbing — now `test/ffsim/replica.py` — which also fixed two `make
+  docker plumbing — now `tools/replica/ffsim/replica.py` — which also fixed two `make
   test-ash` bugs: it ran without the docker socket (so it always silently
   skipped), and it never read `test.env`, so it ignored `PRINTER_IMAGE` and
   rebuilt the local sim image every run.

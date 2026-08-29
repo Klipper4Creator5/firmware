@@ -80,7 +80,7 @@ class Replica:
                 "in test.env to skip it.")
 
         image = "creator5-printer-sim"
-        build_dir = config.root / "test" / "integration" / "printer"
+        build_dir = config.root / "tools" / "replica" / "printer"
         # Always rebuild: a cache hit takes about a second, and a stale image
         # silently testing yesterday's harness is not a trade worth making.
         built = subprocess.run(
@@ -109,10 +109,10 @@ class Replica:
 
         # A case that has to hand something back gets an entrypoint of ours,
         # which runs the stock one and then mounts /out inside the chroot.
-        # See test/integration/printer/entrypoint-out.sh for why that cannot
+        # See tools/replica/printer/entrypoint-out.sh for why that cannot
         # be a plain -v onto /printer/out.
         if want_out:
-            wrapper = self.root / "test" / "integration" / "printer" / "entrypoint-out.sh"
+            wrapper = self.root / "tools" / "replica" / "printer" / "entrypoint-out.sh"
             argv += [
                 "--entrypoint", "/entrypoint-out.sh",
                 "-v", "%s:/entrypoint-out.sh:ro" % wrapper,

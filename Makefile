@@ -233,7 +233,7 @@ verify: image
 # it only exists inside the stock package's kernel component.
 rootfs: image config.env
 	@$(RUN) ./bin/unpack.sh >/dev/null
-	@$(RUN) ./test/integration/extract-rootfs.py
+	@$(RUN) ./tools/replica/extract-rootfs.py
 
 # `make test` used to be here, running test/run-tests.py -- a bespoke harness
 # that wrapped pytest, re-parsed its JUnit XML, and drove thirteen replica case
@@ -294,10 +294,10 @@ qa-replica: image
 #
 # The image contains proprietary FlashForge firmware.
 printer-image: image
-	@$(RUNSIM) ./test/integration/build-printer-image.sh
+	@$(RUNSIM) ./tools/replica/build-printer-image.sh
 
 printer-image-push: image
-	@$(RUNSIM) ./test/integration/build-printer-image.sh --push
+	@$(RUNSIM) ./tools/replica/build-printer-image.sh --push
 
 # The Python gate. The checks that read the printer's rootfs skip without one;
 # everything else runs on any checkout.
@@ -310,7 +310,7 @@ boot-screen:
 # The same frames, drawn by the PRINTER's python inside the replica. Slower,
 # and the only render that proves what the panel would really show.
 boot-screen-sim: image
-	@$(RUNSIM) ./test/integration/sim-boot-screen.py
+	@$(RUNSIM) ./tools/replica/sim-boot-screen.py
 
 clean:
 	@rm -rf work/stage work/out work/modpayload-root

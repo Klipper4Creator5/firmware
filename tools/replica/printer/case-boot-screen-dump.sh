@@ -12,7 +12,7 @@
 # frames are PNG-compressed in here (zlib is stdlib) rather than shipped raw,
 # because a 1024x600x32 frame is 2.4MB and there are several of them.
 #
-# test/integration/sim-boot-screen.py drives this and writes the PNGs out.
+# tools/replica/sim-boot-screen.py drives this and writes the PNGs out.
 MOD=/usr/data/anvil
 PY=$MOD/bin/python3.13
 mkdir -p $MOD/bin

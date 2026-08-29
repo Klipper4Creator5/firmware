@@ -2,7 +2,7 @@
 # Install the mod package into /parts ONCE, and leave the container ready to
 # be committed as an image that IS a printer with the mod on it.
 #
-# Modelled on test/integration/printer/bake.sh, which does the same for the
+# Modelled on tools/replica/printer/bake.sh, which does the same for the
 # STOCK baseline, and for the same reason: the install needs binfmt_misc and
 # chroot, so it needs --privileged, so it cannot happen in a `docker build`
 # step. The caller runs this in a container and commits the result.

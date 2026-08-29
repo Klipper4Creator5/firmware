@@ -315,33 +315,33 @@ pkgs/           package recipes: one directory per component, each a
 ```
 qa/             THE SUITE. static/ needs nothing but a checkout;
                 replica/ needs docker and the firmware. `make qa`
-test/           the shared pytest fixtures, the host-side tests of our own
-                Python, and the machinery that builds the replica
-  ffsim/          the host half of the replica, as a python package: config
-                  loading and the docker plumbing. Not a test framework any
-                  more -- see docs/qa-migration.md
-  integration/    the host-side tests. `make test-py`
-    test_startup.py         bin/ff-startup.py -- the whole first boot
-    test_ffscreen.py        the lines the first boot puts on /dev/fb0
-    test_tool_transform.py  the per-tool G-code frame in ff_toolchange
-    test_chamber.py         the Klipper config gate -- no firmware needed
-    test_gcode.py           gcode/*.gcode against the macros we define
-    printer/        the replica itself: binfmt, mount layout, its two
-                    Dockerfiles, and the entrypoint that runs inside it on
-                    the printer's own binaries -- SHELL, because the printer's
-                    busybox ash is the only interpreter that matters there
-    extract-rootfs.py       pulls the real rootfs out of the stock package
-    sim-boot-screen.py      renders the boot frames, via the docker socket
-    build-printer-image.sh  bakes a prebuilt replica image
+test/           28 host-side unit tests over our own Python, and the two
+                fixtures they share. `make test-py`
+  conftest.py     the merged config tree the config gates read
+  ffcfg.py        Klipper config parsing, as klippy's own parser sees it
+  integration/    test_startup.py, test_tool_transform.py, test_ffscreen.py,
+                  test_chamber.py, test_gcode.py -- see docs/testing.md
+  test-chelper.py in neither suite: bin/patch.sh and bin/verify.sh call it
+tools/replica/  THE REPLICA, which is a build tool as much as a test one --
+                bin/patch.sh assembles the payload inside it
+  printer/        the machine: binfmt, the mount layout, its two Dockerfiles
+                  and the entrypoint that runs inside it on the printer's own
+                  binaries -- SHELL, because the printer's busybox ash is the
+                  only interpreter that matters there
+  ffsim/          the host half: config loading and the docker plumbing
+  extract-rootfs.py       pulls the real rootfs out of the stock package
+  sim-boot-screen.py      renders the boot frames, via the docker socket
+  build-printer-image.sh  bakes a prebuilt replica image
 test.env        replica settings only -- factory image, partition sizes
 docs/           the documentation
 ```
 
-Nothing left under `test/` needs the firmware: the config gate needs only
-python3 and jinja2, and the rest test our own Python against fakes. It briefly
-had a directory of its own, `test/unit`, so that a pull request had something
-to run; with one maintainer who always has the firmware, that was a boundary
-kept in sync for nobody. Everything that needs a real machine is in `qa/`.
+Nothing left under `test/` needs the firmware, or docker, or a network: the
+config gates need python3 and jinja2, and the rest exercise our own Python
+directly. It briefly had a directory of its own, `test/unit`, for exactly that
+distinction; with one maintainer who always has the firmware, that was a
+boundary kept in sync for nobody. Everything that needs a real machine is in
+`qa/`, and the machine itself is in `tools/replica/`.
 
 The line between Python and shell here is not taste. Everything that runs on
 YOUR machine is Python; everything executed by the printer's own busybox under

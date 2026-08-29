@@ -1,6 +1,6 @@
 """The first-boot screen, drawn by the printer's own interpreter.
 
-A port of test/integration/printer/case-boot-screen.sh.
+A port of the retired test/integration/printer/case-boot-screen.sh.
 
 WHAT THIS ADDS OVER test/integration/test_ffscreen.py. That file is the
 host-side unit coverage -- pixel formats, buffer bounds, rotation arithmetic,
@@ -56,7 +56,7 @@ WHAT WAS DROPPED FROM THE CASE SCRIPT
     itself the files it then checked for.
   * `ok`/`bad` and the FAIL counter. Each of them is a test below.
 
-Not in scope: test/integration/printer/case-boot-screen-dump.sh, which renders
+Not in scope: tools/replica/printer/case-boot-screen-dump.sh, which renders
 frames as base64 PNGs for a human to look at under `make boot-screen-sim`. It
 is a viewer, not a test.
 """

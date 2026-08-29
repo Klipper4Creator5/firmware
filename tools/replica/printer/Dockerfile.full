@@ -10,7 +10,7 @@
 # Everything executed inside is the printer's own MIPS userland running under
 # qemu-mipsel. See docs/printer-replica.md.
 #
-# Built by test/integration/build-printer-image.sh, which supplies the URLs per
+# Built by tools/replica/build-printer-image.sh, which supplies the URLs per
 # model.
 #
 # CONTAINS PROPRIETARY FLASHFORGE FIRMWARE.
@@ -75,7 +75,7 @@ COPY --from=fetch /rootfs/ /rootfs/
 COPY --from=fetch /parts/  /parts/
 
 # The harness: binfmt registration, mount layout, prog checks, entrypoint.
-# Build context is test/integration/printer.
+# Build context is tools/replica/printer.
 COPY . /opt/printer/
 RUN chmod +x /opt/printer/*.sh
 

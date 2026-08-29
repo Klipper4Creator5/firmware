@@ -35,7 +35,7 @@ COST
 The install is the machine's own shell running under qemu and it takes
 minutes, so it is baked into an image ONCE per package and cached under a tag
 derived from the package's md5 -- the same trick
-test/integration/build-printer-image.sh uses for the stock baseline. Rebuild
+tools/replica/build-printer-image.sh uses for the stock baseline. Rebuild
 the package and the tag changes, so the next run bakes again instead of
 testing yesterday's build.
 

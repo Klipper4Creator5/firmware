@@ -57,7 +57,7 @@ SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh",
                 "pkgs/*/payload/prog/klipperDaemon",
                 "pkgs/*/payload/etc/s6-rc/" + "source/*/run",
                 "installer/*.sh",
-                "test/integration/printer/*.sh",
+                "tools/replica/printer/*.sh",
                 "qa/replica/actions/*.sh",
                 # BOTH RECIPE LEVELS. pkgs/*/build.sh alone silently
                 # stopped covering thirty-four of the thirty-eight the day
@@ -100,8 +100,9 @@ ASH_GLOBS = ("pkgs/*/payload/*.sh",
              "installer/*.sh", "qa/replica/actions/*.sh")
 
 PY_GLOBS = ("bin/*.py", "pkgs/*/payload/bin/*.py",
-            "pkgs/*/payload/klipper/klippy/extras/*.py", "test/*.py", "test/ffsim/*.py",
-            "test/integration/*.py", "qa/*.py", "qa/lib/*.py",
+            "pkgs/*/payload/klipper/klippy/extras/*.py", "test/*.py",
+            "test/integration/*.py", "tools/replica/*.py",
+            "tools/replica/ffsim/*.py", "qa/*.py", "qa/lib/*.py",
             "qa/static/*.py", "qa/replica/*.py")
 
 

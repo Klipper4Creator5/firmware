@@ -71,7 +71,7 @@ jobs:
           # shellcheck could report anything it liked and the job stayed green.
           # payload scripts run under busybox ash on the printer.
           shellcheck -s sh   -S error pkgs/*/payload/*.sh pkgs/*/payload/init.d/S* pkgs/*/prog/*.sh pkgs/*/prog/firmwareExe installer/*.sh
-          shellcheck -s bash -S error bin/*.sh test/integration/*.sh
+          shellcheck -s bash -S error bin/*.sh tools/replica/*.sh
           # Warnings are advisory: printed, not enforced.
           shellcheck -s sh -S warning pkgs/*/payload/*.sh pkgs/*/payload/init.d/S* pkgs/*/prog/*.sh pkgs/*/prog/firmwareExe installer/*.sh || true
 

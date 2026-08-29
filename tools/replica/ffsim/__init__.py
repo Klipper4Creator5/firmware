@@ -1,7 +1,7 @@
 """Host side of the test harness.
 
 Everything in here runs on YOUR machine. The scripts that run on the printer
--- test/integration/printer/*.sh and the whole payload -- stay shell on
+-- tools/replica/printer/*.sh and the whole payload -- stay shell on
 purpose: they are executed by the printer's own busybox ash under qemu, and
 the fact that they survive that is a large part of what the suite proves.
 Rewriting those in Python would test a Python the printer does not have.

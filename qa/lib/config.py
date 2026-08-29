@@ -1,7 +1,7 @@
 """config.env and test.env, read the way the build reads them.
 
-Lifted from test/ffsim/config.py rather than imported from it. The endgame is
-that test/ffsim is deleted, and a qa/ that imports from it would either block
+Lifted from tools/replica/ffsim/config.py rather than imported from it. The
+endgame is that ffsim is deleted, and a qa/ that imports from it would block
 that deletion or break on it. The file format is stable and the parser is
 thirty lines; the coupling would cost more than the duplication.
 

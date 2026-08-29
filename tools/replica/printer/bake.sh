@@ -7,7 +7,7 @@
 # updater, and a test run starts in under a second.
 #
 # This cannot happen in a `docker build` step: the install needs binfmt_misc
-# and chroot, so it needs --privileged. test/integration/build-printer-image.sh
+# and chroot, so it needs --privileged. tools/replica/build-printer-image.sh
 # runs this
 # in a container and commits the result.
 #

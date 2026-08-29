@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Build a Docker image that IS the printer.
 #
-#   ./test/integration/build-printer-image.sh            build
-#   ./test/integration/build-printer-image.sh --push     build and push
-#   ./test/integration/build-printer-image.sh --no-bake  skip the baseline install
+#   ./tools/replica/build-printer-image.sh            build
+#   ./tools/replica/build-printer-image.sh --push     build and push
+#   ./tools/replica/build-printer-image.sh --no-bake  skip the baseline install
 #
 # ONE image covers both models. That is not a shortcut -- there is genuinely
 # nothing model-specific to put in a second one:
@@ -23,7 +23,7 @@
 #
 # The Dockerfile downloads the firmware itself, so nothing has to be staged
 # locally, config.env is not needed, and the build context is just
-# test/integration/printer. Override to build against different firmware:
+# tools/replica/printer. Override to build against different firmware:
 #
 #   STOCK_URL=  FACTORY_URL=  FW_VERSION=
 #
@@ -75,7 +75,7 @@ $DOCKER build -t "$RAW" \
     --build-arg "FACTORY_URL=$FACTORY_URL" \
     --build-arg "FF_KEY=${FF_KEY:-FFP0331&*%root}" \
     --build-arg "FW_VERSION=$FWVER" \
-    -f test/integration/printer/Dockerfile.full test/integration/printer
+    -f tools/replica/printer/Dockerfile.full tools/replica/printer
 
 if [ "$BAKE" = 1 ]; then
     echo

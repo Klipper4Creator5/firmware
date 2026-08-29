@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Extract the printer's REAL root filesystem from the stock update package.
 
-    ./test/integration/extract-rootfs.py
+    ./tools/replica/extract-rootfs.py
 
 The kernel-*.tar.xz component carries ota_kernel_emmc/ota_v1/rootfs.squashfs
 -- the genuine buildroot rootfs: busybox 1.31.1, /etc/inittab, /etc/init.d
@@ -19,7 +19,7 @@ from pathlib import Path
 
 for _p in Path(__file__).resolve().parents:
     if (_p / "bin" / "common.sh").is_file():
-        sys.path.insert(0, str(_p / "test"))
+        sys.path.insert(0, str(_p / "tools" / "replica"))
         break
 
 from ffsim import cli                            # noqa: E402

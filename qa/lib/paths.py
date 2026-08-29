@@ -1,6 +1,6 @@
 """Where things are, found by looking rather than by counting.
 
-Same rule as test/ffsim/__init__.py, and for the same reason recorded there:
+Same rule as tools/replica/ffsim/__init__.py, for the reason recorded there:
 the shell suite computed the root by counting `..` from $0, so moving a
 launcher one directory deeper made ROOT point at test/ instead of the repo --
 which happened, to five scripts at once, and shipped. A search does not care

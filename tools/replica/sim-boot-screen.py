@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Draw the first-boot screen in the replica and write it out as PNGs.
 
-    ./test/integration/sim-boot-screen.py [--out DIR]
+    ./tools/replica/sim-boot-screen.py [--out DIR]
 
 ffscreen.py packs pixels by hand, and the only honest way to review that is to
 look at the result -- rendered by the interpreter that will really run it.
@@ -22,7 +22,7 @@ from pathlib import Path
 for _p in Path(__file__).resolve().parents:
     if (_p / "bin" / "common.sh").is_file():
         ROOT = _p
-        sys.path.insert(0, str(_p / "test"))
+        sys.path.insert(0, str(_p / "tools" / "replica"))
         break
 
 from ffsim import cli                            # noqa: E402
@@ -30,7 +30,7 @@ from ffsim.config import Config                  # noqa: E402
 from ffsim.replica import Replica                # noqa: E402
 from ffsim.gates import _python_tarball          # noqa: E402
 
-CASE = ("test", "integration", "printer", "case-boot-screen-dump.sh")
+CASE = ("tools", "replica", "printer", "case-boot-screen-dump.sh")
 FRAME = re.compile(r"PNGSTART (\S+)\n(.*?)\nPNGEND", re.S)
 
 

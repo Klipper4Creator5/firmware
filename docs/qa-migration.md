@@ -2,8 +2,8 @@
 
 `qa/` is the test suite. It was built beside `test/` rather than inside it, and
 the migration is now done: every `case-*.sh` has been ported or retired, and
-what remains of `test/` is 136 host-side pytest tests and the machinery that
-builds the replica.
+what remains of `test/` is 28 host-side unit tests. The machinery that builds
+the replica has moved to `tools/replica/`, because it was never a test.
 
 This document says why it exists, what it proves, and what is still owed.
 
@@ -236,7 +236,7 @@ this tree:
 |---|---|
 | `qa/static` | **246 tests, 8s**, no docker |
 | `qa/replica` | 118 tests, 3m40s -- 110 pass, 8 blocked on absent hardware |
-| `test/` pytest | 136 tests, 0.3s |
+| `test/` pytest | 28 tests, 0.1s |
 
 `test/run-tests.py` is **322 lines** and `test/ffsim/` **483**, from 1,657
 between them. What is left of the old harness runs the packaging build on a
@@ -482,19 +482,24 @@ a stock package.
 
 ### What survives in test/
 
-- **`test/integration/test_*.py`** -- 136 host-side tests in five files.
-  Already pytest, and adoptable by pointing `qa/` at them whenever that seems
-  worth doing. Eight files were dropped after the migration; see *The second
-  cut* below.
-- **`test/ffsim/`** -- 678 lines, down from 1,657, and no longer a test
-  framework. `extract_rootfs` is what `make rootfs` runs; `Replica` and the
-  python-tarball helper are what `make boot-screen-sim` uses to render the boot
-  frames with the cross-built interpreter.
-- **`test/integration/printer/`** -- the `Dockerfile`, `entrypoint.sh`,
-  `assemble.sh`, `binfmt.sh` and `seed-prog.sh` that BUILD the replica. `qa/`
-  uses them unmodified; they were never the problem.
+- **`test/integration/test_*.py`** -- 28 host-side unit tests in five files,
+  down from 186; see *The second cut* below.
 - **`test/test-chelper.py`** -- in neither suite. `bin/patch.sh` and
   `bin/verify.sh` call it directly at build time.
+
+And two things that were under `test/` and are not tests, now at
+**`tools/replica/`**:
+
+- **`ffsim/`** -- 678 lines, down from 1,657, and no longer a test framework.
+  `extract_rootfs` is what `make rootfs` runs; `Replica` is what
+  `make boot-screen-sim` and, more to the point, **`bin/patch.sh`** use --
+  the payload is assembled by running the printer's own `opkg` inside a
+  replica, so this is build-path code that happened to live in the test tree.
+- **`printer/`** -- the `Dockerfile`, `entrypoint.sh`, `assemble.sh`,
+  `binfmt.sh` and `seed-prog.sh` that BUILD the replica. `qa/lib/replica.py`
+  uses them unmodified; they were never the problem. Moving them out of
+  `test/` changed no content, only `qa/lib/replica.py`'s build directory and
+  three launcher paths.
 
 ### The second cut
 
@@ -515,6 +520,30 @@ printer, was the subject, and were dropped on that ground:
 The four rows in bold-ish -- the executable bit, the include set, the rootfs
 paths -- are static questions that a replica cannot answer any better, so if
 they come back they belong in `qa/static`, not here.
+
+The five survivors were then cut from 136 tests to 28 -- the 20% worth
+keeping -- on one question: **would this failure be silent?**
+
+| file | was | now | what the survivors are |
+|---|---|---|---|
+| `test_startup.py` | 49 | 8 | the stamp discipline, and the handover order. A stamp written before the values are verifiably saved is a printer that has lost its factory calibration for good, and no later boot will try again |
+| `test_ffscreen.py` | 33 | 5 | the four ways it can do harm -- scribble outside the buffer, scribble a format it does not understand, raise into the migration, or turn the picture |
+| `test_tool_transform.py` | 24 | 7 | every kept test is a move to the WRONG PLACE: a sign, a frame left applied while probing, a stale gcode_move cache, a klippy that will not parse its config on a calibrated printer |
+| `test_chamber.py` | 20 | 4 | the three chamber mistakes that are silent until they have cost a print, plus the parse gate they rest on |
+| `test_gcode.py` | 10 | 4 | a renamed macro, and the safe file's promise that it is cold and stays above Z50 |
+
+What went with them, in one sentence each: the panel narration (words a person
+reads while waiting, and `qa/replica/test_boot_screen.py` renders the real
+thing on the real machine); the geometry probe and `parse_geometry` (a panel
+that looks wrong, not a printer that breaks); `z_adjust` staging and the
+per-job Z term (wrong numbers reported to a person); the config layout checks
+(a config that does not load, which the printer says loudly the first time);
+and the G-code bounds checks (Klipper refuses the move at the first offending
+line, before the toolhead has gone anywhere).
+
+Each of the five files says in its own header what it dropped and why. That is
+deliberate: a test file that has been cut hard should say so where the next
+person opens it, not only in a document they may not read.
 
 ### Still owed
 
