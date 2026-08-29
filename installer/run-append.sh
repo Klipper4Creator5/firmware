@@ -206,15 +206,21 @@ if [ -n "$MODTAR" ]; then
         # FlashForge's run.sh copies a fixed list of files and klipperDaemon is
         # not on it -- so it is installed from here.
         #
+        # $MODDIR/prog, NOT $MODDIR/bin. It moved there in 057a3a1 and this
+        # guard did not, so the whole block was skipped in silence: every
+        # printer since kept FlashForge's klipperDaemon, whose `start` is the
+        # second unsupervised klippy this exists to prevent. A `[ -f ]` that
+        # can only be false is why it never said so.
+        #
         # KLIPPER_NICENESS is carried forward off the file being replaced, so
         # FlashForge's number survives without being guessed. On later updates
         # that reads our own copy, which is how the value persists.
-        if [ -f $MODDIR/bin/klipperDaemon ] && [ -d /usr/prog/klipper ]; then
+        if [ -f $MODDIR/prog/klipperDaemon ] && [ -d /usr/prog/klipper ]; then
             KN=`sed -n 's/^ *KLIPPER_NICENESS= *\([-0-9][0-9]*\).*/\1/p' \
                 /usr/prog/klipper/klipperDaemon 2>/dev/null | head -n 1`
             [ -n "$KN" ] || KN=0
             sed "s/^KLIPPER_NICENESS=.*/KLIPPER_NICENESS=$KN/" \
-                $MODDIR/bin/klipperDaemon > /usr/prog/klipper/klipperDaemon.new \
+                $MODDIR/prog/klipperDaemon > /usr/prog/klipper/klipperDaemon.new \
                 && mv -f /usr/prog/klipper/klipperDaemon.new /usr/prog/klipper/klipperDaemon \
                 && chmod +x /usr/prog/klipper/klipperDaemon \
                 && echo "klipperDaemon: replaced (start is a no-op; niceness $KN)" \
