@@ -167,7 +167,7 @@ def moonraker(config, on_output=None):
     """
     prefix = _prefix_tarball(config)
     if not prefix:
-        raise Skip("nothing in work/pkg/python or work/.sodium -- run ./bin/patch.sh first")
+        raise Skip("nothing in work/pkg/python or work/pkg/libsodium -- run ./bin/build-packages.sh first")
     packages = {"pref.tgz": prefix}
     s6 = _s6_tarball(config)
     if s6:
@@ -256,7 +256,7 @@ def moonraker313_s6(config, on_output=None):
         raise Skip("nothing in work/pkg/s6 -- run ./bin/patch.sh first")
     prefix = _prefix_tarball(config)
     if not prefix:
-        raise Skip("nothing in work/pkg/python or work/.sodium -- run ./bin/patch.sh first")
+        raise Skip("nothing in work/pkg/python or work/pkg/libsodium -- run ./bin/build-packages.sh first")
     tree = _moonraker_tarball(config)
     if not tree:
         raise Skip("no Moonraker tarball in vendor/ -- run ./bin/fetch-assets.sh first")
@@ -282,7 +282,11 @@ def _prefix_tarball(config):
     see the docstring above for why there is no useful fallback.
     """
     trees = _python_trees(config)
-    sodium = config.root / "work" / ".sodium"
+    # work/pkg/libsodium, not work/.sodium: libsodium became
+    # pkgs/3rdparty/libsodium in the same migration that turned work/.py313
+    # into the nineteen trees _python_trees reads. That half was updated and
+    # this line was not, so both moonraker gates skipped rather than ran.
+    sodium = config.root / "work" / "pkg" / "libsodium"
     if not (trees[0] / "bin" / "python3.13").is_file():
         return None
     if not list(sodium.glob("lib/libsodium.so*")):

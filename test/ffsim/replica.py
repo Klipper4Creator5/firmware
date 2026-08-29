@@ -110,7 +110,9 @@ class Replica:
         argv += [
             "-v", "%s/pkgs:/pkgs:ro" % stage,
             "-v", "%s/case.sh:/case.sh:ro" % stage,
-            "-v", "%s/payload:/payload:ro" % self.root,
+            # ASSEMBLED ON THIS SIDE, and mounted as the one directory
+            # every case script already reads. See stage_payload.
+            "-v", "%s/payload:/payload:ro" % stage,
             "-e", "FF_KEY=%s" % config.ff_key,
             "-e", "BASE_PKG=%s" % ("/pkgs/base.tgz" if base_pkg else ""),
             "-e", "PKGS=%s" % "".join(" %s=/pkgs/%s" % (n, n) for n in packages),
@@ -146,6 +148,45 @@ class Replica:
         """
         return self.root / "work" / (".sim-%d" % os.getpid())
 
+    def stage_payload(self, stage):
+        """Assemble what /tmp/payload has always been, from the recipes.
+
+        This was one mount of a top-level payload/ directory until 54a1e72
+        moved those files in with the recipes that own them. qa/lib/replica.py
+        was updated then and this harness was not, so every case reading
+        /tmp/payload ran against an empty tree -- docker does not fail on a
+        bind-mount source that does not exist, it creates an empty directory,
+        which is why the repo kept growing a root-owned payload/ nobody wrote.
+
+        ASSEMBLED HERE RATHER THAN IN entrypoint.sh, which is where
+        qa/lib/replica.py leaves it. That works only when the image is current,
+        and the published one (test.env's PRINTER_IMAGE) predates the split:
+        its entrypoint.sh knows /payload and nothing else, so the seed and the
+        Klipper launcher never arrive and case-moonraker.sh fails on an
+        anvil.conf that was never copied. Doing it on this side needs nothing
+        of the image but the mount it has always had.
+
+        Four sources, four roles: anvil-core's $MODDIR overlay, its anvil.conf
+        template -- the unrendered defaults are exactly what the cases want --
+        Klipper's launcher, which is a /usr/prog file and so lives in prog/,
+        and the installer block, which is never a file on a printer at all
+        (bin/patch.sh splices it into FlashForge's run.sh) but which
+        case-upgrade.sh runs directly as the thing under test.
+        """
+        out = stage / "payload"
+        shutil.copytree(str(self.root / "pkgs" / "anvil-core" / "payload"), str(out))
+        for src, name in (
+                (self.root / "pkgs" / "anvil-core" / "seed" / "anvil.conf.in",
+                 "anvil.conf"),
+                (self.root / "pkgs" / "klipper" / "prog" / "start.sh",
+                 "start.sh"),
+                (self.root / "installer" / "run-append.sh",
+                 "run-append.sh"),
+        ):
+            if src.is_file():
+                shutil.copy(str(src), str(out / name))
+        return out
+
     def run_case(self, case, packages=None, base_pkg=None, usb_stick=False,
                  on_output=None):
         """Run one case script in the replica. Non-zero exit is a Fail."""
@@ -159,6 +200,7 @@ class Replica:
             shutil.rmtree(str(stage))
         (stage / "pkgs").mkdir(parents=True)
         try:
+            self.stage_payload(stage)
             shutil.copy(case, str(stage / "case.sh"))
             for name, path in packages.items():
                 if not os.path.isfile(path):
