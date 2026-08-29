@@ -1,0 +1,58 @@
+#!/bin/sh
+# HelixScreen, as s6 supervises it. Exec'd by s6-supervise, never by hand.
+#
+# `exec` at the bottom is what makes the process s6 supervises BE the UI, so
+# s6-svstat reports its pid and `s6-rc -d change ui` signals it rather than a
+# shell that has long since gone.
+#
+# BLOCKING UNKNOWN: nothing has proved helix-screen runs under a supervisor. It
+# gets the descriptors s6-supervise hands it, no controlling terminal, and a
+# session it did not create. The environment below is the easy half; a tty is
+# not something a run script can conjure. If one turns out to be needed, the
+# answer is s6's own tty handling or a small wrapper -- the foreground this
+# used to run in no longer exists. See docs/notes/80-s6-migration.md.
+MODDIR=/usr/data/anvil
+
+if [ -f $MODDIR/anvil-env.sh ]; then
+    . $MODDIR/anvil-env.sh
+else
+    echo "ui/run: !! no $MODDIR/anvil-env.sh -- HelixScreen may not find its libraries"
+fi
+
+# HELIX_DATA_DIR is the root HelixScreen resolves config/settings.json against,
+# which is why run-append.sh backs that tree up across an update.
+HELIX_DATA_DIR=$MODDIR/helixscreen
+HELIX_LOG_DEST=file
+HELIX_LOG_FILE=/usr/data/logs/helixscreen.log
+# This repo pins and patches the HelixScreen build it ships; an in-app update
+# would replace it behind the package's back. HelixScreen documents this
+# variable as the vendor opt-out.
+HELIX_DISABLE_AUTO_UPDATES=1
+export HELIX_DATA_DIR HELIX_LOG_DEST HELIX_LOG_FILE HELIX_DISABLE_AUTO_UPDATES
+
+mkdir -p /usr/data/logs
+
+# The prerequisite. A run script cannot decline to run -- s6 respawns it -- so
+# a missing HelixScreen is reported with a sleep instead of showing up as a
+# failed exec once a second, which is a printer that got hot and never drew
+# anything. MOD_UI=0 is a different thing and is handled in firmwareExe, which
+# simply leaves this service out of the transition.
+if [ ! -x $MODDIR/helixscreen/bin/helix-launcher.sh ] \
+   && [ ! -x $MODDIR/helixscreen/bin/helix-screen ]; then
+    echo "ui: !! HelixScreen is not installed under $MODDIR/helixscreen"
+    sleep 5
+    exit 1
+fi
+
+# s6-supervise runs one copy of this service at a time, so anything answering
+# to these names is a leftover -- a UI started by hand over ssh -- and two
+# processes fighting over /dev/fb0 is a black screen with no explanation.
+killall helix-screen helix-watchdog helix-splash 2>/dev/null
+
+# The launcher is what a HelixScreen release ships to set up its own
+# environment; skipping it silently would change behaviour on the next release
+# rather than on this one.
+if [ -x $MODDIR/helixscreen/bin/helix-launcher.sh ]; then
+    exec $MODDIR/helixscreen/bin/helix-launcher.sh
+fi
+exec $MODDIR/helixscreen/bin/helix-screen

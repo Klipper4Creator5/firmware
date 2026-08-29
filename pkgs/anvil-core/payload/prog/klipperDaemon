@@ -1,0 +1,49 @@
+#!/bin/sh
+# /usr/prog/klipper/klipperDaemon -- REPLACED by the mod.
+#
+# Stock, this forks klippy with start-stop-daemon -b. klippy is an s6-rc longrun
+# now, so anything that still calls this -- FlashForge's own code, the UI's
+# restart-firmware path, a habit over ssh -- would put a second, unsupervised
+# klippy next to the supervised one, fighting for /dev/ttyS4 and /tmp/uds. So
+# `start` does nothing, and exits 0 so a caller that treats failure as fatal is
+# not broken by it.
+#
+# KLIPPER_NICENESS is FlashForge's tuning and this file is still where it lives:
+# etc/s6-rc/source/klipper/run reads the line below, and payload/run-append.sh
+# carries the value forward off the file it replaces, so a printer that has
+# never seen the stock number does not get a guessed one.
+KLIPPER_NICENESS=0
+
+MODDIR=/usr/data/anvil
+S6RC=$MODDIR/bin/s6-rc
+
+case "$1" in
+start)
+    echo "klipperDaemon: klipper is supervised -- use '$S6RC -u change klipper'"
+    exit 0
+    ;;
+stop)
+    # Redirected rather than reimplemented. Stock semantics would signal a
+    # pidfile nothing writes any more, so `stop` would silently do nothing and
+    # s6 would keep klippy up regardless. This also stops what depends on
+    # klipper: ff-startup, and so the UI.
+    [ -x "$S6RC" ] || { echo "klipperDaemon: no $S6RC"; exit 0; }
+    exec "$S6RC" -d change klipper
+    ;;
+restart)
+    # `s6-svc -t` and not two s6-rc transitions: it takes no lock on the live
+    # directory, so this is safe to call from inside one, and it leaves the
+    # WANTED state alone -- s6-rc goes on believing klipper is up, which stays
+    # true. -wr returns when the supervisor has started it again.
+    [ -x "$MODDIR/bin/s6-svc" ] || { echo "klipperDaemon: no $MODDIR/bin/s6-svc"; exit 0; }
+    exec "$MODDIR/bin/s6-svc" -wr -T 60000 -t "$MODDIR/etc/s6/klipper"
+    ;;
+status)
+    [ -x "$MODDIR/bin/s6-svstat" ] || { echo "klipperDaemon: no $MODDIR/bin/s6-svstat"; exit 0; }
+    exec "$MODDIR/bin/s6-svstat" "$MODDIR/etc/s6/klipper"
+    ;;
+*)
+    echo "usage: $0 {start|stop|restart|status}"
+    exit 1
+    ;;
+esac

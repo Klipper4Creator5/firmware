@@ -132,10 +132,12 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
     # 141 -- a race that stayed invisible until the fork klippy tree tripled
     # the listing, then intermittently reported Mainsail/Moonraker missing
     # from packages that carried both.
-    grep -q 'init.d/S80ui' <<<"$LIST" && ok "mod payload has the service scripts" \
-                                          || bad "mod payload missing init.d services"
-    grep -q 'init.d/S70klipper' <<<"$LIST" && ok "mod payload owns Klipper startup" \
-                                          || bad "mod payload missing S70klipper -- Klipper would never start"
+    # The compiled s6-rc database IS the service set: a payload without it
+    # boots to a scanner supervising nothing.
+    grep -q 'etc/s6-rc/compiled/' <<<"$LIST" && ok "mod payload has the compiled s6-rc database" \
+                                          || bad "mod payload has no s6-rc database -- no service would ever start"
+    grep -q 'servicedirs/klipper/run' <<<"$LIST" && ok "mod payload owns Klipper startup" \
+                                          || bad "mod payload has no klipper service -- Klipper would never start"
     # THE KLIPPER CONFIG. printer.base.cfg has a bare
     # [include printer.chamber.cfg] and Klipper treats a missing include as
     # fatal, so a payload without a chamber config is a printer that comes up
@@ -190,7 +192,7 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
     # ff-startup.py, ffscreen.py and ff_mcu_bringup.py all run on it -- so a
     # package missing it breaks the boot, not just a future release. klippy is
     # not among FF_PYTHON's callers: it stays on FlashForge's 3.8.2, started by
-    # /usr/prog/klipper/start.sh independently (see init.d/S70klipper).
+    # the klipper s6-rc service independently.
     #
     # Two checks, not one, and the second is the one worth having. The
     # interpreter can be present and perfectly runnable while _sqlite3 is

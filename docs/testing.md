@@ -2,15 +2,18 @@
 
 > **There is a second suite.** `qa/` is the replacement for everything below,
 > built beside it rather than inside it, and both run in CI. It is one
-> framework (pytest), and its results are per-assertion rather than per-case:
-> `case-services.sh`'s 360 lines and single exit code are 43 named tests there.
-> `test/` is still the release gate and nothing has been deleted. See
-> **[qa-migration.md](qa-migration.md)** for what moves when, and run
-> `make qa` / `make qa-static` / `make qa-replica`.
+> framework (pytest), and its results are per-assertion rather than per-case.
+> Run `make qa` / `make qa-static` / `make qa-replica`.
 >
-> The rest of this page describes the suite being migrated away from. It is
-> current and accurate for everything `qa/` has not yet replaced, which is
-> most of it.
+> **Several gates below are now RED and cannot be fixed by editing them.**
+> Phase 8 of [notes/80-s6-migration.md](notes/80-s6-migration.md) deleted
+> `payload/init.d/` and `payload/anvil-service.sh`, so the cases that assert
+> the `S*` wrapper contract or the `MOD_S6=0` fallback are asserting something
+> that no longer exists. [qa-migration.md](qa-migration.md) lists which, what
+> each one asserted, and where that assertion lives now. Retiring them needs a
+> stock package and a real run -- not a reading.
+>
+> The rest of this page describes the suite being migrated away from.
 
 Everything lives in `test/integration`, and `test/run-tests.py` runs it. There
 is still a real seam inside it, though — what needs the proprietary firmware

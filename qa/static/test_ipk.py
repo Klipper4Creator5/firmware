@@ -502,6 +502,14 @@ def test_every_payload_file_is_owned_by_a_package():
             # never appear in a list it is still being written into.
             if rel.startswith(MODDIR + "/var/lib/opkg"):
                 continue
+            # The compiled s6-rc database. bin/patch.sh runs s6-rc-compile
+            # over the source tree anvil-core ships, AFTER the payload is
+            # installed, so this is generated for the same reason
+            # .install-manifest is: it describes the payload and cannot be
+            # finished before the payload is. The SOURCE it is compiled from
+            # is package-owned and checked like everything else.
+            if rel.startswith(MODDIR + "/etc/s6-rc/compiled"):
+                continue
             extra.append(rel)
 
     assert not extra, (

@@ -1,0 +1,58 @@
+/bin/sh -c "
+# wlan0 + wpa_supplicant + udhcpc. Nothing in /etc/init.d brings the interface
+# up: FlashForge's firmwareExe owned the whole network stack, and app_startup.sh
+# only insmods the 8821cu driver. So the moment the mod replaces firmwareExe the
+# printer boots with no ssh, no Mainsail and no way to diagnose either.
+#
+# A ONESHOT, not a longrun: wpa_supplicant backgrounds itself with -B and so
+# does udhcpc, so there is no process for s6-supervise to hold.
+#
+# THE WAITS ARE BACKGROUNDED and this returns at once, because a oneshot's up
+# runs inside the transition firmwareExe is blocked on -- up to 15s for wlan0 to
+# register after the insmod and 20s more to associate, and that delay would land
+# on exactly the printer with no network. Returning early is lying to whatever
+# depends on this, so NOTHING DEPENDS ON WIFI, deliberately: moonraker and nginx
+# bind 0.0.0.0 and klipper talks to serial ports.
+#
+# The saved networks live in /usr/prog/wifi/wpa_supplicant.conf, which the mod
+# never ships or touches, so whatever FlashForge's UI saved is still there.
+IFACE=wlan0
+CONF=/usr/prog/wifi/wpa_supplicant.conf
+
+if pgrep -f wpa_supplicant >/dev/null 2>&1 || ps 2>/dev/null | grep wpa_supplican[t] >/dev/null; then
+    echo 'wifi: wpa_supplicant already running'
+    exit 0
+fi
+[ -f \"\$CONF\" ] || { echo \"wifi: !! no \$CONF -- nothing to connect to\"; exit 0; }
+
+(
+    n=0
+    while [ \$n -lt 15 ] && [ ! -d /sys/class/net/\$IFACE ]; do
+        sleep 1
+        n=\$((n + 1))
+    done
+    if [ ! -d /sys/class/net/\$IFACE ]; then
+        echo \"wifi: !! \$IFACE never appeared -- is 8821cu.ko loaded?\"
+        exit 1
+    fi
+    /sbin/ifconfig \$IFACE up 2>/dev/null
+    mkdir -p /var/run/wpa_supplicant
+    # nl80211 first, wext as the fallback: the 8821cu is a Realtek USB part and
+    # which one it registers varies by build.
+    if /usr/sbin/wpa_supplicant -B -i \$IFACE -c \"\$CONF\" -D nl80211,wext; then
+        echo 'wifi: wpa_supplicant started'
+    else
+        echo 'wifi: !! wpa_supplicant failed to start'
+        exit 1
+    fi
+    n=0
+    while [ \$n -lt 20 ]; do
+        /usr/sbin/wpa_cli -i \$IFACE status 2>/dev/null | grep -q '^wpa_state=COMPLETED' && break
+        sleep 1
+        n=\$((n + 1))
+    done
+    /sbin/udhcpc -i \$IFACE -b -t 5 >/dev/null 2>&1 &
+    echo \"wifi: udhcpc requesting a lease on \$IFACE\"
+) &
+echo 'wifi: bringing up wlan0 in the background'
+"

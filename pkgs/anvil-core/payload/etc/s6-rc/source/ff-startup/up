@@ -1,0 +1,40 @@
+/bin/sh -c "
+# Wait until the printer is genuinely up -- klippy answering and moonraker
+# serving -- retrying klipper when a board did not come back, and on a first
+# boot import this unit's factory calibration. The UI depends on this, so
+# HelixScreen starts in front of a working printer rather than a connecting one.
+#
+# anvil.conf is sourced HERE because it is a runtime read: the compiled database
+# is built once, on a build host, and the user edits this file over ssh.
+#
+# IT NEVER EXITS NON-ZERO -- a timeout would leave the printer with no screen,
+# which is worse than the thing it would be reporting.
+MODDIR=/usr/data/anvil
+[ -f \$MODDIR/anvil.conf ] && . \$MODDIR/anvil.conf
+[ -f \$MODDIR/anvil-env.sh ] && . \$MODDIR/anvil-env.sh
+
+# MOD_STARTUP=0 cannot mean 'do not run this service': the UI depends on it, so
+# s6-rc pulls it in regardless. It means what it always described -- do not wait
+# for the printer, start the screen at once. klipper still starts; the retries,
+# the panel narration and the first-boot import are what is skipped.
+if [ \"\${MOD_STARTUP:-1}\" != 1 ]; then
+    echo 'ff-startup: MOD_STARTUP=0 -- not waiting for the printer; the UI starts at once'
+    exit 0
+fi
+if [ ! -f \$MODDIR/bin/ff-startup.py ] || [ ! -x \"\$FF_PYTHON\" ]; then
+    echo 'ff-startup: !! no ff-startup.py or no interpreter -- not waiting for the printer'
+    exit 0
+fi
+
+# --no-bringup because mcu-bringup already did it; retries inside the program
+# still redo the handover, which is the half that matters. --no-klipper because
+# klipper is a dependency now, not this program's to launch -- it still restarts
+# it through s6-svc.
+ARGS=\"--no-bringup --no-klipper\"
+ARGS=\"\$ARGS --timeout \${MOD_STARTUP_TIMEOUT:-240}\"
+ARGS=\"\$ARGS --klipper-tries \${MOD_KLIPPER_TRIES:-6}\"
+[ \"\${MOD_IMPORT:-1}\" = 1 ] || ARGS=\"\$ARGS --no-import\"
+\"\$FF_PYTHON\" \$MODDIR/bin/ff-startup.py \$ARGS \
+    || echo \"ff-startup: !! returned \$? -- the next boot will try again\"
+exit 0
+"

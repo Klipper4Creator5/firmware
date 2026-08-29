@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Everything that has to happen before HelixScreen, and the panel that says so.
 #
-# The firmwareExe wrapper runs this after the init.d services and before the
-# UI. It does two jobs, and only the second is once-per-install:
+# Run as two s6-rc oneshots, between klipper and the UI. It does two jobs, and
+# only the second is once-per-install:
 #
 #   EVERY BOOT   wait until the printer is genuinely up -- the toolhead boards
 #                handed over from their bootloaders, then klipper and
@@ -32,28 +32,43 @@
 #   1. Hand the toolhead boards over from their bootloaders, by calling
 #      ff_mcu_bringup.py directly -- it is a module here, not a subprocess --
 #      naming on the panel whichever board is still being waited for.
-#   2. Launch klipper (start.sh, told not to redo the bring-up) and wait for
-#      klippy and moonraker to be ready. If a board never answered, klippy
-#      says so and names it, and so do we; then stop klippy, redo the
-#      bring-up and try again, which is what reopening the port achieves.
+#   2. Wait for klippy and moonraker to be ready. If a board never answered,
+#      klippy says so and names it, and so do we; then hand the boards over
+#      again and restart klippy, which is what reopening the port achieves.
 #   3. If the install is already stamped, stop here -- the rest is the
 #      migration, and it has been done.
 #   4. Otherwise run FF_IMPORT_FIRMWARE_CONFIG, then SAVE_CONFIG (which
 #      restarts klippy), wait for it to come back, and only then stamp.
 #
-# WHY THIS OWNS KLIPPER'S START. The bring-up has to happen before klippy
-# opens the serial ports, and the retry that actually fixes a board which
-# missed its window is "close the port, hand it over again, reopen" -- so
-# whatever does the bring-up has to be the same thing that starts and
-# restarts klippy. Splitting them across two processes meant this program
-# could only watch, through a file, work it was not allowed to do. init.d/
-# S70klipper stands aside when this program is going to run and takes the job
-# back when it cannot: klipper starting is the single most important thing
-# the mod does, and it must not depend on a python interpreter.
+# HOW IT IS RUN NOW: as TWO s6-rc oneshots, both of them this same program.
+# `mcu-bringup` is step 1 alone (--only-bringup) and klipper depends on it, so
+# the boards are handed over before klippy opens the ports and nothing has to
+# remember to do it -- including s6 restarting klippy after a crash, which is a
+# path no script of ours is on. `ff-startup` is steps 2-4 (--no-bringup
+# --no-klipper) and depends on klipper and moonraker; the UI depends on it. See
+# the `up` scripts in payload/etc/s6-rc/source/, which assemble both command
+# lines out of anvil.conf.
+#
+# WHAT THAT DEPENDENCY DOES NOT GIVE US, and why the waiting below stays. s6-rc
+# counts a longrun up as soon as it is forked unless its servicedir carries a
+# notification-fd, and klipper has none: klippy's "ready" is a state on
+# moonraker's API, which is exactly what this program polls for. So depending
+# on klipper means "after klippy was LAUNCHED", not "after klippy is usable".
+# moonraker and the camera do have a notification-fd, so their readiness is
+# real -- which is why depending on moonraker genuinely does mean the API is
+# answering.
+#
+# WHY IT STILL RESTARTS KLIPPER. The retry that actually fixes a board which
+# missed its window is "close the port, hand it over again, reopen", so
+# whatever does the bring-up has to be the same thing that restarts klippy.
+# That has not changed; only the way it asks has -- `s6-svc -wr -t`, which
+# terminates klippy and waits for the supervisor to bring it back. NOT `s6-rc`:
+# this program runs INSIDE an s6-rc transition, which holds an exclusive lock on
+# the live directory, so an s6-rc underneath it would deadlock.
 #
 # Anything short of a verified success leaves NO stamp: the next boot tries
 # again. That is deliberate. The heater board on this machine routinely needs
-# several klippy restarts before it answers (see init.d/S70klipper), so "the
+# several klippy restarts before it answers, so "the
 # stack was not ready in time" is a normal event to retry, not a failure to
 # record forever.
 #
@@ -73,7 +88,8 @@
 #
 #   usage: ff-startup.py [--stamp F] [--dir D] [--moonraker URL] [--timeout S]
 #                        [--no-import] [--no-klipper] [--klipper-tries N]
-#                        [--start-sh P] [--daemon P] [--mcu-timeout S]
+#                        [--only-bringup] [--no-bringup] [--klipper-svcdir D]
+#                        [--mcu-timeout S]
 #                        [--fb DEV] [--fb-geometry G] [--no-screen] [--dry-run]
 #
 # Exit 0 = the printer came up, and the migration either was not needed or
@@ -105,8 +121,13 @@ except ImportError:
 STAMP = '/usr/data/anvil/.firmware-config-imported'
 JSON_DIR = '/usr/data/firmwareRes/config'
 MOONRAKER = 'http://127.0.0.1:7125'
-START_SH = '/usr/prog/klipper/start.sh'
-DAEMON = '/usr/prog/klipper/klipperDaemon'
+# How klipper is restarted: `s6-svc -wr -t` on its live servicedir. NOT s6-rc --
+# this program runs as an s6-rc oneshot, and s6-rc holds an exclusive lock on
+# the live directory for the length of a transition, so an s6-rc underneath it
+# would wait for a lock its own parent holds. `-t` also leaves the WANTED state
+# alone, so s6-rc goes on believing klipper is up, which stays true.
+S6_SVC = '/usr/data/anvil/bin/s6-svc'
+KLIPPER_SVCDIR = '/usr/data/anvil/etc/s6/klipper'
 UDS = '/tmp/uds'
 TIMEOUT = 240.0
 MCU_TIMEOUT = 30.0
@@ -337,56 +358,31 @@ def klippy_running():
     return False
 
 
-def start_klipper(args):
-    """Run start.sh, telling it the bring-up is already done.
+def restart_klipper(args):
+    """Terminate klippy and wait for its supervisor to bring it back.
 
-    It is not left to run in the background: everything it does after the
-    bring-up we skipped is quick, and knowing it finished is what makes the
-    wait that follows meaningful."""
-    if not os.path.exists(args.start_sh):
-        log('no %s -- cannot start klipper' % args.start_sh)
+    Reopening the port is what toggles DTR/RTS and gives a board that missed
+    its window another chance, so the restart is the fix rather than another
+    go at the same thing -- and -wr does not return until klippy is actually
+    running again, which is what makes the next attempt worth making."""
+    if not os.path.exists(args.s6_svc):
+        log('no %s -- cannot restart klipper' % args.s6_svc)
         return False
-    env = dict(os.environ)
-    env['FF_SKIP_MCU_BRINGUP'] = '1'
-    log('starting klipper (%s)' % args.start_sh)
+    log('restarting klipper (s6-svc -t %s)' % args.klipper_svcdir)
     try:
-        completed = subprocess.run(['/bin/sh', args.start_sh], env=env,
-                                   stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, timeout=120)
+        completed = subprocess.run(
+            [args.s6_svc, '-wr', '-T', '60000', '-t', args.klipper_svcdir],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
     except subprocess.TimeoutExpired:
-        log('start.sh did not return within 120s')
+        log('s6-svc did not return within 120s')
         return False
     except Exception as exc:
-        log('start.sh could not be run (%s)' % exc)
+        log('s6-svc could not be run (%s)' % exc)
         return False
     for line in (completed.stdout
                  or b'').decode('utf-8', 'replace').splitlines():
-        log('  start.sh: %s' % line)
-    return True
-
-
-def stop_klipper(args):
-    """Stop klippy and wait for it to actually go.
-
-    Reopening the port is what toggles DTR/RTS and gives a board that missed
-    its window another chance, so the stop has to be real before the next
-    attempt is worth making."""
-    try:
-        subprocess.run([args.daemon, 'stop'], stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL, timeout=30)
-    except Exception as exc:
-        log('klipperDaemon stop failed (%s)' % exc)
-    for _ in range(15):
-        if not klippy_running():
-            break
-        time.sleep(1.0)
-    # start.sh refuses to run while the socket is there, so clear a stale one
-    # -- but only once klippy is definitely gone.
-    if not klippy_running():
-        try:
-            os.remove(UDS)
-        except OSError:
-            pass
+        log('  klipper: %s' % line)
+    return completed.returncode == 0
 
 
 def klippy_fault(moonraker):
@@ -492,8 +488,19 @@ def stamp(path, note):
 def run(args):
     started = time.time()
     deadline = started + args.timeout
-    moonraker = Moonraker(args.moonraker)
     panel = Panel(args.fb, args.fb_geometry, enabled=not args.no_screen)
+    if args.only_bringup:
+        # The `mcu-bringup` oneshot. Step 1 and nothing else: klipper depends
+        # on this service, so the boards are out of their bootloaders before
+        # klippy opens the ports, every time klippy starts.
+        #
+        # The panel is NOT handed back clean here. This runs seconds before
+        # klipper and then ff-startup, and blanking the screen between the two
+        # would be a flicker for no reason -- ff-startup's own panel.done()
+        # ends the sequence.
+        hand_over_boards(panel, args.mcu_timeout)
+        return 0
+    moonraker = Moonraker(args.moonraker)
     panel.say('STARTING SERVICES', 0.05)
     try:
         return startup(args, moonraker, panel, started, deadline)
@@ -505,32 +512,34 @@ def run(args):
 def bring_up_printer(args, moonraker, panel, started, deadline):
     """Boards out of their bootloaders, klippy up, and retry until it is.
 
-    This is what init.d/S70klipper's supervise() used to do by tailing
-    printer.log for markers, which was the only signal a shell script had.
-    Here the signal is moonraker's, and the retry can do the thing that
-    actually helps: hand the boards over again before reopening the ports.
+    The signal is moonraker's rather than a marker tailed out of
+    printer.log, and the retry does the thing that actually helps: hand the
+    boards over again before reopening the ports.
     """
     for attempt in range(1, args.klipper_tries + 1):
-        if not klippy_running():
-            hand_over_boards(panel, min(args.mcu_timeout,
-                                        max(1.0, deadline - time.time())))
-            if not args.no_klipper and not start_klipper(args):
+        # ATTEMPT 1 NORMALLY DOES NOTHING HERE. klipper is this service's
+        # dependency, so s6-rc has already started it and the boards have
+        # already been handed over by the mcu-bringup oneshot; there is
+        # nothing to do but wait. The branch is for the two cases where that
+        # is not true: a retry, and a klippy that is not there at all because
+        # its run script is failing.
+        if attempt > 1 or not klippy_running():
+            if attempt > 1 or not args.no_bringup:
+                hand_over_boards(panel, min(args.mcu_timeout,
+                                            max(1.0, deadline - time.time())))
+            if not args.no_klipper and not restart_klipper(args):
                 panel.failed('KLIPPER COULD NOT BE STARTED')
                 return False
         if wait_for_stack(moonraker, panel, deadline, started, quiet=True):
             return True
         if time.time() >= deadline or attempt == args.klipper_tries:
             break
-        # Reopening the port toggles DTR/RTS, which is what gives a board
-        # that missed its window another chance -- so the restart is the
-        # fix, not merely another go at the same thing.
         board = klippy_fault(moonraker)
         log('attempt %d/%d failed (%s) -- restarting klipper'
             % (attempt, args.klipper_tries, board or 'no board named'))
         panel.say('RETRYING %s' % (board or 'THE PRINTER'), 0.15,
                   detail='ATTEMPT %d OF %d' % (attempt + 1,
                                                args.klipper_tries))
-        stop_klipper(args)
     report_stack_failure(moonraker, panel)
     return False
 
@@ -665,10 +674,15 @@ def main(argv):
                         help="how long one bring-up pass may take")
     parser.add_argument('--klipper-tries', type=int, default=KLIPPER_TRIES,
                         help="how many times to hand the boards over and retry")
-    parser.add_argument('--start-sh', default=START_SH)
-    parser.add_argument('--daemon', default=DAEMON)
+    parser.add_argument('--s6-svc', default=S6_SVC)
+    parser.add_argument('--klipper-svcdir', default=KLIPPER_SVCDIR,
+                        help="klipper's live servicedir, for the restart")
+    parser.add_argument('--only-bringup', action='store_true',
+                        help="hand the toolhead boards over, then exit")
+    parser.add_argument('--no-bringup', action='store_true',
+                        help="skip the FIRST bring-up; a retry still redoes it")
     parser.add_argument('--no-klipper', action='store_true',
-                        help="do not start klipper; only wait for it")
+                        help="never touch klipper; only wait for it")
     parser.add_argument('--no-import', action='store_true',
                         help="only bring the printer up; never migrate")
     parser.add_argument('--fb', default=None,

@@ -45,17 +45,17 @@ pytestmark = pytest.mark.static
 # THE PRINTER'S SCRIPTS ARE ADDRESSED BY THE SHAPE OF A RECIPE, not by a
 # top-level directory: pkgs/<recipe>/payload/ is what that recipe installs
 # under $MODDIR, and pkgs/<recipe>/payload/prog/ is the part of that which
-# also gets copied onto /usr/prog by bin/patch.sh. Both run on the printer;
-# neither is named recipe by recipe here, so a new recipe with scripts in it
-# is covered the day it lands.
+# anvil-link-prog.sh points the stock /usr/prog paths at. Neither is named
+# recipe by recipe here, so a new recipe with scripts in it is covered the day
+# it lands.
 #
-# prog/ USED TO BE A SIBLING of payload/ and is now inside it. That is the
-# whole of the change: those files are package members now, so the recipe's
-# own hash covers them and anvil-link-prog.sh can point the boot path at the
-# installed copy. Note payload/prog/* is matched by payload/*.sh too only for
-# the .sh names -- firmwareExe has no extension and needs its own pattern.
-SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh", "pkgs/*/payload/init.d/S*",
+# The s6-rc `run` scripts are in the list because s6-supervise execs them on
+# the printer, under the printer's ash, and a bashism in one is a service that
+# never starts and says so only in s6's own log.
+SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh",
                 "pkgs/*/payload/prog/*.sh", "pkgs/*/payload/prog/firmwareExe",
+                "pkgs/*/payload/prog/klipperDaemon",
+                "pkgs/*/payload/etc/s6-rc/" + "source/*/run",
                 "installer/*.sh",
                 "test/integration/printer/*.sh",
                 "qa/replica/actions/*.sh",
@@ -66,6 +66,12 @@ SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh", "pkgs/*/payload/init.d/S*",
                 # refuses a pattern that matches nothing, so the next one
                 # fails instead of quietly shrinking.
                 "pkgs/*.sh", "pkgs/*/build.sh", "pkgs/3rdparty/*/build.sh")
+
+# NOT the oneshots' `up`/`down`. Those are execline command lines, and the
+# shell they carry is inside a `/bin/sh -c "..."` argument -- `bash -n` and
+# shellcheck would both parse the wrapper, pass, and check none of the code
+# that actually runs. Extracting the body and checking THAT belongs in the
+# replica lane beside the rest of the s6-rc assertions.
 
 # The subset executed by the printer's busybox ash. bin/ and test/ are
 # deliberately absent: they run on the build image, where bash is the shell and
@@ -86,11 +92,11 @@ SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh", "pkgs/*/payload/init.d/S*",
 #
 # NOT here, and it is a real gap rather than a decision:
 # pkgs/*/payload/bin/*.sh. wifi-action.sh runs on the printer and no lane
-# checks its dialect. It was not covered before the recipe layout either --
-# the old glob was payload/*.sh, one level up from it -- so adding it belongs
-# with the fix, not with a move.
-ASH_GLOBS = ("pkgs/*/payload/*.sh", "pkgs/*/payload/init.d/S*",
+# checks its dialect.
+ASH_GLOBS = ("pkgs/*/payload/*.sh",
              "pkgs/*/payload/prog/*.sh", "pkgs/*/payload/prog/firmwareExe",
+             "pkgs/*/payload/prog/klipperDaemon",
+             "pkgs/*/payload/etc/s6-rc/" + "source/*/run",
              "installer/*.sh", "qa/replica/actions/*.sh")
 
 PY_GLOBS = ("bin/*.py", "pkgs/*/payload/bin/*.py",

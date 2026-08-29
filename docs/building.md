@@ -211,12 +211,17 @@ directory inside that recipe says how they get there. Three names, no fourth
 
 ```
 pkgs/<recipe>/payload/   staged into the .ipk, laid out as it lands under
-                        $MODDIR: payload/init.d/S60nginx installs as
-                        $MODDIR/init.d/S60nginx and no recipe says so
-pkgs/<recipe>/prog/      placed on /usr/prog by patch.sh -- somebody else's
-                        filesystem, so it cannot be in a package of ours
+                        $MODDIR: payload/etc/s6-rc/source/nginx installs as
+                        $MODDIR/etc/s6-rc/source/nginx and no recipe says so
+pkgs/<recipe>/payload/prog/
+                        package files the printer reads from somebody else's
+                        filesystem: anvil-link-prog.sh symlinks them to the
+                        absolute paths under /usr/prog that FlashForge's own
+                        scripts open
 pkgs/<recipe>/seed/      templated or seeded user state: not a package member,
                         because a member is overwritten on every upgrade
+pkgs/<recipe>/control/   maintainer scripts, copied verbatim into the .ipk's
+                        CONTROL/ -- metadata, not content
 
 installer/              run-pre.sh, run-append.sh -- never files on the
                         printer at all: patch.sh splices them into the stock

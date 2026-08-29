@@ -1,0 +1,81 @@
+#!/bin/sh
+# The nginx service, as s6 runs it. Exec'd by s6-supervise, never by hand.
+#
+# THEREFORE `daemon off;`. nginx's default is to fork a master into the
+# background and return, which under a supervisor means s6 watches the process
+# that forked and exited, decides the service died a millisecond after starting
+# it, and restarts it for ever while the real nginx serves on, supervised by
+# nobody. `-g` puts the directive on the command line so the config file stays
+# shared with a hand-run nginx. Verified on the replica against this printer's
+# own nginx (1.5.0, FlashForge's build): the pid we launched is still the
+# master five seconds later.
+#
+# AND `exec`. Without it s6 supervises this shell, and every signal it sends --
+# the SIGTERM behind `s6-rc -d change nginx` above all -- goes to a shell that
+# ignores it while nginx carries on.
+#
+# THIS FILE DOES NOT LOOK AT MOD_WEB: it runs whenever s6 decides the service
+# should be up, and a `run` that exits because it disagrees is a respawn loop
+# with extra steps. There is no `down` file next to it either -- MEASURED:
+# s6-rc-compile accepts one in a definition directory and SILENTLY DROPS it,
+# producing a byte-identical servicedir. The gate is the argument list;
+# svc_rc_enabled reads MOD_WEB at runtime.
+MODDIR=/usr/data/anvil
+NGINX=/usr/prog/nginx/sbin/nginx
+
+# -p sets the prefix: logs, the pidfile and the temp dirs land under $MODDIR on
+# the data partition, never on /usr/prog. nginx will not start if it cannot
+# create them and does not create them itself.
+mkdir -p $MODDIR/nginx/logs $MODDIR/nginx/tmp
+
+# The prerequisites. A run script cannot decline to run -- s6 respawns it -- so
+# a missing one is reported and the sleep keeps it to one line every 5 seconds
+# instead of one a second in a log nobody is reading.
+if [ ! -x "$NGINX" ]; then
+    echo "nginx: !! no $NGINX -- this printer's firmware did not ship one"
+    sleep 5
+    exit 1
+fi
+if [ ! -f $MODDIR/nginx/nginx.conf ]; then
+    echo "nginx: !! no $MODDIR/nginx/nginx.conf -- the install did not complete"
+    sleep 5
+    exit 1
+fi
+# nginx writes this even under `daemon off;` (measured), and nothing reads it.
+# Removed so nothing on this printer ever starts to.
+rm -f $MODDIR/nginx/logs/nginx.pid
+
+# THE ORPHANED WORKER. nginx is a master that binds :80 and a worker that
+# inherits the listening socket. TERM the master -- what `s6-rc -d change`
+# does -- and the worker goes with it. SIGKILL it, which is what an OOM does,
+# and the worker is orphaned, KEEPS THE SOCKET, and goes on serving: s6 then
+# starts a new nginx every second that cannot bind, while s6-svstat says "up"
+# and an unsupervised leftover answers the browser. All measured on the replica.
+#
+# s6-supervise runs one copy of this service at a time, so anything speaking
+# for nginx now is a leftover.
+#
+# /proc rather than `ps | grep`: busybox ps truncates to the terminal width, so
+# on the replica the command line arrived cut off at "/usr/prog/nginx/" and the
+# grep matched nothing; and busybox kill will not take a negative pid, so
+# signalling the process group is not available either. Both were tried.
+#
+# The match is POSITIVE and narrow, because a wrong match here kills the wrong
+# thing: "s6-supervise nginx" and this very script both have
+# the word nginx in their command lines, and s6-supervise is the process that
+# would otherwise restart us. Only the two shapes nginx itself produces are
+# swept -- "nginx: master process ..." / "nginx: worker process" (it rewrites
+# its own argv) and anything exec'd from the binary before it does.
+for _ng_proc in /proc/[0-9]*; do
+    [ -r "$_ng_proc/cmdline" ] || continue
+    [ "${_ng_proc#/proc/}" = "$$" ] && continue
+    _ng_args=`tr '\0' ' ' < "$_ng_proc/cmdline" 2>/dev/null`
+    case "$_ng_args" in
+        "nginx: "*|*"$NGINX"*) kill -9 "${_ng_proc#/proc/}" 2>/dev/null ;;
+    esac
+done
+unset _ng_proc _ng_args
+
+# stderr is where nginx puts the reason it would not start, and it lands in the
+# scanner's log -- a file that outlives the boot.
+exec $NGINX -p $MODDIR/nginx -c $MODDIR/nginx/nginx.conf -g "daemon off;"

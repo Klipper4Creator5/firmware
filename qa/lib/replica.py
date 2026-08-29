@@ -146,39 +146,6 @@ class File:
         return "File(%s)" % self.path
 
 
-class Service:
-    """One of anvil-core's init.d/S*, driven through its own dispatcher.
-
-    Every method returns a Result. Nothing here decides anything by reading
-    the script: it runs the service and reports what came back, which is the
-    property case-services.sh's header insists on and is worth keeping.
-    """
-
-    def __init__(self, printer, name, initd):
-        self._p = printer
-        self.name = name
-        self.path = "%s/%s" % (initd, name)
-
-    def __call__(self, verb):
-        return self._p.sh("%s %s 2>&1" % (self.path, verb))
-
-    def status(self):
-        return self("status")
-
-    def start(self):
-        return self("start")
-
-    def stop(self):
-        return self("stop")
-
-    @property
-    def installed(self):
-        return self._p.file(self.path).executable
-
-    def __repr__(self):
-        return "Service(%s)" % self.name
-
-
 class Process:
     """A row of the process table, read from /proc rather than from `ps`.
 
@@ -269,9 +236,6 @@ class Printer:
 
     def file(self, path):
         return File(self, path)
-
-    def svc(self, name, initd="/usr/data/anvil/init.d"):
-        return Service(self, name, initd)
 
     def ps(self):
         """The process table, from /proc/*/cmdline.

@@ -102,11 +102,11 @@ Understand the safety net first, because FlashForge's UI is gone from the
 screen and there is nothing to fall back to:
 
 - ssh and Mainsail do not depend on the screen. `/etc/init.d/S50dropbear` is
-  stock and runs long before the UI, and `init.d/S60nginx` and
-  `init.d/S62moonraker` start the web stack independently of it — and of each
-  other, so `S62moonraker restart` over ssh leaves Mainsail served. They are
-  your way in when the screen is dark.
-- `init.d/S70klipper` owns Klipper startup, because on stock firmware it was
+  stock and runs long before the UI, and the `nginx` and `moonraker` services
+  are independent of it — and of each other, so restarting moonraker over ssh
+  (`s6-svc -r /usr/data/anvil/etc/s6/moonraker`) leaves Mainsail served. They
+  are your way in when the screen is dark.
+- The `klipper` service owns Klipper startup, because on stock firmware it was
   `firmwareExe` — not any init script — that ran `/usr/prog/klipper/start.sh`.
   Without this the printer would boot to a working screen and be unable to
   move.
@@ -254,9 +254,9 @@ machine will make it light up again:
 
 ```sh
 ssh root@PRINTER
-/usr/data/anvil/init.d/S80ui status        # what did it choose, and why
-# chose "none"  -> HelixScreen is not installed
-# chose "helix" -> it was started and failed on its own; see its log
+s6-svstat /usr/data/anvil/etc/s6/ui        # is the UI service up?
+# no such servicedir / "unable to open" -> anvil-helixscreen is not installed
+# "down"                                 -> it started and failed; see its log
 ```
 
 `opkg remove anvil-helixscreen` only stops it being started at all — useful to
@@ -271,7 +271,7 @@ interface.
 
 | Symptom | Do this |
 |---|---|
-| Printer boots, screen blank | ssh in; `/usr/data/anvil/init.d/S80ui status` says whether the UI was even started. No on-device repair — reflash the mod, or flash the stock package to get FlashForge's UI back. ssh, Mainsail and printing are unaffected |
+| Printer boots, screen blank | ssh in; `s6-svstat /usr/data/anvil/etc/s6/ui` says whether the UI was even started. No on-device repair — reflash the mod, or flash the stock package to get FlashForge's UI back. ssh, Mainsail and printing are unaffected |
 | No ssh, no screen | flash the stock package for your model |
 | Recovery stick does not help | try a newer stock FlashForge package for your model |
 | Still broken | factory package (`Creator5Pro-factory-*.tgz` **plus** the separate `Creator5Pro-factory.tar.xz` on the same stick; needs 800 MB free) |

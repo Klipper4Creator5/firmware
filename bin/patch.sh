@@ -197,6 +197,120 @@ fi
 # shipped unconditionally, a BUILD_MOONRAKER=0 build still overwrote the
 # printer's config with one written for a server it was not installing.
 
+# --------------------------------------------- 5b-2. the s6-rc database
+# The boot order, compiled. payload/etc/s6-rc/source/ holds the definition
+# directories (one per service, plus the ok-all bundle) and this turns them
+# into the binary database s6-rc-init reads at boot.
+#
+# COMPILED HERE, ON THE BUILD HOST, NOT ON THE PRINTER. That needs a
+# s6-rc-compile that runs on x86, which means a second, native build of the
+# same four tarballs -- which is why this step exists at all and is not two
+# lines. The alternative was shipping the target s6-rc-compile (131KB) and
+# compiling at install time, and it was rejected for the reason phase 6 of
+# docs/notes/80-s6-migration.md states as "do the gate first, not the
+# installer": a database compiled on the printer can fail on a printer in a
+# way CI never sees, and the ABI gate above cannot look at a database.
+#
+# THAT THIS WORKS AT ALL WAS MEASURED, not reasoned from the manual. On
+# 2026-08-28, in the replica: the same source tree compiled by the native
+# s6-rc-compile and by the target one under qemu produced byte-identical
+# db, n and resolve.cdb, and `diff -r` found no difference in the generated
+# servicedirs. The database files are host-neutral by construction (every
+# integer goes through uint32_pack_big) and the servicedirs are neutral
+# BECAUSE both builds are configured --prefix=$MODDIR -- the #! line
+# s6-rc-compile writes into the oneshot runner comes from the execline the
+# COMPILER was linked against, not from the one we ship. Configure the native
+# stack with a different prefix and every oneshot on the printer dies with
+# ENOENT while every longrun keeps working.
+# The source tree comes out of the INSTALLED payload, not out of the recipe
+# directory -- anvil-core ships it, so compiling what shipped is the only way
+# the database and the package cannot disagree.
+S6RC_SRC="$PAYLOAD_DIR/etc/s6-rc/source"
+S6RC_NATIVE="$PWD/work/.s6-native"
+# The four versions and nothing else: this compiler is built by the build
+# image's own gcc, so there is no toolchain file to key on.
+S6RC_NATIVE_STAMP="$SKALIBS_VERSION $EXECLINE_VERSION $S6_VERSION $S6RC_VERSION"
+[ -d "$S6RC_SRC" ] || { echo "   !! no s6-rc source tree at $S6RC_SRC" >&2; exit 1; }
+
+if [ ! -x "$S6RC_NATIVE/bin/s6-rc-compile" ] \
+   || [ "$(cat "$S6RC_NATIVE/.version" 2>/dev/null || true)" != "$S6RC_NATIVE_STAMP" ]; then
+    say "s6-rc: building a native compiler ($SKALIBS_VERSION/$EXECLINE_VERSION/$S6_VERSION/$S6RC_VERSION)"
+    rm -rf work/.s6-native work/.s6-native-src
+    mkdir -p work/.s6-native-src
+    for t in "$SKALIBS_TGZ" "$EXECLINE_TGZ" "$S6_TGZ" "$S6RC_TGZ"; do
+        tar -xzf "$t" -C work/.s6-native-src
+    done
+    (
+        # A subshell for the same reason the cross build has one: nothing
+        # about this compiler's environment may leak into the rest of the
+        # build. Note the ABSENCE of --host: this one runs here.
+        set -e
+        NSRC="$PWD/work/.s6-native-src"
+        ND="$PWD/work/.s6-native-stage"
+        rm -rf "$ND"
+        export CFLAGS="-Os"
+        JOBS=$(nproc 2>/dev/null || echo 4)
+        for pkg in "skalibs-$SKALIBS_VERSION" "execline-$EXECLINE_VERSION" \
+                   "s6-$S6_VERSION" "s6-rc-$S6RC_VERSION"; do
+            cd "$NSRC/$pkg"
+            if [ "$pkg" = "skalibs-$SKALIBS_VERSION" ]; then
+                # No --with-sysdep answers here: configure can compile and RUN
+                # its probes, because the target is this machine.
+                ./configure --prefix="$MODDIR" \
+                    --disable-shared --enable-static >/dev/null
+            else
+                ./configure --prefix="$MODDIR" \
+                    --with-sysdeps="$ND$MODDIR/lib/skalibs/sysdeps" \
+                    --with-include="$ND$MODDIR/include" \
+                    --with-lib="$ND$MODDIR/lib" \
+                    --disable-shared --enable-static >/dev/null
+            fi
+            make -j"$JOBS" >/dev/null
+            make install DESTDIR="$ND" >/dev/null
+        done
+    )
+    mkdir -p "$S6RC_NATIVE/bin"
+    # s6-rc-db comes too: qa/static/test_s6rc_source.py reads the boot graph
+    # back out of the compiled database rather than out of the source tree,
+    # and this is the only copy of it that runs on the build host.
+    for b in s6-rc-compile s6-rc-db; do
+        cp -f "work/.s6-native-stage$MODDIR/bin/$b" "$S6RC_NATIVE/bin/"
+    done
+    rm -rf work/.s6-native-src work/.s6-native-stage
+    echo "$S6RC_NATIVE_STAMP" > "$S6RC_NATIVE/.version"
+else
+    skip "s6-rc: native compiler already built for $S6RC_NATIVE_STAMP"
+fi
+
+# The database goes to etc/s6-rc/compiled/<stamp>, with `current` a symlink to
+# it -- skarnet's own advice, so the boot command never changes when the
+# database does. Not /etc/s6-rc/, which is s6-rc-init's default and is inside
+# the read-only squashfs.
+S6RC_DB_NAME="db-$MOD_VER"
+rm -rf "$PAYLOAD_DIR/etc/s6-rc/compiled"
+mkdir -p "$PAYLOAD_DIR/etc/s6-rc/compiled"
+"$S6RC_NATIVE/bin/s6-rc-compile" \
+    "$PAYLOAD_DIR/etc/s6-rc/compiled/$S6RC_DB_NAME" "$S6RC_SRC" || {
+    echo "   !! s6-rc-compile refused $S6RC_SRC" >&2; exit 1; }
+ln -sfn "$S6RC_DB_NAME" "$PAYLOAD_DIR/etc/s6-rc/compiled/current"
+
+# The shebang the compiler baked in is the one assertion that catches a native
+# stack built with the wrong prefix, and it is worth making here rather than
+# discovering on a printer: this file is generated, so it is the only place
+# the build can see what the database will ask the printer to exec.
+S6RC_RUNNER="$PAYLOAD_DIR/etc/s6-rc/compiled/$S6RC_DB_NAME/servicedirs/s6rc-oneshot-runner/run"
+[ -f "$S6RC_RUNNER" ] || {
+    echo "   !! s6-rc-compile produced no oneshot runner -- has the source tree no oneshots?" >&2
+    exit 1; }
+S6RC_SHEBANG=$(head -1 "$S6RC_RUNNER")
+case "$S6RC_SHEBANG" in
+    "#!$MODDIR/bin/execlineb"*) ;;
+    *) echo "   !! the s6-rc database asks for '$S6RC_SHEBANG', not $MODDIR/bin/execlineb --" >&2
+       echo "      the native stack was configured with the wrong --prefix" >&2
+       exit 1 ;;
+esac
+say "s6-rc: database $S6RC_DB_NAME compiled -- $(ls "$S6RC_SRC" | wc -l) definitions"
+
 # -------------------------------------------------- 5c. CPython 3.13 (shipped)
 # A second Python for the printer, installed by section 0 as anvil-python plus
 # the eighteen anvil-python-* packages. How they are built is in
