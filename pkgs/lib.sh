@@ -92,12 +92,26 @@ pkg_die()  { printf '   !! %s\n' "$*" >&2; exit 1; }
 # json rebuilt a package that does not contain it and left the package that
 # does sitting in the cache.
 #
-# It hashes payload/ and nothing else, because payload/ is what a recipe
-# ships. prog/ and seed/ are placed by bin/patch.sh, are in no package, and
-# must not invalidate one.
+# It hashes payload/ and control/, because those two are what a recipe ships:
+# the files themselves and the maintainer scripts that travel with them. seed/
+# is placed by bin/patch.sh, is in no package, and must not invalidate one.
+#
+# control/ is in here for the same reason payload/ is. An edited postinst
+# changes what the .ipk does and nothing else would notice -- the version is a
+# date and the payload bytes are unchanged, so the stamp would read "already
+# current" and the feed would keep the old script.
+#
+# TWO find CALLS AND AN `|| true`, not one find over both paths. Only one
+# recipe has a control/ at all, and `find a b` where b is missing exits
+# non-zero -- which, under the `set -euo pipefail` every recipe runs with,
+# fails the command substitution and kills the build. Silently: the 2>/dev/null
+# that is there to hide find's own noise hides that message too, so what a
+# recipe without control/ printed was nothing at all, between its own last
+# line and make's Error 1.
 pkg_payload_hash() {
-    find "$PKG_DIR/payload" -type f -print0 2>/dev/null \
-        | LC_ALL=C sort -z | xargs -0 sha256sum 2>/dev/null \
+    {   find "$PKG_DIR/payload" -type f -print0 2>/dev/null || true
+        find "$PKG_DIR/control" -type f -print0 2>/dev/null || true
+    }   | LC_ALL=C sort -z | xargs -0 sha256sum 2>/dev/null \
         | sha256sum | cut -c1-16
 }
 

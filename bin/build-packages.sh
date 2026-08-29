@@ -257,6 +257,35 @@ for r in "${RECIPES[@]}"; do
                 printf 'Description: %s\n' "$_desc"
             } > "$_lay/CONTROL/control"
 
+            # Maintainer scripts, for the one recipe that has any. A file in
+            # $PKG_DIR/control/ is copied in verbatim -- opkg-build already
+            # knows what to do with postinst, prerm and conffiles, so there is
+            # nothing here to teach it.
+            #
+            # RUNTIME PACKAGE ONLY. The -dev half is headers and a static
+            # library; a postinst there would run on a machine that installed
+            # them by accident and act on a payload that is not its own.
+            #
+            # WHAT A POSTINST HERE DOES AT BUILD TIME, because it is not
+            # nothing: bin/patch.sh installs with a host opkg under
+            # --offline-root --force-postinstall, and that combination RUNS
+            # maintainer scripts, with IPKG_INSTROOT empty -- so the absolute
+            # paths in one are taken exactly as written, NOT rebased onto the
+            # offline root. That happens inside the build image, which has no
+            # /usr/prog and is thrown away (LOCAL=1 is the exception: then it
+            # is the host). A script put here guards itself on something only
+            # a printer has; see pkgs/anvil-core/control/postinst.
+            if [ "$_nm" = "$PKG_NAME" ] && [ -d "$PKG_DIR/control" ]; then
+                for _cs in "$PKG_DIR"/control/*; do
+                    [ -f "$_cs" ] || continue
+                    cp -f "$_cs" "$_lay/CONTROL/$(basename "$_cs")"
+                    case "$(basename "$_cs")" in
+                        conffiles) ;;
+                        *) chmod +x "$_lay/CONTROL/$(basename "$_cs")" ;;
+                    esac
+                done
+            fi
+
             # -o 0 -g 0: every file in the archive is owned by root. Without
             # them opkg-build hands tar whatever uid the build ran as, which is
             # a developer's account on one machine and a CI runner's on another

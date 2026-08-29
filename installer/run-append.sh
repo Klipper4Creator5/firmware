@@ -180,6 +180,13 @@ if [ -n "$MODTAR" ]; then
         fi
         chmod a+x $MODDIR/bin/* 2>/dev/null
         echo "mod payload installed"
+        # Point the stock boot path at the payload's own copies. This has to
+        # be HERE and not earlier: FlashForge's run.sh distributed the
+        # component around line 125 above, long before the payload existed, so
+        # the component cannot carry these links itself -- on a first install
+        # they would dangle and on an upgrade they would resolve to the
+        # payload being replaced. See the script's header.
+        [ -x $MODDIR/bin/anvil-link-prog.sh ] && $MODDIR/bin/anvil-link-prog.sh
         # From here on this script runs the printer's own interpreter, so it
         # needs the same environment the boot path gets -- and it is a hand-run
         # `sh run.sh` over ssh at least as often as it is a flash, which is

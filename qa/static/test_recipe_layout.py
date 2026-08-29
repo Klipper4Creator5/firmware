@@ -48,9 +48,18 @@ from lib.paths import ROOT
 pytestmark = pytest.mark.static
 
 # Everything a recipe may contain. build.sh and pkg.conf are the recipe;
-# the three subtrees are its files.
+# the subtrees are its files.
+#
+#   payload/  what the .ipk installs under $MODDIR
+#   prog/     files bin/patch.sh places on /usr/prog, in no package
+#   seed/     user state templated by bin/patch.sh, in no package
+#   control/  maintainer scripts and conffiles, copied verbatim into the
+#             .ipk's CONTROL/ by bin/build-packages.sh. It is metadata rather
+#             than content -- nothing in here lands on the printer as a file,
+#             it runs at install time -- which is why it is its own directory
+#             and not a corner of payload/.
 RECIPE_FILES = {"build.sh", "pkg.conf"}
-RECIPE_DIRS = {"payload", "prog", "seed"}
+RECIPE_DIRS = {"payload", "prog", "seed", "control"}
 
 
 THIRD = os.path.join(ROOT, "pkgs", "3rdparty")

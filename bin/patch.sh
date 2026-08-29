@@ -366,8 +366,17 @@ else
 fi
 
 # ------------------------------------------------ 8. start.sh (web stack on)
+# FROM THE INSTALLED PAYLOAD, not from a directory beside the recipe -- the
+# same move section 1 already makes for the klippy fork. anvil-core ships this
+# file at $MODDIR/prog/start.sh, so the package is the one source of truth and
+# the component is a copy of it rather than a second original.
+#
+# It still travels in the component, because that is what FlashForge's run.sh
+# copies to /usr/prog/klipper/start.sh and what keeps a printer bootable when
+# the payload is not there. anvil-link-prog.sh replaces that copy with a
+# symlink afterwards; see its header.
 say "start.sh: enabling nginx + moonraker"
-cp -f pkgs/klipper/prog/start.sh "$SOFTWARE_DIR/start.sh"
+cp -f "$PAYLOAD_DIR/prog/start.sh" "$SOFTWARE_DIR/start.sh"
 chmod +x "$SOFTWARE_DIR/start.sh"
 
 # ------------------------------------- 9. firmwareExe -> our wrapper script
@@ -380,8 +389,13 @@ chmod +x "$SOFTWARE_DIR/start.sh"
 # and the installer wipes the software dir before run.sh anyway, so nothing
 # here could ever be a reliable backup. Flashing the stock FlashForge package
 # -- which still ships the binary -- is the uninstall.
+#
+# Also from the installed payload, for the reason section 8 gives. The copy
+# that ends up on /usr/prog is what app_startup.sh launches until
+# anvil-link-prog.sh turns it into a symlink -- after which an `opkg upgrade
+# anvil-core` is enough to change what the printer runs, with no .tgz.
 say "firmwareExe: installing wrapper (replaces the stock binary)"
-cp -f pkgs/anvil-core/prog/firmwareExe "$SOFTWARE_DIR/firmwareExe"
+cp -f "$PAYLOAD_DIR/prog/firmwareExe" "$SOFTWARE_DIR/firmwareExe"
 chmod +x "$SOFTWARE_DIR/firmwareExe"
 
 # ---------------------------------------------------------- 10. anvil.conf

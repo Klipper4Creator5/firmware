@@ -44,11 +44,19 @@ pytestmark = pytest.mark.static
 #
 # THE PRINTER'S SCRIPTS ARE ADDRESSED BY THE SHAPE OF A RECIPE, not by a
 # top-level directory: pkgs/<recipe>/payload/ is what that recipe installs
-# under $MODDIR and pkgs/<recipe>/prog/ is what bin/patch.sh places on
-# /usr/prog. Both run on the printer; neither is named recipe by recipe here,
-# so a new recipe with scripts in it is covered the day it lands.
+# under $MODDIR, and pkgs/<recipe>/payload/prog/ is the part of that which
+# also gets copied onto /usr/prog by bin/patch.sh. Both run on the printer;
+# neither is named recipe by recipe here, so a new recipe with scripts in it
+# is covered the day it lands.
+#
+# prog/ USED TO BE A SIBLING of payload/ and is now inside it. That is the
+# whole of the change: those files are package members now, so the recipe's
+# own hash covers them and anvil-link-prog.sh can point the boot path at the
+# installed copy. Note payload/prog/* is matched by payload/*.sh too only for
+# the .sh names -- firmwareExe has no extension and needs its own pattern.
 SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh", "pkgs/*/payload/init.d/S*",
-                "pkgs/*/prog/*.sh", "pkgs/*/prog/firmwareExe", "installer/*.sh",
+                "pkgs/*/payload/prog/*.sh", "pkgs/*/payload/prog/firmwareExe",
+                "installer/*.sh",
                 "test/integration/printer/*.sh",
                 "qa/replica/actions/*.sh",
                 # BOTH RECIPE LEVELS. pkgs/*/build.sh alone silently
@@ -87,7 +95,8 @@ SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh", "pkgs/*/payload/init.d/S*",
 # the old glob was payload/*.sh, one level up from it -- so adding it belongs
 # with the fix, not with a move.
 ASH_GLOBS = ("pkgs/*/payload/*.sh", "pkgs/*/payload/init.d/S*",
-             "pkgs/*/prog/*.sh", "pkgs/*/prog/firmwareExe", "installer/*.sh",
+             "pkgs/*/payload/prog/*.sh", "pkgs/*/payload/prog/firmwareExe",
+                "installer/*.sh",
              "qa/replica/actions/*.sh", "pkgs/ipk-install")
 
 PY_GLOBS = ("bin/*.py", "pkgs/*/payload/bin/*.py",
