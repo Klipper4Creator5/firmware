@@ -640,9 +640,6 @@ def test_every_payload_file_is_owned_by_a_package():
         # is exactly what these two must not be.
         MODDIR + "/anvil.conf",
         MODDIR + "/config/moonraker-custom.conf",
-        # Optional, and from outside the build entirely: config.env's
-        # BUSYBOX_BIN. ABI-gated on its own in bin/patch.sh.
-        MODDIR + "/bin/busybox",
         # opkg's own scaffolding, made by opkg as it installs.
         MODDIR + "/var",
         MODDIR + "/var/lib",
@@ -692,12 +689,41 @@ def test_the_payload_database_has_no_clock_in_it():
         % (len(set(stamps)), sorted(set(stamps))[:3]))
 
 
+def test_the_payload_keeps_libsodium_as_a_symlink():
+    """opkg restores a symlink as a symlink, checked where it has to hold.
+
+    libnacl reaches libsodium through ctypes.cdll.LoadLibrary -- dlopen -- and
+    the name its fallback constructs is
+    __file__[0:__file__.find("lib")+3] + "/libsodium.so", i.e. exactly
+    $MODDIR/lib/libsodium.so. There is no such file: there is a symlink to
+    libsodium.so.26, which is a symlink to libsodium.so.26.2.0. Dereference
+    either on the way through and Moonraker's authorization component stops
+    loading, which is three layers from anything that mentions libsodium.
+
+    pkgs/3rdparty/libsodium/build.sh already asserts this about its own build
+    tree, and test_symlinks_stay_symlinks asserts opkg-build puts a symlink in
+    an archive. Neither covers the step between them -- opkg unpacking the
+    archive into the payload -- and that is the step bin/patch.sh used to
+    check by hand.
+    """
+    lib = _payload() / "lib" / "libsodium.so"
+    assert lib.is_symlink(), (
+        "%s is not a symlink. libnacl's dlopen fallback asks for that exact "
+        "name and gets whatever opkg left there" % lib)
+    assert lib.resolve().is_file(), (
+        "%s is a symlink to nothing -- %s is missing from the payload"
+        % (lib, os.readlink(lib)))
+
+
 def test_packages_are_abi_gated_before_they_ship():
     """bin/build-packages.sh runs mips_abi_gate over every recipe's tree.
 
-    bin/patch.sh gates the staged payload, and that does not cover this: a
-    package can be built by `make packages` on a machine that never runs
-    patch.sh. An .ipk is a shipping vehicle and gets gated like one.
+    THIS IS THE ONLY ABI GATE ON THE RELEASE PATH NOW. bin/patch.sh used to
+    walk the assembled payload as well, which was belt and braces while one
+    file in it (config.env's busybox) came from outside the feed. That file is
+    pkgs/busybox now, so every byte in the payload came out of an .ipk and
+    every .ipk passed this. It runs in build-packages.sh's packaging loop
+    rather than inside a build.sh, so it re-reads cached trees too.
     """
     assert "mips_abi_gate" in (ROOT / "bin" / "build-packages.sh").read_text()
     assert "mips_abi_gate()" in (ROOT / "bin" / "common.sh").read_text()
@@ -761,11 +787,11 @@ def test_one_recipe_builds_one_package(recipe):
     recipe genuinely needs a second source, that source is a package.
 
     THE COUNT IS OVER ALL SOURCE VERBS TOGETHER, not over pkg_unpack alone.
-    There are two ways for a recipe to say where its inputs come from --
+    There are three ways for a recipe to say where its inputs come from --
     pkg_unpack for a pinned download, pkg_intree for the files in this
-    checkout -- and counting only the first would let a recipe use the second
-    to acquire a source the rule was meant to count. One of either, never one
-    of each.
+    checkout, pkg_prebuilt for a binary named by config.env -- and counting
+    only the first would let a recipe use another to acquire a source the rule
+    was meant to count. One of one of them, never one of each.
     """
     body = "\n".join(ln for ln in recipe.read_text().splitlines()
                      if not ln.lstrip().startswith("#"))
@@ -774,11 +800,14 @@ def test_one_recipe_builds_one_package(recipe):
         assert got == want, (
             "%s calls %s %d time(s), expected %d -- one recipe builds one "
             "package" % (recipe, verb, got, want))
-    sources = len(re.findall(r"^\s*(?:pkg_unpack|pkg_intree)\b", body, re.M))
+    sources = len(re.findall(r"^\s*(?:pkg_unpack|pkg_intree|pkg_prebuilt)\b",
+                             body, re.M))
     assert sources == 1, (
         "%s names its source %d time(s), expected exactly 1 -- a recipe "
-        "unpacks one pinned archive (pkg_unpack) or builds from this checkout "
-        "(pkg_intree), never both and never twice" % (recipe, sources))
+        "unpacks one pinned archive (pkg_unpack), builds from this checkout "
+        "(pkg_intree) or takes one binary from outside the build "
+        "(pkg_prebuilt), never two of them and never one twice"
+        % (recipe, sources))
     assert "pkg_dep_autotools" not in body, (
         "%s uses pkg_dep_autotools, which built a dependency inside the "
         "recipe that needed it. Make it a package and name it in "

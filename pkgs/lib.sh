@@ -57,17 +57,20 @@ pkg_die()  { printf '   !! %s\n' "$*" >&2; exit 1; }
 # dependency on a library that was only ever linked into it.
 #
 # PKG_STAMP_EXTRA is for a recipe whose inputs are not described by its version
-# number. Every recipe here builds a pinned tarball, so version-and-toolchain
+# number. Most recipes here build a pinned tarball, so version-and-toolchain
 # says everything -- except anvil-core, whose sources are files in this repo
-# that change without any version changing. It puts a content hash there and
-# pkg_stamp folds it in; see pkgs/anvil-core/pkg.conf.
+# that change without any version changing, and busybox, whose source is a
+# path in config.env that two different builds can share a version string on.
+# Each puts a content hash there and pkg_stamp folds it in; see
+# pkgs/anvil-core/pkg.conf.
 #
 # PKG_DEV_FILES splits one build into two packages: files listed here move
 # into <name>-dev, section libdevel, which no printer installs and which
 # pkg_deps unpacks into a sysroot when the next recipe builds against it.
 #
 # PKG_WHEN is a shell condition deciding whether this recipe exists at all
-# (Mainsail, Moonraker and HelixScreen are downloads gated by BUILD_* flags).
+# (Mainsail, Moonraker and HelixScreen are downloads gated by BUILD_* flags;
+# busybox is gated on BUSYBOX_BIN naming a file that exists).
 # Empty means always. A false condition is absence, not failure: pkg_recipes
 # does not list it, so nothing orders it, builds it or expects it in the
 # feed.
@@ -659,6 +662,27 @@ pkg_intree() {
     pkg_say "$PKG_ID: source is this checkout, at $ROOT"
 }
 
+# ------------------------------------------------------------- pkg_prebuilt
+#
+#     pkg_prebuilt <path>
+#
+# This recipe's source is a finished binary from outside the build entirely --
+# a path in config.env rather than a pinned download or a file in this
+# checkout. pkgs/busybox alone, and it should stay that way: everything a
+# printer runs should be something this repository can rebuild from a sha256,
+# and a recipe that reads a path someone typed cannot promise that.
+#
+# It is a source verb, not a helper, because the rule it has to satisfy is the
+# one test_one_recipe_builds_one_package counts -- a recipe names its source
+# exactly once. Smuggling this in as a bare pkg_stage would have made it the
+# one recipe that names no source at all.
+pkg_prebuilt() {
+    [ -f "${1:-}" ] || pkg_die \
+        "$PKG_ID: no binary at '${1:-}' -- check the path in config.env"
+    PKG_SRC=$1
+    pkg_say "$PKG_ID: source is a prebuilt binary, at $1"
+}
+
 # ----------------------------------------------------------------- pkg_stage
 #
 #     pkg_stage <src> <dest-relative-to-prefix>
@@ -965,6 +989,43 @@ pkg_pywheel() {
     find "$PKG_PYSP" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
     find "$PKG_PYSP" -maxdepth 1 -name '*.dist-info' -prune -exec rm -rf {} + 2>/dev/null || true
     rm -rf "${PKG_PYSP:?}"/bin "${PKG_PYSP:?}"/*.data
+}
+
+# ------------------------------------------------------------- pkg_pynative
+#
+#     pkg_pynative [count]
+#
+# Assert this package shipped at least `count` (default 1) compiled extension
+# modules into site-packages. Called after pkg_ship, so it reads $PKG_OUT --
+# the bytes that go into the .ipk.
+#
+# WHAT IT CATCHES, and it is a failure with no other symptom: a package with a
+# native extension AND a pure-python fallback, where the extension fails to
+# cross-compile and setup.py quietly ships the fallback. Nothing errors. The
+# wheel builds, the wheel unpacks, pkg_pywheel is satisfied, the .ipk installs,
+# and the printer gets a pure-python implementation of the thing that was worth
+# compiling -- or, for cffi and lmdb, nothing that works at all. That is not
+# hypothetical: it is exactly what LMDB_FORCE_CPYTHON=1 exists to prevent in
+# pkgs/3rdparty/python-lmdb, and that recipe found out the hard way.
+#
+# It replaced a single "at least twelve .so files in the payload" check in
+# bin/patch.sh. The count was right and the location was wrong: an aggregate
+# over the finished payload can say that SOMETHING fell back but not what, and
+# it went down by one whether the package that lost its extension was
+# markupsafe (a speedup) or cffi (klippy's chelper).
+#
+# Deliberately a count and not a list of module names. The names are upstream's
+# and change on a version bump -- tornado's is speedups.abi3.so and everyone
+# else's carries the interpreter ABI tag -- while "this recipe compiles
+# something" is a fact about the recipe that a bump must not change.
+pkg_pynative() {
+    _want=${1:-1}
+    _got=$(find "$PKG_OUT/lib/python$PY_MM/site-packages" -name '*.so' 2>/dev/null | wc -l)
+    [ "$_got" -ge "$_want" ] || pkg_die \
+        "$PKG_ID: $_got extension module(s) in site-packages, expected at
+         least $_want. The native build fell back to a pure-python wheel --
+         see $PKG_LOG/wheel-*.log for the compile that did not happen"
+    pkg_say "$PKG_ID: $_got extension module(s)"
 }
 
 # --------------------------------------------------------------- pkg_ship

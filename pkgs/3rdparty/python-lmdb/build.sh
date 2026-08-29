@@ -20,4 +20,5 @@ pkg_unpack "$(pypkg_tgz lmdb)"
 pkg_pywheel lmdb LMDB_FORCE_CPYTHON=1
 
 pkg_ship "lib/python$PY_MM/site-packages"
+pkg_pynative
 pkg_end

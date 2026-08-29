@@ -65,9 +65,10 @@ esac
 # when somebody tries it. Naming the closure by hand would have hidden that.
 #
 # A root with no .ipk in the feed is skipped, which is how the PKG_WHEN gates
-# reach here: BUILD_HELIX=0 builds no anvil-helixscreen, so there is nothing
-# to install and no flag restated in this file. A missing DEPENDENCY is still
-# an error, and opkg raises it.
+# reach here: BUILD_HELIX=0 builds no anvil-helixscreen, and an unset
+# BUSYBOX_BIN builds no anvil-busybox, so there is nothing to install and no
+# flag restated in this file. A missing DEPENDENCY is still an error, and opkg
+# raises it.
 #
 # The four loose python packages are Recommends, which opkg has no field for:
 # pillow and preprocess-cancellation are Moonraker's thumbnail path
@@ -77,7 +78,7 @@ esac
 MOD_ROOTS="anvil-core anvil-opkg anvil-s6-rc anvil-klipper $MODEL_PKG
            anvil-moonraker anvil-python-pillow anvil-python-preprocess-cancellation
            anvil-python-greenlet anvil-python-cffi
-           anvil-mainsail anvil-helixscreen"
+           anvil-mainsail anvil-helixscreen anvil-busybox"
 
 # Named, not versioned: opkg reads the index and picks. The one version that
 # cannot be left to it is anvil-core's -- PKG_VERSION is MOD_VER, which
@@ -281,112 +282,54 @@ fi
 # used to perform is gone: verify.sh's "no headers in the payload" check
 # passes because they were never put there.
 
-# The gates, asked of the TREE THAT SHIPS rather than of a build -- so a cached
-# recipe from an older, wronger build is checked too, and so the answer comes
-# from the bytes the printer will execute. pkgs/3rdparty/python/build.sh gates the
-# interpreter's own stdlib modules when it runs; these run every time.
+# THE GATES THAT WERE HERE ARE THE RECIPES' NOW. pkgs/3rdparty/python/build.sh
+# already asked for _sqlite3 by name, so this file was asking a second time,
+# later, about the same bytes. The "at least twelve extension modules" count
+# was not a duplicate and did not simply go: it is now a per-recipe assertion
+# in the seven python-* recipes that ship a .so, because an aggregate could
+# say that A native package had fallen back to a pure-python wheel but never
+# WHICH, and each of those recipes can say it about itself.
 #
-# Two claims about site-packages, because they fail differently. A
-# site-packages with no EXTENSION MODULES in it is a build where every native
-# package quietly fell back to something pure -- it imports on the build host
-# and loses lmdb, cffi and greenlet on the printer. A site-packages missing a
-# NAMED package is a list that changed without anyone noticing; the three named
-# here are the three whose absence takes Moonraker or klippy down completely
-# rather than costing a feature.
-PY_SQLITE=$(ls "$PAYLOAD_DIR/lib/python$PY_MM/lib-dynload/"_sqlite3*.so 2>/dev/null | head -n1)
-[ -n "$PY_SQLITE" ] \
-    || { echo "   !! python: NO _sqlite3 MODULE -- the one module this" >&2
-         echo "      interpreter exists for. Rebuild anvil-python: delete its build" >&2
-         echo "      tree and rerun ./bin/build-packages.sh, then patch again." >&2
-         exit 1; }
-PY_SP="$PAYLOAD_DIR/lib/python$PY_MM/site-packages"
-for m in lmdb tornado cffi; do
-    [ -e "$PY_SP/$m" ] || [ -e "$PY_SP/$m.py" ] \
-        || { echo "   !! python: no '$m' in site-packages -- pkgs/3rdparty/python-$m" >&2
-             echo "      produced nothing. Rebuild it with ./bin/build-packages.sh" >&2
-             echo "      python-$m, then patch again." >&2
-             exit 1; }
-done
-PY_EXT=$(find "$PY_SP" -name '*.so' | wc -l)
-[ "$PY_EXT" -ge 12 ] \
-    || { echo "   !! python: only $PY_EXT extension modules in site-packages," >&2
-         echo "      expected at least 12. A native package fell back to a" >&2
-         echo "      pure-python build; check work/.pkg-python-*/wheel-*.log." >&2
-         exit 1; }
-say "python: $(basename "$PY_SQLITE") present;" \
-    "$PY_EXT extension modules in site-packages"
+# WHAT THAT COSTS, stated because it is the argument against moving them: a
+# gate inside build.sh does not run on a cache hit, and none of the python
+# recipes sets PKG_STAMP_EXTRA, so editing one of them does not rebuild it.
+# A gate here ran over the shipped tree every time. That is a property of
+# pkg_stamp rather than of where a gate lives -- it is equally true of the
+# _sqlite3 check that was already there -- and the answer is to make the
+# stamp see the recipe, not to keep a second copy of every check in this file.
 du -sh "$PAYLOAD_DIR/lib/python$PY_MM" | awk '{print "   "$1"\tlib/python'"$PY_MM"'/"}'
-du -sh "$PY_SP" | awk '{print "   "$1"\tlib/python'"$PY_MM"'/site-packages/"}'
+du -sh "$PAYLOAD_DIR/lib/python$PY_MM/site-packages" \
+    | awk '{print "   "$1"\tlib/python'"$PY_MM"'/site-packages/"}'
 
-# ---------------------------------------------------- 5d. libsodium (shipped)
-# The one library of ours that ships as a .so, because libnacl reaches it
-# through ctypes.cdll.LoadLibrary -- dlopen, and you cannot dlopen an archive.
-# Moonraker's `authorization` component signs its JWTs with the ed25519 pair
-# libnacl exposes, so this is on the web UI's startup path.
+# ------------------------------------------------- 5d. what is no longer here
+# THREE SECTIONS ENDED AT THIS LINE, and they ended for one reason: every file
+# in the payload now arrives inside an .ipk, so every claim this file used to
+# make about the payload is a claim some recipe can make about its own build.
 #
-# IT COSTS anvil-env.sh NOTHING, which is worth stating because it looks like
-# it should need a library path entry. libnacl's third fallback is
-# __file__[0:__file__.find("lib")+3] + "/libsodium.so", and __file__ is
-# $MODDIR/lib/python3.13/site-packages/libnacl/__init__.py -- so it resolves
-# $MODDIR/lib/libsodium.so by absolute path, measured with LD_LIBRARY_PATH
-# unset. That works because this prefix contains the string "lib"; one that
-# did not would break silently, which matters if $MODDIR ever moves.
+#   libsodium's symlink check. lib/libsodium.so must be a SYMLINK, because
+#     libnacl's dlopen fallback constructs that exact name -- it is
+#     __file__[0:__file__.find("lib")+3] + "/libsodium.so", which resolves
+#     $MODDIR/lib/libsodium.so by absolute path and costs anvil-env.sh nothing.
+#     pkgs/3rdparty/libsodium/build.sh asserts it, and has all along; this was
+#     the second copy. The half of it that was NOT a duplicate -- that
+#     opkg-build puts a symlink in the archive and opkg restores it as one --
+#     is a claim about the packaging tools rather than about libsodium, and it
+#     is qa/static/test_ipk.py's now.
 #
-# THE THREE NAMES ARE TWO SYMLINKS AND A FILE -- libsodium.so ->
-# libsodium.so.26 -> libsodium.so.26.2.0. The first is the name that fallback
-# constructs, the second the SONAME the loader then asks for. The check below
-# is also the only thing on the release path asserting that opkg-build puts a
-# symlink in the archive and opkg restores it as one.
-[ -L "$PAYLOAD_DIR/lib/libsodium.so" ] \
-    || { echo "   !! libsodium: lib/libsodium.so is not a symlink -- libnacl's" >&2
-         echo "      dlopen fallback asks for that exact name." >&2; exit 1; }
-# Resolved rather than reported by link name: a legacy-NaN or big-endian
-# libsodium imports fine on a build host and fails inside libnacl's ctypes
-# call on the printer, surfacing as Moonraker's authorization component not
-# loading -- three layers from anything that says MIPS.
-SODIUM_SO=$(readlink -f "$PAYLOAD_DIR/lib/libsodium.so")
-say "libsodium: $SODIUM_VERSION in lib/ --" \
-    "$(readelf -d "$SODIUM_SO" | awk '/SONAME/{gsub(/[][]/,"",$5); print $5}')," \
-    "$(du -h "$SODIUM_SO" | cut -f1)"
-
-# --------------------------------------------------- 5e. a richer busybox
-# Optional (config.env, unset in normal builds), and the one file in the
-# payload that no package puts there -- which is why it goes ABOVE the gate
-# below. A foreign-ABI busybox in $MODDIR/bin is ENOEXEC at the first call
-# from an init script. Its own gate call, so the error names BUSYBOX_BIN
-# rather than "the payload".
-if [ -n "${BUSYBOX_BIN:-}" ] && [ -f "$BUSYBOX_BIN" ]; then
-    cp -f "$BUSYBOX_BIN" "$PAYLOAD_DIR/bin/busybox"
-    chmod +x "$PAYLOAD_DIR/bin/busybox"
-    mips_abi_gate "$PAYLOAD_DIR/bin/busybox" >/dev/null || {
-        echo "   !! BUSYBOX_BIN=$BUSYBOX_BIN is not nan2008/o32/mips32r2." >&2
-        echo "      The printer cannot exec it. Unset BUSYBOX_BIN in config.env" >&2
-        echo "      or point it at one built for this ABI." >&2
-        exit 1; }
-    say "busybox: $(du -h "$PAYLOAD_DIR/bin/busybox" | cut -f1) from BUSYBOX_BIN"
-fi
-
-# ------------------------------------------------------- 5f. the ABI gate
-# ONE GATE, OVER THE WHOLE PAYLOAD. There used to be three -- s6's over bin/
-# and libexec/, CPython's over the interpreter and its stdlib, libsodium's
-# over one resolved .so -- each run immediately after the copy it was checking
-# and each covering only what that copy had put there. Three subsets with
-# gaps between them: moonraker/, helixscreen/ and klipper/ were never walked
-# by any of them, and neither was anything a future section might add.
+#   busybox. config.env's BUSYBOX_BIN was copied in here, which made it the
+#     one file in the payload that no package owned: an allowance in the
+#     "every file is owned" test, an ABI gate of its own, and a file no
+#     `opkg remove` could take away. It is pkgs/busybox now, PKG_WHEN-gated on
+#     BUSYBOX_BIN, and section 0 installs it like anything else.
 #
-# It can be one gate now because there is one moment when the payload is
-# finished, which is what section 0 created. mips_abi_gate walks for ELF and
-# ignores everything else, so pointing it at the root costs a readelf per file
-# and answers the question that actually matters: is every object THAT SHIPS
-# nan2008/o32/mips32r2. A legacy-NaN or big-endian object gets ENOEXEC from
-# the kernel, or worse the wrong FPU mode, and explains neither.
-#
-# bin/build-packages.sh runs the same rule on the way into every .ipk, so this
-# is belt and braces. It is kept because it checks the bytes that ship rather
-# than the bytes a package was built from, and because it is the only gate
-# that sees files no package put here.
-PAYLOAD_ELF=$(mips_abi_gate "$PAYLOAD_DIR") || exit 1
-say "payload: $PAYLOAD_ELF ELF objects, all nan2008/o32/mips32r2"
+#   the payload-wide ABI gate. It walked $PAYLOAD_DIR for ELF and checked
+#     every object was nan2008/o32/mips32r2. bin/build-packages.sh runs that
+#     same rule over each PKG_ROOT on the way into each .ipk -- and it runs it
+#     on cached trees too, because it is in the packaging loop rather than in
+#     a build.sh. The one thing this gate could see that the per-package one
+#     cannot was a file no package put here, and busybox was the only such
+#     file. There is none now, so this was walking three thousand files to
+#     re-answer a question already answered about each of them.
 
 # ------------------------------------------------------------------- 6. SSH
 # Nothing to install. The stock rootfs (kernel-*.tar.xz -> rootfs.squashfs)
@@ -397,16 +340,18 @@ say "payload: $PAYLOAD_ELF ELF objects, all nan2008/o32/mips32r2"
 # The only thing missing is a root password anyone knows: stock /etc/shadow
 # carries an unpublished hash. Setting ROOT_PW_HASH below is the entire
 # "enable ssh" feature -- no cross-compiled binaries, no init script.
-if [ "${MOD_SSH:-1}" = "1" ]; then
-    if [ -n "${ROOT_PW_HASH:-}" ]; then
-        say "SSH: stock dropbear is already running; setting a known root password"
-    else
-        say "SSH: no ROOT_PW_HASH -- the installer will pick a random root password"
-        say "     and write it to anvil-password.txt on the USB stick."
-        say "     Set ROOT_PW_HASH to choose your own instead."
-    fi
+#
+# MOD_SSH USED TO GATE THIS and is gone. It never turned ssh off -- dropbear is
+# the rootfs's and listens either way -- so all it did was decline to set a
+# password on a machine whose whole recovery story is "ssh in". A build that
+# genuinely wants the stock hash left alone is a build that wants a stock
+# package.
+if [ -n "${ROOT_PW_HASH:-}" ]; then
+    say "SSH: stock dropbear is already running; setting a known root password"
 else
-    skip "SSH"
+    say "SSH: no ROOT_PW_HASH -- the installer will pick a random root password"
+    say "     and write it to anvil-password.txt on the USB stick."
+    say "     Set ROOT_PW_HASH to choose your own instead."
 fi
 # --------------------------------------------------------- 7. root password
 if [ -n "${ROOT_PW_HASH:-}" ]; then
@@ -451,12 +396,13 @@ chmod +x "$SOFTWARE_DIR/firmwareExe"
 # run-append.sh, which makes it user state rather than a package member: a
 # package would overwrite a printer's settings on the first upgrade. See the
 # header of pkgs/anvil-core/build.sh.
-sed -e "s/^MOD_WEB=.*/MOD_WEB=${MOD_WEB:-1}/" \
-    -e "s/^MOD_CAM=.*/MOD_CAM=${MOD_CAM:-1}/" \
-    -e "s/^MOD_UI=.*/MOD_UI=${MOD_UI:-1}/" \
-    -e "s/^MOD_SSH=.*/MOD_SSH=${MOD_SSH:-1}/" \
-    -e "s/^MOD_WIFI=.*/MOD_WIFI=${MOD_WIFI:-1}/" \
-    -e "s/^NICE_MOONRAKER=.*/NICE_MOONRAKER=${NICE_MOONRAKER:-5}/" \
+#
+# FIVE OF THE SEVEN SUBSTITUTIONS ARE GONE with the switches they wrote:
+# MOD_WEB, MOD_CAM, MOD_UI, MOD_SSH and MOD_WIFI all defaulted to 1 and are now
+# simply always true. What is left is the two that have a RANGE -- a nice level
+# is a number, not a state -- which is the line between a tunable and a switch
+# and the reason these two stayed.
+sed -e "s/^NICE_MOONRAKER=.*/NICE_MOONRAKER=${NICE_MOONRAKER:-5}/" \
     -e "s/^NICE_CAM=.*/NICE_CAM=${NICE_CAM:-10}/" \
     pkgs/anvil-core/seed/anvil.conf.in > "$PAYLOAD_DIR/anvil.conf"
 
@@ -486,11 +432,11 @@ say "install manifest: $(wc -l < "$PAYLOAD_DIR/$MOD_MANIFEST") paths -> $MODDIR/
 # --------------------------------------------------- 11. run.sh install step
 say "run.sh: injecting mod install blocks (pre + post)"
 POST=work/.run-post.sh
-# 1 only when ssh is on and nothing was baked in: a package is one file that
-# many people flash, so a baked-in default would be the same password on every
-# printer. The installer picks a random per-machine one instead and writes it
-# onto the USB stick it was flashed from.
-if [ "${MOD_SSH:-1}" = "1" ] && [ -z "${ROOT_PW_HASH:-}" ]; then
+# 1 when nothing was baked in: a package is one file that many people flash, so
+# a baked-in default would be the same password on every printer. The installer
+# picks a random per-machine one instead and writes it onto the USB stick it
+# was flashed from.
+if [ -z "${ROOT_PW_HASH:-}" ]; then
     PW_AUTO=1
 else
     PW_AUTO=0

@@ -23,4 +23,13 @@ PKG_PY_SETUP_ARGS="--disable-jpeg --disable-tiff --disable-webp
 pkg_pywheel pillow
 
 pkg_ship "lib/python$PY_MM/site-packages"
+
+# THREE, not one, and not four. Pillow is all extension: _imaging is the
+# codec core, _imagingmath and _imagingmorph the two operations Moonraker's
+# thumbnail path uses, and there is no pure-python anything behind them --
+# a fallback here is not a slow Pillow, it is an ImportError. _imagingtk is
+# built as well and is not counted, because it is the one that legitimately
+# disappears: there is no X11 on the printer and the CPython package drops
+# tkinter.
+pkg_pynative 3
 pkg_end

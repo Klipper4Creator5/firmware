@@ -31,4 +31,10 @@ _g=$(pkg_pysrc greenlet)
 
 pkg_pywheel greenlet
 pkg_ship "lib/python$PY_MM/site-packages"
+
+# One is the whole package: greenlet IS _greenlet, and everything above this
+# line exists because that C++ has to compile for this ABI. The default count
+# rather than the three .so files actually shipped -- the other two are
+# greenlet/tests/, which ride along and are nobody's dependency.
+pkg_pynative
 pkg_end

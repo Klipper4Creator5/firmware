@@ -100,12 +100,16 @@ for r in "${RECIPES[@]}"; do
             echo "!! $r: PKG_ROOT '$PKG_ROOT' does not exist -- did build.sh run?" >&2
             exit 1; }
 
-        # THE ABI GATE, AT THE PACKAGE BOUNDARY. bin/patch.sh runs the same
-        # check over the staged payload, and that does not cover this: a
-        # package can be built by `make packages` on a machine that never runs
-        # patch.sh. An .ipk is a shipping vehicle, so it gets gated like one --
-        # and it is gated over PKG_ROOT rather than over the finished archive
-        # because readelf cannot look inside a tarball.
+        # THE ABI GATE, AT THE PACKAGE BOUNDARY, and now the only one on the
+        # release path. bin/patch.sh used to walk the assembled payload as
+        # well; it stopped once every file in the payload came out of an .ipk,
+        # because then the only thing that walk could see was three thousand
+        # files this loop had already answered for.
+        #
+        # It is HERE and not in a build.sh deliberately: a recipe's own gates
+        # do not run on a cache hit, and this one has to. It is gated over
+        # PKG_ROOT rather than over the finished archive because readelf cannot
+        # look inside a tarball.
         n=$(mips_abi_gate "$PKG_ROOT") || exit 1
         say "$PKG_NAME: $n ELF object(s) pass nan2008/o32/mips32r2"
 

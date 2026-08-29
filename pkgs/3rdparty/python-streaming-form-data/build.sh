@@ -12,4 +12,5 @@ pkg_pytarget
 pkg_unpack "$(pypkg_tgz streaming-form-data)"
 pkg_pywheel streaming-form-data
 pkg_ship "lib/python$PY_MM/site-packages"
+pkg_pynative
 pkg_end
