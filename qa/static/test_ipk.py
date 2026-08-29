@@ -516,6 +516,166 @@ def test_the_payload_is_the_feed_installed():
             "the musl toolchain was deleted with it" % gone)
 
 
+def test_the_host_opkg_is_built_for_the_prefix():
+    """pkg_buildopkg's two flags, both of which fail silently if dropped.
+
+    opkg compiles its state directory in (libopkg/Makefile.am passes
+    -DVARDIR="@localstatedir@"), so an opkg configured with any other --prefix
+    looks for its status file somewhere else no matter what --offline-root it
+    is handed at runtime. It runs perfectly, writes a database nobody reads,
+    and hands back a payload the printer's opkg sees as empty. Measured from
+    both sides -- see pkgs/3rdparty/opkg/build.sh, which had to learn the same
+    thing for the cross build.
+
+    --disable-shared is the second half of it: the prefix goes into libopkg
+    too, so a shared build produces a bin/opkg that looks for libopkg.so.1 at
+    a path that exists on the printer and not in the container.
+
+    pkg_buildopkg asserts both against the binary it produced. This asserts
+    the flags are still asked for, because the check inside it is only
+    reachable if the build gets that far.
+    """
+    lib = (ROOT / "pkgs" / "lib.sh").read_text()
+    fn = lib.split("pkg_buildopkg() {", 1)
+    assert len(fn) == 2, "pkgs/lib.sh has no pkg_buildopkg"
+    body = fn[1].split("\n}", 1)[0]
+
+    assert '--prefix="$MODDIR"' in body, (
+        "pkg_buildopkg does not configure --prefix=$MODDIR. opkg bakes its "
+        "state directory in at compile time; built anywhere else it keeps its "
+        "database where nothing reads it and says nothing about it")
+    assert "--disable-shared" in body, (
+        "pkg_buildopkg does not configure --disable-shared. The prefix is "
+        "baked into libopkg as well, so the binary would look for "
+        "libopkg.so.1 at a printer path")
+    assert '"$MODDIR/var"' in body, (
+        "pkg_buildopkg no longer checks that the prefix reached the binary. "
+        "That check is the only thing standing between a wrong --prefix and a "
+        "payload whose database is invisible")
+
+
+def test_ipk_install_is_not_on_the_build_path():
+    """The printer's installer installs on the printer, and nowhere else.
+
+    pkgs/ipk-install is POSIX sh that walks an ar archive by hand because the
+    printer has no opkg and no ar -- both measured, see its header. The build
+    container has both, and pkg_buildopkg builds the real client from the same
+    pinned source the printer's opkg is built from. Using the imitation to
+    assemble a payload would mean arguing that its result matches what opkg
+    would have done, when opkg is right there: it resolves no Depends,
+    enforces no Conflicts, reads no Provides and handles no conffiles.
+    """
+    for script in sorted((ROOT / "bin").glob("*.sh")):
+        body = "\n".join(ln for ln in script.read_text().splitlines()
+                         if not ln.lstrip().startswith("#"))
+        assert "ipk-install" not in body, (
+            "bin/%s calls pkgs/ipk-install. That is the printer's hand-repair "
+            "tool; the build path uses the opkg pkg_buildopkg builds"
+            % script.name)
+
+
+# --------------------------------------------------- the assembled payload
+#
+# These read work/modpayload-root, which exists only after bin/patch.sh has
+# run. That needs a stock FlashForge package, so it cannot be a precondition
+# of this lane -- but when the tree IS there the questions are worth asking,
+# and they are the only ones asked of the thing that actually ships.
+
+def _payload():
+    p = ROOT / "work" / "modpayload-root" / "usr" / "data" / "anvil"
+    if not (p / "var" / "lib" / "opkg" / "status").is_file():
+        pytest.skip("no assembled payload -- run bin/patch.sh")
+    return p
+
+
+def test_every_payload_file_is_owned_by_a_package():
+    """Everything in the payload came from a package, or is on this list.
+
+    The point of assembling the payload by installing the feed is that the
+    two are the same set. This asks the payload to prove it, against opkg's
+    own record of what it put there -- and the interesting output is not the
+    pass, it is the allowlist below. Those are the files that are IN the
+    payload and in NO package, which is the remaining to-do list for phase 2
+    of docs/notes/85-packaging.md. It should shrink; it must not grow by
+    accident.
+    """
+    payload = _payload()
+
+    owned = set()
+    for f in (payload / "var" / "lib" / "opkg" / "info").glob("*.list"):
+        for line in f.read_text().splitlines():
+            path = line.split("\t")[0].strip()
+            if path:
+                owned.add(path)
+    assert owned, "the opkg database lists no files at all"
+
+    allowed = {
+        # Generated here, after everything is installed: the list the NEXT
+        # update deletes by. Cannot be a package member -- it describes the
+        # payload, so it is not finished until the payload is.
+        MODDIR + "/.install-manifest",
+        # User state, both of them. anvil.conf is templated from config.env
+        # and preserved across updates by installer/run-append.sh;
+        # moonraker-custom.conf is created once and never overwritten. A
+        # package member is overwritten on every upgrade by definition, which
+        # is exactly what these two must not be.
+        MODDIR + "/anvil.conf",
+        MODDIR + "/config/moonraker-custom.conf",
+        # Optional, and from outside the build entirely: config.env's
+        # BUSYBOX_BIN. ABI-gated on its own in bin/patch.sh.
+        MODDIR + "/bin/busybox",
+        # opkg's own scaffolding, made by opkg as it installs.
+        MODDIR + "/var",
+        MODDIR + "/var/lib",
+        MODDIR + "/var/run",
+    }
+
+    extra = []
+    for dirpath, dirnames, filenames in os.walk(payload):
+        for name in list(dirnames) + list(filenames):
+            p = pathlib.Path(dirpath, name)
+            rel = MODDIR + "/" + str(p.relative_to(payload))
+            if rel in owned or rel in allowed:
+                continue
+            # The database itself: written by opkg while installing, so it can
+            # never appear in a list it is still being written into.
+            if rel.startswith(MODDIR + "/var/lib/opkg"):
+                continue
+            extra.append(rel)
+
+    assert not extra, (
+        "%d path(s) in the payload belong to no package and are not on the "
+        "allowlist in this test:\n  %s\n"
+        "Either the file should come from a package, or it is new user state "
+        "and belongs on the list with a reason."
+        % (len(extra), "\n  ".join(sorted(extra)[:20])))
+
+
+def test_the_payload_database_has_no_clock_in_it():
+    """Two builds of one commit produce one payload, byte for byte.
+
+    opkg stamps Installed-Time from time() (libopkg/opkg_install.c) and
+    honours SOURCE_DATE_EPOCH only for a man-page date at configure time, so
+    the database it writes differs between two builds a second apart --
+    measured, before this was fixed. bin/patch.sh normalises the field
+    afterwards, on the same argument that puts --clamp-mtime and
+    `objcopy -D` elsewhere in the packaging: this is an image being baked, not
+    a machine being installed, and the time it was baked at is not part of it.
+
+    anvil.tar.xz is not reproducible for other reasons yet (bin/pack.sh's tar
+    does not sort or clamp), so this asks the database rather than the
+    tarball -- it is the part that regressed and the part that is fixed.
+    """
+    status = (_payload() / "var" / "lib" / "opkg" / "status").read_text()
+    stamps = re.findall(r"^Installed-Time:\s*(\S+)$", status, re.M)
+    assert stamps, "the opkg status file records no Installed-Time at all"
+    assert len(set(stamps)) == 1, (
+        "the payload's database carries %d different Installed-Time values "
+        "(%s...). bin/patch.sh is meant to normalise them, so two builds of "
+        "one commit differ by one line per package"
+        % (len(set(stamps)), sorted(set(stamps))[:3]))
+
+
 def test_packages_are_abi_gated_before_they_ship():
     """bin/build-packages.sh runs mips_abi_gate over every recipe's tree.
 
