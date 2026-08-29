@@ -1,6 +1,6 @@
 """The boot, on a machine the real installer produced.
 
-qa/static/test_s6rc_source.py proves the database SAYS the right thing. This
+The database is compiled in the replica now, by the s6-rc-compile we ship. This
 proves the printer DOES it: the scanner comes up, s6-rc-init lays the live
 servicedirs down, one transition brings the boot set up, and s6 puts a killed
 daemon back.

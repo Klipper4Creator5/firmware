@@ -16,7 +16,7 @@ Selection is pytest's: `-k nginx`, `-m static`, or a single test id.
 
 | Lane | Needs | What it asks |
 |---|---|---|
-| `static` | nothing but the checkout | every shipped script parses and is free of bashisms, every name resolves, the recipe layout holds, the `.ipk`s are what we mean to ship, and the boot graph *says* the right thing |
+| `static` | nothing but the checkout | every shipped script parses and is free of bashisms, every name resolves, the recipe layout holds, and the `.ipk`s are what we mean to ship |
 | `replica` | docker + qemu + the firmware | what the printer *does* -- on a machine the real `app_startup.sh` installed the real package onto |
 
 The replica lane needs a built package in `work/out/*.tgz` (`make build`) and a

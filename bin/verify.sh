@@ -92,8 +92,8 @@ fi
 PAYLOAD_TAR=$(ls -1 "$WORK"/anvil.tar.xz 2>/dev/null | head -n1)
 if [ -n "$PAYLOAD_TAR" ]; then
     mkdir -p "$WORK/pl"
-    xz -dc "$PAYLOAD_TAR" 2>/dev/null | tar -xf - -C "$WORK/pl" ./klipper ./prog 2>/dev/null \
-        || tar -xf "$PAYLOAD_TAR" -C "$WORK/pl" ./klipper ./prog 2>/dev/null
+    xz -dc "$PAYLOAD_TAR" 2>/dev/null | tar -xf - -C "$WORK/pl" ./klipper ./prog ./etc 2>/dev/null \
+        || tar -xf "$PAYLOAD_TAR" -C "$WORK/pl" ./klipper ./prog ./etc 2>/dev/null
 fi
 for s in "$WORK/pl/prog/start.sh" "$WORK/pl/prog/firmwareExe"; do
     [ -f "$s" ] || { bad "the payload carries no prog/$(basename "$s") -- link-prog has nothing to point the stock path at"; continue; }
@@ -142,6 +142,33 @@ for f in firmwareExe start.sh; do
         && bad "the software component still carries $f -- bin/patch.sh section 8 is staging one again" \
         || ok "no $f in the software component (anvil-core's \$MODDIR/prog is the only one)"
 done
+
+# The oneshot runner's #!, which is the one thing about the compiled database a
+# host can check: s6-rc-compile bakes in the execline of the stack it was linked
+# against, so this line is what every oneshot on the printer will exec. It used
+# to be asserted in bin/patch.sh, against a native compiler that could be built
+# with the wrong --prefix. The database is compiled in the replica by the
+# s6-rc-compile we ship now, so this should be true by construction -- which is
+# exactly why it is cheap to keep, and it is the assertion that would catch the
+# construction being broken.
+S6RC_RUNNER=$(ls -d "$WORK/pl/etc/s6-rc/compiled"/db-*/servicedirs/s6rc-oneshot-runner/run 2>/dev/null | head -n1)
+if [ -z "$S6RC_RUNNER" ]; then
+    bad "the payload's s6-rc database has no oneshot runner -- has the source tree no oneshots?"
+else
+    S6RC_SHEBANG=$(head -1 "$S6RC_RUNNER")
+    case "$S6RC_SHEBANG" in
+        "#!$MODDIR/bin/execlineb"*)
+            ok "the s6-rc database execs $MODDIR/bin/execlineb (the execline we ship)" ;;
+        *)
+            bad "the s6-rc database asks for '$S6RC_SHEBANG', not $MODDIR/bin/execlineb -- every oneshot would ENOENT" ;;
+    esac
+fi
+# `current` must resolve, or s6-rc-init has nothing to read at boot.
+if [ -d "$WORK/pl/etc/s6-rc/compiled/current" ]; then
+    ok "compiled/current resolves ($(readlink "$WORK/pl/etc/s6-rc/compiled/current" 2>/dev/null))"
+else
+    bad "compiled/current does not resolve -- s6-rc-init finds no database at boot"
+fi
 
 # --- 8. mod payload
 if [ -f "$WORK/anvil.tar.xz" ]; then

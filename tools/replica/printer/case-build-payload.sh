@@ -47,6 +47,34 @@ $OPKG update >/dev/null
 $OPKG install $MOD_ROOTS
 echo "payload: $($OPKG list-installed | wc -l) packages installed"
 
+# --- compile the boot database ---------------------------------------------
+# WITH THE s6-rc-compile WE SHIP, on the machine it is for, right after the
+# packages that own the source tree landed. bin/patch.sh used to do this on the
+# build host, which meant a second NATIVE build of skalibs+execline+s6+s6-rc
+# whose only job was to produce a compiler -- and whose whole hazard was that
+# s6-rc-compile bakes the #! of the execline the COMPILER was linked against
+# into the oneshot runner. Get that native --prefix wrong and every oneshot on
+# the printer dies with ENOENT. Here the compiler IS the shipped one, so the
+# shebang it writes is the one we ship by construction.
+#
+# The two agree byte for byte: docs/notes/80-s6-migration.md records the
+# 2026-08-28 measurement -- one source tree, the host compiler and the target
+# one under qemu, identical db, n and resolve.cdb and identical servicedirs.
+#
+# compiled/<stamp> with `current` a symlink, so the boot command never changes
+# when the database does. Not /etc/s6-rc/, s6-rc-init's default, which is
+# inside the read-only squashfs.
+S6RC_SRC=$PREFIX/etc/s6-rc/source
+S6RC_DB=db-${MOD_VER:-0}
+[ -d "$S6RC_SRC" ] || { echo "payload: no s6-rc source at $S6RC_SRC -- anvil-core did not install" >&2; exit 1; }
+[ -x $PREFIX/bin/s6-rc-compile ] || { echo "payload: no $PREFIX/bin/s6-rc-compile -- anvil-s6-rc did not install" >&2; exit 1; }
+rm -rf $PREFIX/etc/s6-rc/compiled
+mkdir -p $PREFIX/etc/s6-rc/compiled
+$PREFIX/bin/s6-rc-compile $PREFIX/etc/s6-rc/compiled/$S6RC_DB "$S6RC_SRC" \
+    || { echo "payload: s6-rc-compile refused $S6RC_SRC" >&2; exit 1; }
+ln -sfn $S6RC_DB $PREFIX/etc/s6-rc/compiled/current
+echo "payload: s6-rc database $S6RC_DB compiled -- `ls "$S6RC_SRC" | wc -l` definitions"
+
 # --- make it shippable -----------------------------------------------------
 # Installing from a file: feed leaves the cache full of SYMLINKS into the
 # feed directory rather than copies, so shipping it would put dangling links

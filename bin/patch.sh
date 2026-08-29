@@ -94,87 +94,16 @@ say "Klipper: fork tree from pinned commit ${KLIPPER_VERSION:0:8} (payload only)
 # BUILD_MOONRAKER=0 build overwrote the config of a server it did not install.
 
 # --- 5b-2. the s6-rc database
-# Compiled on the BUILD HOST, hence the second native build of the same four
-# tarballs -- and byte-identical to a qemu target compile only BECAUSE both
-# stacks are --prefix=$MODDIR: s6-rc-compile bakes the #! of the execline the
-# COMPILER was linked against into the oneshot runner, so a different native
-# prefix means ENOENT on every oneshot. The source comes out of the installed
-# payload, so the database and the package cannot disagree.
-S6RC_SRC="$PAYLOAD_DIR/etc/s6-rc/source"
-S6RC_NATIVE="$PWD/work/.s6-native"
-# The four versions and nothing else: this compiler is the build image's gcc.
-S6RC_NATIVE_STAMP="$SKALIBS_VERSION $EXECLINE_VERSION $S6_VERSION $S6RC_VERSION"
-[ -d "$S6RC_SRC" ] || { echo "   !! no s6-rc source tree at $S6RC_SRC" >&2; exit 1; }
-
-if [ ! -x "$S6RC_NATIVE/bin/s6-rc-compile" ] \
-   || [ "$(cat "$S6RC_NATIVE/.version" 2>/dev/null || true)" != "$S6RC_NATIVE_STAMP" ]; then
-    say "s6-rc: building a native compiler ($SKALIBS_VERSION/$EXECLINE_VERSION/$S6_VERSION/$S6RC_VERSION)"
-    rm -rf work/.s6-native work/.s6-native-src
-    mkdir -p work/.s6-native-src
-    for t in "$SKALIBS_TGZ" "$EXECLINE_TGZ" "$S6_TGZ" "$S6RC_TGZ"; do
-        tar -xzf "$t" -C work/.s6-native-src
-    done
-    (
-        # A subshell so nothing leaks into the rest of the build. Note no --host.
-        set -e
-        NSRC="$PWD/work/.s6-native-src"
-        ND="$PWD/work/.s6-native-stage"
-        rm -rf "$ND"
-        export CFLAGS="-Os"
-        JOBS=$(nproc 2>/dev/null || echo 4)
-        for pkg in "skalibs-$SKALIBS_VERSION" "execline-$EXECLINE_VERSION" \
-                   "s6-$S6_VERSION" "s6-rc-$S6RC_VERSION"; do
-            cd "$NSRC/$pkg"
-            if [ "$pkg" = "skalibs-$SKALIBS_VERSION" ]; then
-                # configure can compile and RUN its probes: the target is here.
-                ./configure --prefix="$MODDIR" \
-                    --disable-shared --enable-static >/dev/null
-            else
-                ./configure --prefix="$MODDIR" \
-                    --with-sysdeps="$ND$MODDIR/lib/skalibs/sysdeps" \
-                    --with-include="$ND$MODDIR/include" \
-                    --with-lib="$ND$MODDIR/lib" \
-                    --disable-shared --enable-static >/dev/null
-            fi
-            make -j"$JOBS" >/dev/null
-            make install DESTDIR="$ND" >/dev/null
-        done
-    )
-    mkdir -p "$S6RC_NATIVE/bin"
-    # s6-rc-db too: qa/static/test_s6rc_source.py reads the boot graph out of
-    # the compiled database, and this is the only copy that runs on the host.
-    for b in s6-rc-compile s6-rc-db; do
-        cp -f "work/.s6-native-stage$MODDIR/bin/$b" "$S6RC_NATIVE/bin/"
-    done
-    rm -rf work/.s6-native-src work/.s6-native-stage
-    echo "$S6RC_NATIVE_STAMP" > "$S6RC_NATIVE/.version"
-else
-    skip "s6-rc: native compiler already built for $S6RC_NATIVE_STAMP"
-fi
-
-# compiled/<stamp> with `current` a symlink, so the boot command never changes.
-# Not /etc/s6-rc/, s6-rc-init's default, which is inside the read-only squashfs.
-S6RC_DB_NAME="db-$MOD_VER"
-rm -rf "$PAYLOAD_DIR/etc/s6-rc/compiled"
-mkdir -p "$PAYLOAD_DIR/etc/s6-rc/compiled"
-"$S6RC_NATIVE/bin/s6-rc-compile" \
-    "$PAYLOAD_DIR/etc/s6-rc/compiled/$S6RC_DB_NAME" "$S6RC_SRC" || {
-    echo "   !! s6-rc-compile refused $S6RC_SRC" >&2; exit 1; }
-ln -sfn "$S6RC_DB_NAME" "$PAYLOAD_DIR/etc/s6-rc/compiled/current"
-
-# The one assertion that catches a native stack built with the wrong prefix.
-S6RC_RUNNER="$PAYLOAD_DIR/etc/s6-rc/compiled/$S6RC_DB_NAME/servicedirs/s6rc-oneshot-runner/run"
-[ -f "$S6RC_RUNNER" ] || {
-    echo "   !! s6-rc-compile produced no oneshot runner -- has the source tree no oneshots?" >&2
-    exit 1; }
-S6RC_SHEBANG=$(head -1 "$S6RC_RUNNER")
-case "$S6RC_SHEBANG" in
-    "#!$MODDIR/bin/execlineb"*) ;;
-    *) echo "   !! the s6-rc database asks for '$S6RC_SHEBANG', not $MODDIR/bin/execlineb --" >&2
-       echo "      the native stack was configured with the wrong --prefix" >&2
-       exit 1 ;;
-esac
-say "s6-rc: database $S6RC_DB_NAME compiled -- $(ls "$S6RC_SRC" | wc -l) definitions"
+# Compiled in the replica by case-build-payload.sh, with the s6-rc-compile
+# anvil-s6-rc ships, straight after opkg installs the feed. It used to be built
+# here by a second NATIVE build of the same four tarballs, cached in
+# work/.s6-native -- 110 lines whose entire hazard was that both stacks had to
+# be --prefix=$MODDIR or the #! baked into the oneshot runner pointed at the
+# build host's execline. Compiling with the compiler we SHIP cannot get that
+# wrong. (Byte-identical either way: 80-s6-migration.md, measured 2026-08-28.)
+[ -d "$PAYLOAD_DIR/etc/s6-rc/compiled/current" ] || pkg_die \
+    "the payload has no compiled s6-rc database -- case-build-payload.sh did not compile one"
+say "s6-rc: database $(readlink "$PAYLOAD_DIR/etc/s6-rc/compiled/current") -- $(ls "$PAYLOAD_DIR/etc/s6-rc/source" | wc -l) definitions"
 
 # --- 6. SSH
 # Nothing to install: the stock rootfs ships dropbear and an enabled

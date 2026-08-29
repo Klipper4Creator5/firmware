@@ -32,7 +32,7 @@
 # that links them there: payload/bin/anvil-link-prog.sh.
 #
 # THE s6-rc SERVICE SOURCE IS HERE and is not compiled by this recipe.
-# payload/etc/s6-rc/source/ is text; bin/patch.sh runs s6-rc-compile over it
+# payload/etc/s6-rc/source/ is text; the replica runs s6-rc-compile over it
 # once the payload is assembled, so this package stays buildable on a checkout
 # that has never run a cross-compiler. Giving it PKG_BUILD_DEPENDS="s6-rc"
 # would take that away.

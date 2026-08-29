@@ -219,7 +219,6 @@ case.
 | static | `test_shell_syntax.py` | 7, parametrised over every script | `run-tests.py`'s `check_shell_syntax`, `check_no_bashisms`, `check_undefined_names` -- now deleted |
 | static | `test_ipk.py` | 32 | new -- the packages, the layout and the ABI string |
 | static | `test_recipe_layout.py` | 9 | new -- a recipe's fixed shape |
-| static | `test_s6rc_source.py` | 9 | new -- what the boot graph *says* |
 | static | `test_probes.py` | 17 | new -- the harness's own parsers |
 | replica | `test_install.py` | 22 | `case-install.sh`, 579 lines and 1 bit |
 | replica | `test_supervisor.py` | 31 | `case-supervisor.sh`, 166 lines |
@@ -324,21 +323,27 @@ is the cross-built ELF we shipped, its log is empty, and every `run` in the
 scandir is executable. The rest describe a machine that cannot be built any
 more.
 
-**Replaced.** The contract that a `run` script is startable and a service comes
-up is now asked two ways, and the split is deliberate:
+**Replaced** by `qa/replica/test_s6rc.py`, which asks what the printer DOES --
+init, one transition, a killed daemon coming back.
 
-| lane | file | asks |
-|---|---|---|
-| static | `test_s6rc_source.py` | what the database SAYS -- graph, bundle, timeouts, the generated shebang, and the shell inside each oneshot |
-| replica | `test_s6rc.py` | what the printer DOES -- init, one transition, a killed daemon coming back |
+There was a static half as well, `test_s6rc_source.py`: it compiled the source
+tree and read the graph, bundle, timeouts and generated shebang back out with
+`s6-rc-db`, never out of the source tree, because the compiler is free to
+reject, rewrite or silently drop what it was given. (`down` is the one that bit
+us: `s6-rc-compile` accepts a `down` file in a definition directory and discards
+it, producing a byte-identical servicedir.)
 
-The static half needs no docker and runs in about a second, which is where a
-boot-order mistake should be caught. It compiles the real source tree with the
-native `s6-rc-compile` that `bin/patch.sh` section 5b-2 builds, and reads the
-answers back out with `s6-rc-db` -- never out of the source tree, because the
-compiler is free to reject, rewrite, or silently drop what it was given.
-`down` is the one that bit us: `s6-rc-compile` accepts a `down` file in a
-definition directory and discards it, producing a byte-identical servicedir.
+**It is gone, and what it cost is worth stating.** It needed an
+`s6-rc-compile` that runs on the build host, and the only way to get one was a
+second NATIVE build of skalibs, execline, s6 and s6-rc -- 110 lines of
+`bin/patch.sh` whose entire hazard was that both stacks had to be
+`--prefix=$MODDIR` or the `#!` baked into the oneshot runner pointed at the
+build host's execline. The database is compiled in the replica now, by the
+`s6-rc-compile` the payload ships, so that hazard cannot exist. The price is
+that a boot-order mistake is caught by the replica lane rather than in a
+second, and that the timeout and edge assertions are not currently made
+anywhere. `bin/verify.sh` keeps the one part a host can still check: the
+oneshot runner's shebang, read straight out of the shipped database.
 
 ### The gates phase 8 killed have been retired
 

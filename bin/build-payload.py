@@ -77,6 +77,10 @@ def run():
             "MOD_ROOTS": " ".join(roots),
             "IPK_ARCH": _sh("IPK_ARCH", "mipsel_xburst2"),
             "SOURCE_DATE_EPOCH": os.environ.get("SOURCE_DATE_EPOCH", "1"),
+            # The case compiles the s6-rc database and stamps it db-$MOD_VER.
+            # Asked of common.sh like every other value here, so the database
+            # name and the package versions cannot come from two clocks.
+            "MOD_VER": _sh("MOD_VER"),
         })
 
     tar = out / "payload.tar"
