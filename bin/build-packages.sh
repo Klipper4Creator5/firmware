@@ -133,8 +133,18 @@ for r in "${RECIPES[@]}"; do
         # PKG_EXCLUDE is a space-separated list of patterns and is meant
         # to word-split here.
         # shellcheck disable=SC2086
+        # -maxdepth 1, AND THAT IS NOT A MICRO-OPTIMISATION. Every value
+        # PKG_EXCLUDE has ever had is ".version", the stamp pkg_end writes at
+        # the ROOT of a recipe's output -- but `find -name` matches a basename
+        # at any depth, and Mainsail's release zip ships a .version of its own
+        # at www/mainsail/.version. So this deleted upstream's file too, and
+        # anvil-mainsail shipped without it. Nothing noticed, because
+        # bin/patch.sh copied the payload out of work/pkg where the file was
+        # still there; installing the payload from the .ipk instead is what
+        # made the package's contents the payload's contents and put a
+        # one-line difference in the diff.
         for p in $PKG_EXCLUDE; do
-            find "$LAYOUT$MODDIR" -name "$p" -exec rm -rf {} + 2>/dev/null || true
+            find "$LAYOUT$MODDIR" -maxdepth 1 -name "$p" -exec rm -rf {} + 2>/dev/null || true
         done
         [ -n "$(find "$LAYOUT$MODDIR" \( -type f -o -type l \) -print -quit)" ] \
             || { echo "!! $r staged nothing -- empty package refused" >&2; exit 1; }
