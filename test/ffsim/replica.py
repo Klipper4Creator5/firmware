@@ -93,15 +93,14 @@ class Replica:
 
     # ------------------------------------------------------------ execution
 
-    def command(self, case, packages=None, base_pkg=None, usb_stick=False,
-                stage=None, want_out=False, env=None):
+    def command(self, case, packages=None, want_out=False, env=None):
         """The exact `docker run` argv for this case.
 
         Split out from run() so it can be inspected and diffed against what
         the shell launcher produced, without a docker daemon anywhere near it.
         """
         packages = packages or {}
-        stage = stage or self.stage_dir()
+        stage = self.stage_dir()
         config = self.config
 
         argv = [self.docker, "run", "--rm", "-i", "--privileged"]
@@ -133,7 +132,11 @@ class Replica:
             # resolves to the same place the daemon does -- see stage_dir.
             "-v", "%s/out:/out" % stage,
             "-e", "FF_KEY=%s" % config.ff_key,
-            "-e", "BASE_PKG=%s" % ("/pkgs/base.tgz" if base_pkg else ""),
+            # Both are always empty/off here, and are passed anyway because
+            # entrypoint.sh and assemble.sh read them unconditionally. The
+            # cases that install a baseline or want a real FAT stick belong
+            # to qa/, which builds its own argv -- see qa/lib/replica.py.
+            "-e", "BASE_PKG=",
             "-e", "PKGS=%s" % "".join(" %s=/pkgs/%s" % (n, n) for n in packages),
         ]
 
@@ -156,7 +159,7 @@ class Replica:
             "-e", "PROG_MB=%s" % config.get("PROG_MB"),
             "-e", "DATA_MB=%s" % config.get("DATA_MB"),
             "-e", "SIM_VERBOSE=%s" % os.environ.get("SIM_VERBOSE", "0"),
-            "-e", "USB_STICK=%s" % ("1" if usb_stick else "0"),
+            "-e", "USB_STICK=0",
             self.image, "/case.sh",
         ]
         return argv
@@ -215,8 +218,8 @@ class Replica:
                 shutil.copy(str(src), str(out / name))
         return out
 
-    def run_case(self, case, packages=None, base_pkg=None, usb_stick=False,
-                 on_output=None, out_dir=None, env=None):
+    def run_case(self, case, packages=None, on_output=None, out_dir=None,
+                 env=None):
         """Run one case script in the replica. Non-zero exit is a Fail.
 
         out_dir asks for a writable /out inside the chroot and copies what the
@@ -240,12 +243,8 @@ class Replica:
                 if not os.path.isfile(path):
                     raise Fail("no package at %s (for %s)" % (path, name))
                 shutil.copy(path, str(stage / "pkgs" / name))
-            if base_pkg:
-                if not os.path.isfile(base_pkg):
-                    raise Fail("no baseline package at %s" % base_pkg)
-                shutil.copy(base_pkg, str(stage / "pkgs" / "base.tgz"))
 
-            argv = self.command(case, packages, base_pkg, usb_stick, stage,
+            argv = self.command(case, packages,
                                 want_out=out_dir is not None, env=env)
             # errors="replace": a case that cats or heads one of the printer's
             # MIPS binaries emits bytes that are not UTF-8, and the default
