@@ -1,20 +1,11 @@
 #!/usr/bin/env bash
-# 3/3 -- repack work/software back into an installable USB package.
+# 3/3 -- repack work/software into an installable USB package.
+#   ./bin/pack.sh [--full|--plain]    default is slim: software component only
 #
-#   ./bin/pack.sh              software component + the mod payload (DEFAULT, ~63MB)
-#   ./bin/pack.sh --full       also carry kernel / control / library
-#   ./bin/pack.sh --plain      no encryption: emits runFirmwareExe.sh + payload
-#                          for the /mnt/runFirmwareExe.sh dev path
-#
-# Slim is the default because the stock installer skips any component that is
-# absent: every update_<name> guards on `ls -1t <name>-*.tar.xz` and returns
-# early when it fails. So shipping only the component we actually modified
-# leaves the kernel, the rootfs image and the MCU/board firmware completely
-# untouched -- MCU flashing is the riskiest thing in the package and there is
-# no reason to run it to install a userspace mod.
-#
-# (start.img, end.img and play are still shipped: runFirmwareExe.sh uses those
-# unconditionally.)
+# Slim works because the stock installer skips any absent component -- every
+# update_<name> guards on `ls -1t <name>-*.tar.xz` -- so the kernel, rootfs and
+# MCU firmware are left untouched. start.img, end.img and play still ship:
+# runFirmwareExe.sh uses them unconditionally.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 
@@ -35,10 +26,8 @@ OUT_VER="${SW_VER:-$STOCK_SW_VER}"
 rm -rf work/stage work/out
 mkdir -p work/stage work/out
 
-# ---------------------------------------------------------------------------
-# 1. md5sum.list -- the installer hard-gates on this. Paths must be "./rel",
-#    and the list must not contain itself.
-# ---------------------------------------------------------------------------
+# --- 1. md5sum.list -- the installer hard-gates on it. Paths must be "./rel",
+#     and the list must not contain itself.
 echo ">> regenerating md5sum.list"
 ( cd work/software
   rm -f md5sum.list
@@ -47,34 +36,23 @@ echo ">> regenerating md5sum.list"
       | xargs -0 md5sum > md5sum.list
   echo "   $(wc -l < md5sum.list) entries" )
 
-# ---------------------------------------------------------------------------
-# 2. software-<ver>.tar.xz
-#
-#    !! NOT actually xz-compressed. FlashForge's own components are PLAIN
-#    tar archives that merely carry a .tar.xz name -- verify with
-#    `file work/outer/software-*.tar.xz`. The stock installer extracts them
-#    with a bare `tar -xvf`, so a genuinely xz-compressed file here does not
-#    install. Keep this a plain tar.
-# ---------------------------------------------------------------------------
+# --- 2. software-<ver>.tar.xz, NOT actually xz. FlashForge's own components
+#     are plain tars carrying a .tar.xz name and the installer runs a bare
+#     `tar -xvf`, so a real xz file does not install.
 echo ">> building software-$OUT_VER.tar.xz (plain tar, matching stock)"
 tar -cf "work/stage/software-$OUT_VER.tar.xz" -C work/software .
 ls -lh "work/stage/software-$OUT_VER.tar.xz" | awk '{print "   "$5}'
 
-# ---------------------------------------------------------------------------
-# 3. the rest of the outer package
-# ---------------------------------------------------------------------------
-# The mod payload: rides in the outer package so it lands on /usr/data,
-# not on the firmware partition.
+# --- 3. the rest of the outer package
+# The payload rides here so it lands on /usr/data, not the firmware partition.
 if [ -d "$PAYLOAD_DIR" ]; then
-    # This one IS really xz: we extract it ourselves with `xz -dc`, and
-    # FlashForge's factory installer proves xz exists on the printer.
+    # This one IS really xz: we extract it ourselves with `xz -dc`.
     echo ">> compressing anvil.tar.xz (Mainsail / HelixScreen / Moonraker / bin)"
     tar -cf - -C "$PAYLOAD_DIR" . | xz -T0 -6 > work/stage/anvil.tar.xz
     ls -lh work/stage/anvil.tar.xz | awk '{print "   "$5}'
 fi
 
-# FlashForge's own installer, reused verbatim -- it already does the whole
-# USB auto-install dance. We only change what it installs.
+# FlashForge's own installer, reused verbatim; only what it installs changes.
 cp -f work/outer/runFirmwareExe.sh work/stage/
 chmod +x work/stage/runFirmwareExe.sh
 for f in start.img end.img play; do
@@ -92,25 +70,18 @@ fi
 echo ">> outer payload:"
 ls -la work/stage | sed 's/^/   /'
 
-# ---------------------------------------------------------------------------
-# 4. emit
-# ---------------------------------------------------------------------------
-# MOD_VER is the release date; common.sh defaults it to today (UTC).
+# --- 4. emit
 BASE="${MOD_NAME:-anvil}-${MOD_VER:?}"
 
 if [ "$PLAIN" = "1" ]; then
-    # app_startup.sh also honours a bare /mnt/runFirmwareExe.sh -- no crypto,
-    # no .tgz. Copy the whole work/out/plain/ tree to the USB root.
+    # app_startup.sh also honours a bare /mnt/runFirmwareExe.sh: copy this
+    # whole tree to the USB root.
     mkdir -p work/out/plain
     cp -a work/stage/. work/out/plain/
     echo
     echo "PLAIN package: work/out/plain/  -> copy its CONTENTS to the USB root"
 else
-    # Name the output after the model the package is actually for. The two
-    # models ship DIFFERENT firmwareExe binaries, so emitting both filenames
-    # from one build (as an earlier version did) would hand the wrong
-    # firmware to one of them. Each model must be built from its own stock
-    # package.
+    # The two models ship DIFFERENT firmwareExe binaries.
     PKG_MACHINE=$(cat work/.pkg_machine 2>/dev/null || echo "")
     if [ "$PKG_MACHINE" = unknown ]; then PKG_MACHINE=""; fi
     if [ -n "$PKG_MACHINE" ] && [ "$PKG_MACHINE" != "${TARGET_MACHINE:-$PKG_MACHINE}" ]; then
@@ -122,9 +93,8 @@ else
 
     echo ">> tarring + encrypting"
     # Outer tar is NOT gzipped despite the .tgz name -- unTar pipes the
-    # decrypted stream straight into `tar xvf -`.
-    # The Pro's app_startup.sh globs /mnt/Creator5Pro-*.tgz and the non-Pro
-    # globs /mnt/Creator5-*.tgz, so the filename prefix must match the model.
+    # decrypted stream into `tar xvf -`. The prefix must match the model:
+    # app_startup.sh globs /mnt/Creator5Pro-*.tgz.
     OUTFILE="work/out/${OUT_MACHINE}-${BASE}.tgz"
     tar -cf - -C work/stage . \
         | openssl des3 -salt -md md5 -k "$FF_KEY" > "$OUTFILE"

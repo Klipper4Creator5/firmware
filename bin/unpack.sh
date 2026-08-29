@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
 # 1/3 -- decrypt the stock package and open the software component.
-#
-#   ./bin/unpack.sh            uses $STOCK_TGZ from config.env
-#   ./bin/unpack.sh <file>     unpack some other package
-#
-# Result:
-#   work/outer/      the 8 top-level files (runFirmwareExe.sh, *.tar.xz, imgs)
-#   work/software/   the extracted software-<ver> tree -- EDIT THIS
+#   ./bin/unpack.sh [<file>]     default: $STOCK_TGZ from config.env
+# -> work/outer/ (the 8 top-level files), work/software/ (the tree to edit)
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 
@@ -32,10 +27,7 @@ STOCK_SW_VER=$(basename "$SW_TARBALL" | sed 's/^software-//; s/\.tar\.xz$//')
 echo ">> extracting software component $STOCK_SW_VER"
 tar -xf "$SW_TARBALL" -C work/software
 
-# Every package carries a model gate. runFirmwareExe.sh compares the MACHINE
-# and PID it was built for against the ones app_startup.sh passes in (which
-# come from the firmware already on the printer) and REFUSES to install on a
-# mismatch. Record it so verify.sh can check it against your printer.
+# runFirmwareExe.sh refuses a MACHINE/PID mismatch; recorded for verify.sh.
 PKG_MACHINE=$(sed -n 's/^MACHINE=//p' work/outer/runFirmwareExe.sh | head -n1)
 PKG_PID=$(sed -n 's/^PID=//p' work/outer/runFirmwareExe.sh | head -n1)
 echo "${PKG_MACHINE:-unknown}" > work/.pkg_machine
@@ -45,25 +37,14 @@ echo ">> package installs on: ${PKG_MACHINE:-unknown} (PID ${PKG_PID:-unknown})"
 echo "$STOCK_SW_VER" > work/.stock_sw_ver
 echo "$SRC"          > work/.source_pkg
 
-# ---- has FlashForge changed printer.base.cfg under us? ---------------------
-# Our payload/klipper/config/printer.base.cfg is FlashForge's file with the
-# chamber block replaced by an include, so a change on their side means a pin
-# map, stepper current or endstop we are shipping stale.
-#
-# This lives HERE, and not in a test, because here is the only moment a
-# pristine stock tree exists: bin/patch.sh copies our file straight over
-# work/software/klipper/config/printer.base.cfg a few steps later. test-base-cfg.py
-# read it afterwards and so spent its life diffing our file against itself --
-# green on a cold tree, red on a second run, and blind to the drift either way.
-#
-# A warning, not a gate: their file changing is news, not a broken build, and
-# it can only happen when you point the build at a new stock package.
+# Ours is FlashForge's file with the chamber block replaced by an include, so
+# drift means a stale pin map or stepper current. Checked here because this is
+# the only moment a pristine stock tree exists. A warning, not a gate.
 STOCK_BASE=work/software/klipper/config/printer.base.cfg
 OURS=pkgs/klipper-config/prog/config/printer.base.cfg
 if [ -f "$STOCK_BASE" ] && [ -f "$OURS" ]; then
-    # Compare only the section/option lines: comments and blank lines differ by
-    # design, our chamber include replaces their heater block, and the ff-*.cfg
-    # includes at the end of the file are ours (see printer.base.cfg's tail).
+    # Section/option lines only: comments differ by design, and the chamber
+    # and ff-*.cfg includes are ours.
     strip() { grep -vE '^\s*(#|$)' "$1" | grep -vE '^\[(heater_generic|verify_heater) chamber_heater\]|^\[include printer\.chamber\.cfg\]|^\[include ff-[a-z-]+\.cfg\]'; }
     if strip "$STOCK_BASE" | diff -q - <(strip "$OURS") >/dev/null 2>&1; then
         echo ">> printer.base.cfg matches the stock file"

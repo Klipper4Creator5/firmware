@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# One-shot: fetch -> unpack -> patch -> pack.
-#
-#   ./bin/build.sh                  build the package
-#   ./bin/build.sh --full           options are passed through to pack.sh
-#                                   (--slim is accepted but is the default)
+# One-shot: fetch -> unpack -> patch -> pack. Options pass through to pack.sh.
 set -euo pipefail
 SCRIPT_DIR="$(dirname "$0")"
 "$SCRIPT_DIR/fetch-assets.sh"
