@@ -117,27 +117,28 @@ case ":$PATH:" in
     *) PATH="$PATH:/usr/prog/Python-3.8.2/bin" ;;
 esac
 
-# And the mod's own bin, which s6 needs on PATH and not merely installed.
+# And the mod's own bin.
 #
-# s6 bakes its --prefix in at compile time, so it was reasonable to assume the
-# binaries could find each other wherever they were. They cannot, and the two
-# rules are different: s6-ftrigrd is found through the compiled-in libexecdir,
-# but s6-svscan execs S6-SUPERVISE BY NAME OFF PATH, and s6-svc -w execs
-# s6-svlisten the same way. With $MODDIR/bin absent from PATH the scanner
-# starts, stays up, answers its control socket -- and supervises nothing,
-# saying so once, in its own log, where nobody is looking:
+# NOT FOR s6's SAKE, which is what this comment used to say. It claimed
+# s6-svscan execs s6-supervise by name off PATH and that s6-svc -w does the
+# same for s6-svlisten, so a printer without $MODDIR/bin on PATH would
+# supervise nothing. Measured in the replica against the binaries we ship, and
+# it is false -- every s6-to-s6 exec goes through a path compiled in at
+# --prefix time, and there are no bare names in any of them:
 #
-#     s6-svscan: warning: unable to spawn s6-supervise for camera:
-#                No such file or directory
-#     s6-svc: fatal: unable to exec s6-svlisten: No such file or directory
+#     s6-svscan              -> /usr/data/anvil/bin/s6-supervise
+#     s6-svc                 -> /usr/data/anvil/bin/{s6-svlisten,s6-svwait,s6-svc}
+#     s6-svwait, s6-svlisten1-> /usr/data/anvil/libexec/s6-ftrigrd
 #
-# It is here rather than in one init script because both halves need it and
-# they inherit it from different places: S40s6 sources this file before
-# starting the SCANNER, which is the process that has to find s6-supervise,
-# and every service script sources it before running s6-svc, which is the
-# process that has to find s6-svlisten. Prepended, not appended: these are
-# ours and nothing on the base rootfs answers to those names, but a printer
-# that ever grows a second s6 should get the one we shipped.
+# A scanner started with PATH=/bin:/sbin:/usr/bin:/usr/sbin spawns its
+# supervisor and says nothing, because there is nothing to say. So does a copy
+# of the scanner alone in an empty directory: the path is in the binary, not in
+# the environment and not relative to argv[0].
+#
+# anvil-service.sh calls every s6 program as "$SVC_S6_BIN/<name>", so our own
+# scripts do not need it either. What is left is people: an ssh session that
+# wants s6-svstat without typing the prefix. Prepended, not appended, so a
+# printer that ever grows a second s6 gets the one we shipped.
 #
 case ":$PATH:" in
     *":/usr/data/anvil/bin:"*) ;;

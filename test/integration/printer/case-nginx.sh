@@ -131,37 +131,50 @@ $NGINX -p $MODDIR/nginx -c $MODDIR/nginx/nginx.conf -t >/dev/null 2>&1 \
     || { bad "the stand-in nginx.conf does not parse: `$NGINX -p $MODDIR/nginx -c $MODDIR/nginx/nginx.conf -t 2>&1 | tail -1`"; exit 1; }
 
 echo
-echo "=== 1. s6-svscan needs \$MODDIR/bin on PATH, and this is the measurement ==="
-# THIS SECTION IS EVIDENCE, NOT A FEATURE. s6-svscan spawns one s6-supervise
-# per service directory, and it finds that program on PATH -- there is no
-# compiled-in path for it, unlike s6-ftrigrd, which s6-svlisten does resolve
-# out of the prefix. $MODDIR/bin is not on any PATH on this printer: the mod's
-# own anvil-env.sh appends /usr/prog/Python-3.8.2/bin and nothing else. With an
-# EMPTY scandir, which is all phase 3 shipped, that costs nothing and nobody
-# noticed. The moment a service directory exists, the scanner logs "unable to
-# spawn s6-supervise for nginx: No such file or directory" and supervises
-# nothing at all, which is a printer with no web UI and a puzzling log.
+echo "=== 1. the scanner finds s6-supervise without help from PATH ==="
+# THIS SECTION IS EVIDENCE, NOT A FEATURE, and it used to assert the opposite.
+# It was written when the belief was that s6-svscan execs s6-supervise BY NAME
+# off PATH, so a printer without $MODDIR/bin on PATH would supervise nothing
+# and say so once in a log nobody reads. Measured here against the binaries we
+# actually ship, that is false: `strings` finds
+# /usr/data/anvil/bin/s6-supervise inside s6-svscan, and a scanner started with
+# a bare PATH spawns its supervisor in silence. So does a copy of the scanner
+# alone in an empty directory -- the path is compiled in at --prefix time, not
+# resolved from the environment and not relative to argv[0].
 #
-# The fix belongs in anvil-env.sh (one PATH entry, next to the one that is
-# already there) and that file is not this agent's to change, so the sequence
-# below both proves the problem and stands in for the fix, loudly. Everything
-# after this section exports PATH by hand for exactly that reason.
+# WHAT IS WORTH HOLDING is that property, because it is the thing that would
+# break quietly: rebuild s6 with a different --prefix, or relocate $MODDIR
+# without rebuilding, and the scanner goes looking for a supervisor at a path
+# that no longer exists. The check below is therefore the positive one -- a
+# bare PATH must still supervise -- plus the compiled-in path itself, which is
+# what makes the first true.
 mkdir -p /tmp/pathctl/nginx
 cp -f $SVCDIR/run /tmp/pathctl/nginx/run
 chmod +x /tmp/pathctl/nginx/run
 touch /tmp/pathctl/nginx/down          # nothing may actually start in here
 env -i /bin/sh -c "PATH=/bin:/sbin:/usr/bin:/usr/sbin $S6/s6-svscan /tmp/pathctl" \
     >/tmp/pathctl.log 2>&1 &
+PATHCTL=$!
 sleep 6
-if grep -q "s6-supervise" /tmp/pathctl.log; then
-    ok "without $S6 on PATH the scanner cannot spawn s6-supervise: `head -1 /tmp/pathctl.log`"
+if [ "`ps 2>/dev/null | grep -c '[s]6-supervise'`" -gt 0 ]; then
+    ok "with a bare PATH the scanner still spawned s6-supervise"
 else
-    bad "expected 'unable to spawn s6-supervise' with a bare PATH, log was: `head -2 /tmp/pathctl.log | tr '\n' ' '`"
+    bad "a bare PATH left the scanner supervising nothing, log: `head -2 /tmp/pathctl.log | tr '\n' ' '`"
 fi
+[ -s /tmp/pathctl.log ] \
+    && bad "the scanner complained about something: `head -2 /tmp/pathctl.log | tr '\n' ' '`" \
+    || ok "and it had nothing to complain about"
+strings $S6/s6-svscan 2>/dev/null | grep -q "^$MODDIR/bin/s6-supervise$" \
+    && ok "because $MODDIR/bin/s6-supervise is compiled into the scanner" \
+    || bad "$MODDIR/bin/s6-supervise is NOT in the scanner -- s6 was built for another prefix, and it will look for its supervisor where that prefix put it"
+kill -9 $PATHCTL 2>/dev/null
+pkill -9 s6-supervise 2>/dev/null
+sleep 1
 $S6/s6-svscanctl -t /tmp/pathctl 2>/dev/null
 sleep 2
-note "the rest of this case exports PATH=$S6:\$PATH, standing in for the"
-note "one-line anvil-env.sh change this measurement asks for."
+# Kept because anvil-env.sh does the same, so the rest of this case runs with
+# the PATH a booted printer has -- not because s6 needs it to find itself.
+note "the rest of this case exports PATH=$S6:\$PATH, as anvil-env.sh does"
 PATH=$S6:$PATH
 export PATH
 
