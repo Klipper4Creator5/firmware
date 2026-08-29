@@ -480,14 +480,30 @@ def test_the_payload_is_the_feed_installed():
         "bin/patch.sh names work/pkg -- see pkg_out above")
 
     # And it must install them the one supported way. pkgs/ipk-install is for
-    # the printer, which has no opkg; the build host has one and uses it.
-    assert "--offline-root" in body or "offline_root" in body, (
-        "bin/patch.sh does not point opkg at an offline root -- how is the "
+    # WHICH opkg, and this assertion flipped once already. It used to demand
+    # an --offline-root, because a HOST opkg unpacking into a staging tree was
+    # how the payload got built. That opkg could not run maintainer scripts --
+    # patch.sh passed --force-postinstall to make the database claim work that
+    # had not happened -- so the payload shipped a postinst nothing had ever
+    # executed.
+    #
+    # bin/build-payload.py runs the PRINTER'S opkg inside the replica, against
+    # /, and tars the result back. So the offline root is what must now be
+    # absent, and the replica step is what must be present.
+    assert "offline_root" not in body and "--offline-root" not in body, (
+        "bin/patch.sh points an opkg at an offline root again. The payload is "
+        "installed on the printer now (bin/build-payload.py) -- an offline "
+        "root means maintainer scripts are not running")
+    assert "build-payload.py" in body, (
+        "bin/patch.sh does not call bin/build-payload.py -- how is the "
         "payload being assembled?")
+    assert "--force-postinstall" not in body, (
+        "bin/patch.sh still forces postinstall. That flag existed to make an "
+        "offline-root database say installed; the printer's own opkg "
+        "configures for real and needs no such claim")
     assert "ipk-install" not in body, (
-        "bin/patch.sh uses pkgs/ipk-install. That is the printer's installer, "
-        "written because the printer has no opkg and no ar; the build "
-        "container has both and pkg_buildopkg builds the real client")
+        "bin/patch.sh uses pkgs/ipk-install. That is the printer's fallback "
+        "installer for a machine with no opkg; the replica has the real one")
 
     # And the reverse direction: patch.sh must not grow its own copy of a build
     # it delegates. A `./configure` anywhere in it would mean some component is

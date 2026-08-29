@@ -20,6 +20,7 @@ printer's userland, where the only interpreter that matters is its ash.
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 from . import Fail, Skip
 
@@ -93,7 +94,7 @@ class Replica:
     # ------------------------------------------------------------ execution
 
     def command(self, case, packages=None, base_pkg=None, usb_stick=False,
-                stage=None):
+                stage=None, want_out=False, env=None):
         """The exact `docker run` argv for this case.
 
         Split out from run() so it can be inspected and diffed against what
@@ -107,12 +108,35 @@ class Replica:
         if not self.prebuilt:
             argv += ["-v", "%s/work/rootfs:/rootfs:ro" % self.root]
 
+        # A case that has to hand something back gets an entrypoint of ours,
+        # which runs the stock one and then mounts /out inside the chroot.
+        # See test/integration/printer/entrypoint-out.sh for why that cannot
+        # be a plain -v onto /printer/out.
+        if want_out:
+            wrapper = self.root / "test" / "integration" / "printer" / "entrypoint-out.sh"
+            argv += [
+                "--entrypoint", "/entrypoint-out.sh",
+                "-v", "%s:/entrypoint-out.sh:ro" % wrapper,
+                "-e", "OUT_UID=%d" % os.getuid(),
+                "-e", "OUT_GID=%d" % os.getgid(),
+            ]
+
         argv += [
             "-v", "%s/pkgs:/pkgs:ro" % stage,
             "-v", "%s/case.sh:/case.sh:ro" % stage,
             # ASSEMBLED ON THIS SIDE, and mounted as the one directory
             # every case script already reads. See stage_payload.
             "-v", "%s/payload:/payload:ro" % stage,
+            # THE ONE WRITABLE MOUNT, and the only way anything the replica
+            # built comes back. Everything else here is :ro on purpose -- a
+            # case script must not be able to edit the checkout it is testing
+            # -- but the payload build runs the printer's own opkg inside the
+            # replica and has to hand the resulting tree back out.
+            #
+            # Under the stage dir because that is already inside the repo,
+            # which is the one path a sibling container resolves to the same
+            # place the daemon does. See stage_dir.
+            "-v", "%s/out:/out" % stage,
             "-e", "FF_KEY=%s" % config.ff_key,
             "-e", "BASE_PKG=%s" % ("/pkgs/base.tgz" if base_pkg else ""),
             "-e", "PKGS=%s" % "".join(" %s=/pkgs/%s" % (n, n) for n in packages),
@@ -127,6 +151,12 @@ class Replica:
             argv += ["-e", "PROG_DUMP=/progdump", "-v", "%s:/progdump:ro" % dump_abs]
         else:
             argv += ["-e", "PROG_DUMP="]
+
+        # Anything the caller needs the case to see. Sorted so two runs of
+        # one build produce the same argv, which is what makes `command`
+        # worth diffing.
+        for key in sorted(env or {}):
+            argv += ["-e", "%s=%s" % (key, env[key])]
 
         argv += [
             "-e", "PROG_MB=%s" % config.get("PROG_MB"),
@@ -168,17 +198,24 @@ class Replica:
 
         Four sources, four roles: anvil-core's $MODDIR overlay, its anvil.conf
         template -- the unrendered defaults are exactly what the cases want --
-        Klipper's launcher, which is a /usr/prog file and so lives in prog/,
-        and the installer block, which is never a file on a printer at all
-        (bin/patch.sh splices it into FlashForge's run.sh) but which
-        case-upgrade.sh runs directly as the thing under test.
+        Klipper's launcher, and the installer block, which is never a file on
+        a printer at all (bin/patch.sh splices it into FlashForge's run.sh)
+        but which case-upgrade.sh runs directly as the thing under test.
+
+        THE LAUNCHER MOVED. start.sh was pkgs/klipper/prog/start.sh, a file in
+        no package; it is anvil-core's payload/prog/start.sh now, so it also
+        arrives via the copytree above -- but at prog/start.sh, and the cases
+        read it flat. Hence the explicit copy, still. Note the `is_file`
+        guard below: a source that moves and is not updated here vanishes
+        SILENTLY, which is the same failure this docstring already describes
+        once.
         """
         out = stage / "payload"
         shutil.copytree(str(self.root / "pkgs" / "anvil-core" / "payload"), str(out))
         for src, name in (
                 (self.root / "pkgs" / "anvil-core" / "seed" / "anvil.conf.in",
                  "anvil.conf"),
-                (self.root / "pkgs" / "klipper" / "prog" / "start.sh",
+                (self.root / "pkgs" / "anvil-core" / "payload" / "prog" / "start.sh",
                  "start.sh"),
                 (self.root / "installer" / "run-append.sh",
                  "run-append.sh"),
@@ -188,8 +225,13 @@ class Replica:
         return out
 
     def run_case(self, case, packages=None, base_pkg=None, usb_stick=False,
-                 on_output=None):
-        """Run one case script in the replica. Non-zero exit is a Fail."""
+                 on_output=None, out_dir=None, env=None):
+        """Run one case script in the replica. Non-zero exit is a Fail.
+
+        out_dir asks for a writable /out inside the chroot and copies what the
+        case left there into that directory. Only on success: a failed build
+        must not leave behind a payload that looks finished.
+        """
         packages = packages or {}
         case = os.path.abspath(case)
         if not os.path.isfile(case):
@@ -199,6 +241,7 @@ class Replica:
         if stage.exists():
             shutil.rmtree(str(stage))
         (stage / "pkgs").mkdir(parents=True)
+        (stage / "out").mkdir()
         try:
             self.stage_payload(stage)
             shutil.copy(case, str(stage / "case.sh"))
@@ -211,7 +254,8 @@ class Replica:
                     raise Fail("no baseline package at %s" % base_pkg)
                 shutil.copy(base_pkg, str(stage / "pkgs" / "base.tgz"))
 
-            argv = self.command(case, packages, base_pkg, usb_stick, stage)
+            argv = self.command(case, packages, base_pkg, usb_stick, stage,
+                                want_out=out_dir is not None, env=env)
             # errors="replace": a case that cats or heads one of the printer's
             # MIPS binaries emits bytes that are not UTF-8, and the default
             # strict decode raised UnicodeDecodeError out of communicate() --
@@ -226,6 +270,15 @@ class Replica:
             if completed.returncode != 0:
                 raise Fail("%s exited %d" % (os.path.basename(case),
                                              completed.returncode))
+            if out_dir is not None:
+                out_dir = Path(out_dir)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                produced = sorted((stage / "out").iterdir())
+                if not produced:
+                    raise Fail("%s left nothing in /out"
+                               % os.path.basename(case))
+                for item in produced:
+                    shutil.copy2(str(item), str(out_dir / item.name))
             return output
         finally:
             # The staged packages are ~80MB each.

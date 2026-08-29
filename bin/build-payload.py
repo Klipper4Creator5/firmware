@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Build $MODDIR by installing the feed inside the printer replica.
+
+    ./bin/build-payload.py <root-package> [<root-package> ...]
+
+Writes the installed tree to $PAYLOAD_DIR, replacing whatever was there.
+
+WHY THIS EXISTS. bin/patch.sh used to assemble the payload with a HOST opkg
+against an --offline-root. That works, and it is wrong in two ways that only
+show up later:
+
+  * it cannot run maintainer scripts. opkg under offline_root leaves every
+    package Status: unpacked, so patch.sh passed --force-postinstall to make
+    the database say installed -- a claim about work that had not happened.
+    A postinst that only works on a build host had nowhere to fail.
+  * it is not the printer. The host opkg is an x86-64 binary resolving paths
+    against a staging directory; a printer's opkg is a MIPS binary resolving
+    them against /. Anything that depends on the difference -- and a postinst
+    is exactly that -- was untested until a machine ran it.
+
+Here the printer's OWN opkg installs onto the printer's own filesystem, under
+qemu-mipsel, and the tree is tarred back out. The install that ships is the
+install that was tested.
+
+WHAT IT COSTS. A privileged container and the printer image, where the old
+path needed neither -- so `make build` now goes through the replica lane. The
+feed itself (bin/build-packages.sh) still needs nothing but a checkout.
+"""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+for _p in Path(__file__).resolve().parents:
+    if (_p / "bin" / "common.sh").is_file():
+        ROOT = _p
+        sys.path.insert(0, str(_p / "test"))
+        break
+
+from ffsim import cli                            # noqa: E402
+from ffsim.config import Config                  # noqa: E402
+from ffsim.replica import Replica                # noqa: E402
+
+CASE = "test/integration/printer/case-build-payload.sh"
+
+
+def _sh(var, default=""):
+    """One value out of bin/common.sh, asked of the shell that defines it.
+
+    Re-deriving MODDIR or IPK_ARCH here would be a second place for them to be
+    wrong, and they would agree right up until somebody edited one.
+    """
+    out = subprocess.run(
+        ["bash", "-c", '. "%s/bin/common.sh" >/dev/null 2>&1; printf "%%s" "${%s:-%s}"'
+         % (ROOT, var, default)],
+        capture_output=True, text=True, cwd=str(ROOT))
+    return out.stdout.strip()
+
+
+def run():
+    roots = sys.argv[1:]
+    if not roots:
+        raise SystemExit("usage: build-payload.py <root-package> ...")
+
+    feed = Path(_sh("PKG_FEED", str(ROOT / "work" / "packages")))
+    payload_dir = Path(_sh("PAYLOAD_DIR"))
+    if not payload_dir.is_absolute() and not str(payload_dir).startswith(str(ROOT)):
+        payload_dir = ROOT / payload_dir
+
+    ipks = sorted(feed.glob("*.ipk"))
+    if not ipks:
+        raise SystemExit("no feed at %s -- run ./bin/build-packages.sh" % feed)
+    index = feed / "Packages"
+    if not index.is_file():
+        raise SystemExit("no Packages index at %s" % index)
+
+    # Everything the printer's opkg needs, on the simulated stick at /mnt: the
+    # archives and the index that names them. `packages` is the replica's own
+    # mechanism for this and copies each to /mnt/<name>.
+    packages = {p.name: str(p) for p in ipks}
+    packages[index.name] = str(index)
+
+    config = Config.load()
+    replica = Replica.start(config, want_output=_echo)
+    out = ROOT / "work" / ".payload-out"
+    replica.run_case(
+        ROOT / CASE, packages=packages, out_dir=out, on_output=_echo,
+        env={
+            "MOD_ROOTS": " ".join(roots),
+            "IPK_ARCH": _sh("IPK_ARCH", "mipsel_xburst2"),
+            "SOURCE_DATE_EPOCH": os.environ.get("SOURCE_DATE_EPOCH", "1"),
+        })
+
+    tar = out / "payload.tar"
+    if not tar.is_file():
+        raise SystemExit("the replica produced no payload.tar")
+
+    # Replace, never merge: a surviving file from a previous build is one no
+    # package accounts for, and the manifest would ship it as though it did.
+    if payload_dir.exists():
+        subprocess.run(["rm", "-rf", str(payload_dir)], check=True)
+    payload_dir.mkdir(parents=True)
+    # --strip-components=1 drops the leading anvil/ the case tarred with.
+    # No -p and no --same-owner: the archive carries the printer's root, this
+    # runs as the build user, and run-append.sh extracts as root on the
+    # machine anyway -- ownership in the payload has never meant anything.
+    subprocess.run(["tar", "-xf", str(tar), "-C", str(payload_dir),
+                    "--strip-components=1"], check=True)
+    subprocess.run(["rm", "-rf", str(out)], check=True)
+    _echo("payload: %s" % payload_dir)
+
+
+def _echo(text):
+    sys.stdout.write(str(text).rstrip("\n") + "\n")
+    sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    sys.exit(cli.main(run))

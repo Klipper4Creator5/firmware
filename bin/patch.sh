@@ -43,11 +43,16 @@ mkdir -p "$PAYLOAD_DIR/bin" "$PAYLOAD_DIR/lib" "$PAYLOAD_DIR/libexec" \
          "$PAYLOAD_DIR/www" "$PAYLOAD_DIR/config" "$PAYLOAD_DIR/etc/s6"
 
 # ------------------------------------------------- 0. the payload, installed
-# Every file bound for $MODDIR comes from a package, installed by a real opkg
-# out of the feed bin/build-packages.sh indexed. `opkg list-installed` answers
-# "what does this release install?" off the payload itself.
-say "payload: installing the feed into $PAYLOAD_ROOT"
-pkg_buildopkg
+# Every file bound for $MODDIR comes from a package, installed by the
+# PRINTER'S OWN opkg out of the feed bin/build-packages.sh indexed, inside the
+# replica. `opkg list-installed` answers "what does this release install?" off
+# the payload itself.
+#
+# There is no host opkg here any more -- pkg_buildopkg built one, configured
+# --disable-curl and --prefix=$MODDIR so its compiled-in database path was
+# right, purely so an x86-64 binary could pretend to be the machine's. The
+# machine is available; it does its own installing.
+say "payload: installing the feed with the printer's own opkg"
 
 # THE MODEL IS NOT CHOSEN HERE ANY MORE. It used to be the one fact opkg
 # could not work out for itself: anvil-klipper-creator5-config and
@@ -103,60 +108,17 @@ for _p in $MOD_ROOTS; do
     done
 done
 
-# Generated, because four of its lines are paths only this script knows.
+# THE PAYLOAD IS BUILT ON THE PRINTER, not here. bin/build-payload.py starts
+# the replica, lets the printer's own opkg install the feed onto the printer's
+# own filesystem, and tars the result back -- see its header for why the host
+# opkg under --offline-root was the wrong tool.
 #
-#   offline_root  where opkg unpacks to. NOT where it keeps its database --
-#                 that is compiled in (pkg_buildopkg), with this prefixed.
-#   lists_dir     offline_root-relative too, so it and cache_dir are put
-#                 outside $MODDIR: bin/pack.sh tars $PAYLOAD_DIR, so scratch
-#                 parked beside it cannot ship and needs no cleaning up.
-#   ignore_uid    clears libarchive's EXTRACT_OWNER. The build lane runs as
-#                 the invoking user, so without this all ~3000 entries warn
-#                 that they could not be chowned to root. Payload ownership
-#                 has never meant anything: run-append.sh extracts as root.
-#   arch          the anti-OpenWrt gate where opkg reads it -- a mipsel_24kc
-#                 package has no priority here and is refused unopened.
-#   src           file: is answered before curl is reached at all
-#                 (libopkg/opkg_download.c:134), which is why the host opkg
-#                 can be built --disable-curl and still resolve a feed.
-MOD_OPKG_CONF="$PAYLOAD_ROOT/.opkg.conf"
-mkdir -p "$PAYLOAD_ROOT"
-cat > "$MOD_OPKG_CONF" <<EOF
-dest root /
-option offline_root $PAYLOAD_ROOT
-option lists_dir /.opkg-lists
-option cache_dir /.opkg-cache
-option ignore_uid 1
-arch all 1
-arch $IPK_ARCH 10
-src anvil file:$PKG_FEED
-EOF
-
-mod_opkg() {
-    "$HOSTOPKG" --conf "$MOD_OPKG_CONF" "$@" \
-        >> "$PAYLOAD_ROOT/.opkg.log" 2>&1 && return 0
-    sed 's/^/   /' "$PAYLOAD_ROOT/.opkg.log" >&2
-    echo "opkg failed: $* -- see $PAYLOAD_ROOT/.opkg.log" >&2
-    exit 1
-}
-mod_opkg update
-# --force-postinstall: under offline_root opkg skips configuration and leaves
-# everything Status: unpacked. Extracting the tarball IS the install, so the
-# database has to say installed.
-#
-# IT DOES RUN SCRIPTS NOW -- anvil-core has a postinst -- and it runs them
-# here, in the build image, with IPKG_INSTROOT empty, so their absolute paths
-# are taken as written rather than rebased onto $PAYLOAD_ROOT. That is why
-# anvil-link-prog.sh opens by checking for /usr/prog/app_startup.sh: there is
-# none in the build image, so it says so and exits 0.
+# What that removes from this file: the generated opkg.conf, the offline_root
+# and lists_dir paths, --force-postinstall, and the Installed-Time fixup. What
+# it adds is a privileged container and the printer image, which is why
+# `make build` runs in the replica lane now.
 # shellcheck disable=SC2086
-mod_opkg --force-postinstall install $MOD_INSTALL
-
-# The one clock left in the payload: opkg stamps Installed-Time from time(),
-# where bin/build-packages.sh builds every .ipk with SOURCE_DATE_EPOCH=1.
-# Normalised so two builds of one commit can be diffed.
-sed -i "s/^Installed-Time: .*/Installed-Time: ${SOURCE_DATE_EPOCH:-1}/" \
-    "$PAYLOAD_DIR/var/lib/opkg/status"
+./bin/build-payload.py $MOD_INSTALL
 
 say "payload: $(grep -c '^Package:' "$PAYLOAD_DIR/var/lib/opkg/status") packages installed (both chamber configs; the printer picks)"
 

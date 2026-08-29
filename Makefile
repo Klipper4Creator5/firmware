@@ -195,8 +195,26 @@ passwd: image
 vendor: image config.env
 	@$(RUN) ./bin/fetch-assets.sh --all
 
+# A THIRD LANE, and it exists because the build now needs both halves of the
+# split above. bin/patch.sh assembles the payload by starting the printer
+# replica and letting the machine's own opkg install the feed, so this lane
+# needs the docker socket -- and it still has to run AS YOU, or every build
+# leaves a root-owned work/ that the next one cannot delete.
+#
+# --group-add is what makes those compatible. RUNSIM keeps root purely because
+# the socket is root:docker and a --user container has no supplementary
+# groups; handing it the socket's own gid answers that without handing it
+# root. The gid is read from the socket rather than assumed, because it is
+# 999 on some distributions and 1001 here.
+RUNBUILD = $(DOCKER_BASE) $(DOCKER_USER) \
+          --group-add $(shell stat -c %g $(DOCKER_SOCK)) \
+          -v $(DOCKER_SOCK):$(DOCKER_SOCK) \
+          -e TEST_ENV -e PRINTER_IMAGE -e SIM_VERBOSE -e PROG_MB -e DATA_MB \
+          -e PROG_DUMP \
+          $(IMAGE)
+
 build: image config.env
-	@$(RUN) ./bin/build.sh $(PACKARGS)
+	@$(RUNBUILD) ./bin/build.sh $(PACKARGS)
 
 # The package feed (docs/notes/85-packaging.md). Builds every
 # recipe under pkgs/ into work/packages/ as .ipk files plus the feed index that
