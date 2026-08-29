@@ -28,7 +28,8 @@ stop)
     # s6 would keep klippy up regardless. This also stops what depends on
     # klipper: ff-startup, and so the UI.
     [ -x "$S6RC" ] || { echo "klipperDaemon: no $S6RC"; exit 0; }
-    exec "$S6RC" -d change klipper
+    # -t: an infinite deadline is EOVERFLOW on a 32-bit time_t.
+    exec "$S6RC" -t 60000 -d change klipper
     ;;
 restart)
     # `s6-svc -t` and not two s6-rc transitions: it takes no lock on the live

@@ -37,4 +37,6 @@ if [ ! -x $MODDIR/bin/s6-rc ]; then
     exit 1
 fi
 # The transition pulls mcu-bringup in first, because klipper depends on it.
-exec $MODDIR/bin/s6-rc -u change klipper
+# -t for the reason firmwareExe spells out: an infinite deadline is
+# EOVERFLOW on a 32-bit time_t.
+exec $MODDIR/bin/s6-rc -t 300000 -u change klipper
