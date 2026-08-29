@@ -70,14 +70,13 @@ say "payload: $(grep -c '^Package:' "$PAYLOAD_DIR/var/lib/opkg/status") packages
 # klipper_pri.sh, their SCHED_FIFO helper. klipperDaemon at that path is a
 # symlink to our shim, pointed there by anvil-link-prog.sh.
 #
-# The assertion is all that is left, and it is cheap: an anvil-klipper that did
-# not install is now a printer with no Klipper at all, with no component copy
-# to mask it.
-[ -d "$PAYLOAD_DIR/klipper/klippy" ] || pkg_die \
-    "the payload has no $MODDIR/klipper/klippy -- anvil-klipper did not install"
-[ -f "$PAYLOAD_DIR/klipper/klippy/chelper/c_helper.so" ] || pkg_die \
-    "the payload has no $MODDIR/klipper/klippy/chelper/c_helper.so -- klippy cannot connect to an MCU without it"
-say "Klipper: fork tree from pinned commit ${KLIPPER_VERSION:0:8} (payload only)"
+# Nothing is asserted here either. The two gates that were -- a klippy tree at
+# $MODDIR/klipper/klippy, and a c_helper.so inside it -- asked whether opkg had
+# just installed the package it was handed, of a staging root three lines after
+# it was filled. qa/replica/test_install.py::test_klippy_is_present asks it of
+# an installed filesystem, and bin/verify.sh asks it of the packed artefact, so
+# the same absence is already caught twice on the two vehicles that reach a
+# printer. A gate here could only fail on a build that both of those fail on.
 
 # --- 2. Toolchanger
 # Gone with section 1: the ff_*.py ride the klippy tree anvil-klipper installs
@@ -101,9 +100,12 @@ say "Klipper: fork tree from pinned commit ${KLIPPER_VERSION:0:8} (payload only)
 # be --prefix=$MODDIR or the #! baked into the oneshot runner pointed at the
 # build host's execline. Compiling with the compiler we SHIP cannot get that
 # wrong. (Byte-identical either way: 80-s6-migration.md, measured 2026-08-28.)
-[ -d "$PAYLOAD_DIR/etc/s6-rc/compiled/current" ] || pkg_die \
-    "the payload has no compiled s6-rc database -- case-build-payload.sh did not compile one"
-say "s6-rc: database $(readlink "$PAYLOAD_DIR/etc/s6-rc/compiled/current") -- $(ls "$PAYLOAD_DIR/etc/s6-rc/source" | wc -l) definitions"
+#
+# So there is nothing left to assert. compiled/current resolving was gated here
+# and is gated in bin/verify.sh, which also reads the one thing a host can tell
+# about the database -- the execline the oneshot runner's #! names. On a
+# machine, qa/replica/test_s6rc.py boots the thing: s6-rc-init reads the
+# database, the boot set comes up, and a database moved aside is reported.
 
 # --- 6. SSH
 # Nothing to install: the stock rootfs ships dropbear and an enabled
