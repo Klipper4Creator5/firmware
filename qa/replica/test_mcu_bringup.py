@@ -46,10 +46,11 @@ DELIBERATELY NOT PORTED
     branch is the one that fires. The fact is asserted in the direction that is
     now true instead -- test_it_runs_with_no_environment_at_all.
 
-  * The port tuple and the every-port-fails pass. Already asserted on the host
-    by test/integration/test_ff_mcu_bringup.py, which imports the module
-    directly and needs no replica; duplicating it here would buy three minutes
-    and no coverage.
+  * The port tuple and the every-port-fails pass. These were asserted on the
+    host by test/integration/test_ff_mcu_bringup.py, which imported the module
+    directly and needed no replica. That file has been dropped -- it drove a
+    module whose one interesting path, the handshake, it could not reach --
+    so both are unasserted anywhere. See docs/qa-migration.md, Still owed.
 """
 import pytest
 

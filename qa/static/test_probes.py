@@ -11,9 +11,6 @@ than against a running replica. That is deliberate: these are pure functions of
 text, they need no docker, and the fixtures below are real samples -- qemu-
 prefixed command lines, busybox's /proc/net/tcp with its uppercase hex and its
 IPv6 rows -- rather than something shaped to make the parser look good.
-
-test/integration/test_harness.py does the same job for the old harness, and for
-the same reason.
 """
 import pytest
 

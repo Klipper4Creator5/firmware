@@ -7,12 +7,13 @@ other's parser through importlib machinery. Underscores and a conftest remove th
 whole problem. pytest.ini pins the rootdir so this file is found no matter
 which lane is named on the command line.
 
-Everything lives in test/integration. There was briefly a second directory,
-test/unit, for the tests needing nothing but this checkout, and before that a
-`rootfs` marker doing the same job through -m expressions. Both existed to
-keep a plain pull request supplied with something to run; this repo has one
-maintainer who always has the firmware, so neither was earning the split. The
-`rootfs` fixture below skips instead, which is the honest report anyway.
+Everything lives in test/integration, and nothing left here needs the
+proprietary firmware: what remains is the Klipper config gate and the tests
+of our own Python. There was briefly a second directory, test/unit, for
+exactly that distinction, and a `rootfs` fixture for the tests that did need
+the extracted userland. Both are gone -- the first because with one
+maintainer who always has the firmware it was a boundary kept in sync for
+nobody, the second because the last test using it was dropped.
 """
 import os
 import shutil
@@ -94,18 +95,3 @@ def cfgdir(tmp_path_factory):
                 "one would silently overwrite the other" % dest)
             shutil.copy2(path, str(d / dest))
     return str(d)
-
-
-@pytest.fixture(scope="session")
-def rootfs():
-    """The printer's real extracted rootfs, or skip.
-
-    This is the one Python fixture that needs the proprietary package, which
-    is why everything using it lives in test/integration. A skip here is a gate
-    that did not run: it is reported as a skip rather than as a pass,
-    and refuses to call the suite clean.
-    """
-    path = os.path.join(ROOT, "work", "rootfs")
-    if not os.path.isdir(os.path.join(path, "bin")):
-        pytest.skip("no printer rootfs -- run 'make rootfs' first")
-    return path

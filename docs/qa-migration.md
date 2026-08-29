@@ -2,7 +2,8 @@
 
 `qa/` is the test suite. It was built beside `test/` rather than inside it, and
 the migration is now done: every `case-*.sh` has been ported or retired, and
-what remains of `test/` is 185 host-side pytest tests plus one packaging gate.
+what remains of `test/` is 136 host-side pytest tests and the machinery that
+builds the replica.
 
 This document says why it exists, what it proves, and what is still owed.
 
@@ -235,7 +236,7 @@ this tree:
 |---|---|
 | `qa/static` | **246 tests, 8s**, no docker |
 | `qa/replica` | 118 tests, 3m40s -- 110 pass, 8 blocked on absent hardware |
-| `test/` pytest | 185 tests, 0.4s |
+| `test/` pytest | 136 tests, 0.3s |
 
 `test/run-tests.py` is **322 lines** and `test/ffsim/` **483**, from 1,657
 between them. What is left of the old harness runs the packaging build on a
@@ -464,19 +465,27 @@ user flashes, and nothing exercises it end to end any more.
 string, reproducibility -- but nothing runs the outer build. The CI job with no
 firmware has lost most of its content as a result.
 
-`test/integration/make-stock-fixture.sh` is deliberately **kept**. It is the
-input a replacement needs -- a synthetic FlashForge package built from the
-`versions.env` pins, so the build can be tested with no proprietary firmware --
-and it is a fixture generator rather than a gate, so it is not a file
-pretending to be coverage. Whoever ports this should note that
-`make_fixture` staged into `work/.fixture` INSIDE the repo on purpose: sibling
-containers resolve their mounts host-side, so a path under the build
-container's `/tmp` does not exist as far as the daemon is concerned.
+`test/integration/make-stock-fixture.sh` was kept for a while as the input a
+replacement would need -- a synthetic FlashForge package built from the
+`versions.env` pins, so the build could be tested with no proprietary
+firmware -- and has since been dropped: it fed a gate that no longer exists,
+and a fixture generator with no consumer rots exactly as silently as a test
+that asserts nothing. Whoever ports the build path will have to write it
+again, and should know two things it had learnt. `make_fixture` staged into
+`work/.fixture` INSIDE the repo on purpose: sibling containers resolve their
+mounts host-side, so a path under the build container's `/tmp` does not exist
+as far as the daemon is concerned. And the shape it reproduced -- the
+software component's `run.sh` ending in `tar -xf
+$WORK_DIR/klipper/chelper.tar` -- is what `bin/patch.sh` section 4 still
+depends on. Recover both from git history rather than from a fresh reading of
+a stock package.
 
 ### What survives in test/
 
-- **`test/integration/test_*.py`** -- 185 host-side tests. Already pytest, and
-  adoptable by pointing `qa/` at them whenever that seems worth doing.
+- **`test/integration/test_*.py`** -- 136 host-side tests in five files.
+  Already pytest, and adoptable by pointing `qa/` at them whenever that seems
+  worth doing. Eight files were dropped after the migration; see *The second
+  cut* below.
 - **`test/ffsim/`** -- 678 lines, down from 1,657, and no longer a test
   framework. `extract_rootfs` is what `make rootfs` runs; `Replica` and the
   python-tarball helper are what `make boot-screen-sim` uses to render the boot
@@ -487,9 +496,30 @@ container's `/tmp` does not exist as far as the daemon is concerned.
 - **`test/test-chelper.py`** -- in neither suite. `bin/patch.sh` and
   `bin/verify.sh` call it directly at build time.
 
+### The second cut
+
+The migration left `test/` at 186 tests across twelve files. Seven of those
+files tested our own Python against fakes so thoroughly that the fake, not the
+printer, was the subject, and were dropped on that ground:
+
+| dropped | tests | asserted | what is lost |
+|---|---|---|---|
+| `test_ff_legacy.py` | 6 | `FF_IMPORT_FIRMWARE_CONFIG` against a hand-built klippy stub | the command's JSON reading is unasserted |
+| `test_ff_mcu_bringup.py` | 5 | the port tuple and the every-port-fails path | nothing asks about either; the handshake was never covered anywhere -- see *One thing found on the way* |
+| `test_config_ownership.py` | 5 | the DO-NOT-EDIT banner on mod-owned configs, and its absence on `moonraker.conf` | a banner can go stale without anything noticing |
+| `test_harness.py` | 4 | `repo_root`, that every harness file compiles, and that every shebanged script is executable in git | the compile half is covered better by `qa/static/test_shell_syntax.py`'s pyflakes pass; **the executable-bit check is not covered anywhere** -- `qa/` checks only `qa/replica/actions/*.sh` |
+| `test_includes.py` | 8 | `printer.base.cfg`'s include set and order | a new `ff-*.cfg` can be shipped and never included |
+| `test_paths.py` | 7 | every literal `/bin`,`/sbin` path in a payload script exists in the real rootfs | the branches no replica reaches -- `S50wifi`'s `udhcpc`, `wpa_supplicant` -- are unasserted. It was also the last user of the `rootfs` fixture, now gone from `test/conftest.py` |
+| `test_tool_offset_sampling.py` | 15 | the SAMPLES/SAMPLES_TOLERANCE parameter set in `ff_tool_offset._estop` | the defaults-match-the-fork property is unasserted |
+
+The four rows in bold-ish -- the executable bit, the include set, the rootfs
+paths -- are static questions that a replica cannot answer any better, so if
+they come back they belong in `qa/static`, not here.
+
 ### Still owed
 
-- **The build path**, above. The largest gap.
+- **The build path**, above. The largest gap. Its fixture generator,
+  `make-stock-fixture.sh`, has been dropped too; recover it from git history.
 - **The rollback**, `case-recovery.sh`'s subject: install the mod, flash the
   stock package, be back byte-for-byte. Retired without a replacement.
 - **`s6-svwait -U` readiness on the shipped camera definition**: the service

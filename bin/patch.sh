@@ -131,7 +131,7 @@ cp -a "$_kl/klippy" "$SOFTWARE_DIR/klipper/klippy"
 # chelper.tar IS THE STOCK INSTALLER'S VEHICLE, not a second build. The
 # software component's run.sh ends with
 # `tar -xf $WORK_DIR/klipper/chelper.tar -C /usr/prog/klipper/klippy/`
-# (see test/integration/make-stock-fixture.sh), so a package without it
+# -- read out of a real stock package, so a package without it
 # extracts nothing over the .so already inside klippy/ -- harmless today,
 # and a missing file the moment FlashForge's installer stops copying
 # klippy/ wholesale. bin/verify.sh fails a fork package that lacks it.

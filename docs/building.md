@@ -313,35 +313,35 @@ pkgs/           package recipes: one directory per component, each a
 **Tests it** — never ships, and never touched by a build:
 
 ```
-test/           run-tests.py, and the shared pytest fixtures
-  ffsim/          the host side of the harness, as a python package:
-                  config loading, the docker plumbing, gate reporting
-  integration/    the suite
+qa/             THE SUITE. static/ needs nothing but a checkout;
+                replica/ needs docker and the firmware. `make qa`
+test/           the shared pytest fixtures, the host-side tests of our own
+                Python, and the machinery that builds the replica
+  ffsim/          the host half of the replica, as a python package: config
+                  loading and the docker plumbing. Not a test framework any
+                  more -- see docs/qa-migration.md
+  integration/    the host-side tests. `make test-py`
+    test_startup.py         bin/ff-startup.py -- the whole first boot
+    test_ffscreen.py        the lines the first boot puts on /dev/fb0
+    test_tool_transform.py  the per-tool G-code frame in ff_toolchange
     test_chamber.py         the Klipper config gate -- no firmware needed
-    test_paths.py           payload paths against the real rootfs
-    test_includes.py        the [include ff-*.cfg] block, exact set and order
-    test_config_ownership.py  DO-NOT-EDIT banners on the mod-owned configs
     test_gcode.py           gcode/*.gcode against the macros we define
-    test_harness.py         static checks on the harness itself
-    make-stock-fixture.sh   synthetic stand-in for a stock package
     printer/        the replica itself: binfmt, mount layout, its two
-                    Dockerfiles, and the cases that run inside it on the
-                    printer's own binaries -- SHELL, because the printer's
+                    Dockerfiles, and the entrypoint that runs inside it on
+                    the printer's own binaries -- SHELL, because the printer's
                     busybox ash is the only interpreter that matters there
     extract-rootfs.py       pulls the real rootfs out of the stock package
-    sim-*.py, printer-exec.py   host-side launchers, via the docker socket
+    sim-boot-screen.py      renders the boot frames, via the docker socket
     build-printer-image.sh  bakes a prebuilt replica image
 test.env        replica settings only -- factory image, partition sizes
 docs/           the documentation
 ```
 
-Not everything in there needs the firmware — the config gate needs only
-python3 and jinja2, and runs on a bare checkout. It briefly had a directory of
-its own, `test/unit`, so that a pull request had something to run; with one
-maintainer who always has the firmware, that was a boundary kept in sync for
-nobody. `run-tests.py` extracts the rootfs before it runs pytest, so a single
-invocation covers as much as the machine allows and reports the rest as gates
-that did not run.
+Nothing left under `test/` needs the firmware: the config gate needs only
+python3 and jinja2, and the rest test our own Python against fakes. It briefly
+had a directory of its own, `test/unit`, so that a pull request had something
+to run; with one maintainer who always has the firmware, that was a boundary
+kept in sync for nobody. Everything that needs a real machine is in `qa/`.
 
 The line between Python and shell here is not taste. Everything that runs on
 YOUR machine is Python; everything executed by the printer's own busybox under

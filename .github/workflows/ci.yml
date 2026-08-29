@@ -1,10 +1,10 @@
 name: ci
 
 # The stock FlashForge firmware is proprietary and ~93MB, so it is never in
-# the repo. The `test` job runs against a synthetic fixture that reproduces
-# the package STRUCTURE (see test/integration/make-stock-fixture.sh) -- enough
-# for the static and packaging checks, but NOT enough to prove a package will
-# not brick a printer.
+# the repo. The `test` job therefore runs only what needs no firmware at all:
+# qa/static and the host-side pytest tree. That is enough for the static and
+# packaging checks, but NOT enough to prove a package will not brick a
+# printer.
 #
 # That proof needs the printer's real rootfs, and so it needs the stock
 # package. `printer-sim` below now always runs, because the packages it needs

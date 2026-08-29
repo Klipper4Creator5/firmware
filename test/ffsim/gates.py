@@ -7,7 +7,7 @@ was no.
 WHAT IS LEFT. This was fifteen gates driving thirteen case scripts; every one
 of them is a module under qa/ now. `extract_rootfs` survives because it is not
 a gate at all -- it unpacks the printer's real userland, which `make rootfs`
-does and which both test_paths.py and a locally built replica need. The python
+does and which a locally built replica needs. The python
 tarball helpers survive because `make boot-screen-sim` renders its frames with
 the cross-built interpreter.
 """
