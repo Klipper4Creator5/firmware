@@ -506,39 +506,48 @@ may touch — plus the three files that are in the payload and in no package.
 **The on-printer half — not started.** `.install-manifest` still exists and
 `installer/run-append.sh` still deletes by it. Replacing it with opkg's own
 `.list` files changes what happens on real printers during an upgrade and
-rewrites `test/integration/printer/case-upgrade.sh`; it is a separate change
+rewrites what is now `qa/replica/test_upgrade.py`; it is a separate change
 with a different risk profile. Keeping the halves apart is what made the first
 one provable: on-printer behaviour is unchanged, so correctness reduced to a
 payload diff.
 
 ### What it is assembled with
 
-**A host opkg.** `pkg_buildopkg` (`pkgs/lib.sh`) builds an x86-64 opkg from
-the same pinned tarball the mipsel one comes from, cached at `work/.opkg-host`,
-shaped as `pkg_buildpython`'s twin. It resolves `Depends`, enforces
-`Conflicts`, reads `Provides` and handles `conffiles` — all of which decide
-what the payload should contain.
+**The printer's own opkg, on the printer's own filesystem.** `bin/patch.sh`
+runs `bin/build-payload.py`, which starts the replica, puts the feed on the
+simulated stick and lets the machine's `opkg` install it. The tree is tarred
+back out and becomes `$MODDIR`. Maintainer scripts therefore run where they
+will run on a printer, and the install that ships is the install that was
+tested.
 
-The database is therefore written by the same program that will later read it
-on the printer, which is what makes "phase 2 is a swap rather than a
-migration" true rather than an argument about format compatibility.
+The database is written by the same binary that will later read it on the
+machine — not merely by the same program built twice — which is what makes
+"phase 2 is a swap rather than a migration" true rather than an argument
+about format compatibility.
 
-**`--prefix=$MODDIR`, and it is the trap.** opkg bakes its state directory in
-at compile time (`libopkg/Makefile.am`: `-DVARDIR="@localstatedir@"`). Built
-with any other prefix it looks for its status file somewhere else no matter
-what `--offline-root` it is given, comes up believing nothing is installed,
-and reinstalls the world. `--disable-shared` is the second half: the prefix
-goes into `libopkg` too, so a shared build produces a `bin/opkg` that looks
-for `libopkg.so.1` at a path that exists on the printer and not here.
-`pkg_buildopkg` checks both against the binary it produced.
+**This is why `make build` needs the docker socket.** The build lane runs on
+`RUNBUILD` (Makefile), which is `RUN` plus the socket and the socket's own
+gid, and still `--user` so the output belongs to you. A build that could not
+reach the daemon could not assemble a payload.
 
-**A chroot was tried and rejected.** It works, and it marks packages
-`installed` without `--force-postinstall`, but it needs root: unprivileged
-`chroot` is `Operation not permitted` and `unshare -Ur` is blocked by Docker's
-seccomp profile. The payload then comes out root-owned and the build-lane user
-cannot delete it, so the next `make build` dies on its own `rm -rf` — the
-failure `Makefile:48-61` exists to prevent. It is also more code: opkg plus an
-`ldd` loop for ten shared libraries, against a nine-line config file.
+**A host opkg was the previous answer, and it is gone.** `pkg_buildopkg`
+cross-built an x86-64 opkg from the same pinned tarball, cached at
+`work/.opkg-host`, and installed the feed into a staging root with
+`--offline-root`. It worked, but everything about it was an imitation of the
+machine: `--prefix=$MODDIR` was mandatory and easy to get wrong (opkg bakes
+its state directory in at compile time — `libopkg/Makefile.am`:
+`-DVARDIR="@localstatedir@"` — so any other prefix comes up believing nothing
+is installed and reinstalls the world), `--disable-shared` was mandatory for
+the same reason one layer down, and postinst scripts had to be forced because
+nothing could execute a MIPS binary. The replica has none of those problems
+because it is not imitating anything.
+
+**A chroot on the host was tried and rejected** before either of those. It
+needs root: unprivileged `chroot` is `Operation not permitted` and
+`unshare -Ur` is blocked by Docker's seccomp profile. The payload then comes
+out root-owned and the build-lane user cannot delete it, so the next
+`make build` dies on its own `rm -rf` — the failure `Makefile:48-61` exists
+to prevent.
 
 ### What the set is
 

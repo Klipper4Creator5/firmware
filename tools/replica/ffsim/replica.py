@@ -28,12 +28,11 @@ from . import Fail, Skip
 class Replica:
     """A configured docker + image pair, ready to run case scripts."""
 
-    def __init__(self, config, image=None, prebuilt=None, docker=None):
+    def __init__(self, config, image=None, docker=None):
         self.config = config
         self.root = config.root
         self.docker = docker
         self.image = image
-        self.prebuilt = prebuilt
 
     # ---------------------------------------------------------------- setup
 
@@ -50,46 +49,25 @@ class Replica:
         raise Skip("docker not available")
 
     @classmethod
-    def start(cls, config, want_output=None):
+    def start(cls, config):
         """Resolve docker and the image, or raise Skip explaining what is absent."""
+        # There is no want_output parameter any more. The only thing this ever
+        # said was that building a replica locally from work/rootfs would cost
+        # about a minute per case, and there is no local build left to warn
+        # about.
         docker = cls.find_docker()
         if subprocess.run([docker, "info"], capture_output=True).returncode != 0:
             raise Skip("docker daemon not running")
 
+        # The image IS the firmware -- rootfs, /usr/prog and /usr/data, with
+        # the stock package already installed, baked by build-printer-image.sh.
+        # There is nothing to mount and nothing to build.
         image = config.get("PRINTER_IMAGE")
-        if image:
-            # A prebuilt image carries the firmware already -- rootfs,
-            # /usr/prog, /usr/data, baked by build-printer-image.sh. Nothing
-            # to mount and nothing to build.
-            return cls(config, image=image, prebuilt=True, docker=docker)
-
-        rootfs = config.root / "work" / "rootfs" / "bin"
-        if not rootfs.is_dir():
-            raise Skip("no printer rootfs -- run 'make rootfs' first (needs "
-                       "the stock package), or set PRINTER_IMAGE to a "
-                       "prebuilt printer image")
-
-        # Say why this is about to be slow: unpacking the factory image is
-        # ~22s and installing the stock baseline ~37s, on EVERY case. The
-        # published image has both done and starts in under a second.
-        if want_output:
-            want_output(
-                "printer-sim: PRINTER_IMAGE is not set, so the replica is "
-                "being built locally -- about a minute of setup per test "
-                "case. Set PRINTER_IMAGE=monstrofil/creator5-printer:latest "
-                "in test.env to skip it.")
-
-        image = "creator5-printer-sim"
-        build_dir = config.root / "tools" / "replica" / "printer"
-        # Always rebuild: a cache hit takes about a second, and a stale image
-        # silently testing yesterday's harness is not a trade worth making.
-        built = subprocess.run(
-            [docker, "build", "-q", "-t", image,
-             "-f", str(build_dir / "Dockerfile"), str(build_dir)],
-            capture_output=True, text=True)
-        if built.returncode != 0:
-            raise Fail("could not build %s:\n%s" % (image, built.stderr.strip()))
-        return cls(config, image=image, prebuilt=False, docker=docker)
+        if not image:
+            raise Skip("no PRINTER_IMAGE -- put one in test.env "
+                       "(test.env.example carries the published one), or "
+                       "build your own with 'make printer-image'")
+        return cls(config, image=image, docker=docker)
 
     # ------------------------------------------------------------ execution
 
@@ -100,8 +78,6 @@ class Replica:
         config = self.config
 
         argv = [self.docker, "run", "--rm", "-i", "--privileged"]
-        if not self.prebuilt:
-            argv += ["-v", "%s/work/rootfs:/rootfs:ro" % self.root]
 
         # A case that has to hand something back gets an entrypoint of ours,
         # which runs the stock one and then mounts /out inside the chroot.
@@ -135,16 +111,6 @@ class Replica:
             "-e", "BASE_PKG=",
             "-e", "PKGS=%s" % "".join(" %s=/pkgs/%s" % (n, n) for n in packages),
         ]
-
-        # A real /usr/prog taken off a printer. Only for a locally built
-        # replica: a prebuilt image already has one baked in, and mounting
-        # over it would replace the genuine tree with an older copy.
-        prog_dump = config.get("PROG_DUMP")
-        if not self.prebuilt and prog_dump and os.path.exists(prog_dump):
-            dump_abs = os.path.abspath(prog_dump)
-            argv += ["-e", "PROG_DUMP=/progdump", "-v", "%s:/progdump:ro" % dump_abs]
-        else:
-            argv += ["-e", "PROG_DUMP="]
 
         # Anything the caller needs the case to see. Sorted so two runs
         # produce the same argv, which is what makes `command` worth diffing.

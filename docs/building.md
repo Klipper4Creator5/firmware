@@ -21,7 +21,9 @@ and every target runs inside it. `make shell` drops you into it.
 
 The test targets get the docker socket mounted through, so they can start the
 replica as a sibling container — and so does `make shell`, which shares their
-run flags. A build cannot reach the docker daemon.
+run flags. So does `make build`, which is newer: `patch.sh` assembles the
+payload by installing the feed *inside* the replica, so the build lane needs
+the daemon too. Only the feed, the unpack and the pack run without it.
 
 ## The pipeline
 
@@ -328,15 +330,14 @@ qa/             THE SUITE. static/ needs nothing but a checkout;
                 replica/ needs docker and the firmware. `make qa`
 tools/replica/  THE REPLICA, which is a build tool as much as a test one --
                 bin/patch.sh assembles the payload inside it
-  printer/        the machine: binfmt, the mount layout, its two Dockerfiles
-                  and the entrypoint that runs inside it on the printer's own
+  printer/        the machine: binfmt, the mount layout, Dockerfile.full and
+                  the entrypoint that runs inside it on the printer's own
                   binaries -- SHELL, because the printer's busybox ash is the
                   only interpreter that matters there
   ffsim/          the host half: config loading and the docker plumbing
-  extract-rootfs.py       pulls the real rootfs out of the stock package
   sim-boot-screen.py      renders the boot frames, via the docker socket
-  build-printer-image.sh  bakes a prebuilt replica image
-test.env        replica settings only -- factory image, partition sizes
+  build-printer-image.sh  bakes the replica image, fetching the firmware itself
+test.env        replica settings only -- the replica image, partition sizes
 docs/           the documentation
 ```
 

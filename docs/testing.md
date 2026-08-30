@@ -16,14 +16,21 @@ Selection is pytest's: `-k nginx`, `-m static`, or a single test id.
 
 | Lane | Needs | What it asks |
 |---|---|---|
-| `static` | nothing but the checkout | every shipped script parses and is free of bashisms, every name resolves, the recipe layout holds, and the `.ipk`s are what we mean to ship |
+| `static` | the checkout; the feed for part of it | every shipped script parses and is free of bashisms, every name resolves, the recipe layout holds, and -- when `work/packages` exists -- the `.ipk`s are what we mean to ship |
 | `replica` | docker + qemu + the firmware | what the printer *does* -- on a machine the real `app_startup.sh` installed the real package onto |
 
-The replica lane needs a built package in `work/out/*.tgz` (`make build`) and a
-base image: put `PRINTER_IMAGE` in `test.env`, or let it build one from
-`work/rootfs` after `make rootfs`. The install is baked into an image once per
-package, keyed on the package's md5, so rebuilding gets you a fresh bake and
-not yesterday's.
+The replica lane needs a built package in `work/out/*.tgz` (`make build`) and
+`PRINTER_IMAGE` in `test.env` — that image *is* the replica, and there is no
+other way to get one. `test.env.example` carries the published tag; `make
+printer-image` builds your own from public firmware. The install is baked into
+an image once per package, keyed on the package's md5, so rebuilding gets you
+a fresh bake and not yesterday's.
+
+**The static lane is worth running twice**, and CI does. A good part of it
+asks what is inside the `.ipk` files, and those questions do not fail on a
+checkout that has no feed — they return quietly, and the lane reports a pass
+having never opened a package. Run it once for the fast parse-and-name
+feedback, then again after `make packages`, when the rest of it can bite.
 
 ### The replica lane, module by module
 
@@ -72,8 +79,8 @@ tools/replica/
   ffsim/                    the host half -- config loading and the docker
                             plumbing. NOT a test framework; it was one, and
                             what is left of it launches containers
-  build-printer-image.sh    bakes a prebuilt replica image
-  extract-rootfs.py         `make rootfs`
+  build-printer-image.sh    bakes the replica image -- fetches the firmware
+                            itself, so it needs no stock package on disk
   sim-boot-screen.py        `make boot-screen-sim`
 ```
 
@@ -140,28 +147,19 @@ privileged container and the result is committed. The md5 of the package that
 was installed is recorded in `/usr/prog/.BASELINE`; `entrypoint.sh` reinstalls
 only if a run asks for a different one.
 
-With `PRINTER_IMAGE` set in `test.env`, a replica starts in **0.7s** and the
-whole end-to-end update test takes **~70s**. Without it, the same test spends
-a minute on setup before it begins. That image contains proprietary FlashForge
-firmware.
+A replica now starts in **0.7s** and the whole end-to-end update test takes
+**~70s**. That image contains proprietary FlashForge firmware.
 
-`run-tests.py` stamps every header with elapsed seconds, so a run says for
-itself where the time went. The headers, in the order they are printed:
+There used to be a second way in, and it is where the numbers in that table
+came from: `make rootfs` unsquashed `rootfs.squashfs` out of a stock package
+into `work/rootfs`, and a thin container mounted it and unpacked the factory
+image for `/usr/prog` on every single case. It is gone. Every caller set
+`PRINTER_IMAGE` anyway — CI extracted a rootfs on every push and read none of
+it — and `make printer-image` builds the image from the same public firmware
+without needing a stock package at all, so the slow path was a second route to
+the same machine that nothing chose. When the image goes stale, rebuild it.
 
-```
-== shell syntax ==
-== no bashisms in the on-printer payload ==
-== extracting the printer rootfs ==            (skipped if already extracted)
-== python checks ==
-== packaging, on a synthetic stock package ==
-== build on the fixture ==
-== printer replica ==                          (or: MCU bring-up runs on the
-                                                printer's own Python)
-== end-to-end update on the printer replica ==
-== recovery: a stock package reverts the mod ==
-```
-
-What takes the time is real work: two full package builds (the payload is
+What takes the time now is real work: two full package builds (the payload is
 55MB through `xz`) and two replica runs. If it needs to get faster again,
 that is where to look — not in the harness.
 

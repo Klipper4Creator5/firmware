@@ -43,32 +43,10 @@ fi
 
 /opt/printer/assemble.sh
 
-# A real /usr/prog, if we were given one. It goes in before anything else so
-# that nothing -- the stock installer included -- can silently shadow a genuine
-# file. There are no stubs: seed-prog.sh hard-fails rather than substituting
-# anything.
-if [ -n "${PROG_DUMP:-}" ] && [ -e "$PROG_DUMP" ]; then
-    # A dump may be a whole-filesystem factory image rooted at usr/prog/... ,
-    # or hold the contents of /usr/prog directly. Decide by what is actually
-    # inside it, not by the first entry -- a factory image starts with a bare
-    # "usr/" line.
-    if [ -d "$PROG_DUMP" ]; then
-        if [ -d "$PROG_DUMP/usr/prog" ]; then cp -a "$PROG_DUMP/usr/." $R/usr/
-        else cp -a "$PROG_DUMP/." $R/usr/prog/; fi
-    elif tar -tf "$PROG_DUMP" 2>/dev/null | head -n 200 | grep -q '^\.\?/\?usr/prog/'; then
-        # Extract INTO $R/usr with the leading `usr/` stripped. The archive
-        # carries a `usr/` entry of its own and /usr is on the read-only
-        # squashfs, so restoring its mode would fail the whole extraction.
-        # Stripping it means tar only ever writes to prog/ and data/, which
-        # are the writable partition mounts.
-        STRIP=1
-        tar -tf "$PROG_DUMP" 2>/dev/null | head -n 1 | grep -q '^\./' && STRIP=2
-        tar -xf "$PROG_DUMP" -C $R/usr --strip-components=$STRIP
-    else
-        tar -xf "$PROG_DUMP" -C $R/usr/prog
-    fi
-    echo "printer-sim: /usr/prog from a real dump ($(basename "$PROG_DUMP"), $(du -sh $R/usr/prog | cut -f1))"
-fi
+# /usr/prog and /usr/data are the image's own /parts, bind-mounted by
+# assemble.sh. A PROG_DUMP branch used to sit here, unpacking a factory image
+# or a tar off a real printer for the replica that was built locally; that
+# replica is gone and the image always has the genuine partitions baked in.
 
 ROOTFS="$ROOTFS" /opt/printer/seed-prog.sh
 

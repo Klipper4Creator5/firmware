@@ -30,13 +30,17 @@ on:
 # these gates were written against -- the same class of silent drift as a gate
 # that skips without saying so. Verified byte-for-byte against the maintainer's
 # local copies on 2026-08-24.
+#
+# The factory image used to be fetched here too, for PROG_DUMP. Both are gone:
+# the replica is PRINTER_IMAGE and nothing else, and that image carries the
+# real /usr/prog already. PRINTER_IMAGE is pinned to a version tag for the
+# same reason these are pinned by sha256 -- it is now the whole substrate the
+# brick-safety gates run on, so it must not move on its own.
 env:
   STOCK_URL_CREATOR5PRO: https://github.com/ghzserg/FF/releases/download/R/Creator5Pro-1.9.7-1.2.9-20260810.tgz
   STOCK_SHA_CREATOR5PRO: 1f3252feaae6d8fc72d7b0fd1ba832cc63d369659f8b2d2896efcf7adab2976b
   STOCK_URL_CREATOR5: https://github.com/ghzserg/FF/releases/download/R/Creator5-1.9.7-1.2.9-20260810.tgz
   STOCK_SHA_CREATOR5: 72009be183e74a4562050a927787ba686c6b558a075f00958892197ac52659cc
-  FACTORY_URL: https://github.com/ghzserg/FF/releases/download/R/Creator5Pro-factory.tar.xz
-  FACTORY_SHA: 45657924298a41b5cd48c0f4412b4b2fb67df624af666b494d6bcea969cc5b7b
 
 jobs:
   test:
@@ -66,14 +70,33 @@ jobs:
       # now; this step is the repo-wide shellcheck, which is a wider net.
       - name: shellcheck
         run: |
+          set -euo pipefail
           sudo apt-get install -y shellcheck
+
+          # FOUND, NOT GLOBBED, and the count is asserted. The list here used
+          # to be four literal globs, two of which stopped matching anything:
+          # pkgs/*/payload/init.d/S* went when s6-rc replaced the init
+          # scripts, and pkgs/*/prog/ moved under payload/. shellcheck exits 2
+          # on a path it cannot open, so this step failed on every run -- and
+          # had it not, the opposite failure was worse: a glob that quietly
+          # matches nothing checks nothing and still reports green.
+          mapfile -t PRINTER_SH < <(
+            find pkgs -path '*/payload/*' \
+                 \( -name '*.sh' -o -name firmwareExe \) | sort)
+          PRINTER_SH+=(installer/run-pre.sh installer/run-append.sh)
+          if [ "${#PRINTER_SH[@]}" -lt 5 ]; then
+            echo "::error title=Nothing to check::found ${#PRINTER_SH[@]} on-printer scripts; the find pattern is stale."
+            exit 1
+          fi
+          printf 'checking: %s\n' "${PRINTER_SH[@]}"
+
           # Errors are a gate. These used to end in `|| true`, which meant
           # shellcheck could report anything it liked and the job stayed green.
           # payload scripts run under busybox ash on the printer.
-          shellcheck -s sh   -S error pkgs/*/payload/*.sh pkgs/*/payload/init.d/S* pkgs/*/prog/*.sh pkgs/*/prog/firmwareExe installer/*.sh
+          shellcheck -s sh   -S error "${PRINTER_SH[@]}"
           shellcheck -s bash -S error bin/*.sh tools/replica/*.sh
           # Warnings are advisory: printed, not enforced.
-          shellcheck -s sh -S warning pkgs/*/payload/*.sh pkgs/*/payload/init.d/S* pkgs/*/prog/*.sh pkgs/*/prog/firmwareExe installer/*.sh || true
+          shellcheck -s sh -S warning "${PRINTER_SH[@]}" || true
 
       # s6 and CPython 3.13 have no BUILD_ flag -- every package ships them
       # (see bin/fetch-assets.sh) -- so this job builds them for real rather
@@ -87,13 +110,15 @@ jobs:
       # of one per package, because pkgs/lib.sh derives the output directory
       # from the recipe name rather than naming each one in bin/common.sh. A
       # new recipe therefore needs no edit here, which is the same property
-      # that makes adding a package one directory.
+      # that makes adding a package one directory. work/packages is the feed
+      # built out of those trees, cached beside them for the same reason.
       - name: Cache the s6 + CPython 3.13 build inputs and outputs
         uses: actions/cache@v4
         with:
           path: |
             vendor
             work/pkg
+            work/packages
           key: fixture-py-${{ hashFiles('versions.env') }}
 
       - name: Fetch the s6 + CPython 3.13 build inputs
@@ -105,28 +130,37 @@ jobs:
           # and the Klipper fork need, none of which has a BUILD_ flag of its
           # own any more -- BUILD_KLIPPER is gone and the fork is the only
           # Klipper, so its 27MB tarball comes down here with the rest. This
-          # config.env never reaches patch.sh, only fetch-assets.sh.
-          # The actual cross-build of s6 and CPython happens inside the suite,
-          # in bin/patch.sh sections 5b/5c, the first time it runs against a
-          # vendor/ that now has what those sections need.
+          # config.env is KEPT rather than removed: the packaging step below
+          # reads it too, and unlike patch.sh, bin/build-packages.sh needs no
+          # stock package -- which is the whole reason the feed can be built
+          # in this job at all.
+          #
+          # s6 and CPython are not cross-built by patch.sh any more; there are
+          # no sections 5b/5c. They are recipes under pkgs/, built by
+          # build-packages.sh like every other one.
           cat > config.env <<'CFG'
           BUILD_MAINSAIL=0
           BUILD_HELIX=0
           BUILD_MOONRAKER=0
           CFG
           ./bin/fetch-assets.sh
-          rm -f config.env
 
-      # The qa suite's static lane. Runs BEFORE the old suite because it is
-      # seconds rather than minutes and it covers the same static ground, so a
-      # syntax error in the payload is reported by name in the first few
-      # seconds of the job rather than several minutes in as one red gate.
+      # BEFORE the static lane, because a good part of what that lane asks is
+      # about .ipk files, and those questions do not fail on a checkout with
+      # no feed -- they return, quietly, and the lane reports a pass having
+      # never opened a package. Building the feed here is what makes that
+      # answer mean something, and it needs no stock firmware to do it.
+      - name: Build the package feed
+        run: ./bin/build-packages.sh
+
+      # The qa suite's static lane: parses, bashisms, names, recipe layout,
+      # and -- now that the feed above exists -- what is inside the .ipk files.
       #
       # No strictness flag: a missing shellcheck or pyflakes fails on its own,
       # because there is no configuration in which running this lane without
       # them is a complete run. Only the static lane here -- this job has no
-      # firmware on purpose, and printer-sim below is where the replica is
-      # proved.
+      # stock firmware on purpose, and printer-sim below is where the replica
+      # is proved.
       - name: qa -- static lane
         run: python3 -m pytest ./qa/static -q
 
@@ -140,15 +174,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ~370MB of somebody else's release assets per run (two ~93MB stock
-      # packages and the 182MB factory image), and they never
-      # change -- the cache key is their checksums, so a new pin misses and
-      # re-fetches, and an unchanged pin costs the archive nothing.
+      # ~186MB of somebody else's release assets per run (two ~93MB stock
+      # packages), and they never change -- the cache key is their checksums,
+      # so a new pin misses and re-fetches, and an unchanged pin costs the
+      # archive nothing. The 182MB factory image was fetched here too until
+      # every run started discarding it: it fed PROG_DUMP, and PROG_DUMP was
+      # only ever read by a replica built locally from work/rootfs.
       - name: Cache the stock firmware
         uses: actions/cache@v4
         with:
           path: stock
-          key: stock-${{ env.STOCK_SHA_CREATOR5PRO }}-${{ env.STOCK_SHA_CREATOR5 }}-${{ env.FACTORY_SHA }}
+          key: stock-${{ env.STOCK_SHA_CREATOR5PRO }}-${{ env.STOCK_SHA_CREATOR5 }}
 
       - name: Fetch the stock firmware
         env:
@@ -195,41 +231,28 @@ jobs:
           get Creator5Pro "$PRO_URL" "$PRO_SHA" stock/Creator5Pro-stock.tgz
           get Creator5    "$STD_URL" "$STD_SHA" stock/Creator5-stock.tgz
 
-      - name: Write test.env (the replica's /usr/prog)
+      - name: Write test.env (the replica)
         env:
-          SECRET_FACTORY:     ${{ secrets.FACTORY_URL }}
-          SECRET_FACTORY_SHA: ${{ secrets.FACTORY_SHA256 }}
-          # A prebuilt replica image: it carries the factory partitions AND
-          # the stock package already installed, which is about a minute of
-          # setup saved on EVERY replica case -- with a full suite's worth of
-          # them, that is the difference between this job and a coffee break.
-          # Defaults to the public one; vars.PRINTER_IMAGE overrides it for a
-          # fork building its own. Left unset for a long time, silently, which
-          # is what made every run here pay the local-build cost on every
-          # case without anyone deciding that on purpose.
-          PRINTER_IMAGE: ${{ vars.PRINTER_IMAGE || 'monstrofil/creator5-printer:latest' }}
+          # THE replica. It carries the printer's rootfs, its real /usr/prog
+          # and /usr/data, and the stock package already installed on top of
+          # them -- about a minute of setup saved on EVERY replica case, which
+          # over a full suite is the difference between this job and a coffee
+          # break. vars.PRINTER_IMAGE overrides it for a fork building its own.
+          #
+          # A VERSION TAG, NOT :latest. This image is now the entire substrate
+          # the brick-safety gates run on -- there is no local fallback left
+          # to build one from a stock package -- so a floating tag would let
+          # it change under a green suite. That is precisely the drift the
+          # sha256 pins above exist to prevent, and it would be worse here,
+          # because nothing in the run would even record what was tested.
+          PRINTER_IMAGE: ${{ vars.PRINTER_IMAGE || 'monstrofil/creator5-printer:1.9.7-1.2.9-20260810' }}
         run: |
           set -euo pipefail
-          : > test.env
-
-          URL="${SECRET_FACTORY:-$FACTORY_URL}"
-          if [ -n "${SECRET_FACTORY:-}" ]; then SHA="${SECRET_FACTORY_SHA:-}"
-          else SHA="$FACTORY_SHA"; fi
-
-          if [ -z "$SHA" ]; then
-            echo "::error title=Unverified factory image::FACTORY_URL is set without FACTORY_SHA256."
+          if [ -z "${PRINTER_IMAGE:-}" ]; then
+            echo "::error title=No replica::PRINTER_IMAGE is empty and there is no other way to get a replica."
             exit 1
           fi
-          if [ -f stock/factory.tar.xz ] && \
-             echo "$SHA  stock/factory.tar.xz" | sha256sum -c - >/dev/null 2>&1; then
-            echo "  factory image: cache hit, checksum ok"
-          else
-            curl -fsSL "$URL" -o stock/factory.tar.xz
-            echo "$SHA  stock/factory.tar.xz" | sha256sum -c -
-          fi
-          echo "PROG_DUMP=\"$PWD/stock/factory.tar.xz\"" >> test.env
-
-          [ -z "${PRINTER_IMAGE:-}" ] || echo "PRINTER_IMAGE=\"$PRINTER_IMAGE\"" >> test.env
+          echo "PRINTER_IMAGE=\"$PRINTER_IMAGE\"" > test.env
           cat test.env
 
       - name: Write config.env
@@ -269,42 +292,45 @@ jobs:
       - name: Fetch the pinned Mainsail, HelixScreen, Moonraker and Klipper assets
         run: make vendor ASSET_ROOT=$PWD
 
-      - name: Extract the printer rootfs
-        run: make rootfs ASSET_ROOT=$PWD
+      # THE FEED, and it is not optional on the release path. bin/patch.sh
+      # builds the payload by INSTALLING the feed, so it refuses to start
+      # without one, and the python recipes resolve PKG_BUILD_DEPENDS out of
+      # work/packages. These two steps ran as one unpack/patch/pack with no
+      # feed for a while, which could not have passed.
+      #
+      # Unlike the build below, this needs no stock firmware -- which is most
+      # of the point: packaging has to be runnable on a bare checkout, or the
+      # gate only runs where the proprietary package is.
+      - name: Build the package feed
+        run: make packages ASSET_ROOT=$PWD
 
-      # The replica starts sibling containers through the docker socket and
-      # needs loop devices for the simulated USB stick; both work on a stock
-      # ubuntu-latest runner.
       # BUILD THE PACKAGE THE SUITE INSTALLS. The qa replica lane installs for
       # real -- the printer's own app_startup.sh, off a FAT stick -- so it
       # needs a package in work/out, and it never builds one on demand: that
-      # would turn "the suite is slow today" into a mystery. This step used to
-      # be a side effect of run-tests.py, which ran unpack/patch/pack before
-      # its own install gate; that runner is gone, so the build is explicit
-      # now, exactly as the comment here predicted it would have to be.
+      # would turn "the suite is slow today" into a mystery.
       #
       # It also supplies the cross-built s6 and CPython, because both ship
       # INSIDE the package; there is no separate build tree to track.
+      #
+      # Through `make`, not around it. `make build` runs bin/build.sh on the
+      # RUNBUILD lane -- as the runner user, with the docker socket and the
+      # socket's own gid -- because bin/patch.sh assembles the payload inside
+      # the replica. Hand-rolling the `docker run` here meant CI exercised an
+      # entry point no human uses, so a mistake in one of the Makefile's own
+      # runners could never turn this job red.
       - name: Build the package
-        run: |
-          docker build -q -t creator5-fw-build -f docker/Dockerfile.build docker
-          docker run --rm \
-            -v "$PWD":"$PWD" -w "$PWD" \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            creator5-fw-build \
-            sh -c './bin/unpack.sh && ./bin/patch.sh && ./bin/pack.sh'
+        run: make build ASSET_ROOT=$PWD
 
       # The brick-safety gate. No ALLOW_SKIP and no REQUIRE_PRINTER_SIM: qa has
       # no skip mode at all, so a missing docker, daemon, image or package
       # fails at the point that needs it rather than being reported as a gap
       # somebody has to remember to accept.
+      #
+      # The replica starts sibling containers through the docker socket and
+      # needs loop devices for the simulated USB stick; both work on a stock
+      # ubuntu-latest runner.
       - name: qa suite on the printer replica
-        run: |
-          docker run --rm \
-            -v "$PWD":"$PWD" -w "$PWD" \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            creator5-fw-build \
-            python3 -m pytest ./qa -q
+        run: make qa ASSET_ROOT=$PWD
 
   # The docs make claims about a machine that can be left unbootable, and the
   # pages cross-link each other and the payload sources heavily -- 30+ links

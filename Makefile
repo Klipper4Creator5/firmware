@@ -68,7 +68,7 @@ ifeq ($(LOCAL),)
   RUNSIM = $(DOCKER_BASE) \
           -v $(DOCKER_SOCK):$(DOCKER_SOCK) \
           -e TEST_ENV -e PRINTER_IMAGE -e REAL_PKG -e SIM_IMAGE \
-          -e SIM_VERBOSE -e PROG_MB -e DATA_MB -e PROG_DUMP -e REQUIRE_PRINTER_SIM \
+          -e SIM_VERBOSE -e PROG_MB -e DATA_MB -e REQUIRE_PRINTER_SIM \
           $(IMAGE)
   RUNTTY = $(subst --rm -i,--rm -it,$(RUNSIM))
 else
@@ -83,7 +83,6 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
 
 .DEFAULT_GOAL := help
 .PHONY: help image shell passwd build vendor packages \
-        rootfs \
         printer-image printer-image-push \
         boot-screen boot-screen-sim \
         qa qa-static qa-replica \
@@ -121,7 +120,8 @@ help:
 	@echo 'qa-replica runs inside a replica of the printer: the real'
 	@echo 'rootfs.squashfs under qemu-mipsel, with the package'
 	@echo 'installed by the printer own app_startup.sh off a real FAT filesystem'
-	@echo 'at /dev/sda1. It needs make build, plus make rootfs or PRINTER_IMAGE.'
+	@echo 'at /dev/sda1. It needs make build, plus PRINTER_IMAGE in test.env'
+	@echo '(test.env.example carries the published one).'
 	@echo
 	@echo 'qa has no ALLOW_SKIP: a missing tool, daemon or image FAILS at the'
 	@echo 'point that needs it, so a gate that did not run cannot look green.'
@@ -129,7 +129,6 @@ help:
 	@echo 'Other:'
 	@echo '  make passwd       a ROOT_PW_HASH for config.env (prompts, echoes the hash)'
 	@echo '  make vendor       download Mainsail + HelixScreen + Moonraker'
-	@echo '  make rootfs       extract the real printer rootfs (enables the replica gates)'
 	@echo '  make image        build the build container'
 	@echo '  make shell        shell inside it'
 	@echo '  make clean | distclean'
@@ -181,7 +180,6 @@ RUNBUILD = $(DOCKER_BASE) $(DOCKER_USER) \
           --group-add $(shell stat -c %g $(DOCKER_SOCK)) \
           -v $(DOCKER_SOCK):$(DOCKER_SOCK) \
           -e TEST_ENV -e PRINTER_IMAGE -e SIM_VERBOSE -e PROG_MB -e DATA_MB \
-          -e PROG_DUMP \
           $(IMAGE)
 
 build: image config.env
@@ -211,11 +209,18 @@ packages: image config.env
 # It checks nothing itself. bin/verify.sh used to run here and was a host-side
 # re-reading of what the printer does at install time; `make qa-replica` makes
 # the printer actually do it, so THAT is the gate before a release goes out.
+# The feed is built ONCE, outside the loop: nothing in it is model-specific
+# (bin/patch.sh says so where it picks the roots -- TARGET_MACHINE names only
+# the output file), so building it twice would only cost time. bin/build.sh
+# is run with RUNBUILD and not RUN because bin/patch.sh assembles the payload
+# INSIDE the replica, which needs the docker socket; `build` above has always
+# used it and `release` was left behind on the runner that has no socket.
 release: image config.env
 	@rm -rf dist && mkdir -p dist
+	@$(RUN) ./bin/build-packages.sh
 	@for m in Creator5Pro Creator5; do \
 	   echo "=== $$m ==="; \
-	   MODEL=$$m $(RUN) ./bin/build.sh $(PACKARGS) || exit 1; \
+	   MODEL=$$m $(RUNBUILD) ./bin/build.sh $(PACKARGS) || exit 1; \
 	   cp work/out/$$m-*.tgz dist/ || exit 1; \
 	 done
 	@echo; echo "dist/:"; ls -lh dist | awk 'NR>1{print "   "$$9"  "$$5}'
@@ -225,12 +230,6 @@ release: image config.env
 #  TEST LANE -- never ships. Reads test.env for the replica settings; the only
 #  targets allowed to reach the docker daemon ($(RUNSIM)).
 # ===========================================================================
-
-# The replica needs this: rootfs.squashfs is the printer's real userland and
-# it only exists inside the stock package's kernel component.
-rootfs: image config.env
-	@$(RUN) ./bin/unpack.sh >/dev/null
-	@$(RUN) ./tools/replica/extract-rootfs.py
 
 # `make test` and `make test-py` used to be here, over test/ -- run-tests.py,
 # then the pytest tree it wrapped. Every case it drove is a module under qa/
@@ -255,9 +254,17 @@ rootfs: image config.env
 #
 #  The replica lane needs two things, and says so if either is absent:
 #
-#    a base replica   PRINTER_IMAGE in test.env (see test.env.example), or
-#                     `make rootfs` from the stock package
+#    a base replica   PRINTER_IMAGE in test.env (see test.env.example)
 #    a package        work/out/*.tgz, from `make build`
+#
+#  There is ONE way to get a replica, and it is that image. `make rootfs`
+#  used to be a second: it unsquashed rootfs.squashfs out of the stock
+#  package into work/rootfs and a thin container bind-mounted it. Every
+#  caller set PRINTER_IMAGE anyway -- CI included, which extracted a rootfs
+#  on every push and read none of it -- and `make printer-image` builds the
+#  image from the same public firmware without needing a stock package at
+#  all, so the fallback was a second path to the same place that nothing
+#  took. Rebuild the image when it goes stale; that is the one lever.
 #
 #  It needs the package because it INSTALLS it, through the printer's own
 #  app_startup.sh off a real FAT stick, rather than hand-placing payload/.
@@ -309,4 +316,4 @@ clean:
 
 distclean:
 	@rm -rf work
-	@echo "removed work/ (including the extracted rootfs)"
+	@echo "removed work/"

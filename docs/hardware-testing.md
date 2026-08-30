@@ -63,7 +63,8 @@ printer does.
       restores a placeholder serial and you may need to put yours back.
 - [ ] Confirm you can reach the printer's IP.
 - [ ] `make qa` passes.
-- [ ] `make rootfs && make qa-replica` passes — this parses every script that
+- [ ] `make qa-replica` passes — needs `PRINTER_IMAGE` in `test.env` and a
+      package from `make build`; this parses every script that
       will run on the printer using the printer's own busybox ash.
 
 Two USB sticks, FAT32, both packages at the **root** of the stick (not in a

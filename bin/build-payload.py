@@ -69,7 +69,7 @@ def run():
     packages[index.name] = str(index)
 
     config = Config.load()
-    replica = Replica.start(config, want_output=_echo)
+    replica = Replica.start(config)
     out = ROOT / "work" / ".payload-out"
     replica.run_case(
         ROOT / CASE, packages=packages, out_dir=out, on_output=_echo,

@@ -43,7 +43,7 @@ def run():
     tree = _python_tarball(config)
     if not tree:
         raise SystemExit("nothing in work/pkg/python -- run ./bin/patch.sh first")
-    replica = Replica.start(config, want_output=_echo)
+    replica = Replica.start(config)
     # The frames come back on stdout as base64, so this body is the payload --
     # not just a log. It is deliberately not echoed.
     body = replica.run_case(str(ROOT.joinpath(*CASE)), packages={"py.tgz": tree})

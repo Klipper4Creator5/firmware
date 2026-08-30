@@ -130,6 +130,4 @@ if [ -z "${STOCK_TGZ:-}" ] && [ -n "$_stock" ]; then
     STOCK_TGZ="$_stock"
 fi
 
-# One factory image serves both models; the replica installs the model's own
-# stock package over it.
-export TARGET_MACHINE TARGET_PID STOCK_TGZ PROG_DUMP
+export TARGET_MACHINE TARGET_PID STOCK_TGZ

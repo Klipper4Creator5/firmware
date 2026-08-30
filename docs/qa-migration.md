@@ -116,16 +116,18 @@ make qa-replica    # the gates that decide whether a package bricks
 
 The replica lane needs two things.
 
-**A base replica.** Quickest is the prebuilt image, which carries the firmware,
-`/usr/prog` and `/usr/data` with the stock package already installed — put it in
-`test.env` (see `test.env.example`) or pass it per-run:
+**A base replica.** The image, which carries the firmware, `/usr/prog` and
+`/usr/data` with the stock package already installed — put it in `test.env`
+(see `test.env.example`) or pass it per-run:
 
 ```sh
-PRINTER_IMAGE=monstrofil/creator5-printer:latest make qa-replica
+PRINTER_IMAGE=monstrofil/creator5-printer:1.9.7-1.2.9-20260810 make qa-replica
 ```
 
-Without it the lane builds the replica from `work/rootfs`, which needs
-`make rootfs` and the stock package.
+There is no second source. The lane used to build a replica locally from
+`work/rootfs` when `PRINTER_IMAGE` was unset, which needed `make rootfs` and
+the stock package and cost about a minute of setup per case; that path is
+gone. `make printer-image` builds the image from the same public firmware.
 
 **A built package**, in `work/out/*.tgz` — because the lane installs it for
 real. `make build` produces one; the newest by mtime is the one used, and the
@@ -462,7 +464,7 @@ Three gates were dropped rather than ported, as a coverage decision:
 | dropped | was | consequence |
 |---|---|---|
 | the pytest gate | `run-tests.py` ran pytest and re-parsed its XML | none at the time -- `make test-py` and CI ran pytest directly; both went when `test/` was deleted |
-| the rootfs extraction | ran `unpack.sh` + `extract_rootfs` inline | none -- `make rootfs` does exactly this, and the replica lane already fails with that command in the message |
+| the rootfs extraction | ran `unpack.sh` + `extract_rootfs` inline | none, and now moot -- `extract_rootfs` and `make rootfs` are both gone, and the replica image does its own extraction at build time |
 | **the packaging build on a synthetic stock package** | `make-stock-fixture.sh`, then `unpack`/`patch`/`pack`/`verify.sh` | **real: `bin/unpack.sh`, `patch.sh` and `pack.sh` now have no test at all.** `verify.sh` has since been retired outright -- see below |
 
 That last row is the one to be uneasy about, and it is recorded here rather
@@ -558,12 +560,13 @@ Two things did, for a while. Both are gone now and `test/` with them:
 And two things that were under `test/` and are not tests, now at
 **`tools/replica/`**:
 
-- **`ffsim/`** -- 630 lines, down from 1,657, and no longer a test framework.
-  `extract_rootfs` is what `make rootfs` runs; `Replica` is what
-  `make boot-screen-sim` and, more to the point, **`bin/patch.sh`** use --
-  the payload is assembled by running the printer's own `opkg` inside a
-  replica, so this is build-path code that happened to live in the test tree.
-- **`printer/`** -- the `Dockerfile`, `entrypoint.sh`, `assemble.sh`,
+- **`ffsim/`** -- no longer a test framework and now smaller again, with
+  `extract_rootfs` and its two tar helpers gone along with `make rootfs`.
+  `Replica` is what `make boot-screen-sim` and, more to the point,
+  **`bin/patch.sh`** use -- the payload is assembled by running the printer's
+  own `opkg` inside a replica, so this is build-path code that happened to
+  live in the test tree.
+- **`printer/`** -- the `Dockerfile.full`, `entrypoint.sh`, `assemble.sh`,
   `binfmt.sh` and `seed-prog.sh` that BUILD the replica. `qa/lib/replica.py`
   uses them unmodified; they were never the problem. Moving them out of
   `test/` changed no content, only `qa/lib/replica.py`'s build directory and
