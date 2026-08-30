@@ -1,16 +1,765 @@
 diff --git a/Makefile b/Makefile
-index 735d18633..e3735648b 100644
+index 735d18633..a3f418d97 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -33,7 +33,7 @@ CFLAGS := -iquote $(OUT) -iquote src -iquote $(OUT)board-generic/ \
+@@ -33,7 +33,12 @@ CFLAGS := -iquote $(OUT) -iquote src -iquote $(OUT)board-generic/ \
  		-std=gnu11 -O2 -MD -Wall \
  		-Wold-style-definition $(call cc-option,$(CC),-Wtype-limits,) \
      -ffunction-sections -fdata-sections -fno-delete-null-pointer-checks
 -CFLAGS += -flto=auto -fwhole-program -fno-use-linker-plugin -ggdb3
-+CFLAGS += -ggdb3
++# -fno-shrink-wrap and ira-max-loops-num=2 are not style choices: they were
++# established by measuring instruction-identical handlers against the stock
++# image (34 -> 40 with no regressions). Stock places its prologue as if
++# shrink-wrapping were off, and the loop-count cap reproduces its allocation
++# in the remaining cases.
++CFLAGS += -ggdb3 -fno-shrink-wrap --param ira-max-loops-num=2
  
  OBJS_klipper.elf = $(patsubst %.c, $(OUT)src/%.o,$(src-y))
  OBJS_klipper.elf += $(OUT)compile_time_request.o
+diff --git a/lib/n32g45x/include/n32g45x.h b/lib/n32g45x/include/n32g45x.h
+new file mode 100644
+index 000000000..fbf6e5b35
+--- /dev/null
++++ b/lib/n32g45x/include/n32g45x.h
+@@ -0,0 +1,256 @@
++// Minimal Nations N32G45x peripheral library definitions
++//
++// Register layouts and constants recovered from the FlashForge levelBoard
++// firmware image.  Names follow the Nations N32G45x standard peripheral
++// library.  Everything is prefixed NS_ so it cannot collide with the CMSIS
++// stm32f103xe.h definitions that Klipper's stm32 port pulls in.
++
++#ifndef __N32G45x_H
++#define __N32G45x_H
++
++#include <stdint.h>
++
++#define __IO volatile
++
++// The CMSIS stm32f1xx.h that Klipper's stm32 port pulls in already declares
++// this identical enum; only declare it when that header is not in play.
++#ifndef IS_FUNCTIONAL_STATE
++typedef enum {DISABLE = 0, ENABLE = !DISABLE} FunctionalState;
++#endif
++
++// ---------------------------------------------------------------- GPIO ----
++
++typedef struct
++{
++    __IO uint32_t PMODE;        // 0x00 pin mode, 2 bits per pin
++    __IO uint32_t POTYPE;       // 0x04 output type, 1 bit per pin
++    __IO uint32_t SR;           // 0x08 slew rate, 1 bit per pin
++    __IO uint32_t PUPD;         // 0x0c pull up/down, 2 bits per pin
++    __IO uint32_t PID;          // 0x10 input data
++    __IO uint32_t POD;          // 0x14 output data
++    __IO uint32_t PBSC;         // 0x18 bit set/clear
++    __IO uint32_t PLOCK;        // 0x1c
++    __IO uint32_t AFL;          // 0x20 alt function, pins 0-7
++    __IO uint32_t AFH;          // 0x24 alt function, pins 8-15
++    __IO uint32_t PBC;          // 0x28 bit clear
++    __IO uint32_t DS;           // 0x2c drive current, 2 bits per pin
++} GPIO_Module;
++
++typedef struct
++{
++    uint32_t Pin;               // 0x00
++    uint32_t GPIO_Mode;         // 0x04
++    uint32_t GPIO_Pull;         // 0x08
++    uint32_t GPIO_Slew_Rate;    // 0x0c
++    uint32_t GPIO_Current;      // 0x10
++    uint32_t GPIO_Alternate;    // 0x14
++} GPIO_InitType;
++
++#define NS_GPIOA ((GPIO_Module *)0x40023400)
++#define NS_GPIOB ((GPIO_Module *)0x40023800)
++#define NS_GPIOC ((GPIO_Module *)0x40023c00)
++#define NS_GPIOD ((GPIO_Module *)0x40024000)
++
++#define GPIO_PIN_ALL    ((uint32_t)0xffff)
++#define GPIO_PIN_9      ((uint32_t)0x0200)
++#define GPIO_PIN_10     ((uint32_t)0x0400)
++
++#define GPIO_MODE_INPUT     ((uint32_t)0x00)
++#define GPIO_MODE_OUT_PP    ((uint32_t)0x01)
++#define GPIO_MODE_AF_PP     ((uint32_t)0x02)
++#define GPIO_MODE_ANALOG    ((uint32_t)0x03)
++#define GPIO_MODE_OUT_OD    ((uint32_t)0x11)
++#define GPIO_MODE_AF_OD     ((uint32_t)0x12)
++
++#define GPIO_NO_PULL        ((uint32_t)0x00)
++#define GPIO_PULL_UP        ((uint32_t)0x01)
++#define GPIO_PULL_DOWN      ((uint32_t)0x02)
++
++#define GPIO_SLEW_RATE_FAST ((uint32_t)0x00)
++#define GPIO_DC_2MA         ((uint32_t)0x00)
++
++#define GPIO_NO_AF          ((uint32_t)0x0f)
++#define GPIO_AF5_USART1     ((uint32_t)0x05)
++
++void GPIO_ConfigPinAF(GPIO_Module *GPIOx, uint32_t af, uint32_t pinpos);
++void GPIO_ConfigPinMode(GPIO_Module *GPIOx, uint32_t mode, uint32_t pinpos);
++void GPIO_InitStruct(GPIO_InitType *GPIO_InitStruct);
++void GPIO_InitPeripheral(GPIO_Module *GPIOx, GPIO_InitType *GPIO_InitStruct);
++void GPIO_SetBits(GPIO_Module *GPIOx, uint32_t pin);
++
++// --------------------------------------------------------------- USART ----
++
++// Note: every USART register is accessed 16 bits wide by the stock firmware
++typedef struct
++{
++    __IO uint16_t STS;          // 0x00 status
++    uint16_t RESERVED0;
++    __IO uint16_t DAT;          // 0x04 data
++    uint16_t RESERVED1;
++    __IO uint16_t BRCF;         // 0x08 baud rate
++    uint16_t RESERVED2;
++    __IO uint16_t CTRL1;        // 0x0c
++    uint16_t RESERVED3;
++    __IO uint16_t CTRL2;        // 0x10
++    uint16_t RESERVED4;
++    __IO uint16_t CTRL3;        // 0x14
++    uint16_t RESERVED5;
++    __IO uint16_t GTP;          // 0x18
++    uint16_t RESERVED6;
++} USART_Module;
++
++typedef struct
++{
++    uint32_t BaudRate;          // 0x00
++    uint16_t WordLength;        // 0x04
++    uint16_t StopBits;          // 0x06
++    uint16_t Parity;            // 0x08
++    uint16_t Mode;              // 0x0a
++    uint16_t HardwareFlowControl; // 0x0c
++} USART_InitType;
++
++#define NS_USART1 ((USART_Module *)0x40013800)
++#define NS_USART2 ((USART_Module *)0x40004400)
++#define NS_USART3 ((USART_Module *)0x40004800)
++#define NS_UART6  ((USART_Module *)0x40015000)
++#define NS_UART7  ((USART_Module *)0x40015400)
++
++#define USART_STS_PEF       ((uint16_t)0x0001)
++#define USART_STS_FEF       ((uint16_t)0x0002)
++#define USART_STS_NEF       ((uint16_t)0x0004)
++#define USART_STS_OREF      ((uint16_t)0x0008)
++#define USART_STS_IDLEF     ((uint16_t)0x0010)
++#define USART_STS_RXDNE     ((uint16_t)0x0020)
++#define USART_STS_TXC       ((uint16_t)0x0040)
++#define USART_STS_TXDE      ((uint16_t)0x0080)
++
++#define USART_CTRL1_RXDNEIEN ((uint16_t)0x0020)
++#define USART_CTRL1_TXDEIEN  ((uint16_t)0x0080)
++#define USART_CTRL1_REN      ((uint16_t)0x0004)
++#define USART_CTRL1_TEN      ((uint16_t)0x0008)
++#define USART_CTRL1_UEN      ((uint16_t)0x2000)
++
++#define USART_WL_8B         ((uint16_t)0x0000)
++#define USART_STPB_1        ((uint16_t)0x0000)
++#define USART_PE_NO         ((uint16_t)0x0000)
++#define USART_MODE_RX       ((uint16_t)0x0004)
++#define USART_MODE_TX       ((uint16_t)0x0008)
++#define USART_HFCTRL_NONE   ((uint16_t)0x0000)
++
++#define USART_FLAG_TXC      ((uint16_t)0x0040)
++// interrupt id: (control register index << 5) | bit position
++#define USART_INT_RXDNE     ((uint16_t)0x0525)
++
++void USART_Init(USART_Module *USARTx, USART_InitType *USART_InitStruct);
++void USART_StructInit(USART_InitType *USART_InitStruct);
++void USART_ConfigBaudRate(USART_Module *USARTx, uint32_t baud);
++void USART_Enable(USART_Module *USARTx);
++void USART_ConfigInt(USART_Module *USARTx, uint16_t USART_INT);
++void USART_ClrFlag(USART_Module *USARTx, uint16_t USART_FLAG);
++
++// ----------------------------------------------------------------- DMA ----
++
++typedef struct
++{
++    __IO uint32_t CHCFG;        // 0x00
++    __IO uint32_t TXNUM;        // 0x04
++    __IO uint32_t PADDR;        // 0x08
++    __IO uint32_t MADDR;        // 0x0c
++    __IO uint32_t CHSEL;        // 0x10 request remap
++} DMA_ChannelType;
++
++typedef struct
++{
++    __IO uint32_t INTSTS;       // 0x00
++    __IO uint32_t INTCLR;       // 0x04
++} DMA_Module;
++
++typedef struct
++{
++    uint32_t PeriphAddr;        // 0x00
++    uint32_t MemAddr;           // 0x04
++    uint32_t Direction;         // 0x08
++    uint32_t BufSize;           // 0x0c
++    uint32_t PeriphInc;         // 0x10
++    uint32_t DMA_MemoryInc;     // 0x14
++    uint32_t PeriphDataSize;    // 0x18
++    uint32_t MemDataSize;       // 0x1c
++    uint32_t CircularMode;      // 0x20
++    uint32_t Priority;          // 0x24
++    uint32_t Mem2Mem;           // 0x28
++} DMA_InitType;
++
++#define NS_DMA1     ((DMA_Module *)0x40020000)
++#define NS_DMA1_CH1 ((DMA_ChannelType *)0x40020008)
++#define NS_DMA1_CH2 ((DMA_ChannelType *)0x4002001c)
++#define NS_DMA1_CH3 ((DMA_ChannelType *)0x40020030)
++#define NS_DMA1_CH4 ((DMA_ChannelType *)0x40020044)
++#define NS_DMA1_CH5 ((DMA_ChannelType *)0x40020058)
++#define NS_DMA1_CH6 ((DMA_ChannelType *)0x4002006c)
++#define NS_DMA1_CH7 ((DMA_ChannelType *)0x40020080)
++#define NS_DMA1_CH8 ((DMA_ChannelType *)0x40020094)
++
++#define DMA_INT_TXC     ((uint32_t)0x00000002)
++
++#define DMA1_INT_TXC1   ((uint32_t)0x00000002)
++#define DMA1_INT_TXC4   ((uint32_t)0x00002000)
++#define DMA1_INT_TXC5   ((uint32_t)0x00020000)
++#define DMA1_FLAG_TXC5  ((uint32_t)0x00020000)
++
++void DMA_DeInit(DMA_ChannelType *channel);
++void DMA_Init(DMA_ChannelType *channel, DMA_InitType *DMA_InitParam);
++void DMA_EnableChannel(DMA_ChannelType *channel);
++void DMA_DisableChannel(DMA_ChannelType *channel);
++void DMA_ConfigInt(DMA_ChannelType *channel, uint32_t DMA_INT);
++uint32_t DMA_GetIntStatus(DMA_Module *DMAy, uint32_t DMAy_INT);
++void DMA_ClrIntPendingBit(DMA_Module *DMAy, uint32_t DMAy_INT);
++uint32_t DMA_GetFlagStatus(DMA_Module *DMAy, uint32_t DMAy_FLAG);
++void DMA_ClearFlag(DMA_Module *DMAy, uint32_t DMAy_FLAG);
++void DMA_RequestRemap(DMA_ChannelType *channel, uint32_t remap);
++
++// ----------------------------------------------------------------- RCC ----
++
++typedef struct
++{
++    uint32_t SysclkFreq;        // 0x00
++    uint32_t HclkFreq;          // 0x04
++    uint32_t Pclk1Freq;         // 0x08
++    uint32_t Pclk2Freq;         // 0x0c
++    uint32_t AdcPllClkFreq;     // 0x10
++    uint32_t AdcHclkFreq;       // 0x14
++} RCC_ClocksType;
++
++#define RCC_AHB_PERIPH_DMA1     ((uint32_t)0x00000001)
++#define RCC_AHB_PERIPH_DMA2     ((uint32_t)0x00000002)
++#define RCC_AHB_PERIPH_GPIOA    ((uint32_t)0x00000080)
++
++#define RCC_APB2_PERIPH_AFIO    ((uint32_t)0x00000001)
++#define RCC_APB2_PERIPH_USART1  ((uint32_t)0x00004000)
++
++void RCC_EnableAHBPeriphClk(uint32_t RCC_AHBPeriph);
++void RCC_EnableAPB2PeriphClk(uint32_t RCC_APB2Periph);
++void RCC_GetClocksFreqValue(RCC_ClocksType *RCC_Clocks);
++
++// ---------------------------------------------------------------- NVIC ----
++
++typedef struct
++{
++    uint8_t NVIC_IRQChannel;                    // 0x00
++    uint8_t NVIC_IRQChannelPreemptionPriority;  // 0x01
++    uint8_t NVIC_IRQChannelSubPriority;         // 0x02
++    uint8_t NVIC_IRQChannelCmd;                 // 0x03
++} NVIC_InitType;
++
++#define NVIC_PriorityGroup_0    ((uint32_t)0x700)
++
++void NVIC_PriorityGroupConfig(uint32_t NVIC_PriorityGroup);
++void NVIC_Init(NVIC_InitType *NVIC_InitStruct);
++
++// N32G45x interrupt numbers.  Note these are NOT identical to a real
++// STM32F103: USART1 is IRQ 36 here, where an F103 would have 37.
++#define N32_DMA1_Channel1_IRQn  11
++#define N32_DMA1_Channel4_IRQn  14
++#define N32_DMA1_Channel5_IRQn  15
++#define N32_USART1_IRQn         36
++
++#endif // n32g45x.h
+diff --git a/lib/n32g45x/n32g45x_periph.c b/lib/n32g45x/n32g45x_periph.c
+new file mode 100644
+index 000000000..255a1e873
+--- /dev/null
++++ b/lib/n32g45x/n32g45x_periph.c
+@@ -0,0 +1,476 @@
++// Nations N32G45x standard peripheral library - subset used by the
++// FlashForge levelBoard firmware.  Reconstructed from the stock image.
++
++#include <stdint.h>
++#include "n32g45x.h"
++
++typedef struct
++{
++    __IO uint32_t ISER[8];
++    uint32_t RESERVED0[24];
++    __IO uint32_t ICER[8];
++    uint32_t RSERVED1[24];
++    __IO uint32_t ISPR[8];
++    uint32_t RESERVED2[24];
++    __IO uint32_t ICPR[8];
++    uint32_t RESERVED3[24];
++    __IO uint32_t IABR[8];
++    uint32_t RESERVED4[56];
++    __IO uint8_t IP[240];
++} NVIC_Type;
++
++typedef struct
++{
++    __IO uint32_t CPUID;
++    __IO uint32_t ICSR;
++    __IO uint32_t VTOR;
++    __IO uint32_t AIRCR;
++} SCB_Type;
++
++#define NS_NVIC ((NVIC_Type *)0xe000e100)
++#define NS_SCB  ((SCB_Type *)0xe000ed00)
++
++#define AIRCR_VECTKEY_MASK ((uint32_t)0x05fa0000)
++
++#define RCC_BASE      0x40021000
++#define RCC_CFG       (*(__IO uint32_t *)(RCC_BASE + 0x04))
++#define RCC_AHBPCLKEN (*(__IO uint32_t *)(RCC_BASE + 0x14))
++#define RCC_APB2PCLKEN (*(__IO uint32_t *)(RCC_BASE + 0x18))
++
++
++/****************************************************************
++ * NVIC
++ ****************************************************************/
++
++void
++NVIC_PriorityGroupConfig(uint32_t NVIC_PriorityGroup)
++{
++    NS_SCB->AIRCR = AIRCR_VECTKEY_MASK | NVIC_PriorityGroup;
++}
++
++void
++NVIC_Init(NVIC_InitType *NVIC_InitStruct)
++{
++    uint32_t tmppriority = 0x00, tmppre = 0x00, tmpsub = 0x0f;
++
++    if (NVIC_InitStruct->NVIC_IRQChannelCmd != DISABLE) {
++        // Compute the Corresponding IRQ Priority
++        tmppriority = (0x700 - (NS_SCB->AIRCR & (uint32_t)0x700)) >> 0x08;
++        tmppre = (0x4 - tmppriority);
++        tmpsub = tmpsub >> tmppriority;
++
++        tmppriority = (uint32_t)NVIC_InitStruct
++            ->NVIC_IRQChannelPreemptionPriority << tmppre;
++        tmppriority |= NVIC_InitStruct->NVIC_IRQChannelSubPriority & tmpsub;
++        tmppriority = tmppriority << 0x04;
++
++        NS_NVIC->IP[NVIC_InitStruct->NVIC_IRQChannel] = tmppriority;
++
++        // Enable the Selected IRQ Channels
++        NS_NVIC->ISER[NVIC_InitStruct->NVIC_IRQChannel >> 0x05] =
++            (uint32_t)0x01 << (NVIC_InitStruct->NVIC_IRQChannel & (uint8_t)0x1f);
++    } else {
++        // Disable the Selected IRQ Channels
++        NS_NVIC->ICER[NVIC_InitStruct->NVIC_IRQChannel >> 0x05] =
++            (uint32_t)0x01 << (NVIC_InitStruct->NVIC_IRQChannel & (uint8_t)0x1f);
++    }
++}
++
++
++/****************************************************************
++ * GPIO
++ ****************************************************************/
++
++void
++GPIO_ConfigPinAF(GPIO_Module *GPIOx, uint32_t af, uint32_t pinpos)
++{
++    uint32_t tmp;
++    if (pinpos & 0x08) {
++        tmp = GPIOx->AFH;
++        tmp &= ~(0x0ful << ((pinpos & 0x07) * 4));
++        tmp |= af << ((pinpos & 0x07) * 4);
++        GPIOx->AFH = tmp;
++    } else {
++        tmp = GPIOx->AFL;
++        tmp &= ~(0x0ful << ((pinpos & 0x07) * 4));
++        tmp |= af << ((pinpos & 0x07) * 4);
++        GPIOx->AFL = tmp;
++    }
++}
++
++void
++GPIO_ConfigPinMode(GPIO_Module *GPIOx, uint32_t mode, uint32_t pinpos)
++{
++    uint32_t tmp = GPIOx->PMODE;
++    tmp &= ~(0x03ul << (pinpos * 2));
++    tmp |= (mode & 0x03ul) << (pinpos * 2);
++    GPIOx->PMODE = tmp;
++
++    uint32_t base = mode & ~0x10ul;
++    if (base == GPIO_MODE_OUT_PP || base == GPIO_MODE_AF_PP) {
++        tmp = GPIOx->POTYPE;
++        tmp &= ~(0x01ul << pinpos);
++        tmp |= ((mode >> 4) & 0x01ul) << pinpos;
++        GPIOx->POTYPE = tmp;
++    }
++}
++
++void
++GPIO_InitPeripheral(GPIO_Module *GPIOx, GPIO_InitType *GPIO_InitStruct)
++{
++    uint32_t pinpos;
++    for (pinpos = 0; (GPIO_InitStruct->Pin >> pinpos) != 0; pinpos++) {
++        uint32_t currentpin = 0x01ul << pinpos;
++        if (!(GPIO_InitStruct->Pin & currentpin))
++            continue;
++        GPIO_ConfigPinAF(GPIOx, GPIO_InitStruct->GPIO_Alternate, pinpos);
++        GPIO_ConfigPinMode(GPIOx, GPIO_InitStruct->GPIO_Mode, pinpos);
++
++        uint32_t tmp = GPIOx->PUPD;
++        tmp &= ~(0x03ul << (pinpos * 2));
++        tmp |= GPIO_InitStruct->GPIO_Pull << (pinpos * 2);
++        GPIOx->PUPD = tmp;
++
++        tmp = GPIOx->SR;
++        tmp &= ~currentpin;
++        tmp |= GPIO_InitStruct->GPIO_Slew_Rate << pinpos;
++        GPIOx->SR = tmp;
++
++        tmp = GPIOx->DS;
++        tmp &= ~(0x03ul << (pinpos * 2));
++        tmp |= GPIO_InitStruct->GPIO_Current << (pinpos * 2);
++        GPIOx->DS = tmp;
++    }
++}
++
++void
++GPIO_InitStruct(GPIO_InitType *GPIO_InitStruct)
++{
++    GPIO_InitStruct->Pin = GPIO_PIN_ALL;
++    GPIO_InitStruct->GPIO_Slew_Rate = GPIO_SLEW_RATE_FAST;
++    GPIO_InitStruct->GPIO_Mode = GPIO_MODE_INPUT;
++    GPIO_InitStruct->GPIO_Alternate = GPIO_NO_AF;
++    GPIO_InitStruct->GPIO_Pull = GPIO_NO_PULL;
++    GPIO_InitStruct->GPIO_Current = GPIO_DC_2MA;
++}
++
++void
++GPIO_SetBits(GPIO_Module *GPIOx, uint32_t pin)
++{
++    GPIOx->PBSC = pin;
++}
++
++
++/****************************************************************
++ * USART
++ ****************************************************************/
++
++void
++USART_ConfigBaudRate(USART_Module *USARTx, uint32_t baud)
++{
++    RCC_ClocksType RCC_ClocksStatus;
++    uint32_t apbclock, integerdivider, fractionaldivider;
++
++    RCC_GetClocksFreqValue(&RCC_ClocksStatus);
++    if (USARTx == NS_USART1 || USARTx == NS_UART6 || USARTx == NS_UART7)
++        apbclock = RCC_ClocksStatus.Pclk2Freq;
++    else
++        apbclock = RCC_ClocksStatus.Pclk1Freq;
++
++    // Determine the integer part
++    integerdivider = (25 * apbclock) / (4 * baud);
++    uint32_t tmpreg = (integerdivider / 100) << 4;
++
++    // Determine the fractional part
++    fractionaldivider = integerdivider - (100 * (tmpreg >> 4));
++    tmpreg |= ((((fractionaldivider * 16) + 50) / 100)) & ((uint8_t)0x0f);
++
++    USARTx->BRCF = (uint16_t)tmpreg;
++}
++
++void
++USART_Init(USART_Module *USARTx, USART_InitType *USART_InitStruct)
++{
++    USART_ConfigBaudRate(USARTx, USART_InitStruct->BaudRate);
++
++    uint32_t tmpreg = USARTx->CTRL1;
++    tmpreg &= ~((uint16_t)0x1000);
++    tmpreg |= USART_InitStruct->WordLength;
++    USARTx->CTRL1 = tmpreg;
++
++    tmpreg = USARTx->CTRL2;
++    tmpreg &= ~((uint16_t)0x3000);
++    tmpreg |= USART_InitStruct->StopBits;
++    USARTx->CTRL2 = tmpreg;
++
++    tmpreg = USARTx->CTRL1;
++    tmpreg &= ~((uint16_t)0x0600);
++    tmpreg |= USART_InitStruct->Parity;
++    USARTx->CTRL1 = tmpreg;
++
++    tmpreg = USARTx->CTRL1;
++    tmpreg &= ~((uint16_t)0x000c);
++    tmpreg |= USART_InitStruct->Mode;
++    USARTx->CTRL1 = tmpreg;
++
++    tmpreg = USARTx->CTRL3;
++    tmpreg &= ~((uint16_t)0x0300);
++    tmpreg |= USART_InitStruct->HardwareFlowControl;
++    USARTx->CTRL3 = tmpreg;
++}
++
++void
++USART_StructInit(USART_InitType *USART_InitStruct)
++{
++    USART_InitStruct->BaudRate = 9600;
++    USART_InitStruct->WordLength = USART_WL_8B;
++    USART_InitStruct->StopBits = USART_STPB_1;
++    USART_InitStruct->Parity = USART_PE_NO;
++    USART_InitStruct->Mode = USART_MODE_RX | USART_MODE_TX;
++    USART_InitStruct->HardwareFlowControl = USART_HFCTRL_NONE;
++}
++
++void
++USART_Enable(USART_Module *USARTx)
++{
++    USARTx->CTRL1 |= USART_CTRL1_UEN;
++}
++
++void
++USART_ConfigInt(USART_Module *USARTx, uint16_t USART_INT)
++{
++    uint32_t usartxbase = (uint32_t)USARTx;
++    uint32_t usartreg = (((uint8_t)USART_INT) >> 0x05);
++    uint32_t itpos = USART_INT & ((uint16_t)0x001f);
++    uint32_t itmask = ((uint32_t)0x01) << itpos;
++
++    if (usartreg == 0x01)
++        usartxbase += 0x0c;
++    else if (usartreg == 0x02)
++        usartxbase += 0x10;
++    else
++        usartxbase += 0x14;
++    *(__IO uint32_t *)usartxbase |= itmask;
++}
++
++void
++USART_ClrFlag(USART_Module *USARTx, uint16_t USART_FLAG)
++{
++    USARTx->STS = (uint16_t)~USART_FLAG;
++}
++
++
++/****************************************************************
++ * DMA
++ ****************************************************************/
++
++void
++DMA_DeInit(DMA_ChannelType *channel)
++{
++    channel->CHCFG &= ~((uint32_t)0x1);
++    channel->CHCFG = 0;
++    channel->TXNUM = 0;
++    channel->PADDR = 0;
++    channel->MADDR = 0;
++    if (channel == NS_DMA1_CH1)
++        NS_DMA1->INTCLR |= (uint32_t)0x0000000f;
++    else if (channel == NS_DMA1_CH2)
++        NS_DMA1->INTCLR |= (uint32_t)0x000000f0;
++    else if (channel == NS_DMA1_CH3)
++        NS_DMA1->INTCLR |= (uint32_t)0x00000f00;
++    else if (channel == NS_DMA1_CH4)
++        NS_DMA1->INTCLR |= (uint32_t)0x0000f000;
++    else if (channel == NS_DMA1_CH5)
++        NS_DMA1->INTCLR |= (uint32_t)0x000f0000;
++    else if (channel == NS_DMA1_CH6)
++        NS_DMA1->INTCLR |= (uint32_t)0x00f00000;
++    else if (channel == NS_DMA1_CH7)
++        NS_DMA1->INTCLR |= (uint32_t)0x0f000000;
++    else if (channel == NS_DMA1_CH8)
++        NS_DMA1->INTCLR |= (uint32_t)0xf0000000;
++}
++
++void
++DMA_Init(DMA_ChannelType *channel, DMA_InitType *DMA_InitParam)
++{
++    channel->PADDR = DMA_InitParam->PeriphAddr;
++    channel->MADDR = DMA_InitParam->MemAddr;
++
++    uint32_t tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x0010);
++    tmpreg |= DMA_InitParam->Direction;
++    channel->CHCFG = tmpreg;
++    channel->TXNUM = DMA_InitParam->BufSize;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x0040);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->PeriphInc;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x0080);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->DMA_MemoryInc;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x0300);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->PeriphDataSize;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x0c00);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->MemDataSize;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x0020);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->CircularMode;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x3000);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->Priority;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x4000);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->Mem2Mem;
++}
++
++void
++DMA_EnableChannel(DMA_ChannelType *channel)
++{
++    channel->CHCFG |= (uint32_t)0x0001;
++}
++
++void
++DMA_DisableChannel(DMA_ChannelType *channel)
++{
++    channel->CHCFG &= ~((uint32_t)0x0001);
++}
++
++void
++DMA_ConfigInt(DMA_ChannelType *channel, uint32_t DMA_INT)
++{
++    channel->CHCFG |= DMA_INT;
++}
++
++uint32_t
++DMA_GetIntStatus(DMA_Module *DMAy, uint32_t DMAy_INT)
++{
++    return (DMAy_INT & DMAy->INTSTS) ? 1 : 0;
++}
++
++void
++DMA_ClrIntPendingBit(DMA_Module *DMAy, uint32_t DMAy_INT)
++{
++    DMAy->INTCLR = DMAy_INT;
++}
++
++uint32_t
++DMA_GetFlagStatus(DMA_Module *DMAy, uint32_t DMAy_FLAG)
++{
++    return (DMAy->INTSTS & DMAy_FLAG) ? 1 : 0;
++}
++
++void
++DMA_ClearFlag(DMA_Module *DMAy, uint32_t DMAy_FLAG)
++{
++    DMAy->INTCLR = DMAy_FLAG;
++}
++
++void
++DMA_RequestRemap(DMA_ChannelType *channel, uint32_t remap)
++{
++    channel->CHSEL = remap;
++}
++
++
++/****************************************************************
++ * RCC
++ ****************************************************************/
++
++void
++RCC_EnableAHBPeriphClk(uint32_t RCC_AHBPeriph)
++{
++    RCC_AHBPeriph |= RCC_AHBPCLKEN;
++    RCC_AHBPCLKEN = RCC_AHBPeriph;
++}
++
++void
++RCC_EnableAPB2PeriphClk(uint32_t RCC_APB2Periph)
++{
++    RCC_APB2Periph |= RCC_APB2PCLKEN;
++    RCC_APB2PCLKEN = RCC_APB2Periph;
++}
++
++// APB/AHB prescaler tables (stock image: 0x0800a7ec / 0x0800a7bc / 0x0800a7cc)
++static const uint8_t APBAHBPresTable[16] = {
++    0, 0, 0, 0, 1, 2, 3, 4, 1, 2, 3, 4, 6, 7, 8, 9
++};
++static const uint8_t ADCHCLKPresTable[16] = {
++    1, 2, 4, 6, 8, 10, 12, 16, 32, 32, 32, 32, 32, 32, 32, 32
++};
++static const uint16_t ADCPLLCLKPresTable[16] = {
++    1, 2, 4, 6, 8, 10, 12, 16, 32, 64, 128, 256, 256, 256, 256, 256
++};
++
++#define HSI_VALUE 8000000
++#define HSE_VALUE 8000000
++#define RCC_PLLHSIPRE (*(__IO uint32_t *)(RCC_BASE + 0x40))
++#define RCC_CFG2      (*(__IO uint32_t *)(RCC_BASE + 0x2c))
++
++void
++RCC_GetClocksFreqValue(RCC_ClocksType *RCC_Clocks)
++{
++    uint32_t tmp, pllmull, pllsource, presc, pllclk;
++
++    // Get PLL clock source and multiplication factor
++    pllmull = (RCC_CFG & (uint32_t)0x083c0000) >> 18;
++    pllsource = RCC_CFG & (uint32_t)0x00010000;
++    if (pllmull & 0x200)
++        pllmull = (pllmull & 0x0f) + 17;
++    else
++        pllmull = pllmull + 2;
++
++    if (pllsource == 0x00) {
++        if (RCC_PLLHSIPRE & 0x01)
++            pllclk = (HSI_VALUE >> 1) * pllmull;
++        else
++            pllclk = HSI_VALUE * pllmull;
++    } else {
++        if (RCC_CFG & (uint32_t)0x00020000)
++            pllclk = (HSE_VALUE >> 1) * pllmull;
++        else
++            pllclk = HSE_VALUE * pllmull;
++    }
++
++    // SYSCLK
++    tmp = RCC_CFG & (uint32_t)0x0c;
++    if (tmp == 0x08)
++        RCC_Clocks->SysclkFreq = pllclk;
++    else
++        RCC_Clocks->SysclkFreq = HSI_VALUE;
++
++    // HCLK
++    tmp = (RCC_CFG >> 4) & 0x0f;
++    presc = APBAHBPresTable[tmp];
++    RCC_Clocks->HclkFreq = RCC_Clocks->SysclkFreq >> presc;
++
++    // PCLK1
++    tmp = (RCC_CFG >> 8) & 0x07;
++    presc = APBAHBPresTable[tmp];
++    RCC_Clocks->Pclk1Freq = RCC_Clocks->HclkFreq >> presc;
++
++    // PCLK2
++    tmp = (RCC_CFG >> 11) & 0x07;
++    presc = APBAHBPresTable[tmp];
++    RCC_Clocks->Pclk2Freq = RCC_Clocks->HclkFreq >> presc;
++
++    // ADC clocks
++    tmp = RCC_CFG2 & 0x0f;
++    RCC_Clocks->AdcHclkFreq = RCC_Clocks->HclkFreq / ADCHCLKPresTable[tmp];
++    tmp = (RCC_CFG2 >> 4) & 0x0f;
++    RCC_Clocks->AdcPllClkFreq = pllclk / ADCPLLCLKPresTable[tmp];
++}
 diff --git a/scripts/buildcommands.py b/scripts/buildcommands.py
 index b35873840..ab1566c0d 100644
 --- a/scripts/buildcommands.py
@@ -148,7 +897,7 @@ index a27dc8c06..d8ae16155 100644
      }
  }
 diff --git a/src/basecmd.c b/src/basecmd.c
-index 6d26884df..006e6ba18 100644
+index 6d26884df..244a85bfd 100644
 --- a/src/basecmd.c
 +++ b/src/basecmd.c
 @@ -10,6 +10,7 @@
@@ -240,7 +989,7 @@ index 6d26884df..006e6ba18 100644
  }
  DECL_COMMAND_FLAGS(command_emergency_stop, HF_IN_SHUTDOWN, "emergency_stop");
  
-@@ -350,6 +351,77 @@ command_clear_shutdown(uint32_t *args)
+@@ -350,6 +351,79 @@ command_clear_shutdown(uint32_t *args)
  }
  DECL_COMMAND_FLAGS(command_clear_shutdown, HF_IN_SHUTDOWN, "clear_shutdown");
  
@@ -286,7 +1035,9 @@ index 6d26884df..006e6ba18 100644
 +    // args[0] ("num") is accepted and ignored by the stock firmware.
 +    uint32_t baseline = ff_eddy_baseline, value = ff_eddy_value;
 +    ff_eddy_rebaseline();
-+    uint32_t diff = value > baseline ? value - baseline : baseline - value;
++    int32_t diff = (int32_t)(value - baseline);
++    if (diff < 0)
++        diff = -diff;
 +    sendf("param_value value=%u reserve=%u", baseline, diff);
 +}
 +DECL_COMMAND(command_get_basic_param, "get_basic_param num=%u");
@@ -318,7 +1069,7 @@ index 6d26884df..006e6ba18 100644
  void
  command_identify(uint32_t *args)
  {
-@@ -365,3 +437,16 @@ command_identify(uint32_t *args)
+@@ -365,3 +439,16 @@ command_identify(uint32_t *args)
  }
  DECL_COMMAND_FLAGS(command_identify, HF_IN_SHUTDOWN,
                     "identify offset=%u count=%c");
@@ -1205,7 +1956,7 @@ index ef38680a9..fd53d7b8c 100644
  DECL_SHUTDOWN(timer_reset);
  
 diff --git a/src/generic/serial_irq.c b/src/generic/serial_irq.c
-index 98910735a..f1ccdf955 100644
+index 98910735a..30a8932da 100644
 --- a/src/generic/serial_irq.c
 +++ b/src/generic/serial_irq.c
 @@ -14,9 +14,12 @@
@@ -1223,32 +1974,12 @@ index 98910735a..f1ccdf955 100644
  static uint8_t transmit_buf[96], transmit_pos, transmit_max;
  
  DECL_CONSTANT("SERIAL_BAUD", CONFIG_SERIAL_BAUD);
-@@ -50,8 +53,8 @@ console_pop_input(uint_fast8_t len)
- {
-     uint_fast8_t copied = 0;
-     for (;;) {
--        uint_fast8_t rpos = readb(&receive_pos);
--        uint_fast8_t needcopy = rpos - len;
-+        uint_fast16_t rpos = readw(&receive_pos);
-+        uint_fast16_t needcopy = rpos - len;
-         if (needcopy) {
-             memmove(&receive_buf[copied], &receive_buf[copied + len]
-                     , needcopy - copied);
-@@ -59,7 +62,7 @@ console_pop_input(uint_fast8_t len)
-             sched_wake_tasks();
-         }
-         irqstatus_t flag = irq_save();
--        if (rpos != readb(&receive_pos)) {
-+        if (rpos != readw(&receive_pos)) {
-             // Raced with irq handler - retry
-             irq_restore(flag);
-             continue;
 @@ -74,7 +77,8 @@ console_pop_input(uint_fast8_t len)
  void
  console_task(void)
  {
 -    uint_fast8_t rpos = readb(&receive_pos), pop_count;
-+    uint_fast16_t rpos = readw(&receive_pos);
++    uint_fast8_t rpos = readb(&receive_pos);
 +    uint_fast8_t pop_count;
      int_fast8_t ret = command_find_block(receive_buf, rpos, &pop_count);
      if (ret > 0)
@@ -1479,10 +2210,22 @@ index 00a8ff012..34fe4005d 100644
      s->flags &= ~SF_NEED_RESET;
      irq_enable();
 diff --git a/src/stm32/Kconfig b/src/stm32/Kconfig
-index 037e37bbe..bac8adc42 100644
+index 037e37bbe..d66601268 100644
 --- a/src/stm32/Kconfig
 +++ b/src/stm32/Kconfig
-@@ -247,7 +247,7 @@ config RAM_SIZE
+@@ -224,6 +224,11 @@ config FLASH_SIZE
+ 
+ config FLASH_BOOT_ADDRESS
+     hex
++    # This part carries a factory bootloader below the application, and
++    # FlashForge declare the boot address as the application base.  That
++    # makes canboot_reset() fold away, which is why stock's "reset" handler
++    # is a bare NVIC_SystemReset.
++    default 0x8004000 if MACH_N32G45x
+     default 0x8000000
+ 
+ config RAM_START
+@@ -247,7 +252,7 @@ config RAM_SIZE
      default 0x9000 if MACH_STM32G07x
      default 0x24000 if MACH_STM32G0Bx
      default 0x20000 if MACH_STM32H7
@@ -1491,7 +2234,7 @@ index 037e37bbe..bac8adc42 100644
  
  config STACK_SIZE
      int
-@@ -303,7 +303,7 @@ choice
+@@ -303,7 +308,7 @@ choice
      config STM32_FLASH_START_1000
          bool "4KiB bootloader" if MACH_STM32F1 || MACH_STM32F0
      config STM32_FLASH_START_4000
@@ -1500,6 +2243,18 @@ index 037e37bbe..bac8adc42 100644
      config STM32_FLASH_START_20000
          bool "128KiB bootloader" if MACH_STM32H743 || MACH_STM32H723 || MACH_STM32F7
  
+diff --git a/src/stm32/Makefile b/src/stm32/Makefile
+index 5f4d3af5c..5e9005029 100644
+--- a/src/stm32/Makefile
++++ b/src/stm32/Makefile
+@@ -47,6 +47,7 @@ src-$(CONFIG_MACH_STM32F103) += ../lib/stm32f1/system_stm32f1xx.c
+ src-$(CONFIG_MACH_STM32F103) += stm32/adc.c
+ src-$(CONFIG_MACH_N32G45x) += ../lib/stm32f1/system_stm32f1xx.c
+ src-$(CONFIG_MACH_N32G45x) += ../lib/n32g45x/n32g45x_adc.c stm32/n32g45x_adc.c
++src-$(CONFIG_MACH_N32G45x) += ../lib/n32g45x/n32g45x_periph.c
+ src-$(CONFIG_MACH_STM32F1) += stm32/stm32f1.c generic/armcm_timer.c stm32/i2c.c
+ src-$(CONFIG_MACH_STM32F2) += ../lib/stm32f2/system_stm32f2xx.c
+ src-$(CONFIG_MACH_STM32F2) += stm32/stm32f4.c generic/armcm_timer.c
 diff --git a/src/stm32/gpio.c b/src/stm32/gpio.c
 index d19437cbe..35b897a72 100644
 --- a/src/stm32/gpio.c
@@ -1523,11 +2278,137 @@ index d19437cbe..35b897a72 100644
      struct gpio_in g = { .regs=regs, .bit=GPIO2BIT(pin) };
      gpio_in_reset(g, pull_up);
 diff --git a/src/stm32/serial.c b/src/stm32/serial.c
-index 19aa048ea..db0ed662e 100644
+index 19aa048ea..cd8682c64 100644
 --- a/src/stm32/serial.c
 +++ b/src/stm32/serial.c
-@@ -13,7 +13,7 @@
+@@ -11,13 +11,144 @@
+ #include "internal.h" // enable_pclock
+ #include "sched.h" // DECL_INIT
  
++#if CONFIG_MACH_N32G45x && CONFIG_STM32_SERIAL_USART1
++// ==========================================================================
++// FlashForge "levelBoard" (Nations N32G45x) reconstruction.
++//
++// The stock console is upstream Klipper's byte-at-a-time USART1 RXNE/TXE
++// interrupt path, not DMA driven, accessed through the Nations N32G45x
++// peripheral library (lib/n32g45x) instead of Klipper's generic
++// enable_pclock()/gpio_peripheral()/armcm_enable_irq() stm32 helpers, and
++// with USART registers accessed 16 bits wide.  See
++// tools/mcu-recovery/recovered_serial.md for the full analysis, addresses
++// and per-function verification against the stock image.
++// ==========================================================================
++#include "n32g45x.h" // NS_USART1
++
++DECL_CONSTANT_STR("RESERVE_PINS_serial", "PH10,PH9");
++
++#define CR1_FLAGS (USART_CTRL1_UEN | USART_CTRL1_REN | USART_CTRL1_TEN \
++                   | USART_CTRL1_RXDNEIEN)
++
++void
++USARTx_IRQHandler(void)
++{
++    uint16_t sr = NS_USART1->STS;
++    if (sr & (USART_STS_RXDNE | USART_STS_OREF)) {
++        // The ORE flag is automatically cleared by reading SR, followed
++        // by reading DR.
++        serial_rx_byte(NS_USART1->DAT);
++    }
++    if (sr & USART_STS_TXDE && NS_USART1->CTRL1 & USART_CTRL1_TXDEIEN) {
++        uint8_t data;
++        int ret = serial_get_tx_byte(&data);
++        if (ret)
++            NS_USART1->CTRL1 = CR1_FLAGS;
++        else
++            NS_USART1->DAT = data;
++    }
++}
++DECL_ARMCM_IRQ(USARTx_IRQHandler, N32_USART1_IRQn);
++
++void
++serial_enable_tx_irq(void)
++{
++    NS_USART1->CTRL1 = CR1_FLAGS | USART_CTRL1_TXDEIEN;
++}
++
++// Vestigial DMA transmit path.  The stock firmware still carries these two
++// handlers (and still turns on the DMA1 clock in serial_init), but nothing
++// ever configures or starts DMA1 channel 4/5 for USART1, so neither handler
++// can run and this flag is only ever cleared.
++uint8_t tx_dma_active;
++
++void
++DMA1_Channel4_IRQHandler(void)
++{
++    if (DMA_GetIntStatus(NS_DMA1, DMA1_INT_TXC4)) {
++        DMA_ClrIntPendingBit(NS_DMA1, DMA1_INT_TXC4);
++        USART_ClrFlag(NS_USART1, USART_FLAG_TXC);
++        DMA_DisableChannel(NS_DMA1_CH4);
++        tx_dma_active = 0;
++    }
++}
++DECL_ARMCM_IRQ(DMA1_Channel4_IRQHandler, N32_DMA1_Channel4_IRQn);
++
++void
++DMA1_Channel5_IRQHandler(void)
++{
++    if (DMA_GetFlagStatus(NS_DMA1, DMA1_FLAG_TXC5))
++        DMA_ClearFlag(NS_DMA1, DMA1_FLAG_TXC5);
++}
++DECL_ARMCM_IRQ(DMA1_Channel5_IRQHandler, N32_DMA1_Channel5_IRQn);
++
++// Stock's vector table is 69 words long: IRQ 0..52.  IRQ 52 (UART4 on this
++// part's numbering) is padded out to a DefaultHandler slot even though
++// UART4's base address, 0x40004C00, appears nowhere in the image -- UART4
++// is not used.  What actually causes the table to extend that far is not
++// known (no peripheral in this range is otherwise touched); this
++// declaration reproduces the table's length and bytes without asserting a
++// mechanism for it.
++DECL_ARMCM_IRQ(DefaultHandler, 52);
++
++void
++serial_init(void)
++{
++    GPIO_InitType gpio;
++    NVIC_InitType nvic;
++    USART_InitType usart;
++
++    RCC_EnableAHBPeriphClk(RCC_AHB_PERIPH_DMA1);
++    RCC_EnableAHBPeriphClk(RCC_AHB_PERIPH_GPIOA);
++    RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_AFIO);
++    RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_USART1);
++
++    GPIO_InitStruct(&gpio);
++    gpio.Pin = GPIO_PIN_9;
++    gpio.GPIO_Mode = GPIO_MODE_AF_PP;
++    gpio.GPIO_Pull = GPIO_PULL_UP;
++    gpio.GPIO_Alternate = GPIO_AF5_USART1;
++    GPIO_InitPeripheral(NS_GPIOA, &gpio);
++    gpio.Pin = GPIO_PIN_10;
++    gpio.GPIO_Alternate = GPIO_AF5_USART1;
++    GPIO_InitPeripheral(NS_GPIOA, &gpio);
++
++    nvic.NVIC_IRQChannel = N32_USART1_IRQn;
++    nvic.NVIC_IRQChannelPreemptionPriority = 0;
++    nvic.NVIC_IRQChannelSubPriority = 3;
++    nvic.NVIC_IRQChannelCmd = ENABLE;
++    NVIC_Init(&nvic);
++
++    USART_StructInit(&usart);
++    usart.BaudRate = CONFIG_SERIAL_BAUD;
++    usart.WordLength = USART_WL_8B;
++    usart.StopBits = USART_STPB_1;
++    usart.Parity = USART_PE_NO;
++    usart.Mode = USART_MODE_RX | USART_MODE_TX;
++    usart.HardwareFlowControl = USART_HFCTRL_NONE;
++    USART_Init(NS_USART1, &usart);
++
++    USART_ConfigInt(NS_USART1, USART_INT_RXDNE);
++    USART_Enable(NS_USART1);
++}
++DECL_INIT(serial_init);
++
++#else // !(CONFIG_MACH_N32G45x && CONFIG_STM32_SERIAL_USART1)
++
  // Select the configured serial port
  #if CONFIG_STM32_SERIAL_USART1
 -  DECL_CONSTANT_STR("RESERVE_PINS_serial", "PA10,PA9");
@@ -1535,6 +2416,24 @@ index 19aa048ea..db0ed662e 100644
    #define GPIO_Rx GPIO('A', 10)
    #define GPIO_Tx GPIO('A', 9)
    #define USARTx USART1
+-  #define USARTx_IRQn USART1_IRQn
++  // Stock installs this handler on vector 36 and unmasks NVIC line 36.
++  // The Nations CMSIS header numbers this part exactly like an F103 --
++  // a contiguous enum in which 36 is SPI2 and USART1 is 37 -- so on the
++  // published numbering this handler sits on the wrong vector and can
++  // never fire.  Neither the SPI2 nor the UART4 base address appears
++  // anywhere in the image.  Reproducing the image requires 36; whether
++  // the shipped silicon really numbers USART1 at 36 is unresolved.
++  #define USARTx_IRQn SPI2_IRQn
+ #elif CONFIG_STM32_SERIAL_USART1_ALT_PB7_PB6
+   DECL_CONSTANT_STR("RESERVE_PINS_serial", "PB7,PB6");
+   #define GPIO_Rx GPIO('B', 7)
+@@ -94,3 +225,5 @@ serial_init(void)
+     gpio_peripheral(GPIO_Tx, GPIO_FUNCTION(7), 0);
+ }
+ DECL_INIT(serial_init);
++
++#endif // CONFIG_MACH_N32G45x && CONFIG_STM32_SERIAL_USART1
 diff --git a/src/tmcuart.c b/src/tmcuart.c
 index a2f5f8fcd..6e4ab200b 100644
 --- a/src/tmcuart.c

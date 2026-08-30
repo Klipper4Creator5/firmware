@@ -46,18 +46,36 @@ def norm(insn):
     return insn[0] + ' ' + op.strip()
 
 
-def disasm_raw(path, start, length, vma):
+_RAW_CACHE = {}
+
+
+def _disasm_whole(path, vma):
+    """Disassemble a flat binary once, returning [(addr, mnemonic, ops)].
+
+    Slicing this in Python replaces per-function --start-address calls,
+    which cannot be trusted: for some addresses objdump emits nothing at
+    all from a `-b binary` image even though neighbouring addresses work.
+    """
+    key = (path, vma)
+    if key in _RAW_CACHE:
+        return _RAW_CACHE[key]
     out = subprocess.run(
         [OBJDUMP, '-D', '-b', 'binary', '-m', 'arm', '-M', 'force-thumb',
-         '--adjust-vma=0x%x' % vma,
-         '--start-address=0x%x' % start,
-         '--stop-address=0x%x' % (start + length), path],
+         '--adjust-vma=0x%x' % vma, path],
         capture_output=True, text=True).stdout
-    insns = []
+    seq = []
     for line in out.splitlines():
         m = re.match(r'\s*([0-9a-f]+):\s+([0-9a-f ]+)\t(\S+)\s*(.*)', line)
         if m:
-            insns.append((m.group(3), m.group(4)))
+            seq.append((int(m.group(1), 16), m.group(3), m.group(4)))
+    _RAW_CACHE[key] = seq
+    return seq
+
+
+def disasm_raw(path, start, length, vma):
+    seq = _disasm_whole(path, vma)
+    lo, hi = start, start + length
+    insns = [(mn, ops) for a, mn, ops in seq if lo <= a < hi]
     return insns
 
 
