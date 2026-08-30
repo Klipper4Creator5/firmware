@@ -8,7 +8,7 @@
 # A HOST C compiler is in here as well, which looks redundant next to two
 # cross-toolchains that arrive as pinned tarballs. It is not: cross-building
 # CPython needs a build-python of exactly the same version to freeze modules
-# and byte-compile the stdlib, so bin/patch.sh builds an x86-64 3.13 out of
+# and byte-compile the stdlib, so bin/payload.sh builds an x86-64 3.13 out of
 # the same source tarball first, and that one needs the host's own gcc.
 # pkg-config and perl are for the same section -- CPython's configure probes
 # libffi through pkg-config, and OpenSSL's Configure is a perl program.
@@ -21,7 +21,7 @@
 # decompress data; zlib not available"). CPython records the module as missing
 # and carries on, so the symptom lands three steps later as "No module named
 # pip". The TARGET's zlib is nothing to do with this: that one is the static
-# -fPIC libz.a bin/patch.sh cross-builds from the pinned tarball.
+# -fPIC libz.a bin/payload.sh cross-builds from the pinned tarball.
 #
 # `patch` is in the list above for one package: lmdb's setup.py shells out to
 # /usr/bin/patch BY ABSOLUTE PATH to apply its own env-copy-txn.patch to the

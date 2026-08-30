@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # OpenSSL -- the one project here whose configure is not an autoconf configure.
 #
-# THREE TRAPS, ALL OF THEM HIT FOR REAL, kept from bin/patch.sh section 5c:
+# THREE TRAPS, ALL OF THEM HIT FOR REAL, kept from bin/payload.sh section 5c:
 #
 #  * `no-docs` only exists from 3.1. On 3.0.x it is an "Unsupported options"
 #    HARD ERROR, not a warning -- so it is not passed here.

@@ -4,10 +4,10 @@ The second half of phase 6. `tools/python/` builds the interpreter;
 this builds what runs on it. **Now a recipe apiece: `pkg/python-<name>`, one
 `.ipk` each** -- see "What is left" at the bottom for the history. `build.sh` is the measurement harness, preserved here because it is
 where the findings live, exactly as `tools/supervisor/` is for s6; it is not
-what a release runs any more, and the two have drifted on purpose (patch.sh
+what a release runs any more, and the two have drifted on purpose (payload.sh
 builds offline from `vendor/` and needs no docker, because the build lane has
 no docker socket). `fill-designators.py` is the exception: it is a real build
-input, called by `patch.sh` for greenlet.
+input, called by `payload.sh` for greenlet.
 
 Everything below was run in the printer replica on the real
 `rootfs.squashfs`, not read off a project page.
@@ -175,7 +175,7 @@ same one-line `FF_PYTHON` switch, since 3.8's libnacl still needs it.
 Capability was settled first -- Moonraker serves, the database works,
 libsodium is ours -- and packaging and integration followed:
 
-1. ~~**Wire into `bin/patch.sh`.**~~ ~~**Done.**~~ **Superseded: each package
+1. ~~**Wire into `bin/payload.sh`.**~~ ~~**Done.**~~ **Superseded: each package
    is its own recipe.** The step below describes the arrangement that replaced
    it, and the arrangement that then replaced *that*, because the second
    correction is the interesting one.
@@ -200,7 +200,7 @@ libsodium is ours -- and packaging and integration followed:
    tree could not express.
 
    libsodium is its own recipe. Every pin is in `versions.env` with a sha256 and
-   `bin/fetch-assets.sh` fetches them, so **patch.sh no longer talks to a
+   `bin/fetch-assets.sh` fetches them, so **payload.sh no longer talks to a
    network**: no `get-pip.py`, no PyPI, `pip --no-index` against hashed
    sdists. The build-python gets its pip from `--with-ensurepip=install` out
    of the same pinned CPython tarball. Two build-image packages were needed

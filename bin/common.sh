@@ -95,7 +95,7 @@ LIBARCHIVE_TGZ="${LIBARCHIVE_TGZ:-$ROOT/vendor/libarchive-${LIBARCHIVE_VERSION:-
 export SODIUM_TGZ OPKG_TGZ LIBARCHIVE_TGZ
 
 # Output paths are derived by pkgs/lib.sh's pkg_out; these three aliases remain
-# only because patch.sh and fetch-assets.sh name them. Add nothing here.
+# only because payload.sh and fetch-assets.sh name them. Add nothing here.
 SODIUM_BUILD="${SODIUM_BUILD:-$ROOT/work/pkg/libsodium}"
 OPKG_BUILD="${OPKG_BUILD:-$ROOT/work/pkg/opkg}"
 ZLIB_BUILD="${ZLIB_BUILD:-$ROOT/work/pkg/zlib}"

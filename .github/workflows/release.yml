@@ -88,14 +88,12 @@ jobs:
           # A manual run has no tag -- GITHUB_REF_NAME would be the branch --
           # so leave it empty and let the build stamp today's UTC date.
           # The optional trailing letter is the same-day re-release
-          # convention common.sh documents (20260824b): the installer never
-          # reads this -- it compares the software component's own version --
-          # so the letter only keeps the outer filenames distinct.
+          # convention common.sh documents (20260824b): nothing on the printer
+          # reads it, so it only keeps the outer filenames distinct.
           MOD_VER=$(case "$GITHUB_REF" in
                       refs/tags/*) echo "${GITHUB_REF_NAME#v}" | sed -n 's/^\([0-9]\{8\}[a-z]\{0,1\}\).*/\1/p' ;;
                       *) echo "" ;;
                     esac)
-          SW_VER=""
           TARGET_MACHINE=Creator5Pro
           STOCK_TGZ_CREATOR5PRO="$PWD/stock/Creator5Pro-stock.tgz"
           STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
@@ -114,7 +112,7 @@ jobs:
           FF_KEY='FFP0331&*%root'
           CFG
 
-      # Before the suite, not after: the replica gates run ./bin/patch.sh
+      # Before the suite, not after: the replica gates run ./bin/payload.sh
       # directly and it expects vendor/ already populated. `make release`
       # further down would have fetched them, but that runs after the gates.
       #
@@ -130,7 +128,7 @@ jobs:
       - name: Fetch the pinned Mainsail, HelixScreen, Moonraker and Klipper assets
         run: make vendor ASSET_ROOT=$PWD
 
-      # THE FEED FIRST. bin/patch.sh builds the payload by installing it, so
+      # THE FEED FIRST. bin/payload.sh builds the payload by installing it, so
       # it refuses to start without one, and the python recipes resolve their
       # build dependencies out of it. This used to run unpack/patch/pack with
       # no feed at all and could not have passed.

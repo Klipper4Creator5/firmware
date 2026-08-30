@@ -10,9 +10,10 @@
 #
 # Escape hatch: LOCAL=1 make <target> runs the scripts directly on the host.
 
-# Packages carry only the software component by default: the stock installer
-# skips absent components, so the kernel and the MCU/board firmware are left
-# alone. FULL=1 carries all four (and reflashes the MCU).
+# A package carries our installer and our payload and no FlashForge component
+# at all: the stock installer skips absent ones, so /usr/prog, the kernel and
+# the MCU/board firmware are left alone. FULL=1 carries the kernel, control and
+# library components too (and reflashes the MCU).
 FULL    ?=
 PACKARGS = $(if $(FULL),--full,)
 DOCKER  ?= docker
@@ -133,8 +134,8 @@ help:
 	@echo '  make shell        shell inside it'
 	@echo '  make clean | distclean'
 	@echo
-	@echo 'Packages carry only the software component; the kernel and MCU are'
-	@echo 'left untouched. FULL=1 make <target> carries all four components.'
+	@echo 'Packages carry the installer and the payload; /usr/prog, the kernel'
+	@echo 'and the MCU are left untouched. FULL=1 also flashes the kernel and MCU.'
 	@echo
 	@echo 'Config: config.env is the BUILD config (what ships). test.env holds'
 	@echo 'the replica settings, which never reach a printer. Copy the .example'
@@ -168,7 +169,7 @@ vendor: image config.env
 	@$(RUN) ./bin/fetch-assets.sh --all
 
 # A THIRD LANE, because the build needs both halves of the split above.
-# bin/patch.sh assembles the payload by starting the printer replica, so this
+# bin/payload.sh assembles the payload by starting the printer replica, so this
 # lane needs the docker socket -- and it still has to run AS YOU, or every
 # build leaves a root-owned work/ the next one cannot delete.
 #
@@ -192,10 +193,10 @@ build: image config.env
 # THE RELEASE PATH IS BUILT ON THIS. It used to say the opposite -- "nothing
 # on the release path depends on this" -- and that was already false when it
 # was written: pkgs/3rdparty/python declares seven build dependencies, pkg_deps
-# resolves them by unpacking their .ipk out of work/packages, and bin/patch.sh
+# resolves them by unpacking their .ipk out of work/packages, and bin/payload.sh
 # builds none of the seven. `make build` on a cold checkout has never worked
 # without this target; it failed deep inside a recipe instead of saying so.
-# bin/patch.sh now checks for the feed up front and names this command.
+# bin/payload.sh now checks for the feed up front and names this command.
 #
 # It still, unlike `build`, needs NO stock FlashForge package -- which is most
 # of the point: packaging has to be runnable in CI on a bare checkout, or the

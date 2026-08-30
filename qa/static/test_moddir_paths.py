@@ -45,7 +45,7 @@ GUARD = re.compile(r"\[\s+-[fxdesr]\s+\$\{?MODDIR\}?/([A-Za-z0-9_.][A-Za-z0-9_./
 
 # Not shipped by any package, and correctly so.
 ALLOWED = {
-    # Templated from config.env by bin/patch.sh and then preserved across
+    # Templated from config.env by bin/payload.sh and then preserved across
     # updates by run-append.sh -- user state, so a package member would
     # overwrite a printer's settings on the first upgrade.
     "anvil.conf",

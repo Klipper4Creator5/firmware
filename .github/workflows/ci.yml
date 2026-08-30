@@ -83,7 +83,7 @@ jobs:
           mapfile -t PRINTER_SH < <(
             find pkgs -path '*/payload/*' \
                  \( -name '*.sh' -o -name firmwareExe \) | sort)
-          PRINTER_SH+=(installer/run-pre.sh installer/run-append.sh)
+          PRINTER_SH+=(installer/runFirmwareExe.sh)
           if [ "${#PRINTER_SH[@]}" -lt 5 ]; then
             echo "::error title=Nothing to check::found ${#PRINTER_SH[@]} on-printer scripts; the find pattern is stale."
             exit 1
@@ -131,11 +131,11 @@ jobs:
           # own any more -- BUILD_KLIPPER is gone and the fork is the only
           # Klipper, so its 27MB tarball comes down here with the rest. This
           # config.env is KEPT rather than removed: the packaging step below
-          # reads it too, and unlike patch.sh, bin/build-packages.sh needs no
+          # reads it too, and unlike payload.sh, bin/build-packages.sh needs no
           # stock package -- which is the whole reason the feed can be built
           # in this job at all.
           #
-          # s6 and CPython are not cross-built by patch.sh any more; there are
+          # s6 and CPython are not cross-built by payload.sh any more; there are
           # no sections 5b/5c. They are recipes under pkgs/, built by
           # build-packages.sh like every other one.
           cat > config.env <<'CFG'
@@ -260,7 +260,6 @@ jobs:
           cat > config.env <<CFG
           MOD_NAME=anvil
           MOD_VER=ci
-          SW_VER=""
           TARGET_MACHINE=Creator5Pro
           STOCK_TGZ_CREATOR5PRO="$PWD/stock/Creator5Pro-stock.tgz"
           STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
@@ -273,8 +272,8 @@ jobs:
           FF_KEY='FFP0331&*%root'
           CFG
 
-      # The replica gates run ./bin/patch.sh, which needs the real Mainsail
-      # zip and HelixScreen tarball in vendor/ -- patch.sh does not fetch them
+      # The replica gates run ./bin/payload.sh, which needs the real Mainsail
+      # zip and HelixScreen tarball in vendor/ -- payload.sh does not fetch them
       # itself, bin/build.sh does, and the gates do not go through build.sh.
       # Nothing here noticed until this job ran for the first time, because
       # every local run already had a populated vendor/. All are public,
@@ -292,7 +291,7 @@ jobs:
       - name: Fetch the pinned Mainsail, HelixScreen, Moonraker and Klipper assets
         run: make vendor ASSET_ROOT=$PWD
 
-      # THE FEED, and it is not optional on the release path. bin/patch.sh
+      # THE FEED, and it is not optional on the release path. bin/payload.sh
       # builds the payload by INSTALLING the feed, so it refuses to start
       # without one, and the python recipes resolve PKG_BUILD_DEPENDS out of
       # work/packages. These two steps ran as one unpack/patch/pack with no
@@ -314,7 +313,7 @@ jobs:
       #
       # Through `make`, not around it. `make build` runs bin/build.sh on the
       # RUNBUILD lane -- as the runner user, with the docker socket and the
-      # socket's own gid -- because bin/patch.sh assembles the payload inside
+      # socket's own gid -- because bin/payload.sh assembles the payload inside
       # the replica. Hand-rolling the `docker run` here meant CI exercised an
       # entry point no human uses, so a mistake in one of the Makefile's own
       # runners could never turn this job red.

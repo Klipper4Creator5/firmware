@@ -165,7 +165,7 @@ fi
   fi )
 say "cached  opkg-utils $OPKG_UTILS_VERSION ($OPKG_UTILS_COMMIT)"
 
-# The toolchain, on the pkg_needs condition that decides whether patch.sh has
+# The toolchain, on the pkg_needs condition that decides whether payload.sh has
 # to compile at all. Wrong here is not a slow build but a stopped one.
 if [ "$ALL" = 1 ] \
    || pkg_needs; then

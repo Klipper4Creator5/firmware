@@ -18,7 +18,7 @@
 #   loader  = /lib/ld-linux-mipsn8.so.1 , rootfs glibc 2.33
 #
 # Toolchain: the repo's Ingenic gcc 7.2 / glibc 2.29 cross compiler -- the SAME
-# one bin/patch.sh uses for klippy's c_helper.so. musl is forbidden: a
+# one bin/payload.sh uses for klippy's c_helper.so. musl is forbidden: a
 # musl-linked interpreter cannot dlopen a glibc c_helper.so, which is exactly
 # how klippy loads it. glibc 2.29 -> 2.33 is forward compatible.
 #
@@ -55,9 +55,9 @@ XZ_VER=5.4.7
 BZIP2_VER=1.0.8
 EXPAT_VER=2.6.4
 EXPAT_TAG=R_2_6_4
-# The mod's prefix root on the printer, and the same --prefix bin/patch.sh
+# The mod's prefix root on the printer, and the same --prefix bin/payload.sh
 # builds with: bin/python3.13 beside bin/s6-svscan, stdlib in
-# lib/python3.13/. The one difference is that patch.sh deletes the `python3`
+# lib/python3.13/. The one difference is that payload.sh deletes the `python3`
 # symlink (and idle3/pydoc3/*-config) out of bin/ before staging, so that
 # putting $MODDIR/bin on PATH cannot quietly change what `python3` means --
 # see tools/python/README.md. This harness leaves the tree as `make install`
@@ -68,7 +68,7 @@ PREFIX=/usr/data/anvil
 if [ "${1:-}" != "--in-container" ]; then
     [ -x "$TOOLCHAIN_HOST/bin/mips-linux-gnu-gcc" ] || {
         echo "!! no toolchain at $TOOLCHAIN_HOST" >&2
-        echo "   run ./bin/fetch-assets.sh, then any build (bin/patch.sh unpacks it)" >&2
+        echo "   run ./bin/fetch-assets.sh, then any build (bin/payload.sh unpacks it)" >&2
         exit 1; }
     exec docker run --rm \
         -v "$TOOLCHAIN_HOST":/toolchain:ro \

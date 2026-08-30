@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build $MODDIR the way a printer would, and hand it back on /out.
 #
-# bin/patch.sh's section 0, run on the machine it is for: the printer's own
+# bin/payload.sh's section 0, run on the machine it is for: the printer's own
 # opkg installs onto the printer's own filesystem, so the postinsts execute
 # under qemu-mipsel against the paths they will see on a machine.
 #
@@ -42,14 +42,14 @@ $OPKG update >/dev/null
 # --- install the release ---------------------------------------------------
 # Roots, not a closure: Depends brings the rest, which is the same question an
 # `opkg install anvil-moonraker` on a printer asks. MOD_ROOTS comes in from
-# bin/patch.sh so the two cannot drift.
+# bin/payload.sh so the two cannot drift.
 [ -n "${MOD_ROOTS:-}" ] || { echo "payload: MOD_ROOTS is empty" >&2; exit 1; }
 $OPKG install $MOD_ROOTS
 echo "payload: $($OPKG list-installed | wc -l) packages installed"
 
 # --- compile the boot database ---------------------------------------------
 # WITH THE s6-rc-compile WE SHIP, on the machine it is for, right after the
-# packages that own the source tree landed. bin/patch.sh used to do this on the
+# packages that own the source tree landed. bin/payload.sh used to do this on the
 # build host, which meant a second NATIVE build of skalibs+execline+s6+s6-rc
 # whose only job was to produce a compiler -- and whose whole hazard was that
 # s6-rc-compile bakes the #! of the execline the COMPILER was linked against

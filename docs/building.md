@@ -21,7 +21,7 @@ and every target runs inside it. `make shell` drops you into it.
 
 The test targets get the docker socket mounted through, so they can start the
 replica as a sibling container — and so does `make shell`, which shares their
-run flags. So does `make build`, which is newer: `patch.sh` assembles the
+run flags. So does `make build`, which is newer: `payload.sh` assembles the
 payload by installing the feed *inside* the replica, so the build lane needs
 the daemon too. Only the feed, the unpack and the pack run without it.
 
@@ -29,25 +29,28 @@ the daemon too. Only the feed, the unpack and the pack run without it.
 
 ```
 fetch-assets.sh  download Mainsail + HelixScreen + Moonraker into vendor/
-unpack.sh   decrypt the stock .tgz, open the software component
-patch.sh    apply the mods to work/software/, and install the .ipk feed
-            into work/modpayload-root/ to make the payload
-pack.sh     regenerate md5sum.list, tar, encrypt → work/out/<Model>-anvil-<date>.tgz
+unpack.sh   decrypt the stock .tgz for the boot images and the two facts
+            pack.sh reads out of FlashForge's software component
+payload.sh  install the .ipk feed into work/modpayload-root/ to make the
+            payload
+pack.sh     generate runFirmwareExe.sh, tar, encrypt
+            → work/out/<Model>-anvil-<date>.tgz
 ```
 
 `make build` runs all four. It needs the .ipk feed to exist first --
-`patch.sh` assembles the payload by installing it -- so `make packages`
-comes before a cold `make build`; patch.sh says so if it is missing. Each is
+`payload.sh` assembles the payload by installing it -- so `make packages`
+comes before a cold `make build`; payload.sh says so if it is missing. Each is
 idempotent and safe to re-run.
 
-There is no host-side check of the built file. `bin/verify.sh` used to
-re-implement the printer's install checks in bash; `make qa-replica` makes the
-printer perform them, so that is the gate now.
+There is no host-side check of the built file. `make qa-replica` has the
+printer perform its own install, and that is the gate.
 
-Packages carry only the **software** component by default. The stock installer
-skips any component that is absent, so the kernel, the rootfs image and the
-MCU/board firmware are left untouched — MCU flashing is the riskiest thing in
-a package and there is no reason to run it for a userspace mod. `FULL=1 make
+Packages carry **no FlashForge component at all** — the installer and the
+payload, and nothing that lands on the firmware partition. The stock installer
+skips any component that is absent, so `/usr/prog`, the kernel, the rootfs
+image and the MCU/board firmware are left untouched — MCU flashing is the
+riskiest thing in a package and there is no reason to run it for a userspace
+mod. `FULL=1 make
 <target>` carries all four.
 
 ## One build
@@ -278,7 +281,7 @@ pkgs/helixscreen/
 
 The service definitions stay with `anvil-core` and do NOT move to the
 components they start, which looks inconsistent and is not. They are one
-source tree, and `bin/patch.sh` compiles the whole of it into a single s6-rc
+source tree, and `bin/payload.sh` compiles the whole of it into a single s6-rc
 database on the build host. A tree split across packages would be a database
 assembled from whichever of them happened to be installed — and there is no
 compiler on the printer to assemble it with.
@@ -288,7 +291,7 @@ compiler on the printer to assemble it with.
 ```
 bin/            fetch-assets -> unpack -> patch -> pack.
                 build-packages.sh is the packaging lane below, and the four
-                steps need it to have run: patch.sh checks for the feed and
+                steps need it to have run: payload.sh checks for the feed and
                 refuses without one
 versions.env    pinned Mainsail / HelixScreen / Moonraker versions + sha256
 vendor/         where fetch-assets.sh caches them (gitignored), plus the
@@ -317,7 +320,7 @@ pkgs/           package recipes: one directory per component, each a
                   configure/make/install, the build cache. A recipe that
                   needs something this cannot express should grow it --
                   qa/static/test_ipk.py fails a recipe that goes around it.
-  libsodium/      bin/patch.sh section 5d's build, moved. patch.sh runs it,
+  libsodium/      bin/payload.sh section 5d's build, moved. payload.sh runs it,
                   so the payload's copy and the packaged copy are one build.
   opkg/           the package manager itself: static musl, with zlib and
                   libarchive as build-only dependencies linked into it. This
@@ -330,7 +333,7 @@ pkgs/           package recipes: one directory per component, each a
 qa/             THE SUITE. static/ needs nothing but a checkout;
                 replica/ needs docker and the firmware. `make qa`
 tools/replica/  THE REPLICA, which is a build tool as much as a test one --
-                bin/patch.sh assembles the payload inside it
+                bin/payload.sh assembles the payload inside it
   printer/        the machine: binfmt, the mount layout, Dockerfile.full and
                   the entrypoint that runs inside it on the printer's own
                   binaries -- SHELL, because the printer's busybox ash is the
@@ -356,7 +359,7 @@ what the suite proves. See [testing.md](testing.md#why-the-harness-is-python)
 for why the host half moved.
 
 Two things keep the boundary from eroding: the only files of ours that
-`patch.sh` copies into a package are the ones under a recipe's `payload/`,
+`payload.sh` copies into a package are the ones under a recipe's `payload/`,
 `prog/` or `seed/`, and `qa/replica/test_what_ships.py` fails if any file on
 the installed printer is byte-identical to one in `bin/` or `docker/`.
 

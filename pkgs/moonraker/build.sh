@@ -8,7 +8,7 @@
 # --strip-components hiding the shape of the archive from whoever reads this.
 #
 # WHAT IS REMOVED, AND WHY IT IS REMOVED HERE. tests/ is a sizeable part of
-# the tree and never runs on a printer. It was trimmed by bin/patch.sh before
+# the tree and never runs on a printer. It was trimmed by bin/payload.sh before
 # this recipe existed and is trimmed in the same place it always was -- once,
 # on the way in. The __pycache__ sweep that stood beside it is pkg_ship's
 # now: it was written here and in pkgs/klipper and missing from anvil-core,
@@ -21,7 +21,7 @@ pkg_begin moonraker || exit 0
 pkg_unpack "$MOONRAKER_TGZ"
 
 _src="$PKG_WORK/src/moonraker-$MOONRAKER_VERSION/moonraker"
-# The guard bin/patch.sh has always had, kept: a tarball whose shape changed
+# The guard bin/payload.sh has always had, kept: a tarball whose shape changed
 # under us would otherwise stage nothing, which looks like a clean build and a
 # dead web UI.
 [ -f "$_src/moonraker.py" ] || pkg_die \

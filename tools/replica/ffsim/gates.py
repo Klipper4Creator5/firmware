@@ -25,7 +25,7 @@ def _python_trees(config):
     """Every recipe output that makes up the printer's python prefix.
 
     NINETEEN TREES, NOT ONE. This used to be work/.py313, the single directory
-    bin/patch.sh cross-built the interpreter and its site-packages into
+    bin/payload.sh cross-built the interpreter and its site-packages into
     together. CPython is pkgs/3rdparty/python now and each of the eighteen
     third-party packages is a pkgs/3rdparty/python-* of its own, so what a
     printer sees is the union of their bin/ and lib/ -- which is exactly what

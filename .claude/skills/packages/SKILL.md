@@ -20,7 +20,7 @@ make packages PKG=<id>     # that recipe and what it builds against
 and dies naming `./bin/fetch-assets.sh` when opkg-utils or a pinned tarball
 is missing.
 
-**The feed is a prerequisite of `make build`, not a side quest.** `bin/patch.sh`
+**The feed is a prerequisite of `make build`, not a side quest.** `bin/payload.sh`
 builds the payload by *installing* the feed with the printer's own opkg, and
 refuses to start when `work/packages` holds no `.ipk`. Recipes with
 `PKG_BUILD_DEPENDS` also resolve them out of that directory. Order is
@@ -140,7 +140,7 @@ retry with different flags. See `pkgs/3rdparty/openssl/build.sh`.
    | directory | where its contents end up |
    | --- | --- |
    | `payload/` | staged into the .ipk, laid out exactly as it lands under `$MODDIR` |
-   | `prog/` | placed on `/usr/prog` by `bin/patch.sh` — not packageable, because every path in a package of ours is under the prefix |
+   | `prog/` | placed on `/usr/prog` by `bin/payload.sh` — not packageable, because every path in a package of ours is under the prefix |
    | `seed/` | templated or seeded user state, deliberately not a package member |
 
    A recipe with a `payload/` needs `PKG_STAMP_EXTRA="$(pkg_payload_hash)"`.
@@ -189,7 +189,7 @@ a bare tree and it reports a pass having never opened a package.
 
 **The ABI gate is not here.** It is `qa/replica/test_abi.py`, and it is the
 only one: it reads every ELF on the *installed filesystem* — ours, the stock
-tree's, and whatever `bin/patch.sh` staged — and refuses anything that is not
+tree's, and whatever `bin/payload.sh` staged — and refuses anything that is not
 nan2008/o32/mips32r2. There were six partial versions of it once, spread over
 `bin/`, `tools/` and the recipes, and between them they still could not see
 the largest binary we ship. `qa/static` now only asserts that a seventh does

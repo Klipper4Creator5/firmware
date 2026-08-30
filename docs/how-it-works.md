@@ -23,34 +23,28 @@ The mod meets the stock printer in exactly **two files**, and owns both:
 * `runFirmwareExe.sh`, the installer. `app_startup.sh` runs whatever it finds
   under that name in the package it just decrypted, so owning the name is all
   it takes to own the install. Ours is `installer/runFirmwareExe.sh`;
-  `bin/pack.sh` bakes the model gate into it. It used to be FlashForge's own
-  file, with the mod's install spliced into the software component's `run.sh`
-  because that was the only place the stock updater would execute anything of
-  ours.
+  `bin/pack.sh` bakes the model gate and the password mode into it.
 * `/usr/prog/PROGRAM/software/firmwareExe`, the UI binary, replaced by a shell
   script that starts the supervisor.
 
 Because everything funnels through those two, `app_startup.sh`, `rcS` and the
-whole init chain stay **completely stock and unpatched**. The genuine
-`firmwareExe` is not kept anywhere: the installer wipes the software directory
-before the new version lands, so nothing on the printer is a reliable backup of
-it. Flashing the stock FlashForge package, which still ships it, is the
-uninstall.
+whole init chain stay **completely stock and unpatched**.
 
-One property comes for free from keeping the binary's name and place:
-`app_startup.sh`'s own watchdog greps `ps` for `firmwareExe` five seconds after
-launch. The wrapper *is* `firmwareExe` and stays in the foreground, so the stock
-watchdog supervises the mod correctly.
+A release ships **no FlashForge component at all** — just the installer and the
+payload — so nothing it does touches `/usr/prog/PROGRAM/software` except the
+one symlink. Two things follow, and both are why it is worth doing:
 
-Its other half does **not** currently work, and it is worth being exact about
-why. When nothing called `firmwareExe` is running, `app_startup.sh` copies one
-out of a version directory — `/usr/prog/PROGRAM/software/<version>/firmwareExe`.
-That directory is the software component the last flash installed, and ours has
-had `firmwareExe` deleted from it since we stopped shipping FlashForge's 21MB
-binary. So the recovery finds nothing to copy, and a printer whose payload
-failed to install shows a blank screen (ssh still answers — dropbear is stock
-init's). Not shipping a software component at all fixes this, because then the
-version directory is FlashForge's own and still holds their binary.
+* `app_startup.sh`'s watchdog greps `ps` for `firmwareExe` five seconds after
+  launch. The wrapper *is* `firmwareExe` and stays in the foreground, so the
+  stock watchdog supervises the mod correctly.
+* When nothing by that name is running, the same watchdog copies one out of the
+  version directory, `/usr/prog/PROGRAM/software/<version>/firmwareExe`. That
+  directory is still FlashForge's, with their genuine binary in it, so a
+  printer whose payload failed to install comes up on the stock UI instead of a
+  blank screen. A release that shipped its own component would have replaced
+  that directory and taken the recovery with it.
+
+Flashing the stock FlashForge package is still the uninstall.
 
 ## Services
 
@@ -104,11 +98,10 @@ executable:
   moonraker dying on `libpython3.8.so.1.0: cannot open shared object file`.
 
 Everything the mod installs lives under `/usr/data/anvil` on the **data**
-partition, which a FlashForge OTA cannot delete. The software component itself
-goes to `/usr/prog` on the firmware partition, which keeps only one version
-(the installer wipes every other version directory) and cannot fit ~100MB of
-web UI — that is why Mainsail and HelixScreen ride in
-the outer package instead.
+partition, which a FlashForge OTA cannot delete. Nothing at all is installed to
+`/usr/prog`: it is the firmware partition, it keeps only one version of a
+component (the installer wipes every other version directory), and it could not
+fit ~100MB of web UI in any case.
 
 ## Moonraker
 

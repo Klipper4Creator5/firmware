@@ -269,7 +269,7 @@ def test_nothing_we_ship_shadows_flashforges_python3(box):
 # The dev half of CPython: headers so the python-* recipes can compile against
 # it on a BUILD machine, pkgconfig files, and the config-3.13-* directory
 # holding the Makefile and the static library. anvil-python-dev owns all of it
-# and bin/patch.sh prunes it via PKG_DEV_FILES.
+# and bin/payload.sh prunes it via PKG_DEV_FILES.
 DEV_MARKERS = (
     MODDIR + "/include/python3.13",
     MODDIR + "/lib/pkgconfig",

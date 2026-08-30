@@ -31,10 +31,10 @@
 # two of every library both worlds wanted, which a package feed cannot express
 # without lying about one of them.
 #
-# Also sourced by bin/patch.sh, for pkg_out alone -- it stages what recipes
+# Also sourced by bin/payload.sh, for pkg_out alone -- it stages what recipes
 # built and has to name where they put it.
 #
-# Recipes run as their own process (both bin/patch.sh and bin/build-packages.sh
+# Recipes run as their own process (both bin/payload.sh and bin/build-packages.sh
 # exec them), so no cross-compiler PATH or CC can leak into whatever runs next
 # and nothing below needs a subshell to prevent it.
 
@@ -96,7 +96,7 @@ pkg_die()  { printf '   !! %s\n' "$*" >&2; exit 1; }
 # the files themselves and the maintainer scripts that travel with them. An
 # edited postinst changes what the .ipk does and nothing else would notice --
 # the version is a date and the payload bytes are unchanged, so the stamp
-# would read "already current". seed/ is placed by bin/patch.sh, is in no
+# would read "already current". seed/ is placed by bin/payload.sh, is in no
 # package, and must not invalidate one.
 #
 # TWO find CALLS AND AN `|| true`, not one find over both paths: most recipes
@@ -930,7 +930,7 @@ pkg_pywheel() {
 # pkgs/3rdparty/python-lmdb, and that recipe found out the hard way.
 #
 # It replaced a single "at least twelve .so files in the payload" check in
-# bin/patch.sh. The count was right and the location was wrong: an aggregate
+# bin/payload.sh. The count was right and the location was wrong: an aggregate
 # over the finished payload can say that SOMETHING fell back but not what, and
 # it went down by one whether the package that lost its extension was
 # markupsafe (a speedup) or cffi (klippy's chelper).

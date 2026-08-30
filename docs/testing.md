@@ -37,7 +37,7 @@ feedback, then again after `make packages`, when the rest of it can bite.
 | module | asks |
 |---|---|
 | `test_install.py` | what the machine's own installer produced: the stock boot chain is untouched and still parses, the wrapper is installed and starts the supervisor, every installed script is `sh -n`-clean under the printer's own busybox, klipper and the UI are services in the compiled database, klipper depends on the bring-up, the config include set is wired up, the user's `printer.cfg` survived, a pristine `backup/stock` was kept, and a boot with no stick does not go looking for an update |
-| `test_abi.py` | the ABI gate, and the only one there is: every ELF object on the installed filesystem -- ours, the stock tree's and whatever `bin/patch.sh` staged -- is 32-bit little-endian MIPS, and every one the kernel's loader will handle is `nan2008/o32/mips32r2`. Two exemptions, both measured and both narrow: kernel modules are `ET_REL` and have no FP ABI to agree about, and FlashForge ships one inert ARM binary |
+| `test_abi.py` | the ABI gate, and the only one there is: every ELF object on the installed filesystem -- ours, the stock tree's and whatever `bin/payload.sh` staged -- is 32-bit little-endian MIPS, and every one the kernel's loader will handle is `nan2008/o32/mips32r2`. Two exemptions, both measured and both narrow: kernel modules are `ET_REL` and have no FP ABI to agree about, and FlashForge ships one inert ARM binary |
 | `test_upgrade.py` | an update deletes what the last package shipped and **only** that -- the user's edits, their `moonraker-custom.conf`, their HelixScreen settings and anything nobody shipped all survive, over both the manifest path and the pre-manifest sweep |
 | `test_supervisor.py` | the s6 we cross-compiled: all 13 binaries load on the printer's kernel, and `s6-svwait -U` really waits for readiness rather than returning on the fork |
 | `test_boot_screen.py` | the first-boot screen renders on our own CPython 3.13, one screen's worth of correctly packed bytes, and degrades to "no screen" rather than raising when there is no panel |
@@ -69,7 +69,7 @@ tests over our own Python, and they have no replacement.
 ## The replica is a tool, not a test
 
 `tools/replica/` builds the machine both suites run against, and the build
-uses it too -- `bin/patch.sh` assembles the payload by running the printer's
+uses it too -- `bin/payload.sh` assembles the payload by running the printer's
 own `opkg` inside it. It is not under `test/` because nothing in it is a test:
 
 ```
@@ -221,11 +221,11 @@ Tests that cannot fail are worse than no tests, because they read as coverage:
     mattered, by `runFirmwareExe.sh` refusing a foreign package -- which the
     replica lane exercises on every install.
   - `test-base-cfg` compared our `printer.base.cfg` against
-    `work/software/.../printer.base.cfg` — which `bin/patch.sh` overwrites
-    *with our own file* before the test reads it. It had been diffing our file
-    against itself: green on a cold tree, red on a second build, and
-    blind to real drift either way. The comparison moved into `bin/unpack.sh`,
-    where a pristine stock tree actually exists.
+    `work/software/.../printer.base.cfg` — which the build overwrote *with our
+    own file* before the test read it. It had been diffing our file against
+    itself: green on a cold tree, red on a second build, and blind to real
+    drift either way. The comparison moved into `bin/unpack.sh`, where a
+    pristine stock tree actually exists.
   - `test-applets`' command-word scan only extracted the first word of a
     simple, unprefixed command: `if timeout 5 foo; then` yielded
     `['if','echo','fi']`, so the one failure its docstring named was invisible

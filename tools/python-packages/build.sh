@@ -4,7 +4,7 @@
 # for the CPython 3.13 that tools/python/build.sh already produces for the
 # FlashForge Creator 5 Pro (Ingenic mipsel).
 #
-# SPIKE. Nothing here is wired into bin/patch.sh yet.
+# SPIKE. Nothing here is wired into bin/payload.sh yet.
 #
 # Same non-negotiables as tools/python/build.sh, for the same reasons:
 #

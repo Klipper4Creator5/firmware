@@ -11,7 +11,7 @@
 # extruder_stepper_free shipped and bricked klippy startup on hardware. One
 # source verb means one tree, so the failure is unrepresentable here.
 #
-# NO CACHE OF ITS OWN. bin/patch.sh kept a $FORK/.version stamp and an
+# NO CACHE OF ITS OWN. bin/payload.sh kept a $FORK/.version stamp and an
 # `is the .so older than any .c` mtime test, both of which pkg_begin's stamp
 # replaces -- the stamp is the pinned commit and the toolchain filename, so a
 # bump to either rebuilds and nothing else does.
@@ -26,7 +26,7 @@ pkg_unpack "$KLIPPER_TGZ"
 # GitHub's generated tarball wraps the repository in klipper-<sha>/, and the
 # unpack keeps that wrapper rather than hiding the shape of the archive behind
 # --strip-components -- the same choice pkgs/moonraker makes and for the same
-# reason. The guard is bin/patch.sh's, kept: a tarball whose shape changed
+# reason. The guard is bin/payload.sh's, kept: a tarball whose shape changed
 # under us would build nothing, which looks like a clean build and a printer
 # that cannot move.
 _top="klipper-$KLIPPER_VERSION"
@@ -77,7 +77,7 @@ pkg_ship "klipper"
 # THE ABI -- o32/nan2008/mips32r2, which the kernel answers with ENOEXEC -- is
 # asked once now, of the installed filesystem, in qa/replica/test_abi.py. That
 # covers both vehicles this tree travels on (the .ipk and the SOFTWARE component
-# bin/patch.sh stages) rather than only the one a build.sh can see.
+# bin/payload.sh stages) rather than only the one a build.sh can see.
 #
 # THE SYMBOLS -- every function klippy cdefs, against the .so's dynamic symbol
 # table -- went with the test/ tree. cffi resolves lazily, so a .so built from
