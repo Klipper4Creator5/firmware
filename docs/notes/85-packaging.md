@@ -646,8 +646,11 @@ synthetic stock fixture with the real vendored assets:
 | added | `klipper/**`, `var/lib/opkg/**`, `bin/opkg` |
 | two builds in a row | byte-identical |
 
-`bin/verify.sh` passes every check including the ship boundary; `make test`
-runs `build-packages → unpack → patch → pack → verify` with 9 gates green.
+`bin/verify.sh` passed every check including the ship boundary; `make test`
+ran `build-packages → unpack → patch → pack → verify` with 9 gates green.
+(Measured while both existed. `bin/verify.sh` and `make test` have since been
+retired -- the ship boundary is now `qa/replica/test_what_ships.py`, asked of
+the installed machine.)
 
 **One bug fell out of it.** `PKG_EXCLUDE` was applied with `find -name`, which
 matches a basename at any depth, so `.version` deleted Mainsail's own
