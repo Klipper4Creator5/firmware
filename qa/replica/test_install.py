@@ -287,6 +287,52 @@ def test_the_config_include_set_is_wired_up(box):
     assert not missing, "included but not installed: %s" % missing
 
 
+def test_every_include_resolves_not_just_ours(box):
+    """The other four.
+
+    The test above deliberately reads only `ff-*.cfg`, which is the mod's own
+    set -- and for a long time that was the whole check, so the FOUR
+    FlashForge includes at the top of printer.base.cfg (printer.filament.cfg,
+    printer.probe.cfg, printer.mesh.cfg, printer.vibration.cfg) were never
+    asked about at all. They are not ours and never will be: they arrive from
+    the stock firmware and we merely include them.
+
+    That is exactly why they need a gate. Klipper treats an [include] that
+    matches no file as FATAL, so a missing one is not a degraded printer, it is
+    a printer that does not start -- and it would be missing for a reason
+    nothing else here would notice, because no package of ours ships it and no
+    recipe of ours could.
+
+    printer.vibration.cfg is the one with teeth: it declares
+    [stepper_resonance_tester], which is why anvil-klipper depends on
+    anvil-python-numpy at all. See qa/replica/test_klippy_extras_import.py and
+    docs/notes/44-vfa-calibration.md.
+    """
+    base = box.file("/usr/data/config/printer.base.cfg")
+    assert base.exists, "no printer.base.cfg -- the mod's config is not wired up"
+
+    included = set(re.findall(r"\[include\s+([^\]]+)\]", base.text))
+    included = {name.strip() for name in included}
+    assert len(included) > 4, (
+        "printer.base.cfg declares only %d includes (%s) -- that is fewer than "
+        "the four FlashForge ones alone, so this file is not the one the "
+        "printer reads" % (len(included), ", ".join(sorted(included))))
+
+    # `ls` rather than File.exists, because Klipper accepts a glob here and one
+    # of ours is a directory of per-model chamber configs.
+    missing = []
+    for name in sorted(included):
+        listing = box.sh("ls -1 /usr/data/config/%s 2>/dev/null" % name)
+        if not listing.out.strip():
+            missing.append(name)
+    assert not missing, (
+        "printer.base.cfg includes %s, and no such file is in "
+        "/usr/data/config. Klipper treats a missing include as fatal, so this "
+        "printer would not start. If these are FlashForge's own configs, the "
+        "replica's /usr/data was seeded without them -- see "
+        "tools/replica/printer/seed-prog.sh." % missing)
+
+
 def test_the_user_printer_cfg_was_not_clobbered(box):
     """The one file on the machine that is the owner's, not ours."""
     cfg = box.file("/usr/data/config/printer.cfg")

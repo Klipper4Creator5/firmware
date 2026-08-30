@@ -86,3 +86,43 @@ def test_recipe_names_are_unique_across_the_two_levels():
     assert not dupes, (
         "recipe name at both levels: %s -- pkg_dir would silently pick one"
         % ", ".join(dupes))
+
+
+def test_klipper_still_depends_on_numpy():
+    """The one Depends in this repo whose absence is a printer that will not boot.
+
+    Every other name in anvil-klipper's Depends means "klippy imports this".
+    numpy means "klippy does not start": extras/stepper_resonance_tester.py
+    opens with a bare `import numpy as np`, klippy.py:122 walks EVERY config
+    section through a load_object, and klippy.py:103 does not catch
+    ImportError -- so with printer.base.cfg including FlashForge's
+    printer.vibration.cfg ([stepper_resonance_tester]), dropping this line does
+    not lose a feature, it bricks the boot.
+
+    It is asserted HERE, statically, because the replica gates that would catch
+    it (qa/replica/test_klippy_extras_import.py, test_numpy.py) need an image
+    baked and a container up, and this one is a grep. It is the cheapest gate
+    on the most expensive mistake, and the mistake has already been made once:
+    two comments in this repo asserted the module guarded its own import, and
+    the dependency did not exist at all until the note that disproved them.
+
+    See docs/notes/44-vfa-calibration.md.
+    """
+    conf = os.path.join(ROOT, "pkgs", "klipper", "pkg.conf")
+    assert os.path.isfile(conf), "pkgs/klipper/pkg.conf is gone"
+    text = open(conf, encoding="utf-8").read()
+
+    # The recipe it must name has to be a recipe, or the Depends resolves to
+    # nothing at install time and opkg refuses the package.
+    assert any(n == "python-numpy" for n, _ in recipes()), \
+        "no python-numpy recipe, so anvil-klipper's Depends names a package " \
+        "no feed of ours builds"
+
+    depends = "".join(
+        line for line in text.splitlines(keepends=True)
+        if not line.lstrip().startswith("#"))
+    assert "anvil-python-numpy" in depends, (
+        "anvil-klipper no longer depends on anvil-python-numpy. That is not a "
+        "lost feature -- klippy loads [stepper_resonance_tester] from "
+        "FlashForge's printer.vibration.cfg and dies on the ImportError, so "
+        "the printer never reaches ready.")

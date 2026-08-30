@@ -71,7 +71,7 @@ Files ending `-recovered` are reconstructions of the stock app's behaviour; the 
 - `25-app-vs-klipper-ownership.md` — which side owns which behaviour, and what is ported
 - `30-toolchange.md` — dock/grab/release sequences, sensors, mounted-tool state
 - `40-offsets.md` — where per-unit numbers live; per-tool offsets; the absolute print Z offset
-- `44-vfa-calibration.md` — VFA (motor torque-ripple) compensation: the stock chain, and the numpy gap that blocks it
+- `44-vfa-calibration.md` — VFA (motor torque-ripple) compensation: the stock chain, what applies it, and the numpy gap that stopped klippy booting
 - `45-tool-offset-calibration.md` — the Klipper port: storage layout, commands, guards
 - `46-offset-calibration-recovered.md` — the app's calibration sequence it was ported from
 - `47-filament-load-recovered.md` / `48-filament-load-port.md` — load/unload/purge

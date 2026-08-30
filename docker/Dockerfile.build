@@ -28,6 +28,18 @@
 # this container; the pin-and-hash rule governs what reaches the printer, and
 # the printer's opkg is cross-compiled against the libarchive OUR feed built.
 # Same call already made for gcc.
+#
+# ninja-build IS DEBIAN'S ON THE SAME TERMS, and MESON IS NOT -- the split is
+# the point. numpy builds with meson-python, so both are needed; but meson is
+# a Python module our build-python imports, and bookworm's 1.0.1 is below the
+# >=1.2.99 numpy's meson.build demands, so it is pinned in versions.env with
+# the rest of PYPKG_HOST_LIST. ninja is a program meson merely execs, no pin of
+# ours would change what it emits, and nothing it produces reaches a printer
+# except through the cross compiler that is pinned.
+#
+# IT IS NEEDED EARLIER THAN NUMPY, which is the part that surprises: meson-python
+# is self-hosting (backend-path = ['.']), so pkg_buildpython runs meson and
+# ninja just to install the backend itself.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -39,7 +51,7 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
       binutils file findutils grep sed gawk make git diffutils patch procps \
       squashfs-tools qemu-user-static docker.io shellcheck \
       gcc g++ libc6-dev zlib1g-dev pkg-config perl \
-      libarchive-dev \
+      libarchive-dev ninja-build \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

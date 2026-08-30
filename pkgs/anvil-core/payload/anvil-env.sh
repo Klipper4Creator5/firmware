@@ -66,19 +66,23 @@ export LD_LIBRARY_PATH
 # klippy -- which reaches c_helper.so through _cffi_backend, the reason this
 # interpreter had to be a glibc build.
 #
-# klippy's numpy gap (extras/stepper_resonance_tester.py) is this switch's
-# problem and it is NOT a smaller item. This comment used to say the module
-# guards its own import, so the printer runs without it and loses resonance
-# testing. Both halves are wrong: line 1 of that file is a bare
+# THE NUMPY GAP WAS THIS SWITCH'S, and it was not the small item this comment
+# used to call it. The old text said extras/stepper_resonance_tester.py guards
+# its own import, so the printer runs without numpy and merely loses resonance
+# testing. Both halves were wrong: line 1 of that file is a bare
 # `import numpy as np`, and klippy.py:122 loads EVERY config section through a
 # load_object that does not catch ImportError. printer.base.cfg includes
 # FlashForge's printer.vibration.cfg, which declares
-# [stepper_resonance_tester] -- so on this interpreter klippy does not come up
-# at all, rather than coming up without one feature.
+# [stepper_resonance_tester] -- so moving klippy to an interpreter without
+# numpy did not cost a feature, it stopped klippy reaching ready at all.
 #
-# See docs/notes/44-vfa-calibration.md for the chain and the options. Nothing
-# here is fixed by editing this line; it takes either a packaged numpy or a
-# guarded import in the fork.
+# CLOSED BY pkgs/3rdparty/python-numpy, which anvil-klipper now names in its
+# Depends. FlashForge's 3.8.2 had numpy in its rootfs and a 3.8 .so is not
+# importable from 3.13, so the interpreter switch had to bring its own -- and
+# it is the reason ninja-build is in docker/Dockerfile.build and
+# pkgs/lib.sh grew pkg_mesoncross. docs/notes/44-vfa-calibration.md has the
+# chain, and qa/replica/test_klippy_extras_import.py is the gate that would
+# have caught it.
 #
 # Note what is NOT on PATH below: $MODDIR/bin is prepended and the interpreter
 # is in there, but it is called python3.13 and only that. bin/payload.sh
