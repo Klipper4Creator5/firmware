@@ -83,7 +83,7 @@ pypkg_var() {
 # The sdist as bin/fetch-assets.sh leaves it in vendor/.
 pypkg_tgz() { printf '%s/vendor/%s' "$ROOT" "$(pypkg_var "$1" FILE)"; }
 # Version taken from the pinned file name, after the LAST dash -- which is what
-# makes inotify_simple-1.3.5 and pyserial-asyncio-0.6 both come out right.
+# makes importlib_metadata-8.7.0 and dbus_fast-5.0.22 both come out right.
 pypkg_version() {
     local _f
     _f="$(pypkg_var "$1" FILE)"

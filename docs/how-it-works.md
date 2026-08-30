@@ -136,7 +136,7 @@ never invoked — the moonraker service starts the server itself.
 **FlashForge's python 3.8.2 is not what this runs on any more.** `FF_PYTHON`
 in `anvil-env.sh` names a CPython 3.13 of our own, cross-built for mipsel by
 `pkgs/3rdparty/python`, with every third-party C extension Moonraker needs beside it in
-`$MODDIR/lib/python3.13/site-packages` — eighteen packages, one `pkgs/3rdparty/python-*`
+`$MODDIR/lib/python3.13/site-packages` — nineteen packages, one `pkgs/3rdparty/python-*`
 recipe and one `.ipk` each — and libsodium in `$MODDIR/lib`; none of it
 borrowed from `/usr/prog`. Measured through the
 real boot path (the scandir, the moonraker service, readiness gating on `:7125`
@@ -144,19 +144,26 @@ actually listening, a `kill -9` respawn, a stop that stays stopped). klippy is o
 too: the `klipper` service execs `$FF_PYTHON` against the klippy tree in
 `$MODDIR/klipper`, so both halves are ours.
 
-**The Moonraker commit pin is still a 2023 one, though the reason it exists
-has changed.** FlashForge built python 3.8.2 without the `_sqlite3` module,
-and Moonraker moved its database from lmdb to sqlite in v0.9.0, so on 3.8.2
-every release from there on got as far as loading the database component and
-died with `ModuleNotFoundError: No module named '_sqlite3'`. Our 3.13 has a
-working `_sqlite3` (measured: create, insert, select, reopen -- and exercised
-for real every run, since Moonraker itself comes up on it in
-`qa/replica/test_web.py`), which is what unpins this -- but the pin has not moved yet: nobody
-has taken a newer Moonraker through this build and its replica gates, and a
-version bump is exactly the kind of change that wants its own measurement,
-not a side effect of an interpreter switch. Until it does, the printer's lmdb
-store is used in place -- nothing is converted, and reverting to stock is a
-clean round trip.
+**Moonraker is a release now, `v0.11.0`, and no longer a 2023 commit.**
+FlashForge built python 3.8.2 without the `_sqlite3` module, and Moonraker
+moved its database from lmdb to sqlite in v0.9.0, so on 3.8.2 every release
+from there on got as far as loading the database component and died with
+`ModuleNotFoundError: No module named '_sqlite3'`. Our 3.13 has a working
+`_sqlite3` (measured: create, insert, select, reopen -- and exercised for real
+every run, since Moonraker itself comes up on it in `qa/replica/test_web.py`),
+which is what unpinned it.
+
+Upgrading a printer that has run an older release **converts** its database:
+Moonraker reads the existing `data.mdb` once and writes an sqlite store beside
+it, which is why `anvil-python-lmdb` still ships even though nothing imports
+lmdb at runtime any more. Without that module Moonraker tries to `pip install`
+one, and a printer has no index to install from -- the old database would be
+dropped in silence. Reverting to stock is still a clean round trip: the lmdb
+store is read, not deleted.
+
+The dependency set moved with it. `dbus-next` became `dbus-fast`,
+`importlib-metadata` (and its `zipp`) is new, and `pyserial-asyncio` is gone,
+imported by nothing in 0.11.0.
 
 This was not worked out in advance; v0.9.3 was built, shipped and tried on the
 printer first, and that is what it said. What came out of it: when bumping the

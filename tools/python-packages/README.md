@@ -30,6 +30,11 @@ speedups, pillow. Pure: jinja2, distro, inotify-simple, libnacl, dbus-next,
 preprocess-cancellation, pyserial, pyserial-asyncio, pycparser, smart_open,
 setuptools.
 
+That is the list as this harness measured it. The feed's has since moved with
+Moonraker's: `v0.11.0` swapped dbus-next for dbus-fast, added
+importlib-metadata and zipp, and dropped pyserial-asyncio. `versions.env` is
+the list that matters.
+
 **The list is deliberately not `moonraker-requirements.txt`**, which installs
 every optional component's dependencies. It is the closure of what the
 *enabled* component set imports -- `moonraker.conf`'s sections plus

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Moonraker -- stage the pinned source tree into the prefix.
 #
-# GitHub's generated tarball wraps everything in moonraker-<sha>/, and what we
+# GitHub's generated tarball wraps everything in moonraker-<ref>/, and what we
 # want is the moonraker/ package directory inside it, not the repository root.
+# The pin is a tag and GitHub strips its leading "v" from that directory name,
+# which ${MOONRAKER_VERSION#v} undoes.
 # The unpack keeps the wrapper and the stage reaches through it, rather than
 # --strip-components hiding the archive's shape from whoever reads this.
 #
@@ -15,7 +17,7 @@ set -euo pipefail
 pkg_begin moonraker || exit 0
 pkg_unpack "$MOONRAKER_TGZ"
 
-_src="$PKG_WORK/src/moonraker-$MOONRAKER_VERSION/moonraker"
+_src="$PKG_WORK/src/moonraker-${MOONRAKER_VERSION#v}/moonraker"
 # The guard bin/payload.sh has always had, kept: a tarball whose shape changed
 # under us would otherwise stage nothing, which looks like a clean build and a
 # dead web UI.

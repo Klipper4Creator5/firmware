@@ -177,7 +177,10 @@ def _host_files():
 #                  configure's link probe fail, and CPython then records the
 #                  module as missing and builds a perfectly working
 #                  interpreter without it.
-#   lmdb           Moonraker's database at the pinned commit.
+#   lmdb           NOT Moonraker's database any more -- 0.11.0 keeps it in
+#                  sqlite. It is what reads the OLD database during the
+#                  one-time conversion on a printer upgrading from a release
+#                  that used it, so it still has to import.
 #   _cffi_backend  klippy's route to c_helper.so, and the reason this
 #                  interpreter had to be glibc rather than musl.
 #
