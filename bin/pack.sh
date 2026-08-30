@@ -26,6 +26,15 @@ OUT_VER="${SW_VER:-$STOCK_SW_VER}"
 rm -rf work/stage work/out
 mkdir -p work/stage work/out
 
+# A baked-in default would be the same password on every printer, so an empty
+# ROOT_PW_HASH means the installer picks a random one ON the machine and writes
+# it to the USB stick. Baked into runFirmwareExe.sh below.
+if [ -z "${ROOT_PW_HASH:-}" ]; then
+    PW_AUTO=1
+else
+    PW_AUTO=0
+fi
+
 # --- 1. md5sum.list -- the installer hard-gates on it. Paths must be "./rel",
 #     and the list must not contain itself.
 echo ">> regenerating md5sum.list"
@@ -44,6 +53,23 @@ tar -cf "work/stage/software-$OUT_VER.tar.xz" -C work/software .
 ls -lh "work/stage/software-$OUT_VER.tar.xz" | awk '{print "   "$5}'
 
 # --- 3. the rest of the outer package
+#
+# Which model this package installs on. Resolved HERE rather than at emit time
+# because two things need it now: the gate baked into our installer, and the
+# output filename app_startup.sh globs for. They must agree -- a file named for
+# one model carrying a gate for the other installs on neither.
+PKG_MACHINE=$(cat work/.pkg_machine 2>/dev/null || echo "")
+PKG_PID=$(cat work/.pkg_pid 2>/dev/null || echo "")
+[ "$PKG_MACHINE" = unknown ] && PKG_MACHINE=""
+[ "$PKG_PID" = unknown ] && PKG_PID=""
+if [ -n "$PKG_MACHINE" ] && [ "$PKG_MACHINE" != "${TARGET_MACHINE:-$PKG_MACHINE}" ]; then
+    echo "MODEL MISMATCH: stock package is for '$PKG_MACHINE', TARGET_MACHINE='$TARGET_MACHINE'" >&2
+    echo "  point STOCK_TGZ_$(echo "$TARGET_MACHINE" | tr a-z A-Z) at a $TARGET_MACHINE package" >&2
+    exit 1
+fi
+OUT_MACHINE="${PKG_MACHINE:-${TARGET_MACHINE:-Creator5Pro}}"
+OUT_PID="${PKG_PID:-${TARGET_PID:-0029}}"
+
 # The payload rides here so it lands on /usr/data, not the firmware partition.
 if [ -d "$PAYLOAD_DIR" ]; then
     # This one IS really xz: we extract it ourselves with `xz -dc`.
@@ -52,9 +78,27 @@ if [ -d "$PAYLOAD_DIR" ]; then
     ls -lh work/stage/anvil.tar.xz | awk '{print "   "$5}'
 fi
 
-# FlashForge's own installer, reused verbatim; only what it installs changes.
-cp -f work/outer/runFirmwareExe.sh work/stage/
+# OUR installer, not FlashForge's. app_startup.sh runs whatever it finds under
+# this name, so owning the name is all it takes to own the install -- see the
+# header of installer/runFirmwareExe.sh for the contract and the exit codes.
+#
+# Three lines are rewritten rather than being config the script reads: it runs
+# on a printer with nothing beside it but the package it came in, so the gate
+# and the password mode have to be IN it. The `^NAME=` shape is what
+# bin/unpack.sh and tools/replica/printer/entrypoint.sh read back.
+echo ">> generating runFirmwareExe.sh ($OUT_MACHINE/$OUT_PID, pw-auto=$PW_AUTO)"
+sed -e "s/^MACHINE=.*/MACHINE=$OUT_MACHINE/" \
+    -e "s/^PID=.*/PID=$OUT_PID/" \
+    -e "s/^MOD_PW_AUTO=.*/MOD_PW_AUTO=$PW_AUTO/" \
+    installer/runFirmwareExe.sh > work/stage/runFirmwareExe.sh
 chmod +x work/stage/runFirmwareExe.sh
+# The substitutions are not optional: a package whose gate still says
+# Creator5Pro because a sed missed would install on the wrong machine.
+for _want in "MACHINE=$OUT_MACHINE" "PID=$OUT_PID" "MOD_PW_AUTO=$PW_AUTO"; do
+    grep -qx "$_want" work/stage/runFirmwareExe.sh || {
+        echo "runFirmwareExe.sh has no '$_want' line -- the sed above missed" >&2
+        exit 1; }
+done
 for f in start.img end.img play; do
     [ -f "work/outer/$f" ] && cp -f "work/outer/$f" work/stage/
 done
@@ -81,16 +125,6 @@ if [ "$PLAIN" = "1" ]; then
     echo
     echo "PLAIN package: work/out/plain/  -> copy its CONTENTS to the USB root"
 else
-    # The two models ship DIFFERENT firmwareExe binaries.
-    PKG_MACHINE=$(cat work/.pkg_machine 2>/dev/null || echo "")
-    if [ "$PKG_MACHINE" = unknown ]; then PKG_MACHINE=""; fi
-    if [ -n "$PKG_MACHINE" ] && [ "$PKG_MACHINE" != "${TARGET_MACHINE:-$PKG_MACHINE}" ]; then
-        echo "MODEL MISMATCH: stock package is for '$PKG_MACHINE', TARGET_MACHINE='$TARGET_MACHINE'" >&2
-        echo "  point STOCK_TGZ_$(echo "$TARGET_MACHINE" | tr a-z A-Z) at a $TARGET_MACHINE package" >&2
-        exit 1
-    fi
-    OUT_MACHINE="${PKG_MACHINE:-${TARGET_MACHINE:-Creator5Pro}}"
-
     echo ">> tarring + encrypting"
     # Outer tar is NOT gzipped despite the .tgz name -- unTar pipes the
     # decrypted stream into `tar xvf -`. The prefix must match the model:

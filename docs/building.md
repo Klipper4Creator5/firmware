@@ -200,9 +200,9 @@ If the stick cannot be written, no password is set — a password nobody can rea
 is no better than no access, and leaving a guessable one behind would be worse
 than saying so.
 
-`bin/patch.sh` decides which of the two applies and sets `MOD_PW_AUTO` in the
-injected install block; `installer/run-append.sh` does the on-device half with
-the printer's own `mkpasswd`.
+`bin/pack.sh` decides which of the two applies and bakes `MOD_PW_AUTO` into
+`installer/runFirmwareExe.sh`, which does the on-device half with the printer's
+own `mkpasswd`.
 
 ## Two config files
 
@@ -239,9 +239,10 @@ pkgs/<recipe>/seed/      templated or seeded user state: not a package member,
 pkgs/<recipe>/control/   maintainer scripts, copied verbatim into the .ipk's
                         CONTROL/ -- metadata, not content
 
-installer/              run-pre.sh, run-append.sh -- never files on the
-                        printer at all: patch.sh splices them into the stock
-                        run.sh
+installer/              runFirmwareExe.sh -- THE installer. app_startup.sh
+                        runs whatever it finds under this name in the package
+                        it decrypted, so this file is the whole install;
+                        pack.sh bakes the model gate into it
 ```
 
 Which is to say:
