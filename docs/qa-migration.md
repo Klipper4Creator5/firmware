@@ -342,8 +342,10 @@ build host's execline. The database is compiled in the replica now, by the
 `s6-rc-compile` the payload ships, so that hazard cannot exist. The price is
 that a boot-order mistake is caught by the replica lane rather than in a
 second, and that the timeout and edge assertions are not currently made
-anywhere. `bin/verify.sh` keeps the one part a host can still check: the
-oneshot runner's shebang, read straight out of the shipped database.
+anywhere. The oneshot runner's shebang was the one part a host could still
+check and `bin/verify.sh` kept it; that file is gone too (see *`bin/verify.sh`
+is retired* below), and `qa/replica/test_s6rc.py` covers the same ground by
+booting the database rather than reading it.
 
 ### The gates phase 8 killed have been retired
 
@@ -461,7 +463,7 @@ Three gates were dropped rather than ported, as a coverage decision:
 |---|---|---|
 | the pytest gate | `run-tests.py` ran pytest and re-parsed its XML | none at the time -- `make test-py` and CI ran pytest directly; both went when `test/` was deleted |
 | the rootfs extraction | ran `unpack.sh` + `extract_rootfs` inline | none -- `make rootfs` does exactly this, and the replica lane already fails with that command in the message |
-| **the packaging build on a synthetic stock package** | `make-stock-fixture.sh`, then `unpack`/`patch`/`pack`/`verify.sh` | **real: `bin/unpack.sh`, `patch.sh`, `pack.sh` and `verify.sh` now have no test at all** |
+| **the packaging build on a synthetic stock package** | `make-stock-fixture.sh`, then `unpack`/`patch`/`pack`/`verify.sh` | **real: `bin/unpack.sh`, `patch.sh` and `pack.sh` now have no test at all.** `verify.sh` has since been retired outright -- see below |
 
 That last row is the one to be uneasy about, and it is recorded here rather
 than buried in a commit message. The build path is what produces the `.tgz` a
@@ -485,6 +487,59 @@ $WORK_DIR/klipper/chelper.tar` -- is what `bin/patch.sh` depended on while the
 klippy tree still went out on the firmware partition; the tree lives at
 `$MODDIR/klipper` now and neither that section nor the `chelper.tar` exists. Recover both from git history rather than from a fresh reading of
 a stock package.
+
+### `bin/verify.sh` is retired
+
+Forty checks, run on the build host against a decrypted copy of the `.tgz`.
+Four survive, in `qa/replica/test_what_ships.py`. The rest went because of
+what the word *simulate* was doing in the file's own description -- "simulate
+every check the printer performs".
+
+The replica lane does not simulate the install. `qa/replica/actions/install-package.sh`
+puts the package on a genuine FAT filesystem at `/dev/sda1` and runs the
+machine's own `/usr/prog/app_startup.sh` over it, verbatim, under qemu. So the
+decrypt, the plain-tar components, `md5sum.list`, the `MACHINE=` gate and the
+`/mnt/<Model>-*.tgz` glob are all *preconditions of the lane* now rather than
+assertions in it: break any of them and the install fails, `installed_image()`
+raises with the install log attached, and every replica test goes red at once.
+A host-side re-reading of the same rules is a second implementation, and a
+second implementation can agree with itself while disagreeing with the printer
+-- the lesson `qa/replica/conftest.py` records this repo learning twice about
+hand-placed payloads.
+
+A second block was asking what the suite already answers, and answers of an
+installed filesystem rather than of a `tar -t` listing: the klippy tree and
+`c_helper.so` (`test_install.py`, `test_abi.py`), the compiled s6-rc database
+and the oneshot runner's execline (`test_s6rc.py`), s6 and `s6-ftrigrd`
+(`test_supervisor.py`), the `.install-manifest` (`test_upgrade.py`),
+libsodium's bare `.so` symlink and the chamber configs
+(`static/test_ipk.py`), and every shipped script's syntax
+(`static/test_shell_syntax.py`).
+
+The four that moved are the ones nothing else asks, and each got stronger for
+the move -- a listing cannot tell you that a shared object loads, or what a
+name resolves to on a `PATH`:
+
+- the shipped interpreter **imports** `sqlite3`, `lmdb` and `_cffi_backend`,
+  rather than a grep finding three `.so` files. This is the check that catches
+  a cross build resolving to an x86_64 manylinux wheel, which is present on
+  disk and raises on import.
+- nothing in `$MODDIR/bin` shadows FlashForge's `python3`, asked with
+  `command -v` after sourcing `anvil-env.sh` -- which is the file that
+  *prepends* `$MODDIR/bin` to `PATH` and therefore creates the hazard.
+- CPython's dev half (headers, pkgconfig, `config-3.13-*`) did not ship.
+- the ship boundary: no file on the installed printer is byte-identical to one
+  under `bin/` or `docker/`. Asked of the machine rather than of the `.tgz`,
+  so it also sees anything a maintainer script wrote as root at install time.
+
+**What genuinely left with it**, and is recorded here rather than in a commit
+message: there is no longer any check you can run on the build host, in
+seconds and without docker, against a package you are about to flash. In
+particular nothing warns you *before* you copy the file to a stick that it was
+built from the wrong model's stock package. The printer still refuses it
+("Firmware does not match machine type") and `make qa-replica` still catches
+it, but the fast host-side warning that `make verify` gave the hardware
+checklist is gone.
 
 ### What survived in test/, and then did not
 

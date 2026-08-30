@@ -216,9 +216,12 @@ Tests that cannot fail are worse than no tests, because they read as coverage:
   - `test-ash-conformance` parsed the payload with the printer's busybox;
     `qa/replica/test_install.py` runs `sh -n` over every *installed* script
     with the same qemu'd busybox.
-  - `test-model-gate` checked what `verify.sh` §8b/§9 checks and what
+  - `test-model-gate` checked what `bin/verify.sh` §8b/§9 checked and what
     `pack.sh` already refuses to build. Its header claimed it proved the two
-    models ship different files; no such check existed in it.
+    models ship different files; no such check existed in it. `verify.sh` has
+    since been retired; the model gate is now enforced where it always
+    mattered, by `runFirmwareExe.sh` refusing a foreign package -- which the
+    replica lane exercises on every install.
   - `test-base-cfg` compared our `printer.base.cfg` against
     `work/software/.../printer.base.cfg` — which `bin/patch.sh` overwrites
     *with our own file* before the test reads it. It had been diffing our file

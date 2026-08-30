@@ -42,13 +42,16 @@ Find yours in Settings → About, or in
 `TARGET_MACHINE` in `config.env`. Then:
 
 ```sh
-make build && make verify          # one model
+make build                         # one model
 make release                       # both, into dist/
 ```
 
-`verify.sh` fails loudly on a mismatch. **You must start from a stock package
-built for your own model** — the mod inherits the gate from whatever package
-you unpack.
+**You must start from a stock package built for your own model** — the mod
+inherits the gate from whatever package you unpack, so a package built from
+the wrong stock file carries the wrong gate and your printer will refuse it
+with "Firmware does not match machine type". Nothing on the build host warns
+you first; `make qa-replica` catches it by installing the package the way the
+printer does.
 
 ## Before the first flash
 

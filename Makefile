@@ -83,7 +83,7 @@ RUNBLDTTY = $(subst --rm -i,--rm -it,$(RUN))
 
 .DEFAULT_GOAL := help
 .PHONY: help image shell passwd build vendor packages \
-        rootfs verify \
+        rootfs \
         printer-image printer-image-push \
         boot-screen boot-screen-sim \
         qa qa-static qa-replica \
@@ -207,19 +207,19 @@ packages: image config.env
 
 # One package per model, collected in dist/. They cannot share content: the
 # two stock packages ship different firmwareExe binaries.
+#
+# It checks nothing itself. bin/verify.sh used to run here and was a host-side
+# re-reading of what the printer does at install time; `make qa-replica` makes
+# the printer actually do it, so THAT is the gate before a release goes out.
 release: image config.env
 	@rm -rf dist && mkdir -p dist
 	@for m in Creator5Pro Creator5; do \
 	   echo "=== $$m ==="; \
 	   MODEL=$$m $(RUN) ./bin/build.sh $(PACKARGS) || exit 1; \
-	   MODEL=$$m $(RUN) ./bin/verify.sh || exit 1; \
 	   cp work/out/$$m-*.tgz dist/ || exit 1; \
 	 done
 	@echo; echo "dist/:"; ls -lh dist | awk 'NR>1{print "   "$$9"  "$$5}'
 	@echo; echo "Each file installs ONLY on the model in its name."
-
-verify: image
-	@$(RUN) ./bin/verify.sh
 
 # ===========================================================================
 #  TEST LANE -- never ships. Reads test.env for the replica settings; the only

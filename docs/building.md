@@ -31,15 +31,16 @@ unpack.sh   decrypt the stock .tgz, open the software component
 patch.sh    apply the mods to work/software/, and install the .ipk feed
             into work/modpayload-root/ to make the payload
 pack.sh     regenerate md5sum.list, tar, encrypt → work/out/<Model>-anvil-<date>.tgz
-verify.sh   simulate every check the printer performs, against the built file
 ```
 
-`make build` runs the first four. It needs the .ipk feed to exist first --
+`make build` runs all four. It needs the .ipk feed to exist first --
 `patch.sh` assembles the payload by installing it -- so `make packages`
-comes before a cold `make build`; patch.sh says so if it is missing.
-`verify.sh` is NOT one of them -- run
-`make verify` after it, as the hardware checklist does. Each is idempotent and
-safe to re-run.
+comes before a cold `make build`; patch.sh says so if it is missing. Each is
+idempotent and safe to re-run.
+
+There is no host-side check of the built file. `bin/verify.sh` used to
+re-implement the printer's install checks in bash; `make qa-replica` makes the
+printer perform them, so that is the gate now.
 
 Packages carry only the **software** component by default. The stock installer
 skips any component that is absent, so the kernel, the rootfs image and the
@@ -282,7 +283,7 @@ compiler on the printer to assemble it with.
 **Builds it** — host-side, never installed:
 
 ```
-bin/            fetch-assets -> unpack -> patch -> pack, plus verify.
+bin/            fetch-assets -> unpack -> patch -> pack.
                 build-packages.sh is the packaging lane below, and the four
                 steps need it to have run: patch.sh checks for the feed and
                 refuses without one
@@ -354,8 +355,8 @@ for why the host half moved.
 
 Two things keep the boundary from eroding: the only files of ours that
 `patch.sh` copies into a package are the ones under a recipe's `payload/`,
-`prog/` or `seed/`, and `make verify` fails if a built package contains any
-file byte-identical to one in `bin/`, `test/` or `docker/`.
+`prog/` or `seed/`, and `qa/replica/test_what_ships.py` fails if any file on
+the installed printer is byte-identical to one in `bin/` or `docker/`.
 
 ## Rebuilding chelper
 
