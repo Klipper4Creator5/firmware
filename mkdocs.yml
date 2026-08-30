@@ -116,3 +116,4 @@ nav:
           - Filament, calibration, persistent state: notes/60-background.md
           - Migrating to s6: notes/80-s6-migration.md
           - Packaging with opkg: notes/85-packaging.md
+          - Wipe and extract: notes/86-wipe-and-extract.md

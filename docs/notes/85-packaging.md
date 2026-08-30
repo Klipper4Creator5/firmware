@@ -511,6 +511,13 @@ with a different risk profile. Keeping the halves apart is what made the first
 one provable: on-printer behaviour is unchanged, so correctness reduced to a
 payload diff.
 
+**Cancelled rather than owed — see `86-wipe-and-extract.md`.** That note
+proposes deleting `$MODDIR` wholesale on update. A printer that never deletes
+selectively needs no file database for the purpose, ours or opkg's, so there
+is nothing left for this half to replace `.install-manifest` *with*. The
+`.list` files still ship and still describe the payload; nothing reads them at
+upgrade time.
+
 ### What it is assembled with
 
 **The printer's own opkg, on the printer's own filesystem.** `bin/patch.sh`

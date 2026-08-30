@@ -112,6 +112,11 @@ a file the previous payload shipped and this one does not is gone, (b) a file
 nothing shipped -- drop one in `bin/` by hand -- survives, (c) `anvil.conf` and
 `config-installed` still survive as they do today.
 
+**Shipped, and now superseded -- see `86-wipe-and-extract.md`.** That note
+proposes deleting `$MODDIR` wholesale on update instead, which gives property
+(a) for free and drops (b) and (c) deliberately. It records the audit: of
+everything the manifest protected, nothing turned out to need protecting.
+
 ## Phase 2 -- build s6 into the package
 
 Pin `skalibs` and `s6` in `versions.env` with sha256s; fetch in
