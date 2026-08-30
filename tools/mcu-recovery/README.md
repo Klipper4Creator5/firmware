@@ -182,10 +182,18 @@ StdPeriph-style driver library that upstream Klipper does not use.
    (IRQ 37). Reproducing that means declaring the handler on IRQ 36 as
    FlashForge do, bug and all, and padding the table out.
 2. **The vendor peripheral library** at 0x08008ACC (1,344 B, plus 328 B of
-   helpers). Compiling the right sources, not writing new code. Klipper
-   vendors only `n32g45x_adc.c`, but the rest is public: the N32G45x SDK
-   ships `n32g45x_usart.c`, `n32g45x_rcc.c` and `n32g45x_dma.c`, which are
-   the three drivers that block accounts for.
+   helpers) -- a matter of finding the right published source, not writing
+   new code. Klipper vendors only `n32g45x_adc.c`, but the rest is public:
+   the N32G45x SDK ships `n32g45x_usart.c`, `n32g45x_rcc.c` and
+   `n32g45x_dma.c`, exactly the three drivers that block accounts for.
+
+   Confirmed by compiling them: SDK V2.1.0's `RCC_GetClocksFreqValue` at
+   -O2 reproduces stock's first four instructions exactly and the next two
+   are the same pair swapped, and `USART_Init`/`DMA_Init` touch the same
+   registers and fields in the same order. So the family is right and the
+   revision is not. Nine flag combinations were tried and -O2 stays the
+   best fit, which points at a different SDK revision rather than different
+   build options -- other published mirrors are the next thing to try.
 3. **The DMA serial path** (268 B of interrupt handlers plus its setup),
    which sits on top of that library.
 4. **The remaining register-allocation differences** -- see below.
