@@ -98,18 +98,6 @@ say "payload: $(grep -c '^Package:' "$PAYLOAD_DIR/var/lib/opkg/status") packages
 # a machine: s6-rc-init reads it, the boot set comes up, and a database moved
 # aside is reported.
 
-# --- 5. the install manifest
-# Every path this payload installs, so the next update deletes exactly what this
-# one left behind -- a renamed init script leaves no stale twin. It names
-# ITSELF, and is moved in from a temp file so `find` cannot list a
-# half-written manifest.
-MOD_MANIFEST=.install-manifest
-{ ( cd "$PAYLOAD_DIR" && find . -mindepth 1 | sed 's|^\./||' )
-  echo "$MOD_MANIFEST"
-} | LC_ALL=C sort -u > work/.install-manifest
-mv -f work/.install-manifest "$PAYLOAD_DIR/$MOD_MANIFEST"
-say "install manifest: $(wc -l < "$PAYLOAD_DIR/$MOD_MANIFEST") paths -> $MODDIR/$MOD_MANIFEST"
-
 echo
 echo "Payload built."
 echo "  mod payload: $(du -sh "$PAYLOAD_DIR" | cut -f1)  (-> /usr/data/anvil, data partition)"

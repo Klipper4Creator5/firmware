@@ -326,20 +326,6 @@ def test_the_user_printer_cfg_was_not_clobbered(box):
     assert cfg.exists, "user printer.cfg was clobbered by the install"
 
 
-# ---------------------------------------------------------- the rollback copy
-
-def test_a_pristine_snapshot_was_kept(box):
-    """runFirmwareExe.sh copies the first install's backup to backup/stock and never
-    overwrites it, so there is always one snapshot taken before the mod ever
-    touched the machine -- later backups are of an already-modded printer."""
-    stock = box.file(MODDIR + "/backup/stock")
-    assert stock.is_dir, (
-        "no pristine snapshot at %s/backup/stock -- there is nothing taken "
-        "before the mod to restore from" % MODDIR)
-    assert box.sh("ls %s/backup/stock" % MODDIR).out.split(), (
-        "%s/backup/stock is empty" % MODDIR)
-
-
 # ------------------------------------------------------------ the install log
 
 def test_the_installer_said_it_installed(box):

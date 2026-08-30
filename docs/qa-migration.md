@@ -70,7 +70,7 @@ lands in `/usr/data/anvil`:
 
 | hand-placed | really installed |
 |---|---|
-| `anvil-env.sh anvil-service.sh anvil.conf init.d etc/s6` | `VERSION anvil-env.sh anvil-service.sh anvil.conf backup bin config config-installed etc helixscreen init.d lib libexec moonraker nginx www` |
+| `anvil-env.sh anvil-service.sh anvil.conf init.d etc/s6` | `VERSION anvil-env.sh anvil-service.sh anvil.conf bin config etc helixscreen init.d lib libexec moonraker nginx www` |
 
 `bin`, `lib` and `libexec` are the cross-built s6 and CPython 3.13. No amount
 of copying a recipe's files produces them.
@@ -255,11 +255,11 @@ nothing:
   -- it runs under `env -i` -- which still goes red if a future build
   reintroduces the dependency.
 - **`case-upgrade.sh`'s headline assertion was vacuous.** It proved an update
-  removes `init.d/S60web`; `run-append.sh:150` does `rm -rf $MODDIR/init.d`
-  *unconditionally*, outside the manifest branch, so it would have passed on an
-  installer whose entire manifest logic had been deleted. The port makes that
-  claim against a path only the manifest governs, and gives the unconditional
-  removal a test of its own.
+  removes `init.d/S60web`; the installer did `rm -rf $MODDIR/init.d`
+  unconditionally, so it would have passed on an installer whose entire
+  deletion logic had been removed. The port makes that claim against a path
+  the deletion actually governs, and gives the unconditional removal a test of
+  its own.
 - **`case-boot-screen.sh` confirmed its own arithmetic.** It computed the
   expected pixel packing by calling `ffscreen._pixel` *inside* the replica, so
   a swapped R/B would have matched itself perfectly. The port computes the
@@ -513,7 +513,7 @@ A second block was asking what the suite already answers, and answers of an
 installed filesystem rather than of a `tar -t` listing: the klippy tree and
 `c_helper.so` (`test_install.py`, `test_abi.py`), the compiled s6-rc database
 and the oneshot runner's execline (`test_s6rc.py`), s6 and `s6-ftrigrd`
-(`test_supervisor.py`), the `.install-manifest` (`test_upgrade.py`),
+(`test_supervisor.py`),
 libsodium's bare `.so` symlink and the chamber configs
 (`static/test_ipk.py`), and every shipped script's syntax
 (`static/test_shell_syntax.py`).

@@ -1,50 +1,45 @@
-"""Does an update delete what the last one installed -- and ONLY that?
+"""Does an update replace the whole of $MODDIR, and keep the little that must live?
 
-A port of test/integration/printer/case-upgrade.sh, which was 224 lines of ash
-reporting one bit. Same subject, same method: two synthetic payloads are built
-on the printer, the REAL installer/runFirmwareExe.sh is run over them by the
-printer's own busybox, and every question below is put to the filesystem
-afterwards. Nothing here greps the installer -- a grep would pass on an
-installer that deletes nothing and fail on a variable rename, and neither
-answer is about the printer.
+Two synthetic payloads are built on the printer, the REAL
+installer/runFirmwareExe.sh is run over them by the printer's own busybox, and
+every question below is put to the filesystem afterwards. Nothing here greps
+the installer -- a grep would pass on an installer that deletes nothing and
+fail on a variable rename, and neither answer is about the printer.
 
-WHY IT MATTERS. Deleting whole directories at the start of an update is right
-only while every file under them is ours, and $MODDIR/bin holds the supervisor
-and the interpreter and is the obvious place for someone to leave a script of
-their own. So bin/payload.sh ships a manifest of the paths the payload installs
-and runFirmwareExe.sh deletes what the PREVIOUS list named, nothing else. Two
-claims that pull against each other: either alone is trivially satisfiable
-(delete everything, or delete nothing) and only holding both at once means
-anything. The negative control -- a hand-dropped file in the SAME directory as
-one that has to go -- is what makes the pair a test.
+WHY IT MATTERS. `rm -rf $MODDIR` before extracting makes the installed set the
+shipped set by construction: a renamed script cannot survive beside the one
+that replaced it, and no list has to be shipped, read or trusted for that to
+hold. What it costs is everything else under $MODDIR, so the pair of claims
+this module holds is "the whole tree goes" and "the two things that outlive it
+did". Either alone is trivially satisfiable -- delete everything, or delete
+nothing -- and only both at once mean anything.
+
+The survivor is HelixScreen's settings, held on /tmp across the wipe and copied
+back over the tarball's seeded defaults. It is now the ONLY preservation
+mechanism in the installer, so it is asserted here with a value that could only
+have come from the printer. /usr/data/config is the other half of the answer,
+and it is outside $MODDIR entirely: printer.cfg and moonraker-custom.conf are
+never candidates for deletion because the wipe cannot reach them.
+
+THE NEGATIVE CONTROL IS INVERTED from what it used to be. `bin/not-ours` is a
+file no payload ever shipped, sitting in $MODDIR/bin beside one that has to go,
+and it must NOT survive: $MODDIR is the mod's install tree and an owner's own
+files belong in /usr/data. See docs/notes/86-wipe-and-extract.md for the audit
+behind that trade.
 
 THE FIXTURE FILENAMES ARE ARBITRARY. `bin/helper-v1`, `share/web-launcher`,
 `share/nginx-launcher`, `oldskin/` and friends stand for "a path the last
 package shipped"; nothing about them is real and no shipped file has those
-names. The case script used init.d/S60web, S60nginx and S62moonraker because
-the failure that prompted all this was a renamed init script surviving an
-update and starting nginx twice. Those names are NOT reused here, for a
-reason worth recording: runFirmwareExe.sh now removes $MODDIR/init.d and
-$MODDIR/anvil-service.sh UNCONDITIONALLY, whatever any manifest says, so an
-assertion about a file under init.d cannot distinguish the manifest from the
-sweep and would pass on an installer whose manifest logic had been deleted
-outright. The unconditional removal is asserted in its own right below; the
-manifest is asserted with names in directories only it governs.
+names.
 
 WHAT THIS MODULE DOES TO THE MACHINE. The `printer` fixture is a replica with
 the real package installed, and the first thing here is `rm -rf $MODDIR`: what
-is under test is runFirmwareExe.sh, whose entire input is a tarball plus whatever
-the last install left on disk, and a hand-built five-file payload exercises
-that exactly as well as a 100MB one while leaving the assertions legible.
-The container is module-scoped and nothing else shares it, so the wipe costs
+is under test is runFirmwareExe.sh, whose entire input is a tarball plus
+whatever the last install left on disk, and a hand-built payload exercises that
+exactly as well as a 100MB one while leaving the assertions legible. The
+container is module-scoped and nothing else shares it, so the wipe costs
 nothing -- but it is the reason this lives in its own file. Tests are
-sequential steps against one machine, in file order, as the case script's
-sections were.
-
-DELIBERATELY DROPPED from the port: nothing. Two things are ADDED, because
-they are cheap here and were not observable from a case script's exit code --
-the log line that says WHICH deletion branch ran (manifest or pre-manifest
-sweep), and the rmdir pass, which the case script never exercised.
+sequential steps against one machine, in file order.
 """
 import pytest
 
@@ -53,7 +48,7 @@ from lib.paths import ROOT
 pytestmark = pytest.mark.replica
 
 MODDIR = "/usr/data/anvil"
-MANIFEST = MODDIR + "/.install-manifest"
+CONFDIR = "/usr/data/config"
 LOG = "/usr/data/anvil-install.log"
 
 # The installer is a real file on a printer now -- app_startup.sh runs it out
@@ -80,18 +75,8 @@ INSTALL_T = 300
 
 # --------------------------------------------------------------- the actions
 
-def _pack(box, src, with_manifest):
+def _pack(box, src):
     """Stage `src` as the payload runFirmwareExe.sh will find on the disk.
-
-    The manifest is generated the way bin/payload.sh generates it -- find over
-    the staged tree, plus the manifest's own name, LC_ALL=C sort -u -- rather
-    than written out by hand here, because a hand-written fixture list would
-    be a list of what we HOPED was in the tree.
-
-    One deviation, and it is not a difference in the result: payload.sh drops
-    the tree's own root with `find -mindepth 1`, which is a GNU extension the
-    printer's busybox find need not have. This runs on the printer, so the
-    root is dropped with the grep the case script used instead.
 
     A plain tar under the .xz name, deliberately: the printer's busybox
     decompresses xz but cannot create it, and runFirmwareExe.sh documents a
@@ -99,26 +84,12 @@ def _pack(box, src, with_manifest):
     shipped it uncompressed. Packing this way means the fallback is executed
     by every run instead of being taken on trust -- and asserted, below.
     """
-    if with_manifest:
-        manifest = (
-            "{ ( cd %(src)s && find . | sed 's|^\\./||' | grep -v '^\\.$' )\n"
-            "  echo '.install-manifest'\n"
-            "} | LC_ALL=C sort -u > %(src)s/.install-manifest\n" % {"src": src})
-    else:
-        # The same tree shipped as a pre-manifest package would have shipped
-        # it. Removing the file rather than building a second directory keeps
-        # the two payloads identical in every other respect, so the legacy
-        # section differs from the ones above it in one thing only. The
-        # removal itself is the unconditional line below.
-        manifest = ""
     done = box.sh(
         "set -e\n"
-        "rm -f %(src)s/.install-manifest\n"
-        "%(manifest)s"
         "mkdir -p /usr/data/update\n"
         "rm -f %(tar)s\n"
         "( cd %(src)s && tar -cf %(tar)s . )\n"
-        % {"src": src, "manifest": manifest, "tar": MODTAR})
+        % {"src": src, "tar": MODTAR})
     if not done.ok:
         pytest.fail("could not build the %s payload: %s" % (src, done.text))
 
@@ -130,8 +101,7 @@ def _install(box):
     its own output to $LOG with an `exec >>` append, and this replica was
     assembled by installing the real package -- so the log already carries a
     "mod payload installed" from the bake. Reading it whole would let every
-    assertion below pass on a run in which the installer did nothing at all,
-    which is the exact vacuity the case script's final check existed to close.
+    assertion below pass on a run in which the installer did nothing at all.
     """
     box.sh(": > %s" % LOG)
     box.sh("sh %s" % INSTALLER, timeout=INSTALL_T)
@@ -161,9 +131,9 @@ def installer(printer):
 def first_install(installer):
     """Version 1: the payload the printer is already carrying.
 
-    Five files. `bin/anvil-hello` is shipped by both versions, `bin/helper-v1`
-    and `share/web-launcher` by this one only, and `oldskin/` is a whole
-    directory that version 2 drops.
+    `bin/anvil-hello` is shipped by both versions, `bin/helper-v1` and
+    `share/web-launcher` by this one only, and `oldskin/` is a whole directory
+    that version 2 drops.
 
     The install is guarded here rather than asserted downstream: if version 1
     never landed, every question in this file is being put to an empty
@@ -187,7 +157,7 @@ def first_install(installer):
     if not built.ok:
         pytest.fail("could not build the version 1 tree: %s" % built.text)
 
-    _pack(box, BUILD + "/v1", with_manifest=True)
+    _pack(box, BUILD + "/v1")
     log = _install(box)
     if "mod payload installed" not in log:
         pytest.fail(
@@ -200,94 +170,58 @@ def first_install(installer):
 def upgraded(first_install):
     """Version 2, installed over version 1 and over what a printer accumulates.
 
-    Everything planted here is something no payload ever shipped, and every
-    one of them is a thing an update has destroyed at some point in this
-    project's history. `bin/not-ours` is THE negative control: it sits in
-    $MODDIR/bin beside `helper-v1`, which does have to go, so nothing but
-    reading the manifest can tell the two apart.
+    Planted by hand, each standing for something no payload ships: `bin/
+    not-ours` is the negative control, `anvil.conf` carries an edit, and
+    init.d/S70klipper and anvil-service.sh are the leftovers of a pre-s6-rc
+    release. All of them must go, and the wipe is the only thing that takes
+    them -- there is no list that names any of them.
 
-    init.d/S70klipper and anvil-service.sh are planted too, and they are the
-    opposite claim: runFirmwareExe.sh removes both unconditionally because the
-    payload ships neither any more, and a leftover S70klipper starts an
-    unsupervised klippy beside the supervised one.
+    Two things must survive, and are planted with values that could only have
+    come from this printer: HelixScreen's settings.json, and an edited
+    /usr/data/config/moonraker.conf, which is outside $MODDIR and must be
+    overwritten anyway because the mod owns it.
 
-    Version 2 drops helper-v1 and oldskin/ and splits share/web-launcher in
-    two, which is the rename that started all this.
+    Version 2 drops helper-v1 and oldskin/, splits share/web-launcher in two --
+    the rename that started all this -- and ships a settings.json and a
+    moonraker.conf of its own for the two survivors to be measured against.
     """
     box = first_install
     planted = box.sh(
         "set -e\n"
         "echo 'MOD_WEB=0   # edited by hand' > %(mod)s/anvil.conf\n"
         "echo '#!/bin/sh' > %(mod)s/bin/not-ours\n"
-        "mkdir -p %(mod)s/config-installed\n"
-        "echo '[server]' > %(mod)s/config-installed/moonraker.conf\n"
         "mkdir -p %(mod)s/init.d\n"
         "echo '#!/bin/sh' > %(mod)s/init.d/S70klipper\n"
         "echo '#!/bin/sh' > %(mod)s/anvil-service.sh\n"
-        "mkdir -p %(build)s/v2/bin %(build)s/v2/share %(build)s/v2/www\n"
+        # The survivor: HelixScreen writes its settings inside its own install
+        # tree, so the wipe would take them without the /tmp stash.
+        "mkdir -p %(mod)s/helixscreen/config\n"
+        "echo mine > %(mod)s/helixscreen/config/settings.json\n"
+        # Outside $MODDIR, and ours to replace: an edit here used to be kept
+        # and landed the new version as .mod-new.
+        "mkdir -p %(conf)s\n"
+        "echo 'edited by hand' > %(conf)s/moonraker.conf\n"
+        "mkdir -p %(build)s/v2/bin %(build)s/v2/share %(build)s/v2/www "
+        "%(build)s/v2/helixscreen/config %(build)s/v2/config\n"
         "echo '#!/bin/sh' > %(build)s/v2/bin/anvil-hello\n"
         "echo '#!/bin/sh' > %(build)s/v2/share/nginx-launcher\n"
         "echo '#!/bin/sh' > %(build)s/v2/share/moonraker-launcher\n"
+        "echo shipped > %(build)s/v2/helixscreen/config/settings.json\n"
+        "echo v2 > %(build)s/v2/config/moonraker.conf\n"
         # NO anvil.conf in v2, deliberately: the payload ships none any more,
         # which is what makes the printer's copy something to remove rather
         # than something to put back.
         "echo v2 > %(build)s/v2/www/index.html\n"
-        % {"build": BUILD, "mod": MODDIR})
+        % {"build": BUILD, "mod": MODDIR, "conf": CONFDIR})
     if not planted.ok:
         pytest.fail("could not set up the upgrade: %s" % planted.text)
 
-    _pack(box, BUILD + "/v2", with_manifest=True)
+    _pack(box, BUILD + "/v2")
     box.upgrade_log = _install(box)
     return box
 
 
-@pytest.fixture(scope="module")
-def legacy(upgraded):
-    """The compatibility path: a printer whose install predates the manifest.
-
-    Every printer running a package built before the manifest existed has no
-    $MODDIR/.install-manifest and no way to reconstruct one, so runFirmwareExe.sh
-    falls back to the old sweep of whole directories. An upgrade off one of
-    those that left a renamed script in place would be the double-start
-    failure all over again, on the printers least able to report it.
-
-    NOT asserted here, because it cannot be: a hand-dropped bin/not-ours does
-    not survive this path. The sweep has no way to know it was not ours, which
-    is the cost of the branch and the reason runFirmwareExe.sh marks it for
-    deletion once no pre-manifest install can still be upgraded.
-    """
-    box = upgraded
-    laid = box.sh(
-        "set -e\n"
-        "rm -rf %(mod)s\n"
-        "mkdir -p %(mod)s/bin %(mod)s/config-installed\n"
-        "echo '#!/bin/sh' > %(mod)s/bin/stale-legacy\n"
-        "echo 'MOD_WEB=0   # edited by hand' > %(mod)s/anvil.conf\n"
-        "echo '[server]' > %(mod)s/config-installed/moonraker.conf\n"
-        % {"mod": MODDIR})
-    if not laid.ok:
-        pytest.fail("could not lay down the pre-manifest layout: %s" % laid.text)
-    if box.file(MANIFEST).exists:
-        pytest.fail("the pre-manifest layout was set up with a manifest in it "
-                    "-- this fixture would be testing the manifest branch")
-
-    _pack(box, BUILD + "/v2", with_manifest=False)
-    box.legacy_log = _install(box)
-    return box
-
-
 # ------------------------------------------------------- version 1 is on disk
-
-def test_the_first_install_shipped_a_manifest(first_install):
-    """Without one the update below takes the compatibility sweep, and every
-    claim about what it spares is a claim about a branch that did not run."""
-    listed = first_install.file(MANIFEST).lines
-    assert listed, "%s is empty or missing after the first install" % MANIFEST
-    assert ".install-manifest" in listed, (
-        "the manifest does not name itself, so the next update cannot replace "
-        "it: %r" % listed)
-    assert "share/web-launcher" in listed, listed
-
 
 def test_the_first_install_extracted_the_payload(first_install):
     assert first_install.file(MODDIR + "/www/index.html").text.strip() == "v1", (
@@ -295,7 +229,7 @@ def test_the_first_install_extracted_the_payload(first_install):
         % first_install.file(MODDIR + "/www/index.html").text)
 
 
-# ------------------------------------------------------------- the upgrade
+# --------------------------------------------------------------- the upgrade
 
 def test_the_upgrade_ran_and_said_so(upgraded):
     """First, because every check that follows is of the form "is this file
@@ -308,13 +242,13 @@ def test_the_upgrade_ran_and_said_so(upgraded):
         % (LOG, _tail(upgraded.upgrade_log)))
 
 
-def test_the_upgrade_took_the_manifest_branch(upgraded):
-    """The two deletion paths leave very similar filesystems and only the log
-    distinguishes them. Without this, an installer that silently fell through
-    to the sweep would pass every deletion test below and fail only the
-    negative control -- one confusing red instead of a diagnosis."""
-    assert "previous install removed (manifest)" in upgraded.upgrade_log, (
-        "the installer did not report the manifest branch:\n%s"
+def test_the_upgrade_wiped_the_directory(upgraded):
+    """The installer says which thing it did, and there is only one thing it
+    can say now. An installer that quietly went back to pruning by a list would
+    pass most of the deletions below and fail only the negative control -- one
+    confusing red instead of a diagnosis."""
+    assert "previous install removed (wiped)" in upgraded.upgrade_log, (
+        "the installer did not report the wipe:\n%s"
         % _tail(upgraded.upgrade_log))
 
 
@@ -327,8 +261,8 @@ def test_the_plain_tar_fallback_is_what_ran(upgraded):
 
 
 def test_a_file_the_last_payload_shipped_and_this_one_does_not_is_gone(upgraded):
-    """Half the trade. Extracting over the old tree without removing anything
-    is harmless only while the set of filenames never changes, and it does."""
+    """Extracting over the old tree without removing anything is harmless only
+    while the set of filenames never changes, and it does."""
     assert not upgraded.file(MODDIR + "/bin/helper-v1").exists, (
         "bin/helper-v1 survived -- a file version 1 shipped and version 2 "
         "does not")
@@ -346,39 +280,27 @@ def test_a_renamed_file_leaves_no_stale_twin(upgraded):
 
 
 def test_a_directory_the_last_payload_shipped_is_removed_too(upgraded):
-    """The manifest's second pass -- reverse sort, rmdir, deepest first. The
-    file inside oldskin/ goes in pass 1 and the emptied directory in pass 2;
-    a payload that drops a whole subtree leaves nothing behind."""
+    """A payload that drops a whole subtree leaves nothing behind."""
     assert not upgraded.file(MODDIR + "/oldskin").exists, (
-        "%s/oldskin survived, so emptied directories are never rmdir'd"
-        % MODDIR)
+        "%s/oldskin survived the wipe" % MODDIR)
 
 
-def test_a_file_nothing_ever_shipped_survives(upgraded):
-    """THE NEGATIVE CONTROL, and the entire point of the manifest. It sits in
-    $MODDIR/bin next to helper-v1, which had to go, so nothing but reading the
-    manifest can tell the two apart."""
-    assert upgraded.file(MODDIR + "/bin/not-ours").exists, (
-        "%s/bin/not-ours was deleted -- the installer is still eating files "
-        "it does not own" % MODDIR)
+def test_a_file_nothing_ever_shipped_is_gone_too(upgraded):
+    """THE NEGATIVE CONTROL, and it is the inverse of what it used to be. It
+    sits in $MODDIR/bin next to helper-v1, which also had to go, and telling
+    the two apart is exactly what this installer no longer tries to do:
+    $MODDIR is the mod's tree and everything in it is replaced. An owner's own
+    files belong in /usr/data, which the wipe cannot reach."""
+    assert not upgraded.file(MODDIR + "/bin/not-ours").exists, (
+        "%s/bin/not-ours survived -- something is still pruning selectively "
+        "instead of replacing the tree" % MODDIR)
 
 
-def test_the_directory_holding_it_survives_too(upgraded):
-    """The other half of pass 2. bin/ IS in the manifest, so it is offered to
-    rmdir; it must be refused while a file we never shipped is still in it.
-    A pass that forced the directory would take the file with it."""
-    assert upgraded.file(MODDIR + "/bin").is_dir, (
-        "%s/bin is gone, so the rmdir pass is not honouring a non-empty "
-        "directory" % MODDIR)
-
-
-def test_init_d_and_anvil_service_go_unconditionally(upgraded):
-    """These two are removed whatever the manifest says, and must be: the
-    payload ships neither any more, so nothing names them, and a leftover
-    S70klipper starts an unsupervised klippy beside the supervised one while a
-    leftover anvil-service.sh is a library something stale could still source.
-    Both were planted here by hand -- exactly the case a manifest diff cannot
-    see."""
+def test_init_d_and_anvil_service_are_gone(upgraded):
+    """Both were planted by hand and neither is in any payload, so the wipe is
+    the only thing that can take them. A leftover S70klipper starts an
+    unsupervised klippy beside the supervised one, and a leftover
+    anvil-service.sh is a library something stale could still source."""
     assert not upgraded.file(MODDIR + "/init.d").exists, (
         "%s/init.d survived; firmwareExe's predecessor ran every S* in it"
         % MODDIR)
@@ -388,14 +310,9 @@ def test_init_d_and_anvil_service_go_unconditionally(upgraded):
 
 def test_anvil_conf_is_removed_rather_than_kept(upgraded):
     """The payload ships no anvil.conf any more, so the upgrade takes the
-    printer's away -- edit and all.
-
-    This is the reversal of the property this test used to hold. The file was
-    user state, preserved across updates through /tmp; it is now inert, and
-    an inert file at the top of $MODDIR that still looks editable is worse
-    than no file. The edit planted by the fixture is what makes the deletion
-    provable: a file that merely still exists could be the shipped default.
-    """
+    printer's away -- edit and all. The edit planted by the fixture is what
+    makes the deletion provable: a file that merely still exists could be the
+    shipped default."""
     conf = upgraded.file(MODDIR + "/anvil.conf")
     assert not conf.exists, (
         "%s/anvil.conf survived the upgrade with %r in it -- nothing reads "
@@ -403,27 +320,54 @@ def test_anvil_conf_is_removed_rather_than_kept(upgraded):
         % (MODDIR, conf.text))
 
 
-def test_config_installed_survives_the_payload_swap(upgraded):
-    """config-installed is the snapshot of the configs the last package wrote,
-    and the three-way diff further down runFirmwareExe.sh cannot tell "unmodified"
-    from "edited" without it -- lose it and a config we own lands as .mod-new
-    forever. It is never shipped, so it is never in a manifest, and this is
-    what proves the deletion respects that."""
-    assert upgraded.file(MODDIR + "/config-installed/moonraker.conf").exists, (
-        "%s/config-installed was deleted -- moonraker.conf would land as "
-        ".mod-new forever" % MODDIR)
+def test_no_manifest_is_written(upgraded):
+    """Nothing ships or reads one. A file reappearing here would mean a payload
+    still carries the list, which is 3000 lines of the one file in the tree
+    that differs between two otherwise identical builds."""
+    assert not upgraded.file(MODDIR + "/.install-manifest").exists, (
+        "%s/.install-manifest is back -- the payload is still shipping a list "
+        "nothing reads" % MODDIR)
 
 
-def test_the_upgrade_left_its_own_manifest(upgraded):
-    """Or the NEXT update falls back to the sweep and the negative control
-    stops holding from then on."""
-    listed = upgraded.file(MANIFEST).lines
-    assert listed, "%s is empty or missing after the update" % MANIFEST
-    assert "share/nginx-launcher" in listed, (
-        "the manifest does not describe the payload just installed: %r"
-        % listed)
-    assert "bin/helper-v1" not in listed, (
-        "the new manifest still names a version 1 path: %r" % listed)
+# ---------------------------------------------------- what outlives the wipe
+
+def test_helixscreen_settings_survive_the_wipe(upgraded):
+    """The one preservation mechanism left in the installer, so it carries the
+    whole weight of "an update does not cost you what you set on the screen".
+
+    The value asserted is the one planted on the printer, not merely a file
+    that exists: version 2 ships a settings.json of its own, so a restore that
+    silently did nothing would leave the shipped copy sitting there and pass a
+    weaker check."""
+    live = upgraded.file(MODDIR + "/helixscreen/config/settings.json")
+    assert live.exists, (
+        "%s/helixscreen/config/settings.json is gone -- the wipe took the "
+        "user's screen settings with it" % MODDIR)
+    assert live.text.strip() == "mine", (
+        "the tarball's seeded settings.json landed on top of the user's: %r"
+        % live.text)
+
+
+def test_the_users_config_directory_is_outside_the_wipe(upgraded):
+    """/usr/data/config is where everything an owner edits lives, and nothing
+    in the installer's deletion path can reach it. This is the assertion that
+    nothing needs to."""
+    assert upgraded.file(CONFDIR).is_dir, (
+        "%s is gone -- the wipe reached outside $MODDIR" % CONFDIR)
+
+
+def test_moonraker_conf_is_overwritten_even_when_edited(upgraded):
+    """It is mod-owned, like every ff-*.cfg: overwriting is how the [webcam]
+    block and the API lockdown reach a printer at all. The seam for an owner's
+    own settings is moonraker-custom.conf, included last so it wins.
+
+    The fixture planted an edit, so a copy left behind would be visible here as
+    the old text rather than as a missing file."""
+    live = upgraded.file(CONFDIR + "/moonraker.conf")
+    assert live.text.strip() == "v2", (
+        "%s/moonraker.conf was not replaced: %r" % (CONFDIR, live.text))
+    assert not upgraded.file(CONFDIR + "/moonraker.conf.mod-new").exists, (
+        "a .mod-new was written -- the compare-and-keep dance is back")
 
 
 def test_shipped_files_are_replaced_with_the_new_version(upgraded):
@@ -438,57 +382,3 @@ def test_the_installer_still_makes_bin_executable(upgraded):
     assert upgraded.file(MODDIR + "/bin/anvil-hello").executable, (
         "%s/bin/anvil-hello is not executable -- nothing in bin/ would run"
         % MODDIR)
-
-
-# ---------------------------------------- the printers that have no manifest
-
-def test_the_legacy_path_ran_and_said_so(legacy):
-    """Same vacuity guard as above, and the same reason it comes first: this
-    section's fixture rebuilt $MODDIR by hand, so an installer that did
-    nothing at all leaves a filesystem that answers several of the questions
-    below correctly."""
-    assert "mod payload installed" in legacy.legacy_log, (
-        "%s has no record of the legacy install:\n%s"
-        % (LOG, _tail(legacy.legacy_log)))
-    assert "previous install removed (no manifest -- pre-manifest layout)" \
-        in legacy.legacy_log, (
-            "the installer did not take the pre-manifest branch:\n%s"
-            % _tail(legacy.legacy_log))
-
-
-def test_the_legacy_sweep_removed_the_stale_file(legacy):
-    """bin/ is one of the seven directories the sweep wipes. A renamed script
-    left in place here is the double-start failure, on a printer whose owner
-    has no manifest to protect them."""
-    assert not legacy.file(MODDIR + "/bin/stale-legacy").exists, (
-        "with no manifest, %s/bin/stale-legacy is still there -- upgrading "
-        "from a shipped pre-manifest version leaves stale files behind"
-        % MODDIR)
-
-
-def test_the_payload_extracted_over_the_pre_manifest_layout(legacy):
-    assert legacy.file(MODDIR + "/share/nginx-launcher").exists, (
-        "the new payload did not install over the pre-manifest layout")
-
-
-def test_anvil_conf_is_removed_on_the_legacy_path(legacy):
-    """The path that could most easily have left it behind.
-
-    The pre-manifest sweep removes seven DIRECTORIES, and anvil.conf is a file
-    at the top of $MODDIR, so nothing in that branch touches it. It goes only
-    because runFirmwareExe.sh removes it unconditionally alongside init.d and
-    anvil-service.sh -- which is exactly why it is removed there and not left
-    to the manifest.
-    """
-    conf = legacy.file(MODDIR + "/anvil.conf")
-    assert not conf.exists, (
-        "%s/anvil.conf survived the pre-manifest path with %r in it -- the "
-        "directory sweep does not reach a top-level file, so the "
-        "unconditional removal is the only thing that takes it"
-        % (MODDIR, conf.text))
-
-
-def test_config_installed_survives_the_legacy_sweep(legacy):
-    """It is not one of the seven directories, and must not become one."""
-    assert legacy.file(MODDIR + "/config-installed/moonraker.conf").exists, (
-        "%s/config-installed was deleted by the legacy sweep" % MODDIR)

@@ -136,40 +136,15 @@ install_component() {
     return 0
 }
 
-# ------------------------------------------------------ backups, taken first --
-# BEFORE any component is installed. A slim package carries none and nothing
-# here would overwrite these anyway, but a --full package carries FlashForge's
-# own and their run.sh copies passwd and shadow over the live ones -- a backup
-# taken afterwards would then capture the package's files rather than the
-# printer's.
+# --------------------------------------------------------------- no backups --
+# Nothing is copied aside before an install. There is one recovery path and it
+# does not read from this printer: flash the stock FlashForge package for the
+# model back, which is the only thing that still carries the genuine
+# firmwareExe -- ours is a symlink into $MODDIR and the real binary went the
+# first time a component was installed over it. See docs/hardware-testing.md.
 #
-# app_startup.sh is deliberately not in this list. The mod replaces firmwareExe
-# instead, so the stock boot scripts are never modified and never need
-# restoring.
-BACKUP=$MODDIR/backup/$STAMP
-mkdir -p "$BACKUP"
-for file in /usr/prog/klipper/start.sh /usr/prog/etc/passwd /usr/prog/etc/shadow; do
-    if [ -e "$file" ]; then
-        dest="$BACKUP`dirname $file`"
-        mkdir -p "$dest" && cp -a "$file" "$dest/" && echo "backed up $file"
-    fi
-done
-# NOT the previous firmwareExe. There is nothing to back up: this is a symlink
-# into $MODDIR, and the genuine binary went the first time a component was
-# installed over it. That is why uninstalling means flashing the STOCK package
-# again -- it is the only thing that still carries the real one. See
-# docs/hardware-testing.md.
-
-# Only the FIRST install sees genuinely stock files, so never let a later
-# re-flash overwrite the pristine copy.
-if [ ! -d "$MODDIR/backup/stock" ]; then
-    cp -a "$BACKUP" "$MODDIR/backup/stock" && echo "kept pristine copy at backup/stock"
-fi
-
-# A password hash left on disk by installs that predate this one. Nothing reads
-# it; do not leave a secret lying in $MODDIR.
-rm -f "$MODDIR/.prev-root-hash"
-sync
+# A copy of start.sh, passwd and shadow taken here would not change that, and
+# $MODDIR is wiped below, so there is nowhere on this printer for one to live.
 
 # FlashForge clears their own NIM logs on every flash. One line, and it leaves
 # a reflashed printer as tidy as a stock one.
@@ -201,10 +176,6 @@ if [ -n "$MODTAR" ]; then
     else
         # Keep user-editable state; replace everything we own.
         #
-        # anvil.conf IS NOT KEPT. A printer upgrading from a release that
-        # had one keeps nothing of it: the settings it held are gone, and it
-        # is removed unconditionally further down -- see the note there.
-        #
         # HelixScreen keeps every user setting INSIDE its own install tree.
         # firmwareExe exports HELIX_DATA_DIR=$MODDIR/helixscreen and the binary
         # resolves its settings as config/settings.json relative to that root,
@@ -212,10 +183,9 @@ if [ -n "$MODTAR" ]; then
         # brightness, theme, log level, touch calibration and spool assignments
         # all live in it.
         #
-        # Backed up before either deletion path below runs (manifest or
-        # compatibility sweep -- both remove $MODDIR/helixscreen) and restored
-        # after extraction. The tarball ships a seeded settings.json of its own,
-        # with "wizard_completed": false, that would otherwise land on top.
+        # Held in /tmp across the wipe below and restored after extraction.
+        # The tarball ships a seeded settings.json of its own, with
+        # "wizard_completed": false, that would otherwise land on top.
         #
         # The list is HelixScreen's own HELIX_USER_CONFIG_FILES, from the
         # install.sh the mod never runs -- it extracts the release tarball
@@ -231,109 +201,40 @@ if [ -n "$MODTAR" ]; then
             mkdir -p $HELIX_KEEP
             cp -f $MODDIR/helixscreen/config/$f $HELIX_KEEP/$f
         done
-        # Remove what the PREVIOUS payload installed -- exactly that, and
-        # nothing else.
+        # Remove the previous install outright, then extract into the empty
+        # directory.
         #
-        # THE PROPERTY THIS HAS TO KEEP, which is why anything is removed at
-        # all rather than just extracted over: files used to be overwritten in
-        # place and never removed, which is harmless only while the set of
-        # filenames never changes. It does change -- a renamed script survives
-        # the update and sits next to the one that replaced it. The installed
-        # set must end up exactly the shipped set.
+        # THE PROPERTY THIS KEEPS, which is why anything is removed at all
+        # rather than just extracted over: files overwritten in place and never
+        # removed are harmless only while the set of filenames never changes.
+        # It does change -- a renamed script otherwise survives the update and
+        # sits next to the one that replaced it. Deleting the directory makes
+        # the installed set the shipped set by construction, with no list to
+        # ship, read or trust.
         #
-        # bin/payload.sh ships a manifest of every path the payload installs --
-        # one per line, relative to $MODDIR, files and directories both, itself
-        # included. Deleting what the LAST manifest lists keeps that property
-        # (a script the last payload shipped and this one does not is named in
-        # that list, so it still goes) without touching a byte we did not put
-        # there.
-        MOD_MANIFEST=$MODDIR/.install-manifest
-        if [ -s "$MOD_MANIFEST" ]; then
-            # Work from a copy in /tmp. The manifest lists itself, so the
-            # first pass below deletes the very file it is reading; the read
-            # would survive that on Linux, but the second pass opens it again
-            # by name and would find nothing there.
-            cp -f "$MOD_MANIFEST" /tmp/anvil.manifest.old
-            # Pass 1 -- the files. Anything that is not a directory, and a
-            # symlink even when it points at one, which is why -L is asked
-            # first: rm -f on a symlink-to-directory removes the link, while
-            # the rmdir pass below would refuse it and leave it behind.
-            while read -r mrel; do
-                [ -n "$mrel" ] || continue
-                case "$mrel" in
-                /*|*..*)
-                    # A manifest is a file on the printer's disk, and this
-                    # loop runs as root with $MODDIR pasted onto the front of
-                    # whatever it says. An absolute path escapes $MODDIR
-                    # outright; `..` walks out of it one component at a time.
-                    # Neither can come out of bin/payload.sh, so one appearing
-                    # here means the file is damaged or forged, and the answer
-                    # is to say so and skip rather than to find out what it
-                    # would have deleted. The `..` test is deliberately blunt
-                    # -- it also rejects a legitimate "foo..bar", and we ship
-                    # no such name.
-                    echo "!! manifest: refusing '$mrel' -- not a path under $MODDIR"
-                    continue ;;
-                esac
-                if [ -L "$MODDIR/$mrel" ] || [ ! -d "$MODDIR/$mrel" ]; then
-                    rm -f "$MODDIR/$mrel"
-                fi
-            done < /tmp/anvil.manifest.old
-            # Pass 2 -- the directories, deepest first and only when empty.
-            # Reverse sort is what makes them deepest-first: "www/mainsail"
-            # sorts after "www", so the child is offered before its parent and
-            # the parent is empty by the time its turn comes. rmdir refusing a
-            # directory that still holds something is not a failure here, it
-            # is the whole point -- a directory holding a file we did not ship
-            # stays, and so does the file.
-            sort -r /tmp/anvil.manifest.old | while read -r mrel; do
-                case "$mrel" in ''|/*|*..*) continue ;; esac
-                [ -d "$MODDIR/$mrel" ] && rmdir "$MODDIR/$mrel" 2>/dev/null
-            done
-            rm -f /tmp/anvil.manifest.old
-            echo "previous install removed (manifest)"
-        else
-            # ---- COMPATIBILITY: an install that predates the manifest ------
-            # Those printers have no $MODDIR/.install-manifest and there is no
-            # way to work out after the fact what they installed, so the whole
-            # directory sweep is the only honest answer: without it an upgrade
-            # off one of them leaves every renamed init script in place, which
-            # is the double-start failure described above.
-            #
-            # -s rather than -f: a zero-byte manifest is a broken install, not
-            # a payload that shipped nothing.
-            #
-            # DELETE THIS BRANCH once no pre-manifest install can still be
-            # upgraded in the field -- it is the one piece of this installer
-            # that can still destroy a file nobody asked it to.
-            rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen $MODDIR/config $MODDIR/moonraker $MODDIR/init.d
-            echo "previous install removed (no manifest -- pre-manifest layout)"
-        fi
-        # init.d/, anvil-service.sh AND anvil.conf ARE GONE, and go
-        # unconditionally rather than by manifest. The payload ships none of
-        # them any more: s6-rc is the CLI, the tree is started by firmwareExe,
-        # and every setting anvil.conf held is now stated in the service that
-        # uses it. A leftover S70klipper is a script that starts an
-        # UNSUPERVISED klippy next to the supervised one, and a leftover
-        # anvil-service.sh is a library something stale could still source, so
-        # neither may be left to a diff that only knows about files the LAST
-        # manifest tracked -- a script planted by hand, or surviving the one
-        # pre-manifest jump every printer takes, is invisible to that.
+        # $MODDIR is ours alone. Everything an owner edits lives in
+        # /usr/data/config -- printer.cfg, moonraker.conf, moonraker-custom.conf
+        # -- and HelixScreen's settings are in $HELIX_KEEP on /tmp by now. A
+        # file dropped under $MODDIR by hand does NOT survive; that is the
+        # trade, and docs/notes/86-wipe-and-extract.md is the audit behind it.
         #
-        # anvil.conf is here for the second reason rather than the first: it
-        # is inert now, nothing reads it, and the manifest branch would take
-        # it anyway. What it must not do is SURVIVE the pre-manifest path,
-        # where the sweep above removes directories and would leave this file
-        # sitting at the top of $MODDIR looking like something an owner could
-        # still edit to change how the printer boots.
+        # It takes anything an older release left here with it and needs no
+        # branch for any of them: a pre-s6-rc init.d/, an anvil-service.sh, an
+        # anvil.conf, a .install-manifest, a .prev-root-hash. A leftover
+        # S70klipper would start an UNSUPERVISED klippy beside the supervised
+        # one, so being thorough here is the point rather than a bonus.
+        #
+        # $MODDIR is gated at the top of this script: nothing but a path under
+        # /usr/data reaches this line.
         #
         # No hot migration is attempted. This runs from app_startup.sh DURING
         # BOOT, before firmwareExe starts, so there is no supervision tree up
         # while it runs and the new one comes up from scratch a moment later.
         # A hand-run `sh runFirmwareExe.sh` over ssh is the exception: that
         # printer needs a reboot, and nothing here forces one.
-        rm -rf $MODDIR/init.d $MODDIR/anvil-service.sh $MODDIR/anvil.conf
+        rm -rf $MODDIR
         mkdir -p $MODDIR
+        echo "previous install removed (wiped)"
         # Try xz first (FlashForge's own factory installer uses `xz -dc`, so
         # it exists), then fall back to plain tar in case a build shipped it
         # uncompressed.
@@ -369,19 +270,12 @@ if [ -n "$MODTAR" ]; then
             rm -rf $HELIX_KEEP
         fi
         chmod a+x $MODDIR/bin/* 2>/dev/null
-        # ---- the s6 scandir, swept -------------------------------------
-        # MEASURED: s6-rc-init creates one symlink per service in the scandir
-        # and fails outright -- "unable to supervise service directories ...:
-        # File exists" -- if a name is taken. A printer upgrading from the
-        # pre-s6-rc payload has nginx, moonraker and camera in there as real
-        # directories, and the manifest cannot remove them: it deletes the
-        # files it listed, but s6-supervise created supervise/ and event/
-        # inside each at RUNTIME, so the rmdir correctly refuses and leaves
-        # exactly the name s6-rc-init collides with.
-        #
-        # After the extraction, so the payload's own empty etc/s6 has landed.
-        rm -rf $MODDIR/etc/s6
-        mkdir -p $MODDIR/etc/s6
+        # The s6 scandir needs no sweep. MEASURED: s6-rc-init creates one
+        # symlink per service in it and fails outright -- "unable to supervise
+        # service directories ...: File exists" -- if a name is taken, and
+        # s6-supervise fills it with supervise/ and event/ directories at
+        # RUNTIME that no payload knows about. The wipe above takes the lot,
+        # and firmwareExe makes the directory again when it starts s6-svscan.
         # /run is a tmpfs, so this matters only for a hand-run install over
         # ssh: a live s6-rc state points at the database just replaced.
         rm -rf /run/s6-rc
@@ -433,31 +327,25 @@ sync
 # /usr/data/config, so an upgrade repoints the link rather than editing a file.
 # printer.chamber.cfg goes the same way -- see the case below.
 #
-# moonraker.conf is KEPT when edited. There is no include-and-override seam for
-# it, and a printer reached through a tuned trusted_clients or cors_domains
-# block would lose that access on an update. So it gets the compare-and-.mod-new
-# dance: still byte-identical to what the LAST package wrote means ours to
-# update, different means the user's to keep. $MODDIR/config-installed holds
-# that last-written copy -- it survives the payload swap and is refreshed only
-# after the comparison below. Without it a config we own could be written only
-# once, then land as .mod-new forever.
-#
-# First install after this rule arrives has no config-installed. An existing
-# file is then treated as edited -- .mod-new, the conservative answer -- UNLESS
-# it still matches FlashForge's pristine runConfig template, which means nobody
-# has touched it and it is ours to replace. See the branch below.
+# moonraker.conf is ours on the same terms, and it has the same kind of seam:
+# [include moonraker-custom.conf] is its LAST line, Moonraker applies options in
+# the order it reads them, so a tuned trusted_clients or cors_domains block set
+# there wins over anything above. Overwriting is also how the [webcam] block and
+# the API lockdown reach a printer at all -- a copy kept back because someone
+# edited it would never receive either again.
 if [ -d $MODDIR/config ]; then
     mkdir -p /usr/data/config
     for source in $MODDIR/config/*; do
         [ -f "$source" ] || continue
         name=`basename "$source"`
         live="/usr/data/config/$name"
-        prev="$MODDIR/config-installed/$name"
         case "$name" in
         moonraker-custom.conf)
             # Yours, permanently. Created once so moonraker.conf's [include]
             # resolves -- Moonraker treats an include matching no file as a
-            # fatal error -- and never touched again, not even as .mod-new.
+            # fatal error -- and never written again. It is the seam for every
+            # Moonraker setting of your own, because moonraker.conf itself is
+            # overwritten below.
             if [ -f "$live" ]; then
                 echo "config: $name kept (yours; never overwritten)"
             else
@@ -475,52 +363,22 @@ if [ -d $MODDIR/config ]; then
             #
             # printer.chamber.cfg is not a file in $MODDIR/config: chamber/
             # holds one per model. The directory is named here so it is
-            # skipped rather than falling through to the compare below.
+            # skipped rather than falling through to the copy below.
             continue
             ;;
         esac
-        # FlashForge's own copy, straight off the factory image, is not a
-        # user edit -- and /usr/data/config/moonraker.conf IS on the factory
-        # image, so without this branch the first install lands as .mod-new,
-        # every later one compares the live factory file against the snapshot
-        # of OURS, and the shipped config could never reach the printer at all.
-        # runConfig/ holds the pristine template the machine was built with;
-        # matching it byte for byte means nobody has touched the live copy.
-        stock="/usr/prog/klipper/runConfig/$name"
-        if [ ! -f "$live" ]; then
-            cp -f "$source" "$live"
-        elif [ -f "$prev" ] && [ "`md5sum < "$live"`" = "`md5sum < "$prev"`" ]; then
-            cp -f "$source" "$live"
-            echo "config: $name updated (was unmodified)"
-        elif [ ! -f "$prev" ] && [ -f "$stock" ] \
-             && [ "`md5sum < "$live"`" = "`md5sum < "$stock"`" ]; then
-            cp -f "$source" "$live"
-            echo "config: $name installed over FlashForge's untouched copy"
-        else
-            cp -f "$source" "$live.mod-new"
-            echo "config: $name kept -- new version left as $name.mod-new"
-        fi
+        cp -f "$source" "$live"
+        echo "config: $name installed"
     done
-    # Snapshot what we just shipped, for the NEXT update to compare against.
-    rm -rf $MODDIR/config-installed
-    mkdir -p $MODDIR/config-installed
-    cp -f $MODDIR/config/* $MODDIR/config-installed/ 2>/dev/null
 fi
 sync
 
 # Stale bytecode from the previous Klipper generation is a silent import-time
-# landmine.
-#
-# $MODDIR, NOT /usr/prog: the klipper s6-rc service execs
-# $MODDIR/klipper/klippy, so that is the tree whose .pyc files get imported.
-# It also needs the sweep MORE than /usr/prog ever did -- klippy WRITES those
-# directories at runtime on a writable /usr/data, and a path created after
-# install is in no .install-manifest, so the manifest delete above walks past
-# it and leaves last release's bytecode beside this release's source.
-find $MODDIR/klipper/klippy -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
-# The stock tree is swept too, and only because it costs one line: nothing
-# imports it any more, but a machine that has been through several releases
-# has bytecode there from when something did.
+# landmine. $MODDIR/klipper/klippy is the tree the klipper s6-rc service execs
+# and klippy writes __pycache__ there at runtime on a writable /usr/data -- the
+# wipe above takes all of it, so only FlashForge's tree is left to sweep.
+# Nothing imports that one any more, but a machine that has been through
+# several releases has bytecode there from when something did.
 find /usr/prog/klipper/klippy -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
 sync
 

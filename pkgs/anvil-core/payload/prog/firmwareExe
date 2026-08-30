@@ -103,10 +103,9 @@ if [ ! -x "$S6BIN/s6-svscan" ]; then
     # Exiting would have app_startup.sh re-exec us into the same wall in a loop.
     while true; do sleep 3600; done
 fi
-# The scandir ships empty and is named in the install manifest, so
-# runFirmwareExe.sh's rmdir pass can legitimately remove it before the new tarball
-# lands. One mkdir deletes a class of "the scanner did not start, log says
-# ENOENT".
+# No payload ships the scandir and runFirmwareExe.sh wipes $MODDIR on every
+# update, so this is where it comes back. One mkdir deletes a class of "the
+# scanner did not start, log says ENOENT".
 mkdir -p "$SCANDIR"
 # exec, so SCANNER_PID is the scanner itself rather than a shell that started
 # one -- otherwise `wait` would return on a wrapper that had already gone.
@@ -131,8 +130,8 @@ fi
 echo "s6: scanning $SCANDIR (pid $SCANNER_PID)"
 
 # Once per boot: s6-rc-init creates one symlink per service in the scandir and
-# fails outright with "File exists" if a name is taken -- which is why
-# runFirmwareExe.sh sweeps $MODDIR/etc/s6 on upgrade. /run is a fresh tmpfs on a
+# fails outright with "File exists" if a name is taken -- which an update
+# cannot leave behind, since it deletes $MODDIR whole. /run is a fresh tmpfs on a
 # normal boot, so the check below is for the printer that got here some other
 # way. `s6-rc -a list` needs the live directory, so it answers the question by
 # behaviour.

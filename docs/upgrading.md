@@ -53,8 +53,9 @@ included at the *end* of `moonraker.conf`, so anything you set there wins.
 Do not delete it — Moonraker treats an include that matches no file as fatal
 and will refuse to start. An empty one is fine.
 
-If you edit `moonraker.conf` itself anyway, the installer notices and keeps
-your copy, landing the new version beside it as `.mod-new`.
+Editing `moonraker.conf` itself does not survive: the next update overwrites
+it, and that is how the `[webcam]` block and the API lockdown reach your
+printer. Put the change in `moonraker-custom.conf` instead.
 
 ---
 

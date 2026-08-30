@@ -112,10 +112,10 @@ a file the previous payload shipped and this one does not is gone, (b) a file
 nothing shipped -- drop one in `bin/` by hand -- survives, (c) `anvil.conf` and
 `config-installed` still survive as they do today.
 
-**Shipped. A proposal to retire it: `86-wipe-and-extract.md`.** Deleting
-`$MODDIR` wholesale on update keeps the stale-twin property for free, and
-gives up the rest deliberately. That note is the audit behind it: of
-everything the manifest protects, nothing turned out to need protecting.
+**Shipped, then retired -- see `86-wipe-and-extract.md`.** Deleting `$MODDIR`
+wholesale on update keeps the stale-twin property for free and gives up the
+rest deliberately. That note is the audit behind it: of everything the
+manifest protected, nothing turned out to need protecting.
 
 ## Phase 2 -- build s6 into the package
 

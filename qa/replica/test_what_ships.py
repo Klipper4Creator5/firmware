@@ -37,7 +37,6 @@ and answers of an installed filesystem rather than of a tar listing:
     s6-ftrigrd                          -> test_s6rc.py, test_supervisor.py
   * the klipper service, printer.base
     and the chamber configs             -> test_install.py, static/test_ipk.py
-  * the .install-manifest               -> test_upgrade.py
   * libsodium's bare .so symlink        -> static/test_ipk.py
   * every shipped script's syntax       -> static/test_shell_syntax.py
 

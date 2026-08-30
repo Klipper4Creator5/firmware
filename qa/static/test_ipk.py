@@ -473,10 +473,6 @@ def test_every_payload_file_is_owned_by_a_package():
     assert owned, "the opkg database lists no files at all"
 
     allowed = {
-        # Generated here, after everything is installed: the list the NEXT
-        # update deletes by. Cannot be a package member -- it describes the
-        # payload, so it is not finished until the payload is.
-        MODDIR + "/.install-manifest",
         # User state: created once and never overwritten. A package member is
         # overwritten on every upgrade by definition, which is exactly what
         # this must not be. $MODDIR/anvil.conf was the other entry here until
@@ -500,10 +496,9 @@ def test_every_payload_file_is_owned_by_a_package():
             # never appear in a list it is still being written into.
             if rel.startswith(MODDIR + "/var/lib/opkg"):
                 continue
-            # The compiled s6-rc database. case-build-payload.sh runs s6-rc-compile
-            # over the source tree anvil-core ships, AFTER the payload is
-            # installed, so this is generated for the same reason
-            # .install-manifest is: it describes the payload and cannot be
+            # The compiled s6-rc database. case-build-payload.sh runs
+            # s6-rc-compile over the source tree anvil-core ships, AFTER the
+            # payload is installed, so it describes the payload and cannot be
             # finished before the payload is. The SOURCE it is compiled from
             # is package-owned and checked like everything else.
             if rel.startswith(MODDIR + "/etc/s6-rc/compiled"):

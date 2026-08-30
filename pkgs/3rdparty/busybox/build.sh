@@ -12,9 +12,9 @@
 # the ONE file in the payload that no package owned -- which cost three
 # separate things: an allowance in qa/static/test_ipk.py's "every file is
 # owned" test, an ABI gate of its own in payload.sh because the payload-wide one
-# ran before the copy, and a file that .install-manifest listed but no
-# `opkg remove` could take away. As a package it is none of those; it is
-# absent or installed, like everything else.
+# ran before the copy, and a file no `opkg remove` could take away. As a
+# package it is none of those; it is absent or installed, like everything
+# else.
 set -euo pipefail
 . ./bin/common.sh
 . pkgs/lib.sh
