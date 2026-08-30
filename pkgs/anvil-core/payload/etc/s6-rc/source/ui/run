@@ -1,16 +1,14 @@
 #!/bin/sh
 # HelixScreen, as s6 supervises it. Exec'd by s6-supervise, never by hand.
 #
-# `exec` at the bottom is what makes the process s6 supervises BE the UI, so
-# s6-svstat reports its pid and `s6-rc -d change ui` signals it rather than a
-# shell that has long since gone.
+# `exec` at the bottom makes the process s6 supervises BE the UI, so
+# `s6-rc -d change ui` signals it rather than a shell that has long since gone.
 #
-# BLOCKING UNKNOWN: nothing has proved helix-screen runs under a supervisor. It
-# gets the descriptors s6-supervise hands it, no controlling terminal, and a
-# session it did not create. The environment below is the easy half; a tty is
-# not something a run script can conjure. If one turns out to be needed, the
-# answer is s6's own tty handling or a small wrapper -- the foreground this
-# used to run in no longer exists. See docs/notes/80-s6-migration.md.
+# BLOCKING UNKNOWN: nothing has proved helix-screen runs under a supervisor.
+# It gets the descriptors s6-supervise hands it, no controlling terminal, and
+# a session it did not create. A tty is not something a run script can
+# conjure; if one is needed the answer is s6's own tty handling or a small
+# wrapper. See docs/notes/80-s6-migration.md.
 MODDIR=/usr/data/anvil
 
 if [ -f $MODDIR/anvil-env.sh ]; then
@@ -33,10 +31,9 @@ export HELIX_DATA_DIR HELIX_LOG_DEST HELIX_LOG_FILE HELIX_DISABLE_AUTO_UPDATES
 mkdir -p /usr/data/logs
 
 # The prerequisite. A run script cannot decline to run -- s6 respawns it -- so
-# a missing HelixScreen is reported with a sleep instead of showing up as a
-# failed exec once a second, which is a printer that got hot and never drew
-# anything. MOD_UI=0 is a different thing and is handled in firmwareExe, which
-# simply leaves this service out of the transition.
+# a missing HelixScreen is reported with a sleep instead of a failed exec once
+# a second, which is a printer that got hot and never drew anything. MOD_UI=0
+# is different, and firmwareExe leaves this service out of the transition.
 if [ ! -x $MODDIR/helixscreen/bin/helix-launcher.sh ] \
    && [ ! -x $MODDIR/helixscreen/bin/helix-screen ]; then
     echo "ui: !! HelixScreen is not installed under $MODDIR/helixscreen"

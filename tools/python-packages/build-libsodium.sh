@@ -1,23 +1,17 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
 # Cross-build libsodium for the Creator 5 Pro (Ingenic mipsel) into the mod's
-# prefix root, so that libnacl -- and therefore Moonraker's `authorization`
+# prefix root, so libnacl -- and therefore Moonraker's `authorization`
 # component -- stops needing /usr/prog/libsodium/lib.
 #
-# This is the LAST /usr/prog string in the phase-6 picture. Everything else
-# the 3.13 interpreter and its extensions need is either static inside the
-# interpreter or built by tools/python-packages/build.sh.
-#
-# Unlike the interpreter's seven static dependencies, this one MUST be shared:
-# libnacl is pure Python and reaches it through ctypes.cdll.LoadLibrary, which
-# is dlopen. So it ships as $MODDIR/lib/libsodium.so.26.2.0 with its soname
-# symlink and the `libsodium.so` development symlink -- and that last one is
-# not decoration, it is the FIRST name libnacl asks dlopen for.
+# Unlike the interpreter's seven static dependencies this one MUST be shared:
+# libnacl is pure Python and reaches it through ctypes.cdll.LoadLibrary. So it
+# ships as $MODDIR/lib/libsodium.so.26.2.0 with its soname symlink and the
+# `libsodium.so` development symlink -- the last of which is not decoration,
+# it is the FIRST name libnacl asks dlopen for.
 #
 # Same gcc-wrapper trick as tools/python/build.sh: -EL -mnan=2008 baked into
-# the driver, so libsodium's libtool link lines cannot lose them. Gated at
-# e_flags=0x70001407 (a shared object, so EF_MIPS_PIC is set and it reads
-# ...07 where the interpreter's executable reads ...05) before anything ships.
+# the driver, so libsodium's libtool link lines cannot lose them.
 #
 #     ./build-libsodium.sh                 # in docker
 #     ./build-libsodium.sh --in-container  # the actual build
@@ -87,10 +81,9 @@ tar -xzf "$TAR" -C "$B"
 cd "$B/libsodium-$SODIUM_VER"
 
 # ---- configure ------------------------------------------------------------
-# --disable-static: nothing links it statically and a .a would only be
-#   trimmed away again.
+# --disable-static: nothing links it statically.
 # --host is what makes autoconf reach for the mips-linux-gnu- prefixed tools
-#   in the wrapper directory, which is the whole point of the wrappers.
+#   in the wrapper directory, which is the point of the wrappers.
 # libsodium's runtime feature probes are AC_RUN_IFELSE with cross defaults
 #   supplied, so nothing here needs qemu.
 log "configure"
@@ -111,12 +104,10 @@ rm -rf "$STAGE"; mkdir -p "$STAGE"
 make install DESTDIR="$STAGE" >> "$W/sodium-make.log" 2>&1
 
 # ---- what shipped, described rather than gated -----------------------------
-# The ABI ASSERTIONS that were here (e_flags == 0x70001407, and the Flags line
-# decoding to nan2008/o32/mips32r2) are gone: qa/replica/test_abi.py reads
-# every ELF on the installed filesystem, which is where this .so ends up and
-# where four other partial copies of the same rule used to disagree. The
-# readelf output stays because a build log that says what it produced is worth
-# having -- it just no longer decides anything.
+# The ABI assertions that were here are gone: qa/replica/test_abi.py reads
+# every ELF on the installed filesystem, where four partial copies of the same
+# rule used to disagree. The readelf output stays because a build log that
+# says what it produced is worth having -- it no longer decides anything.
 log "what the build produced"
 SO=$(readlink -f "$STAGE$PREFIX/lib/libsodium.so")
 file "$SO"

@@ -2,14 +2,13 @@
 # Install the mod package into /parts ONCE, and leave the container ready to
 # be committed as an image that IS a printer with the mod on it.
 #
-# Modelled on tools/replica/printer/bake.sh, which does the same for the
-# STOCK baseline, and for the same reason: the install needs binfmt_misc and
-# chroot, so it needs --privileged, so it cannot happen in a `docker build`
-# step. The caller runs this in a container and commits the result.
+# Modelled on tools/replica/printer/bake.sh, which does the same for the STOCK
+# baseline: the install needs binfmt_misc and chroot, so it needs
+# --privileged, so it cannot happen in a `docker build` step. The caller runs
+# this in a container and commits the result.
 #
-# The install itself is /case.sh (qa/replica/actions/install-package.sh),
-# which boots the machine's own app_startup.sh. Nothing in either file
-# re-implements the update.
+# The install itself is /case.sh (install-package.sh), which boots the
+# machine's own app_startup.sh. Nothing re-implements the update.
 #
 #   PKGS       "name=/pkgs/name" -- entrypoint.sh puts it on the FAT stick
 #   USB_STICK  must be 1, so the package arrives the way it really arrives

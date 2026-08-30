@@ -32,12 +32,11 @@ say "payload: installing the feed with the printer's own opkg"
 # The roots, not the closure: Depends brings the rest, so the metadata is
 # exercised on every build. A root with no .ipk is skipped -- that is how the
 # PKG_WHEN gates reach here -- but a missing DEPENDENCY is still opkg's error.
-# The two loose python packages are Recommends, which opkg has no field for.
 #
 # greenlet and cffi are deliberately NOT here: the klipper service execs
-# $FF_PYTHON, so they are ordinary Depends of anvil-klipper now. Listed here
-# they were installed by every build and by no `opkg install anvil-klipper`,
-# which is the one command that has to work on a printer.
+# $FF_PYTHON, so they are ordinary Depends of anvil-klipper. Listed here they
+# were installed by every build and by no `opkg install anvil-klipper`, which
+# is the one command that has to work on a printer.
 MOD_ROOTS="anvil-core anvil-opkg anvil-s6-rc anvil-klipper
            anvil-moonraker anvil-python-pillow anvil-python-preprocess-cancellation
            anvil-mainsail anvil-helixscreen anvil-busybox"
@@ -66,13 +65,10 @@ say "payload: $(grep -c '^Package:' "$PAYLOAD_DIR/var/lib/opkg/status") packages
 # Nothing is staged here any more: anvil-klipper installs the whole klippy tree
 # at $MODDIR/klipper/klippy and the klipper s6-rc service execs it there on our
 # own $FF_PYTHON, so the package IS the printer's Klipper. /usr/prog/klipper
-# keeps FlashForge's stock klippy, unread -- the only file still read there is
-# klipper_pri.sh, their SCHED_FIFO helper. klipperDaemon at that path is a
-# symlink to our shim, pointed there by anvil-link-prog.sh.
+# keeps FlashForge's stock klippy, unread except for klipper_pri.sh.
 #
-# The assertion is all that is left, and it is cheap: an anvil-klipper that did
-# not install is now a printer with no Klipper at all, with no component copy
-# to mask it.
+# The assertion is all that is left: an anvil-klipper that did not install is
+# a printer with no Klipper at all, with no component copy to mask it.
 [ -d "$PAYLOAD_DIR/klipper/klippy" ] || pkg_die \
     "the payload has no $MODDIR/klipper/klippy -- anvil-klipper did not install"
 [ -f "$PAYLOAD_DIR/klipper/klippy/chelper/c_helper.so" ] || pkg_die \
@@ -95,12 +91,11 @@ say "Klipper: fork tree from pinned commit ${KLIPPER_VERSION:0:8} (payload only)
 
 # --- 5b-2. the s6-rc database
 # Compiled in the replica by case-build-payload.sh, with the s6-rc-compile
-# anvil-s6-rc ships, straight after opkg installs the feed. It used to be built
-# here by a second NATIVE build of the same four tarballs, cached in
-# work/.s6-native -- 110 lines whose entire hazard was that both stacks had to
-# be --prefix=$MODDIR or the #! baked into the oneshot runner pointed at the
+# anvil-s6-rc ships. It used to be built here by a second NATIVE build of the
+# same four tarballs, whose entire hazard was that both stacks had to be
+# --prefix=$MODDIR or the #! baked into the oneshot runner pointed at the
 # build host's execline. Compiling with the compiler we SHIP cannot get that
-# wrong. (Byte-identical either way: 80-s6-migration.md, measured 2026-08-28.)
+# wrong, and is byte-identical either way.
 [ -d "$PAYLOAD_DIR/etc/s6-rc/compiled/current" ] || pkg_die \
     "the payload has no compiled s6-rc database -- case-build-payload.sh did not compile one"
 say "s6-rc: database $(readlink "$PAYLOAD_DIR/etc/s6-rc/compiled/current") -- $(ls "$PAYLOAD_DIR/etc/s6-rc/source" | wc -l) definitions"
@@ -128,30 +123,27 @@ fi
 
 # --- 8. firmwareExe + start.sh -- anvil-core's, and NOT in the component
 # Both install at $MODDIR/prog/ and anvil-link-prog.sh points the stock paths
-# at them, on the flash path (run-append.sh) and on `opkg upgrade anvil-core`
-# (postinst). Nothing execs either between run.sh copying the component and
+# at them. Nothing execs either between run.sh copying the component and
 # link-prog running, so the component copy bought no ordering -- and it cost:
 # our wrapper with no payload never starts a UI, it logs and sleeps for ever,
 # turning a failed install into an unbootable printer. Absent, app_startup.sh
-# restores a firmwareExe from a version directory and the stock recovery works.
-# Stock run.sh is set -x, not set -e, so its two cp lines are noisy no-ops.
+# restores a firmwareExe from a version directory and stock recovery works.
 say "firmwareExe + start.sh: dropped from the component (anvil-core owns both)"
 rm -f "$SOFTWARE_DIR/firmwareExe" "$SOFTWARE_DIR/start.sh"
 
 # --- 10. anvil.conf
-# anvil.conf is not in anvil-core and is the whole of what is left here:
-# preserved across updates by run-append.sh, which makes it user state rather
-# than a package member. Only the two values with a RANGE are substituted.
+# Not in anvil-core and the whole of what is left here: preserved across
+# updates by run-append.sh, which makes it user state rather than a package
+# member. Only the two values with a RANGE are substituted.
 sed -e "s/^NICE_MOONRAKER=.*/NICE_MOONRAKER=${NICE_MOONRAKER:-5}/" \
     -e "s/^NICE_CAM=.*/NICE_CAM=${NICE_CAM:-10}/" \
     -e "s/^NICE_KLIPPER=.*/NICE_KLIPPER=${NICE_KLIPPER:-0}/" \
     pkgs/anvil-core/seed/anvil.conf.in > "$PAYLOAD_DIR/anvil.conf"
 
 # --- 10b. the install manifest
-# Every path this payload installs, so the next update deletes exactly what this
-# one left behind -- a renamed init script leaves no stale twin. It names
-# ITSELF, and is moved in from a temp file so `find` cannot list a
-# half-written manifest.
+# Every path this payload installs, so the next update deletes exactly what
+# this one left behind. It names ITSELF, and is moved in from a temp file so
+# `find` cannot list a half-written manifest.
 MOD_MANIFEST=.install-manifest
 { ( cd "$PAYLOAD_DIR" && find . -mindepth 1 | sed 's|^\./||' )
   echo "$MOD_MANIFEST"

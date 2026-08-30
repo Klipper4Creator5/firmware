@@ -3,28 +3,19 @@
 #
 # NO start-stop-daemon AND NO `-b`: the process this script turns into IS the
 # service, so a fork-and-return would have s6 supervise the process that
-# exited, decide the service died a millisecond after starting, and restart it
-# for ever while the real moonraker served :7125 supervised by nobody.
+# exited and restart it for ever while the real moonraker served :7125
+# supervised by nobody. AND `exec`: without it s6 supervises this shell, and
+# every signal it sends goes to a shell that ignores it.
 #
-# AND `exec`. Without it s6 supervises this shell, and every signal it sends --
-# the SIGTERM behind `s6-rc -d change moonraker` above all -- goes to a shell that
-# ignores it while moonraker carries on.
-#
-# THIS FILE DOES NOT LOOK AT MOD_WEB: it runs whenever s6 decides the service
-# should be up, and a `run` that exits because it disagrees is a respawn loop
-# with extra steps. There is no `down` file next to it either -- MEASURED:
-# s6-rc-compile accepts one in a definition directory and SILENTLY DROPS it,
-# producing a byte-identical servicedir. The gate is the argument list;
-# svc_rc_enabled reads MOD_WEB at runtime.
-#
-# Moving /usr/data/config is phase 7 of docs/notes/80-s6-migration.md; the `-d`
-# below is the one line here that changes when it does.
+# THIS FILE DOES NOT LOOK AT MOD_WEB: a `run` that exits because it disagrees
+# is a respawn loop with extra steps. There is no `down` file either --
+# MEASURED: s6-rc-compile accepts one and SILENTLY DROPS it. The gate is the
+# argument list; svc_rc_enabled reads MOD_WEB at runtime.
 MODDIR=/usr/data/anvil
 
-# Read HERE, not inherited: s6-supervise starts this script from the SCANNER's
+# Read HERE, not inherited: s6-supervise starts this from the SCANNER's
 # environment, which is firmwareExe's at boot but whatever an ssh session had
-# when the service is restarted by hand. moonraker is the process that dies on
-# "libpython3.8.so.1.0: cannot open shared object file" when that is wrong.
+# when the service is restarted by hand.
 [ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 [ -f $MODDIR/anvil-env.sh ] && . $MODDIR/anvil-env.sh
 
@@ -36,11 +27,10 @@ MOONRAKER_TMP=/usr/data/tmp
 MOONRAKER_CONF=$MOONRAKER_DATA/config/moonraker.conf
 
 # TMPDIR: /tmp is a ramdisk here, so a large upload without this fills memory
-# instead of the data partition. Set in the run script because s6 restarts this
-# service without going near any shell of ours.
-#
-# The wipe needs no "is it running" guard: s6-supervise runs one copy of this
-# service at a time and execs this only after the previous one was reaped.
+# instead of the data partition. Set in the run script because s6 restarts
+# this service without going near any shell of ours. The wipe needs no
+# "is it running" guard -- s6-supervise execs this only after the previous
+# copy was reaped.
 rm -rf $MOONRAKER_TMP
 mkdir -p $MOONRAKER_TMP $MOONRAKER_DATA/logs
 export TMPDIR=$MOONRAKER_TMP
@@ -58,21 +48,17 @@ if [ ! -f "$MOONRAKER_MAIN" ]; then
     exit 1
 fi
 # THE UPGRADE PATH: a printer on the pre-s6 payload has a start-stop-daemon'd
-# moonraker whose pid is in this file. The sweep below kills the process; this
-# removes the file so nothing reads a pid the kernel has since reused. Delete
-# both once no pre-s6 install can be upgraded in the field.
+# moonraker whose pid is in this file. Delete both once no pre-s6 install can
+# be upgraded in the field.
 rm -f /run/moonraker.pid
 
-# A moonraker already holding :7125 -- started by hand over ssh, or left by the
-# pre-s6 payload on a printer upgraded without a reboot -- makes this service
-# fail to bind, exit, get respawned, and loop for as long as the printer is on,
-# with s6-svstat saying "up" while an unsupervised leftover answers Mainsail.
+# A moonraker already holding :7125 makes this service fail to bind, exit, get
+# respawned, and loop for as long as the printer is on, with s6-svstat saying
+# "up" while an unsupervised leftover answers Mainsail.
 #
-# /proc rather than `ps | grep`: busybox ps truncates to the terminal width, so
-# a long python command line arrives cut in half. The match is the absolute
-# path of the entry point, which appears in a moonraker's command line and in
-# no other process here -- `s6-supervise moonraker` and this script have the
-# word but not the path. Our own pid is skipped.
+# /proc rather than `ps | grep`: busybox ps truncates to the terminal width.
+# The match is the absolute path of the entry point, which appears in a
+# moonraker's command line and in no other process here.
 for _mr_proc in /proc/[0-9]*; do
     [ -r "$_mr_proc/cmdline" ] || continue
     [ "${_mr_proc#/proc/}" = "$$" ] && continue
@@ -86,23 +72,19 @@ unset _mr_proc _mr_args
 # ---- readiness ------------------------------------------------------------
 #
 # `notification-fd` holds "3": the service is READY once a line is written to
-# fd 3. s6-rc waits for that before counting this service up, and ff-startup
-# depends on it -- so "ready" has to mean something a caller can use.
+# fd 3, and ff-startup depends on that meaning something a caller can use.
 #
 # READY IS "THE HTTP API IS LISTENING", not "the process was forked" (component
 # imports fail seconds later) and NOT "klippy_state is ready" -- moonraker
 # reporting klippy_state=error IS moonraker doing its job, so that definition
 # would never fire on precisely the broken printer whose UI somebody needs.
 #
-# /proc/net/tcp because this busybox has no nc applet (measured): field 2 is
-# LOCAL_ADDRESS:PORT with the port in uppercase hex, field 4 is the state, 0A
-# is TCP_LISTEN. The address half is not matched -- a user who sets
-# host: 127.0.0.1 should still count as listening.
+# /proc/net/tcp because this busybox has no nc applet: field 2 is
+# LOCAL_ADDRESS:PORT in uppercase hex, field 4 the state, 0A is TCP_LISTEN.
+# The address half is not matched, so host: 127.0.0.1 still counts.
 #
 # The port is read from moonraker's own config because it is user-editable and
-# a probe watching the wrong port would never fire: s6-rc would burn the whole
-# `timeout-up` on a working printer and skip everything that depends on it. The
-# awk is section-aware so a `port:` in another component cannot be picked up.
+# a probe watching the wrong port would never fire. The awk is section-aware.
 MOONRAKER_PORT=`awk '
     /^[[:space:]]*\[/ { section = $0 }
     section ~ /\[[[:space:]]*server[[:space:]]*\]/ && /^[[:space:]]*port[[:space:]]*:/ {
@@ -113,14 +95,12 @@ MOONRAKER_PORT=`awk '
 [ -n "$MOONRAKER_PORT" ] || MOONRAKER_PORT=7125
 
 # A subshell, because the last thing this script does is exec and an exec'd
-# moonraker cannot report on itself. It inherits fd 3; the exec below closes
-# fd 3 in MOONRAKER (3>&-) so the only process holding the notification pipe is
-# the one with something to say -- otherwise s6 never sees the pipe close when
-# the prober gives up.
+# moonraker cannot report on itself. The exec below closes fd 3 in MOONRAKER
+# (3>&-) so the only process holding the notification pipe is the one with
+# something to say.
 #
 # 180s: moonraker imports its whole component tree on a 1GHz mipsel box off
-# eMMC, and slower again on the qemu replica. Giving up sends no notification,
-# and s6-rc then gives up at `timeout-up` (120s, in the file next to this).
+# eMMC, and slower again on the qemu replica.
 (
     _mr_n=0
     while [ $_mr_n -lt 180 ]; do
@@ -136,14 +116,12 @@ MOONRAKER_PORT=`awk '
     done
 ) &
 
-# `-d /usr/data` is moonraker's data path -- config/moonraker.conf,
-# logs/moonraker.log and its database. Not optional: moonraker defaults to
+# `-d /usr/data` is moonraker's data path. Not optional: moonraker defaults to
 # ~/printer_data, a home directory that does not exist here.
 #
 # stderr goes wherever the scanner's does ($SVC_S6_LOG), which is where a
 # moonraker that dies before its own logging is configured explains itself.
 #
-# `nice` sets its own priority and then execs in place (verified: the pid s6
-# holds is the interpreter's, not nice's), so this is still one process.
-# NICE_MOONRAKER protects klippy from this process; 0 or unset = normal.
+# `nice` sets its own priority and then execs in place, so this is still one
+# process. NICE_MOONRAKER protects klippy from it; 0 or unset = normal.
 exec nice -n "${NICE_MOONRAKER:-0}" "$FF_PYTHON" "$MOONRAKER_MAIN" -d "$MOONRAKER_DATA" 3>&-

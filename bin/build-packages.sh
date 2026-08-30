@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Build every recipe under pkgs/ into the feed, in dependency order, and index it.
+# Build every recipe under pkgs/ into the feed, in dependency order, and index
+# it.
 #
 #     ./bin/build-packages.sh              all recipes
 #     ./bin/build-packages.sh opkg         that one and everything it needs
 #
 # Each recipe is packaged before the next is built, because a recipe gets its
-# PKG_BUILD_DEPENDS out of this feed: libarchive's configure reads zlib's
-# headers out of anvil-zlib_*.ipk. The archives themselves are opkg-utils'
-# work; what is left here is laying out the tree it packages.
+# PKG_BUILD_DEPENDS out of this feed. The archives are opkg-utils' work; what
+# is left here is laying out the tree it packages.
 #
 # Needs no stock FlashForge package, unlike bin/patch.sh, so packaging stays
 # runnable in CI on a bare checkout.
@@ -22,9 +22,9 @@ for t in "$OPKG_BUILD_BIN" "$OPKG_INDEX_BIN" "$OPKG_UNBUILD_BIN"; do
 done
 
 # Reproducible by default: opkg-build adds --clamp-mtime when SOURCE_DATE_EPOCH
-# is set. THE DEFAULT IS 1 AND NOT 0, WHICH IS NOT A TYPO -- OpenSSL reads it as
-# `$ENV{'SOURCE_DATE_EPOCH'} || time()`, and Perl's || makes 0 the one value
-# that silently falls through to the current time.
+# is set. THE DEFAULT IS 1 AND NOT 0, WHICH IS NOT A TYPO -- OpenSSL reads it
+# as `$ENV{'SOURCE_DATE_EPOCH'} || time()`, and Perl's || makes 0 the one
+# value that silently falls through to the current time.
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1}"
 
 # Sorted so a dependency precedes its dependent -- alphabetically, libarchive
@@ -61,19 +61,18 @@ for r in "${RECIPES[@]}"; do
             exit 1; }
 
         # --- the layout
-        # opkg-build packages a DIRECTORY: the tree as it appears on the target,
-        # plus a CONTROL/ it does not ship. Laid down under $MODDIR, so `opkg
-        # install` needs no prefix and nothing of ours can land on the rootfs.
-        # cp -a, not cp: libsodium's .so -> .so.26 -> .so.26.2.0 chain would
-        # otherwise become three identical 400KB files.
+        # opkg-build packages a DIRECTORY: the tree as it appears on the
+        # target, plus a CONTROL/ it does not ship. Laid down under $MODDIR so
+        # `opkg install` needs no prefix. cp -a, not cp: libsodium's
+        # .so -> .so.26 -> .so.26.2.0 chain would become three 400KB files.
         LAYOUT="work/.ipk-$PKG_NAME"
         rm -rf "$LAYOUT"
         mkdir -p "$LAYOUT$MODDIR" "$LAYOUT/CONTROL"
         cp -a "$PKG_ROOT/." "$LAYOUT$MODDIR/"
-        # -maxdepth 1: PKG_EXCLUDE is always ".version", the stamp pkg_end writes
-        # at a recipe's ROOT, but `find -name` matches a basename at any depth --
-        # and Mainsail ships its own www/mainsail/.version, which this deleted.
-        # PKG_EXCLUDE is a space-separated pattern list, meant to split.
+        # -maxdepth 1: PKG_EXCLUDE is always ".version", the stamp pkg_end
+        # writes at a recipe's ROOT, but `find -name` matches a basename at
+        # any depth -- and Mainsail ships its own www/mainsail/.version, which
+        # this deleted.
         # shellcheck disable=SC2086
         for p in $PKG_EXCLUDE; do
             find "$LAYOUT$MODDIR" -maxdepth 1 -name "$p" -exec rm -rf {} + 2>/dev/null || true
@@ -105,9 +104,9 @@ for r in "${RECIPES[@]}"; do
 
         # --- deterministic modes
         # -o 0 -g 0 and SOURCE_DATE_EPOCH settle owner and mtime but not MODE:
-        # GNU tar restores a directory's exact mode as root and applies the umask
-        # otherwise, so Moonraker came out 0775 in the container, 0755 outside.
-        # Symlinks are left alone -- chmod would follow them.
+        # GNU tar restores a directory's exact mode as root and applies the
+        # umask otherwise, so Moonraker came out 0775 in the container and
+        # 0755 outside. Symlinks are left alone -- chmod would follow them.
         for lay in "$LAYOUT" "$DEVLAYOUT"; do
             [ -d "$lay$MODDIR" ] || continue
             find "$lay$MODDIR" -type d -exec chmod 0755 {} +
@@ -132,9 +131,9 @@ for r in "${RECIPES[@]}"; do
                 printf 'Section: %s\n' "$_sect"
                 printf 'Priority: optional\n'
                 [ -n "$_dep" ] && printf 'Depends: %s\n' "$_dep"
-                # Provides alone lets a printer install BOTH chamber configs, and
-                # the last to unpack wins silently; Conflicts on the same virtual
-                # name is what makes "either" mean "exactly one".
+                # Provides alone lets a printer install BOTH chamber configs,
+                # and the last to unpack wins silently; Conflicts on the same
+                # virtual name is what makes "either" mean "exactly one".
                 # shellcheck disable=SC2086
                 [ -n "$PKG_PROVIDES" ] \
                     && printf 'Provides: %s\n' "$(echo $PKG_PROVIDES)"
@@ -146,8 +145,8 @@ for r in "${RECIPES[@]}"; do
 
             # Runtime package only: a postinst on the -dev half would act on a
             # payload that is not its own. It also runs on the BUILD, with
-            # IPKG_INSTROOT empty, so one here guards on something only a printer
-            # has.
+            # IPKG_INSTROOT empty, so one here guards on something only a
+            # printer has.
             if [ "$_nm" = "$PKG_NAME" ] && [ -d "$PKG_DIR/control" ]; then
                 for _cs in "$PKG_DIR"/control/*; do
                     [ -f "$_cs" ] || continue
@@ -192,8 +191,8 @@ done
 
 # --- the prune
 # An orphan .ipk goes into the index and a printer can install a package no
-# recipe builds any more; renames leave them behind. Full builds only, and the
-# expected set comes from ALL recipes, not the ones this run built.
+# recipe builds any more. Full builds only, and the expected set comes from
+# ALL recipes, not the ones this run built.
 if [ $# -eq 0 ]; then
     expected=""
     for r in $(pkg_recipes); do
@@ -212,9 +211,9 @@ if [ $# -eq 0 ]; then
 fi
 
 # --- the index
-# opkg refuses a package whose sha256 does not match its stanza, so signing the
-# INDEX signs the whole feed. --checksum sha256 is not the default; opkg asks
-# for Packages.gz first and falls back to Packages, so both are written.
+# opkg refuses a package whose sha256 does not match its stanza, so signing
+# the INDEX signs the whole feed. --checksum sha256 is not the default; opkg
+# asks for Packages.gz first and falls back to Packages, so both are written.
 say "index: writing $PKG_FEED/Packages"
 ( cd "$PKG_FEED" && python3 "$OPKG_INDEX_BIN" --checksum md5 --checksum sha256 . > Packages )
 gzip -n -9 -c "$PKG_FEED/Packages" > "$PKG_FEED/Packages.gz"

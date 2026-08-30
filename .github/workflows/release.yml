@@ -3,21 +3,17 @@ name: release
 # A release is blocked on the printer replica passing.
 #
 # The replica is the printer's real rootfs.squashfs, chrooted under
-# qemu-mipsel, with /usr/prog installed by FlashForge's own updater. The
-# installer under test runs on the printer's busybox, tar, md5sum and unTar --
-# not on Debian stand-ins. If that fails, nothing ships.
+# qemu-mipsel, with /usr/prog installed by FlashForge's own updater, so the
+# installer under test runs on the printer's busybox, tar, md5sum and unTar.
+# If that fails, nothing ships.
 #
-# The stock FlashForge packages and the factory image are large but not
-# secret: they are published at ghzserg/FF and this workflow fetches what is
-# already public, exactly as ci.yml does. Every one is pinned by sha256 and
-# the checksum is enforced, not advisory -- an unpinned download would let the
-# archive change under us while the gates kept reporting green against a
-# different firmware than they were written for.
+# The stock packages and the factory image are large but not secret: this
+# fetches what is already public at ghzserg/FF, pinned by sha256 and enforced,
+# so the archive cannot change under us while the gates report green.
 #
-# TAGS. `v<YYYYMMDD>-<city>`, e.g. v20260824-nova-kakhovka: the release date,
-# and the name of a Ukrainian city under occupation. Only the date reaches the
-# package filename -- the installer's version field is a date and nothing else
-# -- so the city is carried by the tag and the release title.
+# TAGS. `v<YYYYMMDD>-<city>`, e.g. v20260824-nova-kakhovka: the release date
+# and a Ukrainian city under occupation. Only the date reaches the package
+# filename, so the city is carried by the tag and the release title.
 
 on:
   push:
@@ -60,13 +56,11 @@ jobs:
 
       - name: Write test.env (the replica's /usr/prog)
         env:
-          # A prebuilt replica image: it carries the factory partitions AND
-          # the stock package already installed, about a minute of setup
-          # saved on every replica case. The end-to-end test reinstalls the
-          # baseline itself when the package under test is for the other
-          # model, so this only ever changes how long it takes, never what it
-          # proves. Defaults to the public one; vars.PRINTER_IMAGE overrides
-          # it for a fork building its own.
+          # A prebuilt replica image carrying the factory partitions AND the
+          # stock package already installed, about a minute saved per case.
+          # The end-to-end test reinstalls the baseline itself when the
+          # package under test is for the other model, so this only changes
+          # how long it takes, never what it proves.
           PRINTER_IMAGE: ${{ vars.PRINTER_IMAGE || 'monstrofil/creator5-printer:latest' }}
         run: |
           set -euo pipefail
@@ -79,14 +73,10 @@ jobs:
           cat > config.env <<CFG
           MOD_NAME=anvil
           # The tag is v<YYYYMMDD>-<city>; the package version is the date
-          # alone. FlashForge's installer reads this as the software version
-          # and it is compared as a number, so the codename stays in the tag.
-          # A manual run has no tag -- GITHUB_REF_NAME would be the branch --
-          # so leave it empty and let the build stamp today's UTC date.
-          # The optional trailing letter is the same-day re-release
-          # convention common.sh documents (20260824b): the installer never
-          # reads this -- it compares the software component's own version --
-          # so the letter only keeps the outer filenames distinct.
+          # alone, which FlashForge's installer compares as a number. A manual
+          # run has no tag, so leave it empty and let the build stamp today's
+          # UTC date. The optional trailing letter (20260824b) is the same-day
+          # re-release convention and only keeps the outer filenames distinct.
           MOD_VER=$(case "$GITHUB_REF" in
                       refs/tags/*) echo "${GITHUB_REF_NAME#v}" | sed -n 's/^\([0-9]\{8\}[a-z]\{0,1\}\).*/\1/p' ;;
                       *) echo "" ;;
@@ -97,26 +87,22 @@ jobs:
           STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
           STOCK_TGZ=""
           # No Klipper source knob any more: pkgs/klipper builds from the
-          # commit pinned in versions.env and cross-compiles c_helper.so from
-          # those same sources. KLIPPER_FORK used to be settable here, and
-          # setting it to "" is what made v20260824 ship the stock 0.12-era
-          # klippy; a recipe names one source, so that cannot recur.
-          # The secret is INTENTIONALLY unset: a hash baked in here would be
-          # the same root password in every public release. Empty means each
-          # printer picks a random one on its first install and writes it to
-          # anvil-password.txt on the stick; updates keep it. The plumbing
-          # stays so a fork can bake one in deliberately.
+          # commit pinned in versions.env. KLIPPER_FORK used to be settable
+          # here, and setting it to "" is what made v20260824 ship the stock
+          # 0.12-era klippy.
+          #
+          # The password secret is INTENTIONALLY unset: a hash baked in here
+          # would be the same root password in every public release. Empty
+          # means each printer picks a random one on first install. The
+          # plumbing stays so a fork can bake one in deliberately.
           ROOT_PW_HASH='${{ secrets.ROOT_PW_HASH }}'
           FF_KEY='FFP0331&*%root'
           CFG
 
       # Before the suite, not after: the replica gates run ./bin/patch.sh
-      # directly and it expects vendor/ already populated. `make release`
-      # further down would have fetched them, but that runs after the gates.
-      #
-      # Cached because the set now includes the Klipper fork and the ~203MB
-      # MIPS toolchain that compiles its chelper; the key is the pin file, so
-      # a version bump refetches and anything else reuses.
+      # directly and it expects vendor/ already populated. Cached because the
+      # set includes the Klipper fork and the ~203MB MIPS toolchain; the key
+      # is the pin file.
       - name: Cache the pinned vendor assets
         uses: actions/cache@v4
         with:
@@ -146,19 +132,16 @@ jobs:
 
       - name: End-to-end update test on the packages that will actually ship
         # The suite above tested a package built from the same tree; this
-        # tests the exact files that get attached to the release.
+        # tests the exact files attached to the release.
         #
-        # In the build image, not on the runner: every step before this one
-        # ran as root inside that image, so work/ and dist/ belong to root and
-        # the replica -- which stages into work/.sim-* -- cannot create its
-        # own scratch directory as the runner user. It also needs the docker
-        # socket, because each case starts a printer replica container.
+        # In the build image, not on the runner: every earlier step ran as
+        # root inside that image, so work/ and dist/ belong to root and the
+        # replica cannot create its scratch directory as the runner user. It
+        # also needs the docker socket.
         #
         # REAL_PKG points the replica lane at one exact package instead of the
-        # newest thing in work/out. Two models ship per release and they are
-        # not interchangeable, so each is installed and asserted against in
-        # turn -- 22 named results per package where sim-install.py gave one
-        # exit code.
+        # newest in work/out. Two models ship per release and they are not
+        # interchangeable, so each is installed and asserted against in turn.
         run: |
           docker run --rm \
             -v "$PWD":"$PWD" -w "$PWD" \
@@ -177,11 +160,10 @@ jobs:
 
       - name: Assemble the release notes
         if: startsWith(github.ref, 'refs/tags/')
-        # The fixed half is the same every time; the half that names the city
-        # is not. docs/releases/<tag>.md carries it, and is appended when it
-        # exists -- so the story of the city the release is named for lives in
-        # the repo at the tagged commit, not only in a hand-edited release
-        # page that nothing reproduces.
+        # The fixed half is the same every time; the half naming the city is
+        # not. docs/releases/<tag>.md carries it and is appended when it
+        # exists, so that story lives in the repo at the tagged commit rather
+        # than only on a hand-edited release page.
         run: |
           set -euo pipefail
           cat > RELEASE_NOTES.md <<'NOTES'
@@ -223,8 +205,7 @@ jobs:
           files: dist/*.tgz
           # Every build so far is a pre-release: this replaces the stock UI on
           # a machine whose only recovery path is a USB stick with the stock
-          # package on it. That is worth saying with the flag, not just in
-          # prose people scroll past.
+          # package on it. Worth saying with the flag, not just in prose.
           prerelease: true
           name: ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md

@@ -44,14 +44,12 @@ pytestmark = pytest.mark.static
 #
 # THE PRINTER'S SCRIPTS ARE ADDRESSED BY THE SHAPE OF A RECIPE, not by a
 # top-level directory: pkgs/<recipe>/payload/ is what that recipe installs
-# under $MODDIR, and pkgs/<recipe>/payload/prog/ is the part of that which
-# anvil-link-prog.sh points the stock /usr/prog paths at. Neither is named
-# recipe by recipe here, so a new recipe with scripts in it is covered the day
-# it lands.
+# under $MODDIR. Neither level is named recipe by recipe here, so a new recipe
+# with scripts in it is covered the day it lands.
 #
-# The s6-rc `run` scripts are in the list because s6-supervise execs them on
-# the printer, under the printer's ash, and a bashism in one is a service that
-# never starts and says so only in s6's own log.
+# The s6-rc `run` scripts are in the list because s6-supervise execs them
+# under the printer's ash, and a bashism in one is a service that never starts
+# and says so only in s6's own log.
 SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh",
                 "pkgs/*/payload/prog/*.sh", "pkgs/*/payload/prog/firmwareExe",
                 "pkgs/*/payload/prog/klipperDaemon",
@@ -59,40 +57,32 @@ SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh",
                 "installer/*.sh",
                 "tools/replica/printer/*.sh",
                 "qa/replica/actions/*.sh",
-                # BOTH RECIPE LEVELS. pkgs/*/build.sh alone silently
-                # stopped covering thirty-four of the thirty-eight the day
-                # they moved under 3rdparty/ -- a glob that matches fewer
-                # files does not fail, it just checks less. _files() now
-                # refuses a pattern that matches nothing, so the next one
-                # fails instead of quietly shrinking.
+                # BOTH RECIPE LEVELS. pkgs/*/build.sh alone silently stopped
+                # covering thirty-four of the thirty-eight the day they moved
+                # under 3rdparty/ -- a glob that matches fewer files does not
+                # fail, it just checks less. _files() now refuses a pattern
+                # that matches nothing.
                 "pkgs/*.sh", "pkgs/*/build.sh", "pkgs/3rdparty/*/build.sh")
 
-# NOT the oneshots' `up`/`down`. Those are execline command lines, and the
-# shell they carry is inside a `/bin/sh -c "..."` argument -- `bash -n` and
-# shellcheck would both parse the wrapper, pass, and check none of the code
-# that actually runs. Extracting the body and checking THAT belongs in the
-# replica lane beside the rest of the s6-rc assertions.
+# NOT the oneshots' `up`/`down`. Those are execline command lines whose shell
+# is inside a `/bin/sh -c "..."` argument, so bash -n and shellcheck would
+# parse the wrapper, pass, and check none of the code that actually runs.
+# Extracting the body belongs in the replica lane.
 
 # The subset executed by the printer's busybox ash. bin/ and test/ are
-# deliberately absent: they run on the build image, where bash is the shell and
-# a bashism is not a defect.
+# deliberately absent: they run on the build image, where a bashism is not a
+# defect. So is pkgs/*/build.sh, for the same reason.
 #
-# qa/replica/actions/ IS here, and that is not a formality. Those scripts are
-# handed to entrypoint.sh and run inside the chroot exactly as a case script
-# is, so they are as exposed to ash as anything under payload/. A bashism in
-# hold.sh would fail at container start and read as "the replica is broken on
-# this machine" -- a harness failure wearing a machine failure's clothes, which
-# is the hardest kind to diagnose.
-# pkgs/*/build.sh is deliberately not here: the recipes are build-host bash,
-# like everything in bin/, and a bashism in one is not a defect.
+# qa/replica/actions/ IS here, and not as a formality: those scripts run
+# inside the chroot exactly as a case script does, so a bashism in hold.sh
+# would fail at container start and read as "the replica is broken on this
+# machine" -- a harness failure wearing a machine failure's clothes.
 #
 # installer/ is here too: run-pre.sh and run-append.sh are spliced into
-# FlashForge's own run.sh and execute inside the stock installer's shell,
-# which is the same busybox.
+# FlashForge's own run.sh and execute inside the stock installer's shell.
 #
-# NOT here, and it is a real gap rather than a decision:
-# pkgs/*/payload/bin/*.sh. wifi-action.sh runs on the printer and no lane
-# checks its dialect.
+# NOT here, and a real gap rather than a decision: pkgs/*/payload/bin/*.sh.
+# wifi-action.sh runs on the printer and no lane checks its dialect.
 ASH_GLOBS = ("pkgs/*/payload/*.sh",
              "pkgs/*/payload/prog/*.sh", "pkgs/*/payload/prog/firmwareExe",
              "pkgs/*/payload/prog/klipperDaemon",
@@ -142,16 +132,11 @@ PY_FILES = _files(PY_GLOBS)
 
 # --------------------------------------------------------- the globs are live
 #
-# Each lane below asserts its own inputs exist. This is not defensive noise: it
-# is the exact bug the original guarded against, quoted from check_no_bashisms:
-#
-#     With no targets shellcheck writes usage to stderr and exits 1, leaving
-#     `hits` empty -- a green gate that examined nothing. check_shell_syntax
-#     guards this; this one did not, so moving payload/ would have retired the
-#     ash-compatibility check silently.
-#
-# Parametrized tests fail the same way, and worse: zero parameters is zero
-# tests, which is not even a red line. It is an empty run that reads as clean.
+# Each lane below asserts its own inputs exist -- the exact bug the original
+# guarded against: with no targets shellcheck writes usage to stderr and exits
+# 1, leaving `hits` empty, which is a green gate that examined nothing.
+# Parametrized tests fail the same way and worse: zero parameters is zero
+# tests, an empty run that reads as clean.
 
 def test_shell_globs_match_something():
     assert SHELL_FILES, "no scripts to parse -- the globs in SYNTAX_GLOBS rotted"
@@ -212,13 +197,12 @@ def bashisms():
     only about itself.
     """
     # A failure, not a skip. There is no configuration in which running this
-    # suite without shellcheck is a complete run, so calling it "skipped" would
-    # describe a machine that is not set up as though it were a decision
-    # somebody made. See qa/conftest.py.
+    # suite without shellcheck is a complete run, so "skipped" would describe
+    # a machine that is not set up as though it were a decision. See
+    # qa/conftest.py.
     #
-    # pytest.fail rather than a bare assert on which(): `assert None` is what
-    # an assert would lead with, and the sentence explaining how to fix it
-    # would be the part that got truncated in the summary.
+    # pytest.fail rather than a bare assert on which(): the sentence
+    # explaining how to fix it is what an assert would truncate.
     if not shutil.which("shellcheck"):
         pytest.fail(
             "shellcheck is not installed, so nothing checked that the payload "
@@ -278,10 +262,8 @@ def test_no_undefined_names():
     descend.
     """
     # The debian package ships the module without putting a pyflakes
-    # executable on PATH, so shutil.which() -- the shape the shellcheck test
-    # above uses -- reports it missing on the very image that has it.
-    #
-    # A failure, not a skip, for the same reason as shellcheck above.
+    # executable on PATH, so shutil.which() reports it missing on the very
+    # image that has it. A failure, not a skip, as with shellcheck above.
     if importlib.util.find_spec("pyflakes") is None:
         pytest.fail(
             "pyflakes is not installed, so nothing checked that every name is "

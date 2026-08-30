@@ -6,13 +6,12 @@
 #
 # WHOSE INTERPRETER DLOPENS IT: libnacl reaches libsodium through
 # ctypes.cdll.LoadLibrary, and the process doing that is OUR CPython 3.13, not
-# FlashForge's 3.8.2 (see payload/anvil-env.sh). It has to match whatever
-# interpreter loads it, and that interpreter is built by this toolchain.
+# FlashForge's 3.8.2. It has to match whatever interpreter loads it.
 #
 # WHY IT CANNOT BE STATIC, when the interpreter's seven dependencies all are:
-# you cannot dlopen an archive. Moonraker's `authorization` component signs its
-# JWTs with the ed25519 pair libnacl exposes, so this is on the startup path of
-# the web UI rather than beside it.
+# you cannot dlopen an archive. Moonraker's `authorization` component signs
+# its JWTs with the ed25519 pair libnacl exposes, so this is on the startup
+# path of the web UI.
 set -euo pipefail
 . ./bin/common.sh
 . pkgs/lib.sh
@@ -30,10 +29,10 @@ pkg_unpack "$SODIUM_TGZ"
 pkg_build "libsodium-$SODIUM_VERSION" \
     --disable-static --enable-shared --with-pic CFLAGS="-O2 -fPIC"
 
-# All three names: libsodium.so -> libsodium.so.26 -> libsodium.so.26.2.0. The
-# bare `libsodium.so` is not a development leftover to be trimmed -- it is the
+# All three names: libsodium.so -> .so.26 -> .so.26.2.0. The bare
+# `libsodium.so` is not a development leftover to be trimmed -- it is the
 # FIRST name libnacl asks dlopen for, and the only one its
-# __file__[0:__file__.find("lib")+3] + "/libsodium.so" fallback can construct.
+# __file__[0:__file__.find("lib")+3] + "/libsodium.so" fallback constructs.
 pkg_ship "lib/libsodium.so*"
 
 [ -L "$SODIUM_BUILD/lib/libsodium.so" ] \

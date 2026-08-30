@@ -1,90 +1,59 @@
 #!/usr/bin/env python3
 # Everything that has to happen before HelixScreen, and the panel that says so.
 #
-# Run as two s6-rc oneshots, between klipper and the UI. It does two jobs, and
-# only the second is once-per-install:
+# Run as two s6-rc oneshots, between klipper and the UI. Two jobs, only the
+# second once-per-install:
 #
 #   EVERY BOOT   wait until the printer is genuinely up -- the toolhead boards
-#                handed over from their bootloaders, then klipper and
-#                moonraker ready -- naming on the panel whatever is being
-#                waited for. This machine takes its time: three of the four
-#                boards need a handshake before they answer (see
-#                bin/ff_mcu_bringup.py) and the heater board routinely costs
-#                klippy a restart or two. Without this the wait happens behind
-#                a black screen with HelixScreen up and reporting a
-#                disconnected printer, which tells an owner nothing about
-#                which board is missing.
-#
+#                handed over from their bootloaders, then klipper and moonraker
+#                ready -- naming on the panel whatever is being waited for.
+#                Three of the four boards need a handshake before they answer
+#                and the heater board routinely costs klippy a restart or two.
 #   FIRST BOOT   carry this unit's factory calibration from firmwareExe's JSON
 #                into Klipper, then stamp the install so it never runs again.
 #
-# WHY THIS IS ITS OWN PROGRAM, rather than a klippy:ready hook in [ff_legacy].
-# klippy:ready is the one event where the printer is least able to say whether
-# the rest of the machine is healthy -- it fires with moonraker possibly not
-# yet listening and nginx possibly not yet serving. And a boot-time migration
-# is a property of the INSTALL, not of every klippy start, so it wants a stamp
-# on disk rather than a "has anything been calibrated yet" guess re-evaluated
+# ITS OWN PROGRAM rather than a klippy:ready hook, because klippy:ready fires
+# with moonraker possibly not yet listening, and a boot-time migration is a
+# property of the INSTALL -- it wants a stamp on disk, not a guess re-evaluated
 # on every ready.
 #
-# So it is a separate program, run from the firmwareExe wrapper before
-# HelixScreen:
-#
 #   1. Hand the toolhead boards over from their bootloaders, by calling
-#      ff_mcu_bringup.py directly -- it is a module here, not a subprocess --
-#      naming on the panel whichever board is still being waited for.
+#      ff_mcu_bringup.py directly -- a module here, not a subprocess.
 #   2. Wait for klippy and moonraker to be ready. If a board never answered,
-#      klippy says so and names it, and so do we; then hand the boards over
-#      again and restart klippy, which is what reopening the port achieves.
-#   3. If the install is already stamped, stop here -- the rest is the
-#      migration, and it has been done.
-#   4. Otherwise run FF_IMPORT_FIRMWARE_CONFIG, then SAVE_CONFIG (which
-#      restarts klippy), wait for it to come back, and only then stamp.
+#      hand the boards over again and restart klippy, which is what reopening
+#      the port achieves.
+#   3. If the install is already stamped, stop -- the rest is the migration.
+#   4. Otherwise FF_IMPORT_FIRMWARE_CONFIG, then SAVE_CONFIG (which restarts
+#      klippy), wait for it to come back, and only then stamp.
 #
-# HOW IT IS RUN NOW: as TWO s6-rc oneshots, both of them this same program.
-# `mcu-bringup` is step 1 alone (--only-bringup) and klipper depends on it, so
-# the boards are handed over before klippy opens the ports and nothing has to
-# remember to do it -- including s6 restarting klippy after a crash, which is a
-# path no script of ours is on. `ff-startup` is steps 2-4 (--no-bringup
-# --no-klipper) and depends on klipper and moonraker; the UI depends on it. See
-# the `up` scripts in payload/etc/s6-rc/source/, which assemble both command
-# lines out of anvil.conf.
+# TWO s6-rc ONESHOTS, both this same program. `mcu-bringup` is step 1 alone
+# (--only-bringup) and klipper depends on it, so the boards are handed over
+# before klippy opens the ports even when s6 restarts klippy after a crash.
+# `ff-startup` is steps 2-4 (--no-bringup --no-klipper) and depends on klipper
+# and moonraker; the UI depends on it.
 #
-# WHAT THAT DEPENDENCY DOES NOT GIVE US, and why the waiting below stays. s6-rc
+# THE DEPENDENCY IS NOT ENOUGH, which is why the waiting below stays: s6-rc
 # counts a longrun up as soon as it is forked unless its servicedir carries a
-# notification-fd, and klipper has none: klippy's "ready" is a state on
-# moonraker's API, which is exactly what this program polls for. So depending
-# on klipper means "after klippy was LAUNCHED", not "after klippy is usable".
-# moonraker and the camera do have a notification-fd, so their readiness is
-# real -- which is why depending on moonraker genuinely does mean the API is
-# answering.
+# notification-fd, and klipper has none -- klippy's "ready" is a state on
+# moonraker's API, which is what this polls for. moonraker and the camera do
+# have one, so depending on moonraker really does mean the API is answering.
 #
-# WHY IT STILL RESTARTS KLIPPER. The retry that actually fixes a board which
-# missed its window is "close the port, hand it over again, reopen", so
-# whatever does the bring-up has to be the same thing that restarts klippy.
-# That has not changed; only the way it asks has -- `s6-svc -wr -t`, which
-# terminates klippy and waits for the supervisor to bring it back. NOT `s6-rc`:
-# this program runs INSIDE an s6-rc transition, which holds an exclusive lock on
-# the live directory, so an s6-rc underneath it would deadlock.
+# WHY IT STILL RESTARTS KLIPPER: the retry that fixes a board which missed its
+# window is "close the port, hand it over again, reopen", so the thing doing
+# the bring-up has to be the thing that restarts klippy. Via `s6-svc -wr -t`,
+# NOT `s6-rc`: this runs INSIDE an s6-rc transition, which holds an exclusive
+# lock on the live directory, so an s6-rc underneath it would deadlock.
 #
-# Anything short of a verified success leaves NO stamp: the next boot tries
-# again. That is deliberate. The heater board on this machine routinely needs
-# several klippy restarts before it answers, so "the
-# stack was not ready in time" is a normal event to retry, not a failure to
-# record forever.
+# Anything short of a verified success leaves NO stamp and the next boot tries
+# again. "The stack was not ready in time" is a normal event to retry.
 #
-# THE BROWSER UI IS DELIBERATELY NOT CONSULTED. Everything here travels over
-# moonraker's API, so klipper and moonraker are the only services involved.
-# Which browser UI is installed -- Mainsail, Fluidd, or nothing at all on a
-# BUILD_MAINSAIL=0 build -- is a packaging choice that this migration has no
-# stake in, so it is not waited for, not checked, and not mentioned again.
+# The browser UI is deliberately not consulted: everything travels over
+# moonraker's API, and which UI is installed is a packaging choice.
 #
-# WHAT THE PANEL SHOWS. All of this happens before HelixScreen starts, so the
-# screen is black for as long as it takes -- which on a first boot is the
-# longest wait of the whole install. ffscreen.py paints a line of text and a
-# progress bar straight onto /dev/fb0 so the machine does not look bricked
-# and nobody reaches for the power switch mid-SAVE_CONFIG. It is decoration:
-# if it cannot draw, the migration proceeds exactly the same. --no-screen
-# turns it off.
+# All of this happens before HelixScreen starts, so the screen is black for as
+# long as it takes. ffscreen.py paints a line of text and a progress bar onto
+# /dev/fb0 so nobody reaches for the power switch mid-SAVE_CONFIG; it is
+# decoration, and --no-screen turns it off.
 #
 #   usage: ff-startup.py [--stamp F] [--dir D] [--moonraker URL] [--timeout S]
 #                        [--no-import] [--no-klipper] [--klipper-tries N]
@@ -92,8 +61,8 @@
 #                        [--mcu-timeout S]
 #                        [--fb DEV] [--fb-geometry G] [--no-screen] [--dry-run]
 #
-# Exit 0 = the printer came up, and the migration either was not needed or
-# succeeded. Exit 1 = something did not finish; no stamp was written.
+# Exit 0 = the printer came up and the migration was not needed or succeeded.
+# Exit 1 = something did not finish; no stamp was written.
 import argparse
 import json
 import os
@@ -103,11 +72,10 @@ import time
 import urllib.error
 import urllib.request
 
-# Both sit beside this script, so running it by absolute path finds them:
-# python puts the script's own directory on sys.path. Either being absent is
-# survivable and neither is fatal -- no ffscreen means no panel, and no
-# bring-up means the boards are left to klippy, which reports a board that
-# never answered better than we could anyway.
+# Both sit beside this script, so running it by absolute path finds them.
+# Either being absent is survivable: no ffscreen means no panel, and no
+# bring-up leaves the boards to klippy, which reports one that never answered
+# better than we could anyway.
 try:
     import ffscreen
 except ImportError:
@@ -121,11 +89,10 @@ except ImportError:
 STAMP = '/usr/data/anvil/.firmware-config-imported'
 JSON_DIR = '/usr/data/firmwareRes/config'
 MOONRAKER = 'http://127.0.0.1:7125'
-# How klipper is restarted: `s6-svc -wr -t` on its live servicedir. NOT s6-rc --
-# this program runs as an s6-rc oneshot, and s6-rc holds an exclusive lock on
-# the live directory for the length of a transition, so an s6-rc underneath it
-# would wait for a lock its own parent holds. `-t` also leaves the WANTED state
-# alone, so s6-rc goes on believing klipper is up, which stays true.
+# How klipper is restarted: `s6-svc -wr -t` on its live servicedir. NOT s6-rc
+# -- this runs as an s6-rc oneshot, and s6-rc holds an exclusive lock on the
+# live directory for the length of a transition. `-t` also leaves the WANTED
+# state alone, so s6-rc goes on believing klipper is up, which stays true.
 S6_SVC = '/usr/data/anvil/bin/s6-svc'
 KLIPPER_SVCDIR = '/usr/data/anvil/etc/s6/klipper'
 UDS = '/tmp/uds'
@@ -156,10 +123,9 @@ LOGFILE = '/USR/DATA/LOGS/ANVIL-BOOT.LOG'
 
 def log(msg):
     # The boot log is where somebody looks when the printer did not come up,
-    # so the prefix has to be the name of the thing they would then go and
-    # read. This said 'ff-import' for as long as that was the whole job; it
-    # now waits for the boards and owns klipper on every boot, and a line
-    # saying 'ff-import: starting klipper' sends the reader to the wrong file.
+    # so the prefix has to name the thing they would then go and read. This
+    # said 'ff-import' when that was the whole job; it now owns klipper on
+    # every boot.
     sys.stdout.write('ff-startup: %s\n' % msg)
     sys.stdout.flush()
 
@@ -187,10 +153,9 @@ class Panel:
             self.screen = screen
 
     # Both of these swallow everything. This is the boundary where drawing
-    # stops being allowed to matter: the migration below must run identically
-    # on a printer with no panel, a panel that dies mid-write, or a panel that
-    # throws something ffscreen did not anticipate. One failure retires the
-    # screen for the rest of the run rather than failing again every 2s.
+    # stops being allowed to matter: the migration must run identically with
+    # no panel, a panel that dies mid-write, or one that throws something
+    # unanticipated. One failure retires the screen for the rest of the run.
 
     def say(self, status, progress, note=KEEP_POWER, detail='', fault=False):
         if self.screen is None:
@@ -490,14 +455,11 @@ def run(args):
     deadline = started + args.timeout
     panel = Panel(args.fb, args.fb_geometry, enabled=not args.no_screen)
     if args.only_bringup:
-        # The `mcu-bringup` oneshot. Step 1 and nothing else: klipper depends
-        # on this service, so the boards are out of their bootloaders before
-        # klippy opens the ports, every time klippy starts.
+        # The `mcu-bringup` oneshot: step 1 and nothing else, so the boards
+        # are out of their bootloaders before klippy opens the ports.
         #
-        # The panel is NOT handed back clean here. This runs seconds before
-        # klipper and then ff-startup, and blanking the screen between the two
-        # would be a flicker for no reason -- ff-startup's own panel.done()
-        # ends the sequence.
+        # The panel is NOT handed back clean here -- ff-startup runs seconds
+        # later and its own panel.done() ends the sequence.
         hand_over_boards(panel, args.mcu_timeout)
         return 0
     moonraker = Moonraker(args.moonraker)
@@ -517,12 +479,10 @@ def bring_up_printer(args, moonraker, panel, started, deadline):
     boards over again before reopening the ports.
     """
     for attempt in range(1, args.klipper_tries + 1):
-        # ATTEMPT 1 NORMALLY DOES NOTHING HERE. klipper is this service's
-        # dependency, so s6-rc has already started it and the boards have
-        # already been handed over by the mcu-bringup oneshot; there is
-        # nothing to do but wait. The branch is for the two cases where that
-        # is not true: a retry, and a klippy that is not there at all because
-        # its run script is failing.
+        # ATTEMPT 1 NORMALLY DOES NOTHING HERE: klipper is this service's
+        # dependency, so the boards have already been handed over by the
+        # mcu-bringup oneshot. The branch is for a retry, and for a klippy
+        # that is not there at all because its run script is failing.
         if attempt > 1 or not klippy_running():
             if attempt > 1 or not args.no_bringup:
                 hand_over_boards(panel, min(args.mcu_timeout,

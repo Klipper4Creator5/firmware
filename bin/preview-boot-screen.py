@@ -4,19 +4,14 @@
 # payload/bin/ffscreen.py draws onto a framebuffer, which is a flat array of
 # pixels and therefore untestable by reading the code. This wraps it in the
 # smallest possible harness -- a file standing in for /dev/fb0 -- and converts
-# the result to a PNG with nothing but the standard library, so reviewing a
-# layout change does not require a printer, a replica, or Pillow.
+# the result to a PNG with nothing but the standard library.
 #
 #     ./bin/preview-boot-screen.py [--out DIR] [--size 480x800@32]
 #
-# The default size is the real one: this machine's framebuffer is PORTRAIT
-# 480x800, and the panel is that buffer turned 90 degrees clockwise. What gets
-# written here is therefore rotated back before it becomes a PNG, so the file
-# shows what a person standing at the printer would see rather than the
-# sideways buffer behind it.
-#
-# It renders every phase the migration actually goes through, in order, so a
-# change that only looks right for one message is visible immediately.
+# The default size is the real one: the framebuffer is PORTRAIT 480x800 and
+# the panel is that buffer turned 90 degrees clockwise, so what is written
+# here is rotated back before it becomes a PNG. It renders every phase the
+# migration goes through, in order.
 import argparse
 import glob
 import importlib.util

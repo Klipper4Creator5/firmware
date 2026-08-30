@@ -102,11 +102,11 @@ PRUNE = ("/proc", "/sys", "/dev")
 
 SCAN = "/tmp/qa-abi-scan.py"
 
-# Runs INSIDE the chroot, on the printer's own interpreter, as one process.
-# One process and not a shell loop because the walk touches ~24000 files: a
-# `find | while read; do xxd; done` is 24000 qemu-mipsel starts and takes
-# longer than the whole rest of the lane. Reading 52 bytes per file is the
-# whole ELF header for ELF32; e_type is at 16, e_machine at 18, e_flags at 36.
+# Runs INSIDE the chroot, on the printer's own interpreter, as one process --
+# not a shell loop, because the walk touches ~24000 files and a
+# `find | while read; do xxd; done` is 24000 qemu-mipsel starts. Reading 52
+# bytes per file is the whole ELF32 header; e_type at 16, e_machine at 18,
+# e_flags at 36.
 SCAN_PROGRAM = r'''
 import os, struct, sys
 
@@ -133,8 +133,8 @@ for dirpath, dirnames, filenames in os.walk("/"):
         cls, data = head[4], head[5]
         # e_type/e_machine/e_flags can only be decoded once the endianness is
         # known, and a header that lies about its own endianness is exactly
-        # the kind of file this is looking for -- so it is reported with the
-        # fields left at -1 rather than guessed at.
+        # what this is looking for -- so it is reported with the fields left
+        # at -1 rather than guessed at.
         if data == 1:
             etype, machine = struct.unpack_from("<HH", head, 16)
             flags, = struct.unpack_from("<I", head, 36)
@@ -211,8 +211,7 @@ def elves(box):
         % (PY, got.code, got.text))
 
     lines = got.out.splitlines()
-    # The sweep's own completion marker. Without it a walk killed halfway --
-    # by a timeout, by the interpreter dying on one unreadable directory --
+    # The sweep's own completion marker. Without it a walk killed halfway
     # returns a short list that every assertion below passes happily, which is
     # a green gate over an unswept filesystem.
     assert lines and lines[-1] == "SWEPT", (

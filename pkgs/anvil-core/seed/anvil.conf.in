@@ -1,23 +1,16 @@
 # /usr/data/anvil/anvil.conf -- runtime switches. Edit on the printer, reboot.
 # PRESERVED across mod updates.
 
-# FIVE SWITCHES USED TO BE IN THIS FILE and are not any more: MOD_WEB (the web
-# stack), MOD_CAM (the camera), MOD_UI (the touchscreen), MOD_WIFI (wlan0) and
-# MOD_SSH (which was never read on the printer at all). All five defaulted to
-# 1, and what each really offered was a partly-installed mod -- a state nobody
-# chose on purpose and everything downstream had to keep a second answer for.
-# The web stack, the screen and wifi now start because they are installed, and
-# not starting them is `opkg remove`, or a stock FlashForge package.
+# FIVE SWITCHES USED TO BE IN THIS FILE: MOD_WEB, MOD_CAM, MOD_UI, MOD_WIFI
+# and MOD_SSH. All defaulted to 1, and each really offered a partly-installed
+# mod. The web stack, the screen and wifi now start because they are
+# installed; not starting them is `opkg remove`, or a stock package.
 #
-# The camera is the one worth spelling out. mjpg-streamer on :8080, proxied by
-# nginx at /webcam/, from FlashForge's own binary on the firmware partition. It
-# is an s6-rc longrun that reports ready only once it has a device, so a
-# printer without one waits out its timeout-up on every boot.
-#
-# firmwareExe still reads MOD_CAM when it expands the ok-all bundle, defaulting
-# to 1. It is not shipped here because none of these switches is: a
-# half-installed mod is not a state to offer. Add MOD_CAM=0 by hand on a
-# machine that has no camera and never will.
+# The camera is worth spelling out: mjpg-streamer on :8080, proxied by nginx
+# at /webcam/. It is an s6-rc longrun that reports ready only once it has a
+# device, so a printer without one waits out its timeout-up on every boot.
+# firmwareExe still reads MOD_CAM when it expands the ok-all bundle,
+# defaulting to 1 -- add MOD_CAM=0 by hand on a machine that has no camera.
 #
 # These tune it when there IS one; defaults shown:
 #MOD_CAM_RES=1280x720
@@ -26,78 +19,63 @@
 
 # Boot splash: a line of text on the panel from the moment the mod gets
 # control until HelixScreen paints. Without it the screen is black for the
-# whole of boot, every boot. FlashForge's own /usr/prog/start.img cannot fill
-# that gap -- the only two lines that would display it, both in
-# app_startup.sh, are commented out on this firmware. 0 = leave it black.
+# whole of boot. FlashForge's own /usr/prog/start.img cannot fill that gap --
+# the lines that would display it are commented out. 0 = leave it black.
 MOD_SPLASH=1
 
 # Startup: bin/ff-startup.py, run by the firmwareExe wrapper just before the
 # UI. EVERY boot it hands the toolhead boards over from their bootloaders,
 # starts klipper, and waits for klipper + moonraker to be ready -- naming on
-# the panel whichever board or service is holding things up, and handing the
-# boards over again on each retry, which is what gives one that missed its
-# window another chance. MOD_KLIPPER_TRIES (below) bounds the retries.
+# the panel whatever is holding things up, and handing the boards over again
+# on each retry. MOD_KLIPPER_TRIES bounds the retries.
 #
-# 0 = do not wait for the printer: klipper still starts (it is a service in
-# its own right and has never depended on this program), the MCU bring-up still
-# happens (it is klipper's dependency), and the screen comes up at once in
-# front of a machine that may still be connecting. What is skipped is the wait,
-# the retries when a board did not answer, the panel narration and the
-# first-boot import. That is also what happens automatically if the script or
-# the interpreter is missing -- klipper starting must never depend on python.
+# 0 = do not wait: klipper still starts, the MCU bring-up still happens (it is
+# klipper's dependency), and the screen comes up at once in front of a machine
+# that may still be connecting. What is skipped is the wait, the retries, the
+# panel narration and the first-boot import -- which is also what happens if
+# the script or the interpreter is missing, since klipper starting must never
+# depend on python.
 #MOD_STARTUP_TIMEOUT=240
 MOD_STARTUP=1
 
-# First-boot migration, done by the same program once the printer is up: it
-# runs FF_IMPORT_FIRMWARE_CONFIG and SAVE_CONFIG to move this unit's factory
-# calibration into printer.cfg, then stamps .firmware-config-imported so it
-# never runs again. 0 = never migrate (you calibrate by hand); the startup
-# wait above still happens.
+# First-boot migration, by the same program once the printer is up: it runs
+# FF_IMPORT_FIRMWARE_CONFIG and SAVE_CONFIG to move this unit's factory
+# calibration into printer.cfg, then stamps .firmware-config-imported. 0 =
+# never migrate; the startup wait above still happens.
 MOD_IMPORT=1
 
 # ---------------------------------------------------------------------------
-# Priorities. Nice values (0..19) for the services that share this SoC's two
-# cores with klippy. Higher = yields more.
+# Priorities. Nice values (0..19) for the services sharing this SoC's two
+# cores with klippy. Higher = yields more. 0 disables.
 #
-# Why they exist. Stock ran neither moonraker nor nginx nor the streamer --
-# both lines are commented out in FlashForge's own start.sh -- so klippy had
-# the machine to itself. The mod runs all of them. When the host cannot meet
+# Stock ran neither moonraker nor nginx nor the streamer, so klippy had the
+# machine to itself; the mod runs all of them. When the host cannot meet
 # Klipper's step-generation deadlines the printer does not slow down, it
 # STOPS: the MCU reports "Timer too close" and shuts down mid-job.
 #
-# Why niceing these is only insurance, not a cure. klippy is already ahead of
-# them on both counts: klipper_pri.sh puts its main thread on SCHED_FIFO 50
-# (real-time, which outranks every nice value there is), and its serial reader
-# thread calls os.nice(-20) itself -- FlashForge's own change, in
-# serialhdl.py's _bg_thread. So these numbers only matter for whatever klippy
-# thread is neither, and for the case where the chrt or the nice did not take.
-# Check that first, it is one line in the log:
+# These are insurance, not a cure. klippy is already ahead on both counts:
+# klipper_pri.sh puts its main thread on SCHED_FIFO 50, which outranks every
+# nice value there is, and its serial reader thread calls os.nice(-20) itself.
+# So these matter only for whatever klippy thread is neither, and for the case
+# where the chrt or the nice did not take. Check that first:
 #     grep -i nice /usr/data/logs/printer.log
 # "current nice = -20" means it applied; "nice process failed" means it did not.
 #
-# 0 disables (starts the service at normal priority, as before this existed).
-# Neither touches memory or eMMC contention -- this printer's busybox has no
-# ionice applet, so there is no knob here for either.
+# Neither touches memory or eMMC contention -- this busybox has no ionice.
 #
-# Moonraker: modest. It is the print path -- HelixScreen and Mainsail both
-# start jobs through it -- so starving it delays the UI, not just background
-# work.
+# Moonraker: modest. It is the print path, so starving it delays the UI.
 NICE_MOONRAKER=5
-# The streamer: the most deserving. It is pure background work that nothing
-# waits on, and if the camera hands over YUYV rather than MJPEG it encodes
-# every frame in software, which is the largest CPU load the mod can add.
-# If a print dies with "Timer too close" and this is the difference, the camera
-# was the cause: stop it (`S65camera stop`) or unplug it, rather than reaching
-# for a nicer number.
+# The streamer: the most deserving. Pure background work that nothing waits
+# on, and if the camera hands over YUYV rather than MJPEG it encodes every
+# frame in software -- the largest CPU load the mod can add. If a print dies
+# with "Timer too close" and this is the difference, stop the camera rather
+# than reaching for a nicer number.
 NICE_CAM=10
-# klippy ITSELF, which is the odd one out: the two above yield TO klippy, this
-# one is klippy. 0 -- normal priority -- is what FlashForge shipped and what you
-# want; it is here because the number has to live somewhere, and a nice value
-# belongs with the other nice values rather than inside the klipperDaemon shim,
-# where it used to be and where it made that file machine-specific.
+# klippy ITSELF, the odd one out: the two above yield TO klippy, this one is
+# klippy. 0 is what FlashForge shipped and what you want; it lives here
+# because a nice value belongs with the other nice values rather than inside
+# the klipperDaemon shim, where it made that file machine-specific.
 #
-# A NEGATIVE value is the only one worth considering and it is mostly redundant:
-# klipper_pri.sh already puts klippy's main thread on SCHED_FIFO 50, which
-# outranks every nice value there is, and its serial reader thread calls
-# os.nice(-20) itself. Set this only if the log says the chrt did not take.
+# A negative value is mostly redundant -- SCHED_FIFO 50 already outranks every
+# nice value. Set it only if the log says the chrt did not take.
 NICE_KLIPPER=0

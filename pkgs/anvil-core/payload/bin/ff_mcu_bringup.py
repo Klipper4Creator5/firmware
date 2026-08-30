@@ -85,10 +85,9 @@ DEADLINE_S = 24.0
 # How long a board must stay quiet after a non-0x06 ack before we believe it
 # really jumped to its application. This MUST be longer than the bootloader's
 # banner period, or a board still sitting in its bootloader looks quiet just
-# by being between banners -- the exact mistake the old version made. The
-# period is known only to be longer than 5s (the old window missed it), so
-# this is set well clear of that. Only the odd-ack path pays it: a 0x06 ack
-# is conclusive on its own and returns immediately.
+# by being between banners. The period is known only to be longer than 5s, so
+# this is set well clear of that. Only the odd-ack path pays it: a 0x06 ack is
+# conclusive on its own.
 QUIET_S = 9.0
 # How many times to resend 'A' before falling back to the quiet check.
 # 50 is what firmwareExe does, exactly (slti $v0, $v0, 0x32).
@@ -187,11 +186,10 @@ class Port(object):
         self.tail = seen[-(len(BANNER) - 1):] if len(BANNER) > 1 else b""
 
         # Deliberately stricter than stock. firmwareExe only requires a
-        # literal "Ready" on the heat board; on ttyS5 and ttyS7 its ready
-        # flag is set by *any* byte arriving, banner or not, and it sends 'A'
-        # on the strength of that. We will not: a board that is already
-        # running is speaking the Klipper protocol, and 'A' has no business
-        # on that wire. The banner is the only thing that earns a write.
+        # literal "Ready" on the heat board; on ttyS5 and ttyS7 its ready flag
+        # is set by *any* byte arriving, and it sends 'A' on the strength of
+        # that. We will not: a board that is already running is speaking the
+        # Klipper protocol, and 'A' has no business on that wire.
         if BANNER in seen:
             self.banners += 1
             self.handshake(now)

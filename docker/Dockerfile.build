@@ -1,48 +1,33 @@
 # The only thing that runs on your machine is Docker itself.
 #
-# Every make target executes inside this image: the build scripts, the tests,
+# Every make target executes inside this image: the build scripts, the tests
 # and the install simulations. The docker CLI is included so the simulation
 # targets can start sibling containers through the mounted socket, and
 # qemu-user-static so the printer's real MIPS userland can be executed.
 #
-# A HOST C compiler is in here as well, which looks redundant next to two
-# cross-toolchains that arrive as pinned tarballs. It is not: cross-building
-# CPython needs a build-python of exactly the same version to freeze modules
-# and byte-compile the stdlib, so bin/patch.sh builds an x86-64 3.13 out of
-# the same source tarball first, and that one needs the host's own gcc.
-# pkg-config and perl are for the same section -- CPython's configure probes
-# libffi through pkg-config, and OpenSSL's Configure is a perl program.
+# A HOST C compiler is here as well, which looks redundant beside two
+# cross-toolchains: cross-building CPython needs a build-python of exactly the
+# same version to freeze modules and byte-compile the stdlib, and that one
+# needs the host's own gcc. pkg-config and perl are for the same section --
+# CPython's configure probes libffi through pkg-config, and OpenSSL's
+# Configure is a perl program.
 #
-# zlib1g-dev is for THE HOST HALF of that build and nothing else, which is why
-# it looks out of place beside two cross-toolchains: the build-python needs a
-# working zlib module. Every wheel the package step produces is a zip, and so
-# is the pip that produces them -- ensurepip installs pip out of a bundled
-# .whl, and a build-python without zlib cannot even unpack it ("can't
-# decompress data; zlib not available"). CPython records the module as missing
-# and carries on, so the symptom lands three steps later as "No module named
-# pip". The TARGET's zlib is nothing to do with this: that one is the static
-# -fPIC libz.a bin/patch.sh cross-builds from the pinned tarball.
+# zlib1g-dev is for THE HOST HALF of that build: the build-python needs a
+# working zlib module, or ensurepip cannot unpack pip's bundled .whl. CPython
+# records the module as missing and carries on, so the symptom lands three
+# steps later as "No module named pip". The TARGET's zlib is unrelated.
 #
-# `patch` is in the list above for one package: lmdb's setup.py shells out to
-# /usr/bin/patch BY ABSOLUTE PATH to apply its own env-copy-txn.patch to the
-# bundled liblmdb before compiling it, and raises "Applying patch failed" when
-# that is not there -- which is a build failure with nothing in it to say that
-# a two-hundred-kilobyte utility is what is missing. lmdb is Moonraker's
-# database at the pinned commit, so this is not an optional package.
-#
-# The alternative was a container of its own, the way tools/supervisor and
-# tools/python build for measurement. The build lane deliberately gets no
-# docker socket (only the test lane does), so there is no daemon to ask.
+# `patch` is for one package: lmdb's setup.py shells out to /usr/bin/patch BY
+# ABSOLUTE PATH to patch the bundled liblmdb, and raises "Applying patch
+# failed" when it is absent -- with nothing to say that a small utility is
+# what is missing. lmdb is Moonraker's database at the pinned commit.
 #
 # libarchive-dev IS DEBIAN'S, DELIBERATELY, AND IS THE ONE EXCEPTION TO
-# versions.env. pkgs/lib.sh's pkg_buildopkg builds an x86-64 opkg from the
-# pinned opkg tarball to assemble the payload, and opkg requires libarchive
-# (configure.ac: "Require libarchive"). That opkg is a BUILD TOOL: it runs
-# here, in this container, and never leaves it. The pin-and-hash rule governs
-# what reaches the printer, and the printer's opkg is a different binary --
-# pkgs/3rdparty/opkg, cross-compiled against the libarchive OUR feed built.
-# Taking Debian's for the host tool is the same call already made for gcc,
-# which pkg_buildpython uses to build the x86-64 build-python.
+# versions.env. pkg_buildopkg builds an x86-64 opkg to assemble the payload,
+# and opkg requires libarchive. That opkg is a BUILD TOOL that never leaves
+# this container; the pin-and-hash rule governs what reaches the printer, and
+# the printer's opkg is cross-compiled against the libarchive OUR feed built.
+# Same call already made for gcc.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive

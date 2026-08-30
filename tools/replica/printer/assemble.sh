@@ -28,9 +28,9 @@ mkdir -p $SRC/proc $SRC/sys $SRC/tmp $SRC/run $SRC/dev $SRC/mnt \
 
 # These would act on the host kernel, or drive real hardware. Neuter them
 # while the tree is still writable, and record every substitution. cmd_mcu is
-# in this list because klipper's start.sh calls `cmd_mcu write_firmware` --
-# neutering the genuine binary is honest, whereas shadowing it with a stub
-# earlier in PATH would depend on PATH order and hide the real one.
+# here because klipper's start.sh calls `cmd_mcu write_firmware`; neutering
+# the genuine binary is honest, where shadowing it with a stub earlier in PATH
+# would depend on PATH order and hide the real one.
 NEUTERED=""
 for c in insmod rmmod modprobe reboot poweroff halt cmd_mcu; do
     for d in sbin usr/sbin bin usr/bin; do
@@ -48,8 +48,7 @@ done
 # printer's kernel has nls_cp936 built in; a container kernel almost never
 # does, and the mount then fails with EINVAL -- which would make the boot
 # script skip the update and the test pass for the wrong reason. Try the real
-# options first and only fall back if the kernel rejects them, so a host that
-# CAN do cp936 runs the genuine call.
+# options first and fall back only if the kernel rejects them.
 if [ "${USB_STICK:-0}" = 1 ]; then
     rm -f "$SRC/bin/mount"
     cat > "$SRC/bin/mount" <<'MOUNTSH'
@@ -78,14 +77,13 @@ mount -t proc  proc  $R/proc
 mount -t sysfs sys   $R/sys -o ro 2>/dev/null || true
 mount -t tmpfs tmpfs $R/tmp -o mode=1777
 mount -t tmpfs tmpfs $R/run
-# The two ext4 partitions. They are disk-backed rather than tmpfs because a
-# real /usr/prog is ~830MB and holding that in RAM is a needless way to make
-# the suite fail on a small runner.
+# The two ext4 partitions, disk-backed rather than tmpfs because a real
+# /usr/prog is ~830MB.
 #
 # Their SIZES are NOT modelled unless you say what they are. The real numbers
-# come off the machine (`df -h` over ssh); until PROG_MB/DATA_MB are set from
-# it these are unbounded, and an install that runs the machine out of space
-# passes here and fails there.
+# come off the machine; until PROG_MB/DATA_MB are set from it these are
+# unbounded, and an install that runs the machine out of space passes here and
+# fails there.
 mkdir -p /parts/prog /parts/data
 if [ -n "${PROG_MB:-}" ]; then mount -t tmpfs tmpfs $R/usr/prog -o size=${PROG_MB}m
 else mount --bind /parts/prog $R/usr/prog; fi                      # "usershare"
@@ -102,12 +100,11 @@ for n in null zero full random urandom tty; do
 done
 : > $R/dev/fb0                        # `cat start.img > /dev/fb0` must work
 
-# ---- the USB stick as a real block device ------------------------------------
+# ---- the USB stick as a real block device ----------------------------------
 # USB_STICK=1 makes /dev/sda1 a genuine FAT filesystem on a loop device, so
 # app_startup.sh can run VERBATIM: its own `mount -t vfat /dev/sda1 /mnt` is
-# what puts the package in front of the installer. Without this the boot script
-# finds no block device, skips the whole update block, and the end-to-end test
-# would be testing nothing.
+# what puts the package in front of the installer. Without this the boot
+# script finds no block device and skips the whole update block.
 if [ "${USB_STICK:-0}" = 1 ]; then
     [ -e /dev/loop-control ] || mknod /dev/loop-control c 10 237 2>/dev/null || true
     LOOP=$(losetup -f --show /stick.img) || {

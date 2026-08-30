@@ -3,22 +3,18 @@
 # execline and s6.
 #
 # --bootdb AND --livedir ARE BAKED IN, like every other prefix in this stack.
-# --bootdb is where s6-rc-init looks for the compiled database when nothing
-# tells it otherwise; it defaults to $prefix/etc/s6-rc/compiled/current, which
-# is where we want it, and is spelled out here because a default that happens
-# to be right is not the same as a decision. --livedir is the runtime state
-# directory and stays at /run/s6-rc: it must be on a tmpfs that is empty at
-# boot, because s6-rc-init refuses to run over a live directory that already
-# exists. Whether /run is tmpfs on this printer is the one thing about this
-# recipe that has not been checked on hardware.
+# --bootdb is where s6-rc-init looks for the compiled database; its default
+# happens to be where we want it, and is spelled out here because a default
+# that happens to be right is not the same as a decision. --livedir stays at
+# /run/s6-rc: it must be on a tmpfs that is empty at boot, because s6-rc-init
+# refuses to run over a live directory that already exists. Whether /run is
+# tmpfs on this printer is the one thing here not checked on hardware.
 #
-# WHAT SHIPS is the runtime, not the whole toolbox. s6-rc-compile turns a
-# source directory into a database and is a BUILD tool -- it runs where the
-# database is compiled, which is here, not on the printer. s6-rc-update swaps
-# a live database without a reboot, which on this machine an update is anyway.
-# The repo/set families are 0.7.0 features nothing here uses. What is left is
-# the three programs that bring services up and down and the two the generated
-# databases exec by absolute path.
+# WHAT SHIPS is the runtime, not the whole toolbox. s6-rc-compile is a BUILD
+# tool -- it runs where the database is compiled, not on the printer.
+# s6-rc-update swaps a live database without a reboot, which on this machine
+# an update is anyway. What is left is the three programs that bring services
+# up and down and the two the generated databases exec by absolute path.
 set -euo pipefail
 . ./bin/common.sh
 . pkgs/lib.sh

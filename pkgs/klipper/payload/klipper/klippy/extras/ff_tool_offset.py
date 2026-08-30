@@ -9,34 +9,27 @@
 #   BaseFunction::fitCircleStable / fitCircleByLeastSquares   @0x6467f8 / @0x645b10
 # Full walkthrough: docs/notes/46-offset-calibration-recovered.md
 #
-# The physical setup: a fixed inductive "cylinder" station under the bed
-# (levelboard PD0, exposed to Klipper as [e_stop X]/[e_stop Y]/[e_stop Z] --
-# one pin, three axis wrappers). The nozzle is lowered into its bore until the
-# sensor fires (Z), then driven outward from the bore centre along +X, +Y, -X,
-# -Y until the bore wall fires it. Four boundary points -> least-squares circle
-# -> the bore axis in this tool's nozzle frame. Done twice (the second pass is
-# centred on the first fit and re-probes Z there); the second result is stored
-# as [ff_tool n]'s nozzle_x/nozzle_y/nozzle_z -- RAW machine coordinates with
-# the G-code offset
-# zeroed, nothing subtracted. Tool-to-tool differences of those are what the
-# toolchanger applies (ff_toolchange._derive_offsets).
+# The setup: a fixed inductive "cylinder" station under the bed (levelboard
+# PD0, exposed as [e_stop X]/[e_stop Y]/[e_stop Z] -- one pin, three axis
+# wrappers). The nozzle is lowered into its bore until the sensor fires (Z),
+# then driven outward from the bore centre along +X, +Y, -X, -Y until the wall
+# fires it. Four boundary points -> least-squares circle -> the bore axis in
+# this tool's nozzle frame. Done twice, the second pass centred on the first
+# fit with Z re-probed there; the second result is stored as [ff_tool n]'s
+# nozzle_x/y/z -- RAW machine coordinates with the G-code offset zeroed.
+# Tool-to-tool differences of those are what the toolchanger applies.
 #
-# The same pass with an EMPTY carriage measures x/y/z_station_pos ("TS" in the
-# app's CSV). z_station_pos is the eddy-frame reference the print-start Z
-# offset is computed against (TOOLCHANGE_SET_PRINT_OFFSET), so it must be
-# measured with the same station and the same mechanics as the tools.
+# The same pass with an EMPTY carriage measures the station position.
+# station_z is the eddy-frame reference the print-start Z offset is computed
+# against, so it must be measured with the same station and mechanics.
 #
-# Results are stored the way Klipper's own calibrators store theirs
-# (PID_CALIBRATE, SHAPER_CALIBRATE, PROBE_CALIBRATE): configfile.set() into
-# the SAVE_CONFIG block of printer.cfg --
-#   [ff_tool <n>]     nozzle_x / nozzle_y / nozzle_z   (ff_tool.py)
-#   [ff_tool_offset]  station_x / station_y / station_z
-# applied live at once and persisted by SAVE_CONFIG (which restarts).
-# firmwareExe's extruder.json is not touched; ff_legacy.py can import it once.
+# Results are stored the way Klipper's own calibrators store theirs:
+# configfile.set() into the SAVE_CONFIG block of printer.cfg, applied live at
+# once and persisted by SAVE_CONFIG (which restarts). firmwareExe's
+# extruder.json is not touched; ff_legacy.py can import it once.
 #
-# This is a Python extra rather than a macro because each ESTOP result feeds
-# the next move (the second pass is centred on the first fit) and a gcode_macro
-# renders its whole template before anything executes.
+# A Python extra rather than a macro because each ESTOP result feeds the next
+# move, and a gcode_macro renders its whole template before anything executes.
 
 import math
 
@@ -68,18 +61,15 @@ CYLINDER_Y_DEFAULT = 214.5
 
 
 # ---------------------------------------------------------------------------
-# Circle fit
-#
-# Port of BaseFunction::fitCircleStable @0x6467f8 (centroid-shifted algebraic
-# least squares, cv::solve DECOMP_LU on the 3x3 normal equations):
+# Circle fit -- port of BaseFunction::fitCircleStable @0x6467f8
+# (centroid-shifted algebraic least squares, cv::solve DECOMP_LU on the 3x3
+# normal equations):
 #     A = [2x', 2y', 1],  b = x'^2 + y'^2,  (A^T A) p = A^T b
 #     centre = (p0 + centroid_x, p1 + centroid_y),  r = sqrt(p2 + p0^2 + p1^2)
-# The shipped variant calls fitCircleByLeastSquares @0x645b10, the same
-# algebraic fit without the centroid shift; for the 4 symmetric points the
-# sequence produces both reduce to centre_x = (x_plus+x_minus)/2,
-# centre_y = (y_plus+y_minus)/2. We
-# keep the shifted form for numerical hygiene and accept >= 3 points.
-# Pure Python on purpose: numpy is not guaranteed on the X2000 rootfs.
+# For the 4 symmetric points this sequence produces, this and the shipped
+# unshifted variant both reduce to the midpoints; the shifted form is kept for
+# numerical hygiene and accepts >= 3 points. Pure Python on purpose: numpy is
+# not guaranteed on the X2000 rootfs.
 # ---------------------------------------------------------------------------
 
 def fit_circle(points):
@@ -195,28 +185,26 @@ class FFToolOffset:
         # None = restore the accel limit that was live when we started
         # (same policy as ff_toolchange); set to force the app's 20000.
         self.accel_restore = config.getfloat('accel_restore', None)
-        # Residual guard. The app has NONE -- any four numbers are accepted.
-        # A point off the fitted circle is what a mis-trigger looks like;
-        # abort without saving. With four symmetric points one bad point of
-        # error e shows up as a residual of only ~e/4 while moving the centre
-        # by e/2, so 0.05 here catches centre errors of ~0.1 mm. 0 disables.
+        # Residual guard, which the app has none of -- any four numbers are
+        # accepted. With four symmetric points one bad point of error e shows
+        # up as a residual of only ~e/4 while moving the centre by e/2, so
+        # 0.05 catches centre errors of ~0.1 mm. 0 disables.
         self.max_residual = config.getfloat('max_residual', 0.05, minval=0.)
         # Sanity window for the fitted bore radius (0 disables).
         self.min_radius = config.getfloat('min_radius', 0.0, minval=0.)
         self.max_radius = config.getfloat('max_radius', 0.0, minval=0.)
         # Plausibility of nozzle_z against station_z: the nozzle fires the
-        # station ~3.2 mm above where the empty carriage does (this unit
-        # 3.19). A value far outside that means a bad probe, and a bad
-        # nozzle_z is exactly what drives the first layer into the plate.
-        # Checked only when station_z is known. 0 disables.
+        # station ~3.2 mm above where the empty carriage does. A value far
+        # outside that means a bad probe, and a bad nozzle_z is what drives
+        # the first layer into the plate. Checked only when station_z is
+        # known; 0 disables.
         self.gap_min = config.getfloat('gap_min', 1.5)
         self.gap_max = config.getfloat('gap_max', 5.0)
         # Plate check (empty carriage, before any nozzle descends): the
         # station Z must not land more than plate_z_tolerance ABOVE the
         # calibrated station_z -- one-sided, because a plate can only hold the
-        # probe high -- and a sideways probe must find the circle's edge. With
-        # the build plate still on, the Z probe stops high on the sheet (or
-        # never triggers) and there is no edge. 0 disables the check.
+        # probe high -- and a sideways probe must find the circle's edge. 0
+        # disables.
         self.plate_check = config.getboolean('plate_check', True)
         self.plate_z_tolerance = config.getfloat('plate_z_tolerance', 0.8,
                                                  above=0.)

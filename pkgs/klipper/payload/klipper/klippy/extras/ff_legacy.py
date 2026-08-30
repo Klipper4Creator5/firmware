@@ -1,44 +1,32 @@
-# One-shot migration helpers from firmwareExe's per-unit JSON to Klipper config.
+# One-shot migration from firmwareExe's per-unit JSON to Klipper config.
 #
-# [ff_legacy] is shipped permanently (printer.base.cfg includes ff-legacy.cfg)
-# and does exactly one thing: it registers the command below. It has no
-# startup behaviour at all.
+# [ff_legacy] is shipped permanently and does exactly one thing: it registers
+# the command below. It has no startup behaviour. On a fresh install the
+# migration is driven from outside klippy by bin/ff-startup.py, which waits
+# until the stack is up, sends FF_IMPORT_FIRMWARE_CONFIG and SAVE_CONFIG over
+# the moonraker API, and stamps the install so it never runs again.
 #
-# WHO RUNS IT. On a fresh install the migration is driven from outside klippy,
-# by /usr/data/anvil/bin/ff-startup.py, which the firmwareExe wrapper
-# runs once before HelixScreen. That program waits until klipper, moonraker
-# and Mainsail are all up, sends FF_IMPORT_FIRMWARE_CONFIG and SAVE_CONFIG
-# over the moonraker API, and stamps the install so it never runs again.
-#
-# Deliberately NOT a klippy:ready handler here: that would put a
-# Creator-5-only, once-per-install chore inside a general extra and re-decide
-# it on every ready, at the one moment klippy cannot know whether the rest of
-# the machine is up. Running the command by hand works as it always did.
+# Deliberately NOT a klippy:ready handler: that would re-decide a
+# once-per-install chore on every ready, at the one moment klippy cannot know
+# whether the rest of the machine is up.
 #
 #   FF_IMPORT_FIRMWARE_CONFIG [DIR=/usr/data/firmwareRes/config] [APPLY=1]
 #
 # reads extruder.json / test.json / zoffset.json and
-#   * stages the per-unit data for SAVE_CONFIG (configfile.set), exactly
-#     as TOOL_CALIBRATE_TOOL_OFFSET / TOOL_LOCATE_SENSOR would:
+#   * stages the per-unit data for SAVE_CONFIG, as the calibrators would:
 #         [ff_tool n]      dock_x/dock_y  <- x_check_pos<n>/y_check_pos<n>
 #                          nozzle_x/y/z   <- t<n>_offset_x/y/z
-#                          z_adjust       <- zoffset.json z_offset_t<n+1> (if != 0)
+#                          z_adjust       <- zoffset.json z_offset_t<n+1>
 #         [ff_tool_offset] station_x/y/z  <- x/y/z_station_pos
 #                          cylinder_x/y   <- cylinder_x/y
-#   * PRINTS a snippet for the few [ff_toolchange] settings that are plain
-#     config (and so cannot be autosaved), only when the JSON disagrees with
-#     the running value -- on a stock unit it never does:
-#         [ff_toolchange]  x_correction   <- grabOffset
-#                          fast_feed      <- grabSpeed * 60
-#                          slow_feed, release_slow_feed <- grabSpeedSlow * 60
-#                          temp_offset    <- tempOffset
+#   * PRINTS a snippet for the [ff_toolchange] settings that are plain config
+#     and so cannot be autosaved, only when the JSON disagrees with the
+#     running value -- on a stock unit it never does.
 # APPLY=0 only prints everything and stages nothing.
 #
-# Key names and the struct layout were read off the binary
-# (Config::loadExtruderConfig @0x64f7f8, loadTestConfig @0x654380,
-# loadZOffsetConfig @0x65621c); see docs/notes/40-offsets.md. The files
-# are NOT strict JSON: each ends with a trailing C comment after the closing
-# brace, so we use raw_decode() and ignore the tail.
+# Key names and the struct layout were read off the binary; see
+# docs/notes/40-offsets.md. The files are NOT strict JSON -- each ends with a
+# trailing C comment after the closing brace, so raw_decode() ignores the tail.
 
 import json
 import logging

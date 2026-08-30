@@ -5,40 +5,24 @@
 #   ./tools/replica/build-printer-image.sh --push     build and push
 #   ./tools/replica/build-printer-image.sh --no-bake  skip the baseline install
 #
-# ONE image covers both models. That is not a shortcut -- there is genuinely
-# nothing model-specific to put in a second one:
-#
-#   * rootfs.squashfs is byte-for-byte identical in the Creator 5 and
-#     Creator 5 Pro packages. Their kernel-*.tar.xz differ, but only in the
-#     eMMC/SD kernel images and module.tar, not in the root filesystem.
-#   * /usr/prog comes from the factory image, and only the Pro's was ever
-#     published.
-#
-# The model is decided by whichever stock package a test installs into the
-# replica: that overwrites app_startup.sh, firmwareExe, start.sh, klipper,
-# passwd and shadow with that model's genuine files. An earlier version of
-# this script published :pro and :std tags that were byte-for-byte identical
-# apart from a label, which was worse than useless -- pulling :std without a
-# baseline install gave you a Pro.
+# ONE image covers both models, because there is genuinely nothing
+# model-specific to put in a second one: rootfs.squashfs is byte-for-byte
+# identical in both packages, and /usr/prog comes from the factory image, only
+# the Pro's of which was ever published. The model is decided by whichever
+# stock package a test installs, which overwrites app_startup.sh, firmwareExe,
+# start.sh, klipper, passwd and shadow with that model's genuine files.
 #
 # The Dockerfile downloads the firmware itself, so nothing has to be staged
-# locally, config.env is not needed, and the build context is just
-# tools/replica/printer. Override to build against different firmware:
+# locally and the build context is just tools/replica/printer. Override with
+# STOCK_URL= FACTORY_URL= FW_VERSION=.
 #
-#   STOCK_URL=  FACTORY_URL=  FW_VERSION=
-#
-# The image carries the printer's real rootfs and its real /usr/prog and
-# /usr/data, pre-unpacked into /parts, so a replica run bind-mounts them and
-# copies nothing.
-#
-# It also carries the STOCK PACKAGE ALREADY INSTALLED. That install is done
-# here, once, rather than at the start of every replica run, where it costs 37
-# seconds -- the stock installer is shell running under qemu and it sleeps for
-# real. It cannot be a `docker build` step, because it needs binfmt_misc and
-# chroot and therefore --privileged, so the build runs it in a container and
-# commits the result. The md5 of the package that was installed is recorded in
-# /usr/prog/.BASELINE, and entrypoint.sh reinstalls if a run asks for a
-# different one.
+# The image carries the real rootfs and the real /usr/prog and /usr/data,
+# pre-unpacked into /parts, and the STOCK PACKAGE ALREADY INSTALLED -- done
+# here once rather than at the start of every replica run, where it costs 37
+# seconds of qemu. It cannot be a `docker build` step, because it needs
+# binfmt_misc and chroot and therefore --privileged, so the build runs it in a
+# container and commits the result. The md5 is recorded in /usr/prog/.BASELINE
+# and entrypoint.sh reinstalls if a run asks for a different one.
 #
 # THE IMAGE CONTAINS PROPRIETARY FLASHFORGE FIRMWARE. Pushing it redistributes
 # their software.

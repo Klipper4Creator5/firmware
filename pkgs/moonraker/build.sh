@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
 # Moonraker -- stage the pinned source tree into the prefix.
 #
-# GitHub's generated tarball wraps everything in moonraker-<sha>/, and the
-# thing we want is the moonraker/ package directory inside it -- not the
-# repository root, which also carries docs, scripts and a test suite. So the
-# unpack keeps the wrapper and the stage reaches through it, rather than
-# --strip-components hiding the shape of the archive from whoever reads this.
+# GitHub's generated tarball wraps everything in moonraker-<sha>/, and what we
+# want is the moonraker/ package directory inside it, not the repository root.
+# The unpack keeps the wrapper and the stage reaches through it, rather than
+# --strip-components hiding the archive's shape from whoever reads this.
 #
-# WHAT IS REMOVED, AND WHY IT IS REMOVED HERE. tests/ is a sizeable part of
-# the tree and never runs on a printer. It was trimmed by bin/patch.sh before
-# this recipe existed and is trimmed in the same place it always was -- once,
-# on the way in. The __pycache__ sweep that stood beside it is pkg_ship's
-# now: it was written here and in pkgs/klipper and missing from anvil-core,
-# which is the recipe that was actually shipping bytecode.
+# tests/ is a sizeable part of the tree and never runs on a printer, so it is
+# trimmed here, once, on the way in.
 set -euo pipefail
 . ./bin/common.sh
 . pkgs/lib.sh
@@ -30,18 +25,14 @@ _src="$PKG_WORK/src/moonraker-$MOONRAKER_VERSION/moonraker"
 pkg_stage "$_src" "moonraker"
 rm -rf "$PKG_WORK/stage$MODDIR/moonraker/tests"
 
-# moonraker.conf, which was anvil-core's until now. It is Moonraker's config:
-# it names Moonraker's socket, its trusted clients and its components, and it
-# is meaningless without the server it configures. The reason it lived in
-# anvil-core is that anvil-core was the first recipe and everything of ours
-# started there, not a decision anybody made.
+# moonraker.conf is Moonraker's config -- its socket, its trusted clients and
+# its components -- and is meaningless without the server it configures.
 #
-# It installs to $MODDIR/config, which is a STAGING directory rather than
-# where Moonraker reads it: installer/run-append.sh copies $MODDIR/config/*
-# into /usr/data/config/, and moonraker.conf takes the compare-and-.mod-new
-# branch there because a printer reached through a tuned trusted_clients block
-# must not lose that access on an update. payload/ mirrors the install, so the
-# path here is the staging path.
+# It installs to $MODDIR/config, a STAGING directory rather than where
+# Moonraker reads it: installer/run-append.sh copies $MODDIR/config/* into
+# /usr/data/config/, and moonraker.conf takes the compare-and-.mod-new branch
+# there, because a printer reached through a tuned trusted_clients block must
+# not lose that access on an update.
 pkg_stage "$PKG_DIR/payload/config" "config"
 
 pkg_ship "moonraker" "config"

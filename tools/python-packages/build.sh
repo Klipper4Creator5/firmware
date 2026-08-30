@@ -1,37 +1,25 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
-# Cross-build the third-party Python packages Moonraker and klippy import,
-# for the CPython 3.13 that tools/python/build.sh already produces for the
-# FlashForge Creator 5 Pro (Ingenic mipsel).
+# Cross-build the third-party Python packages Moonraker and klippy import, for
+# the CPython 3.13 that tools/python/build.sh produces (Ingenic mipsel).
 #
 # SPIKE. Nothing here is wired into bin/patch.sh yet.
 #
-# Same non-negotiables as tools/python/build.sh, for the same reasons:
-#
-#   * e_flags 0x70001405 for an EXEC, 0x70001407 for a DYN (EF_MIPS_PIC).
-#     Every .so this produces is gated; a legacy-NaN wheel imports fine on the
-#     host and fails on the printer with nothing but ENOEXEC to say why.
+# Same non-negotiables as tools/python/build.sh:
+#   * e_flags 0x70001405 for an EXEC, 0x70001407 for a DYN. Every .so is
+#     gated; a legacy-NaN wheel imports fine on the host and fails on the
+#     printer with nothing but ENOEXEC.
 #   * -EL -mnan=2008 must reach the COMPILE and the LINK of every object.
 #     setuptools does not forward CFLAGS to its link line, so the flags are
-#     baked into PATH wrappers around the gcc driver and no build system gets
-#     a vote.
-#   * glibc toolchain only. musl is forbidden -- klippy dlopens a glibc
-#     c_helper.so.
+#     baked into PATH wrappers around the gcc driver.
+#   * glibc toolchain only -- klippy dlopens a glibc c_helper.so.
 #
-# THE CROSS TRICK. There is no crossenv here. The staged interpreter already
-# carries _sysconfigdata__linux_mipsel-linux-gnu.py, which records the cross
-# CC, LDSHARED, EXT_SUFFIX (.cpython-313-mipsel-linux-gnu.so) and INCLUDEPY
-# (/usr/data/anvil/include/python3.13). Exporting _PYTHON_SYSCONFIGDATA_NAME
-# at an x86-64 CPython 3.13 of the SAME version makes sysconfig -- and so
-# setuptools' build_ext -- answer every question about the TARGET. The staged
-# tree is bind-mounted at its real prefix so INCLUDEPY resolves without
-# rewriting anything.
-#
-# WHAT IS BUILT AND WHY THAT LIST. Not moonraker-requirements.txt, which
-# installs every optional component's dependency. The list is what the
-# ENABLED component set imports -- assets/moonraker.conf's sections plus
-# server.CORE_COMPONENTS, closed over moonraker's own imports (see
-# scan-imports.py beside this file) -- plus what klippy needs.
+# THE CROSS TRICK, with no crossenv: the staged interpreter carries
+# _sysconfigdata__linux_mipsel-linux-gnu.py, recording the cross CC, LDSHARED,
+# EXT_SUFFIX and INCLUDEPY, and _PYTHON_SYSCONFIGDATA_NAME pointed at it from
+# an x86-64 CPython of the SAME version makes setuptools' build_ext answer for
+# the TARGET. The staged tree is bind-mounted at its real prefix so INCLUDEPY
+# resolves without rewriting anything.
 #
 # Usage:
 #     ./build-pyext.sh              # in docker
@@ -115,11 +103,10 @@ if ! "$HOSTPY" -c 'import pip' 2>/dev/null; then
     "$HOSTPY" /tmp/get-pip.py -q
 fi
 # Every package below is built from its SDIST with build isolation OFF, so
-# every PEP 517 backend any of them names has to be here in advance. That is
-# not a convenience: with isolation ON, pip rewrites PYTHONPATH for the build
-# subprocess, the cross _sysconfigdata module stops being importable, and the
-# build either dies ("No module named '_sysconfigdata__linux_mipsel-linux-gnu'")
-# or -- worse -- silently answers every sysconfig question for x86-64.
+# every PEP 517 backend has to be here in advance: with isolation ON, pip
+# rewrites PYTHONPATH for the build subprocess, the cross _sysconfigdata
+# module stops being importable, and the build either dies or -- worse --
+# silently answers every sysconfig question for x86-64.
 "$HOSTPY" -m pip install -q --upgrade \
     'setuptools>=68' wheel 'cython<3.1' flit_core poetry-core hatchling \
     hatch-vcs setuptools-scm
@@ -156,15 +143,11 @@ want() { [ -z "${ONLY:-}" ] && return 0; case " $ONLY " in *" $1 "*) return 0;; 
 
 # build <spec> [env=val ...]
 #
-# --no-binary :all: is not optional and not caution. Without it pip HELPFULLY
-# downloads a prebuilt manylinux wheel and the "cross build" of cffi, greenlet
-# and tornado silently becomes x86-64 -- measured, first run of this script:
-# three x86-64 .so files sailed into the tree and only the ABI gate caught
-# them. A wheel that is the wrong architecture is not a build failure anywhere
-# except on the printer.
-#
-# --no-build-isolation is what keeps _PYTHON_SYSCONFIGDATA_NAME reaching
-# setup.py; see the backend pre-install above.
+# --no-binary :all: is not caution: without it pip downloads a prebuilt
+# manylinux wheel and the "cross build" of cffi, greenlet and tornado silently
+# becomes x86-64. Measured on the first run of this script; only the ABI gate
+# caught it. --no-build-isolation is what keeps _PYTHON_SYSCONFIGDATA_NAME
+# reaching setup.py.
 build() {
     local spec=$1 name=${1%%[=<>]*}; shift
     want "$name" || return 0
@@ -183,8 +166,7 @@ build() {
 #
 # Two packages cannot come from `pip wheel <spec>`, for unrelated reasons, and
 # both need their unpacked source anyway. Fetched by URL and CHECKED, the way
-# versions.env pins everything else in this repo: the only thing between a
-# source URL and code the printer executes is the hash.
+# versions.env pins everything else.
 sdist() {
     local url=$1 want=$2 dir=$3 f="$SRC/$(basename "$1")"
     [ -s "$f" ] || curl -sSLf -o "$f" "$url"
@@ -212,12 +194,10 @@ builddir() {
 FAILED=""
 
 # ============================================================ packages ======
-# THE LIST IS NOT moonraker-requirements.txt. That file installs every
-# optional component's dependency -- apprise, ldap3, paho-mqtt, zeroconf,
-# python-periphery, smart_open, dbus-next's mqtt friends. None of those
-# components is configured in assets/moonraker.conf, so none of them is built
-# here. What IS built is the closure of what the ENABLED set imports
-# (scan-imports.py), plus klippy's three.
+# THE LIST IS NOT moonraker-requirements.txt, which installs every optional
+# component's dependency. None of those components is configured in
+# assets/moonraker.conf. What IS built is the closure of what the ENABLED set
+# imports (scan-imports.py), plus klippy's three.
 log "packages"
 
 # ---- pure python (no compiler is invoked; they are here to be PRESENT) ----
@@ -226,13 +206,10 @@ build "inotify-simple==1.3.5"
 build "libnacl==2.1.0"
 build "dbus-next==0.2.3"
 # preprocess-cancellation 0.2.1's sdist declares version 0.0.0 in its own
-# metadata -- a broken upstream release, not something about this target. pip
-# refuses it ("has inconsistent version: expected '0.2.1', but metadata has
-# '0.0.0'") for the specifier, so the tree is fetched by URL, hash-checked,
-# and wheeled as a directory, where pip has no specifier to disagree with. It
-# is a lazily-imported optional path inside the metadata SUBPROCESS
-# (gcode object cancellation), so a printer without it loses that feature and
-# nothing else.
+# metadata, so pip refuses it for the specifier; the tree is fetched by URL,
+# hash-checked, and wheeled as a directory instead. It is a lazily-imported
+# optional path inside the metadata SUBPROCESS, so a printer without it loses
+# gcode object cancellation and nothing else.
 if want preprocess-cancellation; then
     builddir "$(sdist \
         https://files.pythonhosted.org/packages/4a/56/7e18b0336c1e6c6622411dd0d3a7634b171e4d156a13b1ceaa048682454a/preprocess_cancellation-0.2.1.tar.gz \
@@ -244,10 +221,7 @@ build "pyserial-asyncio==0.6"
 build "pycparser==2.22"          # cffi's only runtime dependency
 # smart_open is not optional, whatever its name suggests, and it is not
 # moonraker that wants it: streaming-form-data's targets.py imports it at
-# module scope, so `import streaming_form_data` raises ModuleNotFoundError
-# without it -- measured in the replica, where every other package imported
-# and that one did not. moonraker-requirements.txt pins it (`smart_open<=6.4.0`)
-# for exactly this reason. Pure python, no dependencies of its own.
+# module scope. Pure python, no dependencies of its own.
 build "smart_open==6.4.0"
 build "jinja2==3.1.4"
 # setuptools/pkg_resources are a dependency of nothing here. They are the fix
@@ -270,24 +244,19 @@ build "markupsafe==2.1.5"
 # .pc for it, and PKG_CONFIG_LIBDIR makes that the only one it can see.
 build "cffi==1.17.1"
 
-# greenlet -- klippy's reactor. Expected to fight over its hand-written
-# stack-switching assembly (switch_mips_unix.h); fought over something else
-# entirely, and the assembly was never the problem.
+# greenlet -- klippy's reactor. The hand-written stack-switching assembly was
+# never the problem; C++ designated initializers were.
 #
-# greenlet 3.x is C++ and writes every PyTypeObject / PyNumberMethods as a
-# DESIGNATED INITIALIZER. Those are C++20; gcc 7.2 -- the Ingenic toolchain,
-# and the only compiler that produces this printer's ABI -- takes them as an
-# extension but only in declaration order with no gaps, and refuses anything
-# else with
+# greenlet 3.x writes every PyTypeObject / PyNumberMethods as a designated
+# initializer. gcc 7.2 -- the only compiler that produces this printer's ABI
+# -- takes those only in declaration order with no gaps, and otherwise refuses
+# with "sorry, unimplemented: non-trivial designated initializers not
+# supported". A PyTypeObject naming 20 of its 50 slots is nothing but gaps.
 #
-#     sorry, unimplemented: non-trivial designated initializers not supported
-#
-# A PyTypeObject naming 20 of its 50 slots is nothing but gaps, so all three
-# of greenlet's fail. fill-designators.py writes the skipped fields back as
-# explicit zeros, reading the field ORDER out of the target interpreter's own
-# headers rather than a list typed in here -- and refuses to guess if a
-# designator turns up that the header does not have. These are objects of
-# static storage duration, so every field it inserts was already zero; the
+# fill-designators.py writes the skipped fields back as explicit zeros,
+# reading the field ORDER out of the target interpreter's own headers, and
+# refuses to guess at a designator the header does not have. These are objects
+# of static storage duration, so every inserted field was already zero: the
 # patch changes the spelling, not the program.
 if want greenlet; then
     GL=$(sdist https://files.pythonhosted.org/packages/2f/ff/df5fede753cc10f6a5be0931204ea30c35fa2f2ea7a35b25bdaf4fe40e46/greenlet-3.1.1.tar.gz \
@@ -299,54 +268,39 @@ if want greenlet; then
 fi
 
 # lmdb -- moonraker's database AT THIS PIN, and the package that disappears
-# the moment the pin moves past 80c7620 (lmdb -> sqlite), which is the whole
-# point of having built an interpreter with _sqlite3.
+# the moment the pin moves past 80c7620 (lmdb -> sqlite).
 #
-# LMDB_FORCE_CPYTHON=1 is load-bearing. lmdb's setup.py has two backends: a
-# real CPython extension and a cffi one that ships mdb.c and COMPILES IT AT
-# IMPORT TIME. Left to itself here it chose cffi and produced a py3-none-any
-# wheel containing mdb.c -- i.e. exactly the failure phase 6 already recorded,
-# rebuilt from scratch. (Do not "fix" this with LMDB_FORCE_CFFI=0: the setup
-# script tests the variable for PRESENCE, so the string "0" selects cffi.)
+# LMDB_FORCE_CPYTHON=1 is load-bearing: lmdb's setup.py has a real CPython
+# extension and a cffi backend that ships mdb.c and COMPILES IT AT IMPORT
+# TIME, and left alone it chose cffi. Do not "fix" this with
+# LMDB_FORCE_CFFI=0 -- setup.py tests the variable for PRESENCE, so "0"
+# selects cffi.
 build "lmdb==1.4.1" LMDB_FORCE_CPYTHON=1
 
 # streaming-form-data -- moonraker's upload parser, Cython. 1.13.0 (what
-# moonraker-requirements.txt pins) ships a pregenerated _parser.c from a
-# Cython that predates 3.13: it calls the four-argument _PyLong_AsByteArray,
-# which grew a fifth parameter in 3.13, and every integer conversion in the
-# file fails to compile. Regenerating from the .pyx with a current Cython is
-# the fix, and a later release ships C that is already regenerated -- moonraker
-# only asks five names of it (StreamingFormDataParser, ParseFailedException,
-# FileTarget, ValueTarget, SHA256Target), all present throughout the 1.x line.
+# moonraker-requirements.txt pins) ships a pregenerated _parser.c calling the
+# four-argument _PyLong_AsByteArray, which grew a fifth parameter in 3.13, so
+# every integer conversion fails to compile. A later release ships C that is
+# already regenerated.
 build "streaming-form-data==1.19.1"
 
-# pillow -- Moonraker's ONLY use of it is
-# components/file_manager/metadata.py, which runs as a SUBPROCESS to pull
-# thumbnails out of gcode. So it is not on the startup path: without it
-# Moonraker runs and Mainsail shows no thumbnails. It is built anyway because
-# the cost turned out to be one flag list.
+# pillow -- Moonraker's ONLY use is components/file_manager/metadata.py, which
+# runs as a SUBPROCESS to pull thumbnails out of gcode, so it is off the
+# startup path: without it Mainsail shows no thumbnails.
 #
 # ZLIB ONLY. Gcode thumbnails are base64 PNG, so zlib is the only codec on
-# that path; jpeg, tiff, webp, jpeg2000, lcms, freetype and imagequant are
-# libraries nobody has cross-built here and every one of them is off. Pillow
-# probes for them by trying to LINK against the host's copies unless told not
-# to, which is what --disable-platform-guessing is for.
+# that path; jpeg, tiff, webp, jpeg2000, lcms, freetype and imagequant are all
+# off. Pillow probes for them by trying to LINK against the host's copies
+# unless told not to, which is what --disable-platform-guessing is for.
 #
-# NOT 10.3.0, which is what moonraker-requirements.txt pins. That release
-# cannot be built by python 3.13 AT ALL, and not for any reason to do with
-# this target: its setup.py reads its own version with
+# NOT 10.3.0, and not for any reason to do with this target: its setup.py
+# reads its own version with exec(...) then locals()["__version__"], and PEP
+# 667 (new in 3.13) made a function's locals() a snapshot, so setup.py dies
+# with KeyError: '__version__' before compiling anything. 11.0.0 is the first
+# line that supports 3.13.
 #
-#     exec(compile(open("src/PIL/_version.py").read(), ...))
-#     return locals()["__version__"]
-#
-# and PEP 667 (new in 3.13) made a function's locals() a snapshot, so the
-# name exec() defined is not there any more and setup.py dies with
-# KeyError: '__version__' before it compiles a single file. 11.0.0 is the
-# first line that supports 3.13. Moonraker asks PIL for Image.open, resize
-# and save, all unchanged across that gap.
-#
-# pip cannot drive this: the disable flags are build_ext options and there is
-# no PEP 517 path to them, so setup.py is called directly.
+# pip cannot drive this: the disable flags are build_ext options with no PEP
+# 517 path to them, so setup.py is called directly.
 if want pillow; then
     PIL_SRC=$(sdist https://files.pythonhosted.org/packages/a5/26/0d95c04c868f6bdb0c447e3ee2de5564411845e36a858cfd63766bc7b563/pillow-11.0.0.tar.gz \
         72bacbaf24ac003fea9bff9837d1eedb6088758d41e100c1552930151f677739 \
@@ -380,12 +334,11 @@ find "$SP" -name '*.dist-info' -prune -exec rm -rf {} + 2>/dev/null || true
 rm -rf "$SP"/bin "$SP"/*.data 2>/dev/null || true
 
 # ============================================================= gates ========
-# NO ABI GATE HERE. This used to walk every .so in the site-packages tree and pin e_flags per ELF
-# type -- 0x70001405 for an EXEC, 0x70001407 for a DYN. It was one of five
-# implementations of that rule and the strictest of them, strict enough to be
-# wrong: the low three bits are NOREORDER/PIC/CPIC and vary between objects of
-# identical ABI, so an exact-word compare refuses files the kernel loads
-# happily. qa/replica/test_abi.py asks the question once, over the installed
+# NO ABI GATE HERE. This used to pin e_flags per ELF type over every .so in
+# the tree -- strict enough to be wrong, since the low three bits are
+# NOREORDER/PIC/CPIC and vary between objects of identical ABI, so an
+# exact-word compare refuses files the kernel loads happily.
+# qa/replica/test_abi.py asks the question once, over the installed
 # filesystem, masking those bits off.
 
 echo

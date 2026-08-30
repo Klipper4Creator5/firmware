@@ -1,27 +1,20 @@
 # Per-tool configuration for the FlashForge Creator 5 Pro toolchanger.
 #
 # Hand-written (ff-toolchange.cfg): just the section header, [ff_tool 0..3].
-#
 # Everything per-unit is autosaved into printer.cfg's SAVE_CONFIG block --
 # never write these in an included file (SAVE_CONFIG refuses: "conflicts with
 # included value"):
-#   #*# [ff_tool 0]
-#   #*# dock_x = 296.557861   DOCK. Carriage X at which this tool's dock
-#   #*# dock_y = 56.235977    engages, and the dock's Y (the app's
-#                              x/y_check_pos<n>). Written by
-#                              FF_IMPORT_FIRMWARE_CONFIG from the factory
-#                              JSON. A tool without a dock cannot be grabbed
-#                              or released.
-#   #*# nozzle_x = 16.416023   MEASUREMENT. The station bore axis as probed
-#   #*# nozzle_y = 212.585861  with this tool's nozzle, raw machine coords,
-#   #*# nozzle_z = 1.515972    G-code offset zeroed. Written as a triple by
-#                              TOOL_CALIBRATE_TOOL_OFFSET; all three or none.
-#   #*# z_adjust = -0.020      USER CORRECTION. A persistent per-tool Z tweak
-#                              added on top of the measured difference at
-#                              every grab (the app's zoffset.json). Klipper's
-#                              own babystep (SET_GCODE_OFFSET Z_ADJUST) is
-#                              global, so this is the only per-tool one.
-#                              Set with TOOL_Z_ADJUST.
+#   dock_x/dock_y    DOCK. Carriage X at which this tool's dock engages, and
+#                    the dock's Y. Written by FF_IMPORT_FIRMWARE_CONFIG from
+#                    the factory JSON. A tool without a dock cannot be grabbed
+#                    or released.
+#   nozzle_x/y/z     MEASUREMENT. The station bore axis as probed with this
+#                    tool's nozzle, raw machine coords, G-code offset zeroed.
+#                    Written as a triple by TOOL_CALIBRATE_TOOL_OFFSET; all
+#                    three or none.
+#   z_adjust         USER CORRECTION, added on top of the measured difference
+#                    at every grab. Klipper's own babystep is global, so this
+#                    is the only per-tool one. Set with TOOL_Z_ADJUST.
 #
 # Offsets applied on a grab (ff_toolchange):
 #   X = nozzle_x[tool] - nozzle_x[base]        DIFFERENCE against a base tool
@@ -29,9 +22,8 @@
 #   Z = nozzle_z[tool] - station_z + z_adjust[tool]   ABSOLUTE: raw eddy frame
 #                                               -> bed frame (~+3.2 mm)
 # Absolute values are stored, so recalibrating one tool leaves the others
-# valid. nozzle_z - station_z ([ff_tool_offset]) is the nozzle-to-eddy-trigger
-# gap; applying it at every grab means Z=0 is the bed whenever a tool is
-# mounted, not only after TOOLCHANGE_SET_PRINT_OFFSET.
+# valid. Applying nozzle_z - station_z at every grab means Z=0 is the bed
+# whenever a tool is mounted, not only after TOOLCHANGE_SET_PRINT_OFFSET.
 
 import logging
 

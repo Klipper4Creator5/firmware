@@ -104,9 +104,8 @@ class Replica:
             argv += ["-v", "%s/work/rootfs:/rootfs:ro" % self.root]
 
         # A case that has to hand something back gets an entrypoint of ours,
-        # which runs the stock one and then mounts /out inside the chroot.
-        # See tools/replica/printer/entrypoint-out.sh for why that cannot
-        # be a plain -v onto /printer/out.
+        # which runs the stock one and then mounts /out inside the chroot. See
+        # entrypoint-out.sh for why that cannot be a plain -v onto /printer/out.
         if want_out:
             wrapper = self.root / "tools" / "replica" / "printer" / "entrypoint-out.sh"
             argv += [
@@ -125,13 +124,13 @@ class Replica:
             # THE ONE WRITABLE MOUNT: everything else is :ro so a case cannot
             # edit the checkout it is testing. Under the stage dir because
             # that is inside the repo, the one path a sibling container
-            # resolves to the same place the daemon does -- see stage_dir.
+            # resolves to the same place the daemon does.
             "-v", "%s/out:/out" % stage,
             "-e", "FF_KEY=%s" % config.ff_key,
             # Both are always empty/off here, and are passed anyway because
             # entrypoint.sh and assemble.sh read them unconditionally. The
-            # cases that install a baseline or want a real FAT stick belong
-            # to qa/, which builds its own argv -- see qa/lib/replica.py.
+            # cases that install a baseline or want a real FAT stick belong to
+            # qa/, which builds its own argv.
             "-e", "BASE_PKG=",
             "-e", "PKGS=%s" % "".join(" %s=/pkgs/%s" % (n, n) for n in packages),
         ]
@@ -225,12 +224,10 @@ class Replica:
 
             argv = self.command(case, packages,
                                 want_out=out_dir is not None, env=env)
-            # errors="replace": a case that cats or heads one of the printer's
-            # MIPS binaries emits bytes that are not UTF-8, and the default
-            # strict decode raised UnicodeDecodeError out of communicate() --
-            # so the harness itself failed, reporting nothing about the case.
-            # A case is free to print whatever it likes; that is the case's
-            # problem to fix, not a reason to lose the whole run's output.
+            # errors="replace": a case that cats one of the printer's MIPS
+            # binaries emits bytes that are not UTF-8, and a strict decode
+            # raised UnicodeDecodeError out of communicate() -- so the harness
+            # itself failed, reporting nothing about the case.
             completed = subprocess.run(argv, capture_output=True, text=True,
                                        errors="replace")
             output = (completed.stdout or "") + (completed.stderr or "")

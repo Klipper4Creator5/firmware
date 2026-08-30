@@ -1,69 +1,42 @@
 # Print-start / print-end entry points for the FlashForge Creator 5 Pro.
 #
-# Why this exists
-#   The stock slicer profile's start G-code carries no toolchanger information
-#   and, crucially, no G28 -- its only motion is `G1 Z5 F2400`.  On an unhomed
-#   machine that raises "Must home axis first", so the file cannot be the thing
-#   that prepares the machine: something must home, clean and grab a tool
-#   BEFORE the file's first line.  The touchscreen app did exactly that -- it
-#   ran its whole prepare sequence and only then sent M23/M24 (see
-#   docs/notes/50-print-lifecycle.md).  It never subscribed to a print-start
-#   event, because it *was* the thing starting the print.
+# The stock slicer profile's start G-code carries no toolchanger information
+# and no G28 -- its only motion is `G1 Z5 F2400`, which on an unhomed machine
+# raises "Must home axis first". So the file cannot be what prepares the
+# machine: something must home, clean and grab a tool BEFORE its first line,
+# which is exactly what the touchscreen app did before sending M23/M24. This
+# module restores that ordering for prints started from Moonraker/Mainsail by
+# wrapping the commands that begin a print, so the stock OrcaSlicer profile
+# needs no modification.
 #
-#   This module restores that ordering for prints started from Moonraker /
-#   Mainsail, by wrapping the commands that begin a print.  Doing it here
-#   rather than in the slicer means the stock OrcaSlicer profile needs no
-#   modification and already-sliced files keep working.
+# NOT via idle_timeout:printing: that is emitted synchronously inside motion
+# scheduling, which is no place to run a G-code script, and it fires only once
+# the toolhead syncs -- which for a stock file is the very `G1 Z5` that fails.
 #
-# Why not idle_timeout:printing
-#   `idle_timeout:printing` is emitted from handle_sync_print_time (a
-#   toolhead:sync_print_time handler), i.e. synchronously inside motion
-#   scheduling -- not a safe place to run a G-code script, which is why
-#   Klipper runs its own idle gcode from a reactor timer instead.  It also
-#   fires only once the toolhead syncs, which for a stock file is the very
-#   `G1 Z5` that fails on unhomed axes: the event would arrive at the same
-#   instant the print dies.  There is no usable window.
-#
-# What this module does NOT do
-#   It contains no print policy at all.  It resolves the file, reads the
-#   slicer metadata, and calls two ordinary G-code macros:
+# It contains no print policy. It resolves the file, reads the slicer
+# metadata, and calls two ordinary macros defined in ff-print-macros.cfg:
 #
 #       FF_BEFORE_PRINT_START ORIGIN=<cmd> [BED=] [TOOL=] [NOZZLE=] [LAYER=]
 #       FF_AFTER_PRINT_END    STATE=<complete|cancelled|error|...>
 #
-#   Both are defined in ff-print-macros.cfg and may be redefined by the user.
-#   Everything derived from the file is also published in get_status, so a
-#   redefined macro can read printer.ff_print.* instead of the parameters.
+# Everything derived is also published in get_status as printer.ff_print.*.
 #
-# What is read, and why this way
-#   Only the head of the file, and only what the file states in its own
-#   commands.  The app's parser did the same -- its string table (firmwareExe
-#   ~138069) lists M104/M109/M140/M190/M141/M191 and `;HEIGHT:` among the keys
-#   it scanned, and the fields it produced: fisrNozzleIndex (sic), nozzleTemp,
-#   bedTemp, chamberTemp, layerHeight.
-#
-#   bed          the file's first `M140`/`M190 S<t>`
-#   nozzle       the file's first `M104`/`M109 S<t>`
+# Only the head of the file is read, and only what the file states in its own
+# commands -- as the app's own parser did:
+#   bed          the first `M140`/`M190 S<t>`
+#   nozzle       the first `M104`/`M109 S<t>`
 #   first tool   the first bare `Tn` -- the file's initial extruder, NOT the
-#                lowest-numbered one it uses; two otherwise identical files
-#                here start on T0 and T2 respectively
+#                lowest-numbered one it uses
 #   layer        the first `;HEIGHT:` -- the FIRST layer's height, which is
-#                what the print Z offset's thin-layer term actually wants
+#                what the print Z offset's thin-layer term wants
 #
-#   Nothing is read from the slicer's config block.  That keeps this
-#   slicer-agnostic: no table of plate types, no `bed_temperature_formula`,
-#   nothing that breaks when a profile or slicer version changes, and no need
-#   to read the far end of a 27 MB file.  (The config-block route also has a
-#   trap: on a real file `; first_layer_bed_temperature` read 55 where `M140`
-#   said 80.)
+# Nothing is read from the slicer's config block: that keeps this
+# slicer-agnostic and avoids reading the far end of a 27 MB file. It is also
+# unreliable -- on a real file `; first_layer_bed_temperature` read 55 where
+# `M140` said 80.
 #
-#   Per-tool clean temperatures are NOT taken from the file.  The app kept a
-#   material per slot and looked the temperature up in its own table; that
-#   table is already ported as _FF_FILAMENT.temps, so the material per tool is
-#   configured alongside it as _FF_FILAMENT.tool_material.
-#
-# All of the above sits within ~8 KB of the start of the file; HEAD_BYTES is a
-# wide margin around that, not a guess.
+# Per-tool clean temperatures are NOT taken from the file; the app's material
+# table is ported as _FF_FILAMENT.temps, with the material per tool alongside.
 
 import logging
 import os
@@ -71,10 +44,8 @@ import re
 
 EXTRUDER_COUNT = 4
 
-# Bounded read: everything we parse sits within ~8 KB of the start on real
-# files (the first Tn), so this is a wide margin without loading a 27 MB file.
-# Only the head is read -- the slicer's config block at the end is deliberately
-# not a source, see above.
+# Bounded read: everything parsed sits within ~8 KB of the start on real
+# files, so this is a wide margin rather than a guess.
 HEAD_BYTES = 256 * 1024
 
 # print_stats states that mean the job is over (as opposed to paused mid-print).
@@ -112,11 +83,9 @@ def _parse_metadata(path):
     if tool_match is not None:
         metadata['tool'] = int(tool_match.group(1))
 
-    # First-layer height, from the per-layer marker the slicer emits in the
-    # body -- one of the three keys the app looked for, and the only one that
-    # appears near the start of the file.  This feeds the print Z offset's
-    # thin-layer term, which is a FIRST-layer correction, so the first layer's
-    # height is the value that belongs there.
+    # First-layer height, from the per-layer marker the slicer emits. This
+    # feeds the print Z offset's thin-layer term, which is a FIRST-layer
+    # correction.
     layer_match = re.search(r'^;HEIGHT:([0-9.]+)', head, re.M)
     if layer_match is not None:
         try:

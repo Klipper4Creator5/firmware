@@ -4,22 +4,19 @@
 # scripts and nothing proprietary has to be staged on disk first:
 #
 #   * the stock OTA package -> decrypt -> kernel component -> rootfs.squashfs,
-#     which is the printer's real root filesystem
+#     the printer's real root filesystem
 #   * the factory image     -> /usr/prog and /usr/data, the real partitions
 #
-# Everything executed inside is the printer's own MIPS userland running under
-# qemu-mipsel. See docs/printer-replica.md.
-#
-# Built by tools/replica/build-printer-image.sh, which supplies the URLs per
-# model.
+# Everything executed inside is the printer's own MIPS userland under
+# qemu-mipsel. See docs/printer-replica.md. Built by
+# tools/replica/build-printer-image.sh, which supplies the URLs per model.
 #
 # CONTAINS PROPRIETARY FLASHFORGE FIRMWARE.
 
 # ----------------------------------------------------------------- fetch ----
-# A throwaway stage: the ~93MB package and the 182MB compressed factory image
-# never reach a layer of the final image, and the unpack that would otherwise
-# cost ~60 seconds on every test run (22s unpack + 37s install) happens once,
-# here.
+# A throwaway stage: the ~93MB package and the 182MB factory image never reach
+# a layer of the final image, and the ~60 seconds of unpack and install
+# happens once, here.
 FROM debian:bookworm-slim AS fetch
 
 RUN apt-get update -qq \
@@ -32,9 +29,9 @@ ARG FACTORY_URL
 # The package key, hardcoded in /usr/prog/bin/unTar on the printer.
 ARG FF_KEY='FFP0331&*%root'
 
-# The root filesystem. Three things about the stock package matter here: it is
-# DES3 with -md md5 (the printer's OpenSSL is 1.0.2d, which derived keys with
-# MD5), the components inside are plain tar despite the .tar.xz names, and the
+# The root filesystem. Three things about the stock package matter: it is DES3
+# with -md md5 (the printer's OpenSSL is 1.0.2d, which derived keys with MD5),
+# the components inside are plain tar despite the .tar.xz names, and the
 # kernel one carries rootfs.squashfs.
 RUN set -eu; \
     curl -fsSL "$STOCK_URL" -o /stock.tgz; \
@@ -52,8 +49,8 @@ RUN set -eu; \
 #   /parts/prog -> /usr/prog   ("usershare")
 #   /parts/data -> /usr/data   ("userdata")
 # A factory image is rooted at usr/, so strip that level off. The last two
-# tests are the point of the whole exercise: a real python3 and a real
-# OpenSSL 1.0.2d mean a real /usr/prog rather than an approximation of one.
+# tests are the point: a real python3 and a real OpenSSL 1.0.2d mean a real
+# /usr/prog rather than an approximation of one.
 RUN set -eu; \
     mkdir -p /parts; \
     curl -fsSL "$FACTORY_URL" -o /factory.tar.xz; \
@@ -81,10 +78,10 @@ RUN chmod +x /opt/printer/*.sh
 
 ENV ROOTFS=/rootfs
 
-# One image serves both models: rootfs.squashfs is identical in the Creator 5
-# and Creator 5 Pro packages, and /usr/prog comes from the Pro factory image
-# because that is the only one published. Which model the replica actually IS
-# is decided by the stock package a test installs into it.
+# One image serves both models: rootfs.squashfs is identical in both packages,
+# and /usr/prog comes from the Pro factory image because that is the only one
+# published. Which model the replica IS is decided by the stock package a test
+# installs into it.
 ARG FW_VERSION=unknown
 LABEL org.opencontainers.image.title="FlashForge Creator 5 printer replica" \
       org.opencontainers.image.description="The printer's real userland (MIPS32r2 o32 nan2008, busybox 1.31.1, glibc 2.33) under qemu-mipsel, for testing firmware packages without a printer" \

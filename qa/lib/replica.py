@@ -194,14 +194,14 @@ class Printer:
                 argv, input=script, capture_output=True, text=True,
                 # errors="replace": a command that cats one of the printer's
                 # MIPS binaries emits bytes that are not UTF-8, and a strict
-                # decode raises out of communicate() -- so the harness fails
-                # and reports nothing about the test.
+                # decode raises out of communicate(), so the harness fails and
+                # reports nothing about the test.
                 errors="replace", timeout=timeout)
         except subprocess.TimeoutExpired as expired:
             # A timeout is a Result, not an exception, because "it did not
-            # come back" is a verdict some tests are specifically looking for
-            # -- the init sequence must return, and an S40s6 that runs the
-            # scanner inline is exactly the failure that hangs it.
+            # come back" is a verdict some tests are looking for -- the init
+            # sequence must return, and an S40s6 that runs the scanner inline
+            # is exactly the failure that hangs it.
             return Timeout(argv, expired, timeout)
         return Result(argv, done.returncode, done.stdout, done.stderr)
 
@@ -356,11 +356,9 @@ def resolve_image(config, docker):
     probe = subprocess.run([docker, "info"], capture_output=True, text=True)
     if probe.returncode != 0:
         # The two causes look identical from here and need opposite fixes, so
-        # the message carries both rather than guessing. "permission denied"
-        # is the common one and it is not a dead daemon at all -- the daemon
-        # is fine and the user is not in the docker group, which an already
-        # open shell will not notice even after usermod, because a process
-        # keeps the groups it started with.
+        # the message carries both. "permission denied" is the common one and
+        # is not a dead daemon at all -- the user is not in the docker group,
+        # which an already open shell will not notice even after usermod.
         said = (probe.stderr or "").strip().splitlines()
         raise ReplicaMissing(
             "the docker daemon did not answer, so no replica can be built:\n"
@@ -408,10 +406,9 @@ def mod_package(config):
     one.
     """
     # REAL_PKG names one package explicitly, which is how the release workflow
-    # asks about the EXACT file it is going to attach to the release rather
-    # than about whatever the tree last built. Two models ship per release and
-    # they are not interchangeable, so "the newest" is the wrong question
-    # there.
+    # asks about the EXACT file it will attach rather than about whatever the
+    # tree last built. Two models ship per release and they are not
+    # interchangeable.
     named = os.environ.get("REAL_PKG", "").strip()
     if named:
         chosen = pathlib.Path(named)
@@ -563,26 +560,21 @@ def start(config=None, base_pkg=None, packages=None, setup_timeout=600,
     argv += [
         "-v", "%s/pkgs:/pkgs:ro" % stage,
         "-v", "%s/case.sh:/case.sh:ro" % stage,
-        # THE PRINTER'S FILES, FROM THE RECIPES THAT OWN THEM. This used to
-        # be one mount of a top-level payload/ directory. It is three now, and
-        # entrypoint.sh reassembles /tmp/payload out of them, because the
-        # files a case script reaches for are split across two recipes and two
-        # roles: anvil-core's $MODDIR overlay, its anvil.conf template, and
-        # Klipper's launcher, which goes to /usr/prog.
+        # THE PRINTER'S FILES, FROM THE RECIPES THAT OWN THEM: anvil-core's
+        # $MODDIR overlay, its anvil.conf template, and Klipper's launcher,
+        # which goes to /usr/prog. entrypoint.sh reassembles /tmp/payload out
+        # of the three.
         #
-        # Reassembled rather than re-pointed on purpose. Every case script
-        # copies out of /tmp/payload with `2>/dev/null` -- a path that stops
-        # resolving does not fail there, it copies nothing and the case runs
-        # green against an empty $MODDIR. Keeping the assembled tree byte-for
-        # -byte what it was means none of those copies had to be touched.
+        # Reassembled rather than re-pointed on purpose: every case script
+        # copies out of /tmp/payload with `2>/dev/null`, so a path that stops
+        # resolving copies nothing and the case runs green against an empty
+        # $MODDIR.
         "-v", "%s/pkgs/anvil-core/payload:/payload:ro" % ROOT,
         "-v", "%s/pkgs/anvil-core/seed:/payload-seed:ro" % ROOT,
-        # entrypoint.sh reads start.sh out of here. It lived in
-        # pkgs/klipper/prog until the recipes were reorganised; docker
-        # CREATES a missing bind source as a root-owned empty dir, so a
-        # stale path here did not fail -- it silently mounted nothing and
-        # grew a pkgs/klipper/prog that no recipe owned and no user could
-        # delete.
+        # entrypoint.sh reads start.sh out of here. docker CREATES a missing
+        # bind source as a root-owned empty dir, so a stale path here did not
+        # fail -- it silently mounted nothing and grew a directory no recipe
+        # owned and no user could delete.
         "-v", "%s/pkgs/anvil-core/payload/prog:/payload-klipper:ro" % ROOT,
         "-e", "FF_KEY=%s" % config.ff_key,
         "-e", "BASE_PKG=%s" % ("/pkgs/base.tgz" if base_pkg else ""),
@@ -662,11 +654,9 @@ def logs(printer):
 def stop(printer):
     # DETACH THE STICK'S LOOP FIRST. assemble.sh attaches /stick.img with
     # `losetup`, which does not autoclear, and loop devices belong to the HOST
-    # kernel rather than to the container. entrypoint.sh detaches on its way
-    # out, but these containers never take that path -- hold.sh sleeps and we
-    # `rm -f` them -- so without this every module leaks one, and a WSL2 kernel
-    # has thirteen. The symptom is the NEXT run failing to set up a loop
-    # device, which looks like a docker fault and is not.
+    # kernel. These containers never take entrypoint.sh's exit path, so
+    # without this every module leaks one, and a WSL2 kernel has thirteen. The
+    # symptom is the NEXT run failing to set up a loop device.
     subprocess.run(
         [printer.docker, "exec", printer.container, "sh", "-c",
          '[ -f /stick.loop ] && losetup -d "$(cat /stick.loop)" || true'],

@@ -1,54 +1,33 @@
 # A few lines of text on /dev/fb0, for the moments when nothing else owns the
 # screen and the printer would otherwise look dead.
 #
-# WHY THIS EXISTS. The first boot after a flash runs ff-startup.py
-# before HelixScreen, and that can take a couple of minutes: it waits for
-# klipper to find its MCUs (which on this machine routinely needs a restart or
-# two), then makes a SAVE_CONFIG that restarts klippy again. All of it happens
-# with the UI not yet started, so the panel sits black. A black panel during
-# the longest wait of the install is the worst possible moment to say nothing
-# -- it reads as a brick, and the fix people reach for is a power cut, which
-# is the one thing that can actually leave the config half-written.
-#
-# So: no toolkit, no fonts on disk, no dependencies. The panel is a plain
-# framebuffer -- the stock installer draws its own splash with
-# `cat start.img > /dev/fb0`.
-#
-# THE GEOMETRY IS HARDCODED, NOT READ FROM SYSFS. sysfs is the "right" source
-# in principle, but measured on real hardware it reports a geometry that does
-# not match this panel, and trusting it drew a sheared or wrong-sized frame.
-# The default below is the known Creator5Pro panel; a printer whose geometry
-# genuinely differs needs --fb-geometry (see main()).
+# The first boot after a flash runs ff-startup.py before HelixScreen, and that
+# can take a couple of minutes with the panel black. That reads as a brick,
+# and the fix people reach for is a power cut -- the one thing that can leave
+# the config half-written. So: no toolkit, no fonts on disk, no dependencies,
+# just a plain framebuffer.
 #
 # EVERY failure here is swallowed and turns the screen off, never into an
 # error: this is decoration on top of a migration that must finish regardless.
-# A printer that cannot draw still gets its calibration.
 #
-# THE PANEL IS MOUNTED SIDEWAYS. This machine's framebuffer is 480x800 at
-# 32bpp -- PORTRAIT -- while the screen you look at is landscape 800x480. The
-# display is the buffer rotated 90 degrees clockwise. Established from
-# FlashForge's own boot splash: /usr/prog/start.img is 1536000 bytes, which
-# the stock installer writes with `cat start.img > /dev/fb0`, and it only
-# decodes into a picture at 480x800x4 -- read as landscape it comes out as
-# five sheared copies. Decoded correctly it is their "Upgrading, please
-# wait..." screen, and it is upright only after a 90-degree clockwise turn.
+# THE GEOMETRY IS HARDCODED, NOT READ FROM SYSFS: measured on real hardware,
+# sysfs reports a geometry that does not match this panel, and trusting it
+# drew a sheared frame. A printer whose geometry genuinely differs needs
+# --fb-geometry. The replica passes it explicitly, since it mounts the HOST's
+# /sys read-only.
 #
-# So everything below draws in LANDSCAPE coordinates -- self.width x
-# self.height is what the eye sees -- and _rect turns each rectangle into
-# buffer coordinates on the way out. A 90-degree rotation maps an
-# axis-aligned rectangle to an axis-aligned rectangle, so this costs a few
-# lines of arithmetic per rectangle and nothing per pixel. Rotating a
-# finished frame instead would mean a per-pixel Python loop over 384000
-# pixels every repaint, on a 1GHz MIPS core.
+# THE PANEL IS MOUNTED SIDEWAYS. The framebuffer is 480x800 at 32bpp --
+# PORTRAIT -- while the screen is landscape 800x480, the buffer rotated 90
+# degrees clockwise. Established from FlashForge's own /usr/prog/start.img,
+# which is 1536000 bytes and only decodes at 480x800x4.
 #
-# A portrait framebuffer is taken to mean a rotated panel, which is true for
-# this machine and is what makes the default work with no configuration.
+# So everything below draws in LANDSCAPE coordinates and _rect turns each
+# rectangle into buffer coordinates on the way out. A 90-degree rotation maps
+# an axis-aligned rectangle to an axis-aligned rectangle, so this costs a few
+# lines of arithmetic per rectangle and nothing per pixel; rotating a finished
+# frame would mean a per-pixel Python loop over 384000 pixels every repaint on
+# a 1GHz MIPS core. A portrait framebuffer is taken to mean a rotated panel;
 # rotate=0 forces the raw orientation.
-#
-# GEOMETRY CAN ALSO BE GIVEN EXPLICITLY, overriding the hardcoded default --
-# that is what the replica case passes, since the replica mounts the HOST's
-# /sys read-only and makes /dev/fb0 a plain file, so even a trusted sysfs
-# probe there would describe the developer's monitor rather than the panel.
 import os
 
 # 5x7 glyphs, one byte per column, bit 0 = top row. Only the characters the
@@ -304,9 +283,9 @@ class Screen:
         try:
             buf = self._blank()
             # Scales come from the panel width so the same layout works on
-            # whatever the two models turn out to have. The title wants about
-            # two thirds of the width; the status line is deliberately much
-            # smaller, because it changes and the title does not.
+            # whatever the two models have. The status line is deliberately
+            # much smaller than the title, because it changes and the title
+            # does not.
             title_scale = self._fit(title, max(2, self.width // 180))
             status_scale = max(2, (title_scale * 4) // 9)
             note_scale = max(1, status_scale)
@@ -314,7 +293,7 @@ class Screen:
             # One centred column: title, status, detail, bar, note. The gaps
             # are in units of text height so they stay proportional when
             # scaled. A frame with no bar and no note is all text, so it
-            # starts lower and sits nearer the middle of the panel.
+            # starts lower.
             if progress is not None or note:
                 title_y = int(self.height * 0.30)
             elif fault:

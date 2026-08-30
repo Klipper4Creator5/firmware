@@ -1,18 +1,16 @@
 #!/bin/sh
 # /usr/prog/klipper/start.sh
 #
-# Klippy is an s6-rc longrun, so this asks for the service and the graph brings
-# the MCU bring-up along. It is kept rather than deleted because it is a path
-# other things take -- FlashForge's own tooling knows this filename, and it is
-# in every set of notes anybody has written about this printer.
+# Klippy is an s6-rc longrun, so this asks for the service and the graph
+# brings the MCU bring-up along. It is kept rather than deleted because other
+# things take this path -- FlashForge's own tooling knows the filename.
 #
-# There is deliberately no direct launch left here. One that still ran
+# There is deliberately no direct launch left. One that still ran
 # klipperDaemon would be a second way to start klippy: unsupervised, invisible
 # to s6-rc, and fighting the supervised copy for /dev/ttyS4.
 #
-# bin/patch.sh stages this as a software component and FlashForge's own run.sh
-# copies it onto /usr/prog/klipper, which is why it lives on the firmware
-# partition and why a stock flash replaces it.
+# bin/patch.sh stages this as a software component and FlashForge's run.sh
+# copies it onto /usr/prog/klipper, which is why a stock flash replaces it.
 MODDIR=/usr/data/anvil
 
 # This script is on the firmware partition and the env file is on the data

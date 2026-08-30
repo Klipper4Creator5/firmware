@@ -1,16 +1,10 @@
-# The part of a cross-build that is the same for every package.
+# The part of a cross-build that is the same for every package. Sourced by
+# every recipe's build.sh after bin/common.sh, and by bin/patch.sh for pkg_out
+# alone. Recipes run as their own process, so no cross CC leaks onward.
 #
-# Sourced by every recipe's build.sh, after bin/common.sh.
-#
-# ONE RECIPE BUILDS ONE SOURCE: it unpacks one source, builds it, and ships it;
-# anything it builds against arrives as a package another recipe produced,
-# unpacked out of the feed by pkg_deps. The invariant is countable, and
-# qa/static/test_ipk.py counts it: exactly one source verb per recipe. One
-# build may still produce two archives -- <name> for the printer and <name>-dev
-# for the headers a build machine opens (PKG_DEV_FILES) -- which is one source
-# sorted into two archives afterwards, not one script compiling two projects.
-#
-# WHAT A RECIPE LOOKS LIKE:
+# ONE RECIPE BUILDS ONE SOURCE: exactly one source verb per recipe, counted by
+# qa/static/test_ipk.py. One build may still produce two archives, <name> and
+# <name>-dev (PKG_DEV_FILES).
 #
 #     . ./bin/common.sh
 #     . pkgs/lib.sh
@@ -22,88 +16,31 @@
 #     pkg_ship "lib/libsodium.so*"
 #     pkg_end
 #
-# The version, the dependencies and the package metadata live in the recipe's
-# pkg.conf, the one place that describes a package; pkg_begin reads it, so the
-# build and the packaging cannot disagree about what is being built.
-#
-# ONE TOOLCHAIN: everything here cross-compiles with the Ingenic glibc 2.29 /
-# gcc 7.2 toolchain that produces this printer's ABI. A second libc would mean
-# two of every library both worlds wanted, which a package feed cannot express
-# without lying about one of them.
-#
-# Also sourced by bin/patch.sh, for pkg_out alone -- it stages what recipes
-# built and has to name where they put it.
-#
-# Recipes run as their own process (both bin/patch.sh and bin/build-packages.sh
-# exec them), so no cross-compiler PATH or CC can leak into whatever runs next
-# and nothing below needs a subshell to prevent it.
+# Version, dependencies and metadata live in the recipe's pkg.conf. Everything
+# cross-compiles with the one Ingenic glibc 2.29 / gcc 7.2 toolchain.
 
 pkg_say()  { printf '>> %s\n' "$*"; }
 pkg_skip() { printf '   (skip) %s\n' "$*"; }
 pkg_die()  { printf '   !! %s\n' "$*" >&2; exit 1; }
 
-# ----------------------------------------------------------------- pkg_conf
-#
-#     pkg_conf <recipe-id>
-#
-# Read pkg/<id>/pkg.conf into the PKG_* metadata variables, defaults first so
-# a recipe only spells what is true about it. Sets no build state -- every
-# variable it touches is metadata, so pkg_begin can call it in the recipe's own
-# shell while pkg_stamp calls it inside a subshell to look at somebody else's.
-#
-# PKG_BUILD_DEPENDS is recipe ids and never reaches the control file; it drives
-# build order and pkg_deps. PKG_DEPENDS is what opkg reads at install time.
-# Keeping them apart is what stops a package from declaring a runtime
-# dependency on a library that was only ever linked into it.
-#
-# PKG_STAMP_EXTRA is for a recipe whose inputs are not described by its version
-# number. Most recipes here build a pinned tarball, so version-and-toolchain
-# says everything -- except anvil-core, whose sources are files in this repo
-# that change without any version changing, and busybox, whose source is a
-# path in config.env that two different builds can share a version string on.
-# Each puts a content hash there and pkg_stamp folds it in; see
-# pkgs/anvil-core/pkg.conf.
-#
-# PKG_DEV_FILES splits one build into two packages: files listed here move
-# into <name>-dev, section libdevel, which no printer installs and which
-# pkg_deps unpacks into a sysroot when the next recipe builds against it.
-#
-# PKG_WHEN is a shell condition deciding whether this recipe exists at all
-# (Mainsail, Moonraker and HelixScreen are downloads gated by BUILD_* flags;
-# busybox is gated on BUSYBOX_BIN naming a file that exists).
-# Empty means always. A false condition is absence, not failure: pkg_recipes
-# does not list it, so nothing orders it, builds it or expects it in the
-# feed.
+# pkg_conf <recipe-id> -- read pkg/<id>/pkg.conf into the PKG_* metadata.
+# Sets no build state, so pkg_stamp can read another recipe's in a subshell.
+#   PKG_BUILD_DEPENDS  recipe ids; build order and pkg_deps only. PKG_DEPENDS
+#                      is what opkg reads. Keeping them apart stops a runtime
+#                      dependency on a merely-linked library.
+#   PKG_STAMP_EXTRA    content hash for inputs no version number describes.
+#   PKG_DEV_FILES      files that move into <name>-dev, section libdevel.
+#   PKG_WHEN           whether the recipe exists at all; empty means always.
+#                      A false condition is absence, not failure.
 
-# ------------------------------------------------------- pkg_payload_hash
+# PKG_STAMP_EXTRA="$(pkg_payload_hash)" -- sixteen hex digits over payload/
+# and control/, for the half of a package that comes out of this checkout
+# rather than a tarball; without it the stamp reports "already current" and
+# hands back the previous build. control/ counts, because an edited postinst
+# changes what the .ipk does; seed/ ships in nothing. $PKG_DIR is already set.
 #
-#     PKG_STAMP_EXTRA="$(pkg_payload_hash)"
-#
-# Sixteen hex digits over every file in this recipe's payload/ -- the cache
-# key for the half of a package that comes out of this checkout instead of out
-# of a tarball. Called from pkg.conf, where $PKG_DIR is already set.
-#
-# WHY A RECIPE NEEDS THIS AT ALL. pkg_stamp is built from a version number,
-# and a version number only describes an upstream. A recipe that also ships
-# files of ours has inputs the version cannot see, and a stamp that cannot see
-# an input does not fail -- it reports "already current" and hands over the
-# previous build. That is exactly what was happening to helixscreen: its
-# printer-database entry was hashed into ANVIL-CORE's stamp, so editing the
-# json rebuilt a package that does not contain it and left the package that
-# does sitting in the cache.
-#
-# It hashes payload/ and control/, because those two are what a recipe ships:
-# the files themselves and the maintainer scripts that travel with them. An
-# edited postinst changes what the .ipk does and nothing else would notice --
-# the version is a date and the payload bytes are unchanged, so the stamp
-# would read "already current". seed/ is placed by bin/patch.sh, is in no
-# package, and must not invalidate one.
-#
-# TWO find CALLS AND AN `|| true`, not one find over both paths: most recipes
-# have no control/, and `find a b` with b missing exits non-zero -- which under
-# the `set -euo pipefail` every recipe runs with fails the command
-# substitution and kills the build. Silently, because the 2>/dev/null that
-# hides find's own noise hides that too.
+# TWO find CALLS AND AN `|| true`: `find a b` with b missing exits non-zero,
+# which under the recipes' `set -euo pipefail` kills the build silently.
 pkg_payload_hash() {
     {   find "$PKG_DIR/payload" -type f -print0 2>/dev/null || true
         find "$PKG_DIR/control" -type f -print0 2>/dev/null || true
@@ -111,32 +48,15 @@ pkg_payload_hash() {
         | sha256sum | cut -c1-16
 }
 
-# ------------------------------------------------------------------ pkg_dir
-#
-#     pkg_dir <recipe-id>      ->  the directory holding its pkg.conf
-#
-# Recipes live at two depths and this is the only function that knows it.
-#
-#     pkgs/<name>/            a recipe that carries FILES OF THIS REPO --
-#                             a payload/, a prog/ or a seed/. Four of them.
-#     pkgs/3rdparty/<name>/   a recipe that builds a pinned tarball and
-#                             stages nothing from the checkout. Thirty-four.
-#
-# THE SPLIT IS MECHANICAL, NOT EDITORIAL, and that is the whole reason it can
-# be a directory rather than a field. "Do we actively modify it" drifts: the
-# day somebody patches zlib, is it still third-party? Whether a recipe carries
-# files of ours is a fact about the tree, checkable in one assertion
-# (qa/static/test_recipe_layout.py), and a recipe crossing the line is a move
-# that the same test demands.
-#
-# What it buys is `ls pkgs/`: four entries that a person edits, instead of
-# thirty-eight where the four are buried. Nothing else in this file, and
-# nothing in any recipe, spells either path.
-#
-# Names are unique ACROSS both levels -- pkg_out, pkg_stamp and the .ipk
-# filename are all keyed by the bare name -- and test_recipe_layout.py holds
-# that too, because a duplicate would resolve to whichever level is searched
-# first and build the wrong thing very quietly.
+# pkg_dir <recipe-id> -> the directory holding its pkg.conf. Recipes live at
+# two depths and this is the only function that knows it:
+#     pkgs/<name>/            carries files of this repo -- a payload/, prog/
+#                             or seed/. Four of them.
+#     pkgs/3rdparty/<name>/   builds a pinned tarball, stages nothing from the
+#                             checkout. Thirty-four.
+# Names are unique ACROSS both levels, since pkg_out, pkg_stamp and the .ipk
+# filename are keyed by the bare name; qa/static/test_recipe_layout.py holds
+# that and the split, which is mechanical rather than editorial.
 pkg_dir() {
     for _c in "$ROOT/pkgs/$1" "$ROOT/pkgs/3rdparty/$1"; do
         if [ -f "$_c/pkg.conf" ]; then printf '%s' "$_c"; return 0; fi
@@ -152,10 +72,8 @@ pkg_conf() {
     PKG_MAINTAINER='anvil <none@example.invalid>'
     PKG_STAMP_EXTRA=''; PKG_WHEN=''
     PKG_DEV_FILES=''; PKG_DEV_DESCRIPTION=''
-    # PKG_DIR IS SET BEFORE THE FILE IS SOURCED so that pkg.conf and build.sh
-    # can name their own directory without either of them spelling out where
-    # recipes live -- which is now two places, so nothing else should have to
-    # know that.
+    # PKG_DIR is set before the file is sourced, so pkg.conf and build.sh can
+    # name their own directory without spelling out where recipes live.
     PKG_DIR=$(pkg_dir "$1") \
         || pkg_die "no recipe named '$1' under pkgs/ or pkgs/3rdparty/"
     # shellcheck disable=SC1090
@@ -176,17 +94,10 @@ pkg_ipk() {
           "$PKG_VERSION" "$PKG_RELEASE" "$PKG_ARCH" )
 }
 
-# ---------------------------------------------------------------- pkg_stamp
-#
-# The cache key for a recipe: its own version, the toolchain that determines
-# its ABI, and -- recursively -- the stamp of everything it builds against, so
-# a zlib bump rebuilds libarchive and opkg with no composite stamp maintained
-# by hand. The toolchain filename is in it because the compiler decides the ABI
-# as much as the sources do, and a tree built by another one has to be
-# invalidated rather than reused.
-#
-# Computed from pkg.conf alone, so bin/fetch-assets.sh can ask whether a build
-# is going to need a compiler before any compiler exists.
+# The cache key for a recipe: its version, the toolchain that determines its
+# ABI, and recursively the stamp of all it builds against, so a zlib bump
+# rebuilds libarchive and opkg. From pkg.conf alone, so bin/fetch-assets.sh
+# can ask whether a build needs a compiler before one exists.
 pkg_stamp() {
     (
         _PKG_DEPTH=$(( ${_PKG_DEPTH:-0} + 1 ))
@@ -217,20 +128,15 @@ pkg_recipes() {
     for _d in "$ROOT"/pkgs/*/ "$ROOT"/pkgs/3rdparty/*/; do
         [ -f "$_d/pkg.conf" ] || continue
         _r=$(basename "$_d")
-        # PKG_WHEN in a subshell, because it is arbitrary shell out of a
-        # recipe's metadata and this function is called by the fetcher, by the
-        # packager and by the tests. A condition that set a variable or cd'd
-        # somewhere would otherwise do it to whoever asked.
+        # PKG_WHEN in a subshell: arbitrary shell out of a recipe's metadata,
+        # and this is called by the fetcher, the packager and the tests.
         ( pkg_conf "$_r"; [ -z "$PKG_WHEN" ] || eval "$PKG_WHEN" ) || continue
         printf '%s\n' "$_r"
     done
 }
 
-# True when any recipe needs compiling. This is what
-# bin/fetch-assets.sh asks before pulling the ~203MB toolchain, instead of
-# comparing a hand-written stamp string it has to keep in step with the builder
-# -- the two spellings drifted, the comparison could never be false, and the
-# toolchain was re-hashed on every single run for months.
+# True when any recipe needs compiling -- what bin/fetch-assets.sh asks before
+# pulling the ~203MB toolchain.
 pkg_needs() {
     for _r in $(pkg_recipes); do
         if pkg_stale "$_r"; then return 0; fi
@@ -238,15 +144,10 @@ pkg_needs() {
     return 1
 }
 
-# ---------------------------------------------------------------- pkg_order
-#
-#     pkg_order <recipe-id>...
-#
-# The given recipes and everything they build against, in an order where a
-# dependency always precedes its dependent. Depth-first, so asking for one
-# recipe gets its whole closure -- `PKG=opkg make packages` builds zlib and
-# libarchive first rather than failing on an empty sysroot. Alphabetical order
-# would put libarchive before zlib.
+# pkg_order <recipe-id>... -- the given recipes and all they build against,
+# dependency first. Depth-first, so one recipe gets its whole closure:
+# `PKG=opkg make packages` builds zlib and libarchive first, where
+# alphabetical order would invert those two.
 pkg_order() {
     _order=''; _seen=' '; _path=' '
     for _r in "$@"; do _pkg_visit "$_r"; done
@@ -269,13 +170,9 @@ _pkg_visit() {
     _order="$_order $1"
 }
 
-# ---------------------------------------------------------------- pkg_begin
-#
-#     pkg_begin <recipe-id>
-#
-# Read the recipe's metadata, check the cache, and lay out the scratch tree.
-# Returns non-zero when the output is already current, so every recipe starts
-# `pkg_begin <id> || exit 0` and a warm tree costs one process spawn.
+# pkg_begin <recipe-id> -- read the recipe's metadata, check the cache, lay
+# out the scratch tree. Non-zero when the output is already current, so every
+# recipe starts `pkg_begin <id> || exit 0`.
 pkg_begin() {
     PKG_ID=$1
     pkg_conf "$PKG_ID"
@@ -313,16 +210,11 @@ pkg_end() {
     pkg_say "$PKG_ID: $PKG_OUT sealed"
 }
 
-# ------------------------------------------------------------ pkg_toolchain
-#
-# Unpack the toolchain if it is not already there, write the compiler
-# wrappers, put them on PATH, and then prove the wrappers produce the ABI this
-# printer's kernel will actually exec.
-#
-# -mnan=2008 and -EL are baked into the compiler DRIVER rather than passed in
-# CFLAGS, because autotools link lines do not all forward CFLAGS to the link
-# step and a single object linked without them poisons the whole binary's ABI
-# flags.
+# Unpack the toolchain, write the compiler wrappers, put them on PATH, and
+# prove they produce the ABI this printer's kernel will exec. -mnan=2008 and
+# -EL are baked into the compiler DRIVER, not CFLAGS: autotools link lines do
+# not all forward CFLAGS, and one object linked without them poisons the whole
+# binary's ABI flags.
 pkg_toolchain() {
     PKG_HOST=$PY_HOST
     PKG_TC=$PY_TOOLCHAIN_DIR
@@ -350,12 +242,9 @@ pkg_toolchain() {
     done
     export PATH="$PKG_XW/bin:$PATH"
 
-    # Exported as well as put on PATH, because the two are different
-    # handshakes. An autoconf configure finds the cross compiler from --host,
-    # by looking for $host-gcc on PATH. OpenSSL takes no --host -- it takes a
-    # target name, linux-mips32 -- and reads $CC from the environment, so with
-    # PATH alone it silently used the build machine's gcc. Both point at the
-    # same wrappers, so a project gets the same compiler either way.
+    # Exported as well as on PATH: an autoconf configure finds the cross
+    # compiler as $host-gcc on PATH, while OpenSSL takes a target name and
+    # reads $CC from the environment.
     export CC="$PKG_HOST-gcc"     CXX="$PKG_HOST-g++"
     export AR="$PKG_HOST-ar"      RANLIB="$PKG_HOST-ranlib"
     export STRIP="$PKG_HOST-strip" NM="$PKG_HOST-nm"
@@ -364,9 +253,8 @@ pkg_toolchain() {
 
     PKG_STRIP="$_tc/bin/$PKG_HOST-strip"
 
-    # The wrapper is gated before anything is built on it: one that lost
-    # -mnan=2008 produces a tree that compiles, links, passes every test on the
-    # build host and is refused by the printer's kernel at exec().
+    # Gated before anything is built on it: a wrapper that lost -mnan=2008
+    # builds a tree that passes every test here and is refused at exec().
     echo 'int main(void){return 0;}' > "$PKG_WORK/src/.abi.c"
     "$PKG_HOST-gcc" "$PKG_WORK/src/.abi.c" -o "$PKG_WORK/src/.abi.out" \
         || pkg_die "the $PKG_ID compiler wrapper cannot build a hello-world"
@@ -378,31 +266,20 @@ pkg_toolchain() {
     pkg_say "$PKG_ID: toolchain ready ($PKG_HOST, e_flags=$_abi)"
 }
 
-# ---------------------------------------------------------- pkg_buildpython
+# An x86-64 CPython of exactly $PY_VERSION, exported as $HOSTPY. Nothing it
+# produces ships; it is a compiler for the build machine.
 #
-#     pkg_buildpython
+# THE VERSIONS MUST MATCH EXACTLY. Cross-compiling CPython needs a
+# build-python of the same version and configure hard-errors on a mismatch, so
+# the build image's python3 cannot stand in. The pkg/python-* recipes need it
+# for a second reason: it runs pip and setuptools under
+# _PYTHON_SYSCONFIGDATA_NAME (see pkg_pytarget), and an extension compiled
+# against 3.13 headers by a 3.14 setuptools crashes at import on the printer.
 #
-# Provide an x86-64 CPython of exactly $PY_VERSION and export $HOSTPY. Nothing
-# it produces is ever shipped; it is a compiler for the build machine.
-#
-# THE VERSIONS MUST MATCH EXACTLY. Cross-compiling CPython needs a build-python
-# of the same version -- the Makefile runs it to freeze modules, generate the
-# deepfreeze sources and byte-compile the stdlib, and configure hard-errors on
-# a mismatch -- so the build image's own python3 cannot stand in. The
-# pkg/python-* recipes need it for a second reason: it runs pip and setuptools
-# while _PYTHON_SYSCONFIGDATA_NAME makes them answer for mipsel (see
-# pkg_pytarget), and an extension compiled against 3.13 headers by a 3.14
-# setuptools is an import-time crash on the printer and nowhere else.
-#
-# ONE CACHE, SHARED BY EVERY PYTHON RECIPE. It lives at work/.py-host rather
-# than inside $PKG_WORK, so pkg_end does not delete it. Its stamp is
-# $PY_VERSION plus the PEP 517 backend sdists installed into it, because a
-# backend bump has to rebuild the thing the backends live in.
-#
-# --with-ensurepip=install, where the CROSS build has --without-ensurepip and
-# must keep it: on a printer pip would need a network and a compiler and has
-# neither, while here pip is what builds every wheel. It comes out of the
-# pinned tarball, not off bootstrap.pypa.io.
+# One cache for every python recipe, at work/.py-host so pkg_end does not
+# delete it, stamped on $PY_VERSION plus the PEP 517 backend sdists.
+# --with-ensurepip=install, where the cross build has --without-ensurepip:
+# here pip is what builds every wheel.
 pkg_buildpython() {
     PKG_HOSTPY_ROOT="$PWD/work/.py-host"
     HOSTPY="$PKG_HOSTPY_ROOT/bin/python$PY_MM"
@@ -431,10 +308,8 @@ pkg_buildpython() {
     (
         set -e
         # The cross environment is removed rather than avoided by calling
-        # order: pkg_toolchain and pkg_deps may already have exported CC,
-        # CFLAGS and a sysroot describing the PRINTER, and a configure that
-        # inherits those builds an x86-64 interpreter with mipsel flags and
-        # fails somewhere unrecognisable.
+        # order: a configure inheriting the printer's CC and sysroot builds an
+        # x86-64 interpreter with mipsel flags.
         unset CC CXX AR RANLIB STRIP NM OBJCOPY OBJDUMP LD
         unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS LIBS CONFIG_SITE
         unset PKG_CONFIG_LIBDIR PKG_CONFIG_PATH PKG_CONFIG_SYSROOT_DIR
@@ -446,19 +321,16 @@ pkg_buildpython() {
     ) > "$_hplog" 2>&1 || pkg_die "$PKG_ID: the build-python failed to build -- see $_hplog"
 
     # zlib is asserted, not assumed: CPython records a missing library as an
-    # absent module and carries on. Every wheel is a zip and so is pip, so
-    # ensurepip fails with "can't decompress data" inside a make install that
-    # reports success, and the symptom arrives three steps later as "No module
-    # named pip". zlib1g-dev in docker/Dockerfile.build is the fix.
+    # absent module and carries on, so ensurepip fails inside a make install
+    # that reports success and surfaces later as "No module named pip".
     "$HOSTPY" -c 'import zlib' 2>/dev/null || pkg_die \
         "the build-python has no zlib module, so it cannot unpack a single wheel. Install zlib1g-dev in docker/Dockerfile.build and delete work/.py-host."
     "$HOSTPY" -m pip --version >> "$_hplog" 2>&1 || pkg_die \
         "the build-python has no pip -- ensurepip failed inside 'make install'; its traceback is in $_hplog"
 
-    # The PEP 517 backends go into the build-python, not an isolated
-    # environment per wheel: --no-build-isolation is what keeps
-    # _PYTHON_SYSCONFIGDATA_NAME reaching setup.py, and with isolation off the
-    # backends have to already be here.
+    # The backends go into the build-python, not a per-wheel isolated
+    # environment: --no-build-isolation is what keeps
+    # _PYTHON_SYSCONFIGDATA_NAME reaching setup.py.
     for _p in setuptools $PYPKG_HOST_LIST; do
         _sd=$(pypkg_tgz "$_p")
         [ -f "$_sd" ] || pkg_die \
@@ -481,33 +353,19 @@ pkg_buildpython() {
     pkg_say "$PKG_ID: build-python ready ($("$HOSTPY" -V 2>&1))"
 }
 
-# ----------------------------------------------------------------- pkg_deps
-#
-# Fill the recipe's sysroot from the feed: every recipe named in
-# PKG_BUILD_DEPENDS is unpacked out of its own .ipk and merged in, then the
-# usual cross-build variables are pointed at the result.
-#
-# Unpacked by opkg-unbuild, upstream's inverse of opkg-build, so nothing needs
-# a working opkg in order to build packages and opkg can be an ordinary recipe
-# rather than a bootstrap stage.
-#
-# BUILDING AGAINST THE PACKAGE, NOT THE BUILD TREE, is the point. Pointing at
-# work/pkg/zlib directly would work and would mean nothing ever checks that the
-# .ipk contains the headers its dependents need; here a package that forgot to
-# ship a header fails the next recipe's configure.
-#
-# The sysroot mirrors the printer -- dependencies sit under $MODDIR inside it,
-# where they will live on the machine -- which is why PKG_CONFIG_SYSROOT_DIR is
-# set to the sysroot rather than emptied: the .pc files say
-# prefix=/usr/data/anvil, and that variable is what turns their -I and -L into
-# paths that exist here.
+# Fill the recipe's sysroot from the feed: everything in PKG_BUILD_DEPENDS is
+# unpacked out of its own .ipk by opkg-unbuild and merged in, then the
+# cross-build variables point at the result. Building against the package
+# rather than the build tree is the point -- one that forgot to ship a header
+# fails the next recipe's configure. The sysroot mirrors the printer, deps
+# under $MODDIR inside it, so PKG_CONFIG_SYSROOT_DIR is set to the sysroot
+# rather than emptied: the .pc files say prefix=/usr/data/anvil.
 pkg_deps() {
     [ -n "$PKG_BUILD_DEPENDS" ] || return 0
     for _d in $PKG_BUILD_DEPENDS; do
         # Both halves, when the dependency has two: which of <name> and
-        # <name>-dev exists is the dependency's business (anvil-zlib-dev has no
-        # runtime half at all), so both are tried and it is an error only if
-        # neither is there.
+        # <name>-dev exists is the dependency's business, so only neither is
+        # an error.
         _found=0
         for _v in '' dev; do
             _ipk=$(pkg_ipk "$_d" "$_v")
@@ -540,21 +398,12 @@ pkg_deps() {
     export PKG_CONFIG_SYSROOT_DIR="$PKG_SYSROOT"
 }
 
-# ------------------------------------------------------------ source verbs
+# SOURCE VERBS. A recipe names where its inputs come from exactly once, with
+# one of the verbs below; qa/static/test_ipk.py counts these calls.
 #
-# A recipe names where its inputs come from exactly once, with one of the two
-# verbs below. Not a style rule: "one recipe builds one source" is checked by
-# counting these calls (qa/static/test_ipk.py).
-#
-# --------------------------------------------------------------- pkg_unpack
-#
-#     pkg_unpack <archive>
-#
-# Extract this recipe's one pinned source archive into $PKG_WORK/src.
-#
-# Zip as well as tar, dispatched on the name, because Mainsail publishes a .zip
-# and a second source verb would double the thing being counted. tar reads its
-# own compression off the file, so only the container is decided here.
+# pkg_unpack <archive> -- extract this recipe's one pinned source archive into
+# $PKG_WORK/src. Zip as well as tar, dispatched on the name, because Mainsail
+# publishes a .zip.
 pkg_unpack() {
     [ -f "${1:-}" ] || pkg_die "no source at '${1:-}' -- run ./bin/fetch-assets.sh"
     case "$1" in
@@ -569,34 +418,18 @@ pkg_unpack() {
     esac
 }
 
-# --------------------------------------------------------------- pkg_intree
-#
-#     pkg_intree
-#
-# This recipe's sources are the checked-out repository, not a download. Used
-# by anvil-core alone, whose contents are payload/ and assets/. It unpacks
-# nothing and exists so that "a recipe names its source exactly once" stays a
-# countable property with no exemption; the freshness of those inputs is
-# PKG_STAMP_EXTRA's job, not this verb's.
+# pkg_intree -- this recipe's sources are the checked-out repository, not a
+# download; anvil-core alone. Unpacks nothing, and exists so the source-verb
+# count needs no exemption. Freshness of those inputs is PKG_STAMP_EXTRA's job.
 pkg_intree() {
     PKG_SRC="$ROOT"
     pkg_say "$PKG_ID: source is this checkout, at $ROOT"
 }
 
-# ------------------------------------------------------------- pkg_prebuilt
-#
-#     pkg_prebuilt <path>
-#
-# This recipe's source is a finished binary from outside the build entirely --
-# a path in config.env rather than a pinned download or a file in this
-# checkout. pkgs/busybox alone, and it should stay that way: everything a
-# printer runs should be something this repository can rebuild from a sha256,
-# and a recipe that reads a path someone typed cannot promise that.
-#
-# It is a source verb, not a helper, because the rule it has to satisfy is the
-# one test_one_recipe_builds_one_package counts -- a recipe names its source
-# exactly once. Smuggling this in as a bare pkg_stage would have made it the
-# one recipe that names no source at all.
+# pkg_prebuilt <path> -- this recipe's source is a finished binary from
+# outside the build, a path in config.env. pkgs/busybox alone, and it should
+# stay that way: a recipe reading a typed path cannot promise a rebuild from a
+# sha256. A source verb rather than a helper so the same count covers it.
 pkg_prebuilt() {
     [ -f "${1:-}" ] || pkg_die \
         "$PKG_ID: no binary at '${1:-}' -- check the path in config.env"
@@ -604,20 +437,12 @@ pkg_prebuilt() {
     pkg_say "$PKG_ID: source is a prebuilt binary, at $1"
 }
 
-# ----------------------------------------------------------------- pkg_stage
-#
-#     pkg_stage <src> <dest-relative-to-prefix>
-#
-# Put a file or tree into the staged install, where pkg_ship expects to find
-# it: $PKG_WORK/stage$MODDIR/<dest>.
-#
-# This is `make install` for things that have no make -- Mainsail's static
-# files, Moonraker's python tree, HelixScreen's prebuilt tarball, anvil-core's
-# scripts. Staging them where an autotools install lands means pkg_ship, the
-# .la sweep, the archive normalisation and the ELF-only strip need no special
-# case for a package that was never compiled.
-#
-# cp -a: these trees contain symlinks and modes that are part of what ships.
+# pkg_stage <src> <dest-relative-to-prefix> -- put a file or tree where
+# pkg_ship expects it, $PKG_WORK/stage$MODDIR/<dest>. `make install` for things
+# that have no make (Mainsail's static files, Moonraker's python tree,
+# anvil-core's scripts), landing them where an autotools install would so
+# pkg_ship needs no special case. cp -a, because these trees contain symlinks
+# and modes that are part of what ships.
 pkg_stage() {
     [ -e "${1:-}" ] || pkg_die "$PKG_ID: nothing to stage at '${1:-}'"
     [ -n "${2:-}" ] || pkg_die "$PKG_ID: pkg_stage needs a destination"
@@ -626,50 +451,29 @@ pkg_stage() {
     cp -a "$1" "$_dst" || pkg_die "$PKG_ID: could not stage $1 -> $2"
 }
 
-# ---------------------------------------------------------------- pkg_build
-#
-#     pkg_build <srcdir-under-src> [configure args...]
-#
-# Configure, make, install into the staging tree. The only way a recipe
-# compiles anything. Projects differ in the settings of these three steps, not
-# in the steps, so the settings are variables:
-#
+# pkg_build <srcdir-under-src> [configure args...] -- configure, make, install
+# into the staging tree; the only way a recipe compiles anything. Projects
+# differ in the settings of those three steps, not in the steps:
 #   PKG_CONFIGURE       the configure program.        default ./configure
 #                       'none' skips the step entirely (bzip2).
-#   PKG_CONFIGURE_AUTO  1 = prepend --host and --prefix, which is what an
-#                       autoconf configure wants and what zlib and OpenSSL
-#                       both refuse. default 1; set 0 and pass your own.
+#   PKG_CONFIGURE_AUTO  1 = prepend --host and --prefix, which an autoconf
+#                       configure wants and zlib and OpenSSL refuse.
 #   PKG_MAKE_TARGET     what to build.                default: everything
 #   PKG_INSTALL_TARGET  how to install it.            default install
-#                       'none' means the recipe places the files itself,
-#                       because the project has no install target worth using.
+#                       'none' = the recipe places the files itself.
 #   PKG_MAKE_ARGS       extra variables for make (LDLIBS=-lpthread for s6).
-#   PKG_CC_SHARED       the whole link line for a project that has NO BUILD
-#                       SYSTEM AT ALL, appended to `$CC -shared -fPIC`. When
-#                       it is set there is nothing to configure and nothing to
-#                       make, so both steps are skipped and this is the build.
+#   PKG_CC_SHARED       the whole link line for a project with no build system
+#                       at all, appended to `$CC -shared -fPIC`; when set,
+#                       configure and make are skipped.
 #
-# PKG_CC_SHARED EXISTS FOR KLIPPER AND SAYS SO. klippy/chelper has no
-# Makefile and never has: on a normal machine klippy compiles c_helper.so at
-# first run, from the argument list in klippy/chelper/__init__.py, using
-# whatever cc the printer has -- and this printer has none. So the "build
-# system" for that .so genuinely is one gcc line, and the recipe's job is to
-# state Klipper's own COMPILE_ARGS rather than to invent a link.
+# PKG_CC_SHARED exists for Klipper: klippy/chelper has no Makefile and
+# normally compiles c_helper.so at first run with a cc this printer lacks. A
+# knob rather than a gcc line in the recipe because $CC is the gated wrapper
+# where -EL -mnan=2008 live.
 #
-# WHY IT IS A KNOB HERE AND NOT A gcc LINE IN THE RECIPE. $CC is the wrapper
-# pkg_toolchain wrote and gated, which is where -EL -mnan=2008 live. A recipe
-# that ran a compiler itself would be free to reach past that -- and the ABI
-# flags being spelled in exactly one place is the property
-# test_a_recipe_does_not_rebuild_the_shared_parts exists to hold. The recipe
-# says WHAT to link; this says HOW, the same split every other knob has.
-#
-# The prefix is always $MODDIR and the DESTDIR always the recipe's staging tree.
-#
-# RETURNS NON-ZERO, NEVER DIES. Under the `set -euo pipefail` every recipe runs
-# a failure aborts the build anyway; what this buys is the recoverable case.
-# OpenSSL's mips target hardcodes -mips2 while this toolchain defaults to
-# -mfp64, a combination gcc refuses, and the recovery is to reconfigure for
-# portable C -- which `if ! pkg_build` can express and pkg_die could not.
+# RETURNS NON-ZERO, NEVER DIES, for the recoverable case: OpenSSL's mips
+# target hardcodes -mips2 against this toolchain's -mfp64, which gcc refuses,
+# and `if ! pkg_build` can express the retry that pkg_die could not.
 pkg_build() {
     _dir=$1; shift
     _tag=$(basename "$_dir")
@@ -679,20 +483,16 @@ pkg_build() {
         cd "$PKG_WORK/src/$_dir"
 
         # No build system: link the sources named by the recipe and stop.
-        # -shared -fPIC and $CC are pkg_build's, so a recipe cannot get the
-        # ABI or the output kind wrong; everything else is Klipper's own
-        # COMPILE_ARGS, spelled in the recipe where a reader can compare it
-        # against klippy/chelper/__init__.py.
+        # -shared -fPIC and $CC are pkg_build's; the rest is Klipper's own
+        # COMPILE_ARGS, spelled in the recipe against chelper/__init__.py.
         if [ -n "${PKG_CC_SHARED:-}" ]; then
             # shellcheck disable=SC2086
             $CC -shared -fPIC $PKG_CC_SHARED > "$PKG_LOG/$_tag-cc.log" 2>&1
             exit 0
         fi
 
-        # The trailing arguments go to whichever step consumes them: to
-        # configure when there is one, to make when there is not. bzip2 has no
-        # configure, so its CC/AR/RANLIB have to reach make or the library is
-        # built with the build machine's compiler.
+        # Trailing arguments go to whichever step consumes them: configure
+        # when there is one, make when there is not (bzip2's CC/AR/RANLIB).
         if [ "${PKG_CONFIGURE:-./configure}" != none ]; then
             if [ "${PKG_CONFIGURE_AUTO:-1}" = 1 ]; then
                 set -- --host="$PKG_HOST" --prefix="$MODDIR" "$@"
@@ -719,34 +519,18 @@ pkg_build() {
     pkg_say "$PKG_ID: built $_tag"
 }
 
-# ------------------------------------------------------------- pkg_pytarget
+# pkg_pytarget -- point the build-python's sysconfig at the TARGET interpreter
+# in the sysroot, so pip and setuptools answer for mipsel while running on
+# x86-64. After pkg_toolchain, pkg_deps and pkg_buildpython.
 #
-#     pkg_pytarget
-#
-# Point the build-python's sysconfig at the TARGET interpreter in the sysroot,
-# so that pip and setuptools -- running on x86-64 -- answer every question
-# about mipsel. Call it after pkg_toolchain, pkg_deps and pkg_buildpython.
-#
-# THE CROSS TRICK, with no crossenv in it. anvil-python ships
-# lib/python3.13/_sysconfigdata__linux_mipsel-linux-gnu.py, recording the cross
-# CC, LDSHARED, EXT_SUFFIX (.cpython-313-mipsel-linux-gnu.so) and INCLUDEPY for
-# the target. Pointing _PYTHON_SYSCONFIGDATA_NAME at it from an x86-64 CPython
-# of the same version makes sysconfig -- and so setuptools' build_ext -- build
-# for mipsel while running on x86-64.
-#
-# The module is rewritten rather than used as it ships because every path in it
-# is /usr/data/anvil/..., which exists on the printer and nowhere here;
-# INCLUDEPY in particular has to name a directory that exists or no C extension
-# finds Python.h. The substitution is blanket, over every string value rather
-# than a list of the variables that matter, because that list is what nobody
-# gets right by hand: INCLUDEPY fails loudly, LIBDIR and LIBPL fail quietly.
-#
-# It goes first on PYTHONPATH, is read only by the build, and never ships.
-#
-# The pure-python recipes call this too, with nothing to cross-compile:
-# sysconfig is what a wheel build asks for its tags and paths whether or not
-# there is C in the package, so every recipe runs the same verbs and none has
-# to decide which kind it is.
+# anvil-python ships _sysconfigdata__linux_mipsel-linux-gnu.py, recording the
+# cross CC, LDSHARED, EXT_SUFFIX and INCLUDEPY; _PYTHON_SYSCONFIGDATA_NAME
+# pointed at it is what makes build_ext build for mipsel. It is rewritten
+# first because every path in it is /usr/data/anvil/..., which exists on the
+# printer and nowhere here -- blanket over every string value, because that
+# list is what nobody gets right by hand: INCLUDEPY fails loudly, LIBDIR and
+# LIBPL quietly. Read only by the build, never shipped. Pure-python recipes
+# call it too: sysconfig is what a wheel build asks for its tags either way.
 pkg_pytarget() {
     [ -n "${HOSTPY:-}" ] || pkg_die \
         "$PKG_ID: pkg_pytarget needs the build-python -- call pkg_buildpython first"
@@ -779,17 +563,15 @@ with open(dst, "w") as fh:
 PYEOF
 
     export _PYTHON_SYSCONFIGDATA_NAME="$_sc"
-    # Only the rewritten module, deliberately not the target's stdlib as well:
-    # the one thing that has to be importable is this, and adding the target's
-    # stdlib puts the host interpreter importing the target's os.py one
-    # path-ordering mistake away.
+    # Only the rewritten module, deliberately not the target's stdlib: that
+    # puts the host interpreter importing the target's os.py one path-ordering
+    # mistake away.
     export PYTHONPATH="$_xsys"
     export PYTHONDONTWRITEBYTECODE=1
     export PIP_DISABLE_PIP_VERSION_CHECK=1
     # setuptools does not forward CFLAGS to its link lines, which is why the
-    # -EL -mnan=2008 that decide this printer's ABI live in the gcc wrapper
-    # pkg_toolchain wrote. What is passed here only helps a compile find
-    # headers.
+    # ABI flags live in the gcc wrapper. What is passed here only helps a
+    # compile find headers.
     export LDSHARED="$PKG_HOST-gcc -shared -L$PKG_PYROOT/lib"
     export CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64 -I$PKG_PYROOT/include -I$PKG_PYINC"
     export CXXFLAGS="$CFLAGS"
@@ -800,9 +582,8 @@ PYEOF
     mkdir -p "$PKG_PYSP"
 
     # Gated before anything is built on it: if _PYTHON_SYSCONFIGDATA_NAME has
-    # not taken, sysconfig answers every later question for x86-64 and the
-    # result is a tree of host objects that builds perfectly and imports
-    # nowhere.
+    # not taken, the result is a tree of host objects that builds perfectly
+    # and imports nowhere.
     "$HOSTPY" - "$PKG_PYINC" ".cpython-$(printf '%s' "$PY_MM" | tr -d .)-mipsel-linux-gnu.so" <<'PYEOF' \
         || pkg_die "$PKG_ID: the sysconfig cross trick did not take"
 import os, sys, sysconfig
@@ -821,49 +602,27 @@ PYEOF
     pkg_say "$PKG_ID: sysconfig answers for mipsel, headers at $PKG_PYINC"
 }
 
-# ---------------------------------------------------------------- pkg_pysrc
-#
-#     pkg_pysrc <list-entry>
-#
-# Where this package's sdist unpacked to: every PyPI sdist unpacks to a
-# directory named after the file with .tar.gz removed, under $PKG_WORK/src.
+# pkg_pysrc <list-entry> -- where this package's sdist unpacked to: the file
+# name with .tar.gz removed, under $PKG_WORK/src.
 pkg_pysrc() {
     _f=$(pypkg_var "$1" FILE)
     printf '%s/src/%s' "$PKG_WORK" "${_f%.tar.gz}"
 }
 
-# -------------------------------------------------------------- pkg_pywheel
+# pkg_pywheel <list-entry> [VAR=VAL ...] -- build one wheel for the target
+# from the source pkg_unpack extracted and unpack it into the staging
+# site-packages. Trailing VAR=VAL pairs are environment for that build alone.
+#   PKG_PY_SETUP_ARGS   drive setup.py build_ext with these and then
+#                       bdist_wheel, instead of pip. PEP 517 offers no way to
+#                       pass build_ext options, and pillow's --disable-* are.
 #
-#     pkg_pywheel <list-entry> [VAR=VAL ...]
-#
-# Build one wheel for the target out of the source pkg_unpack just extracted,
-# and unpack it into the staging site-packages. Trailing VAR=VAL pairs are
-# environment for that build alone (lmdb needs one).
-#
-# It takes the package name and not a path, and builds from the unpacked
-# directory rather than the sdist, so that every recipe reads the same way --
-# greenlet has to patch its sources before they compile and pillow has to be
-# driven through setup.py, and pip builds a directory exactly as it builds an
-# sdist.
-#
-# NOTHING HERE TALKS TO A NETWORK. pip runs --no-index against a tree that came
-# out of an archive bin/fetch-assets.sh already checked the sha256 of.
-# --no-binary :all: is kept as well: the day someone adds an index URL for one
-# awkward package, it is what stops x86-64 .so files sailing into the tree.
-#
-#   PKG_PY_SETUP_ARGS   drive setup.py build_ext with these options and then
-#                       bdist_wheel, instead of calling pip. PEP 517 offers no
-#                       way to pass build_ext options, and pillow's --disable-*
-#                       are build_ext options.
-#
-# Unzipped rather than pip-installed, because `pip install` installs FOR the
-# interpreter running it, which is x86-64. A wheel's layout is already the
-# layout of site-packages.
-#
-# .dist-info goes: nothing on the printer resolves a dependency, asks for a
-# version or runs an entry point. The .data directories and their scripts go
-# for a stronger reason -- their console-script shebangs name the
-# build-python's path under work/.py-host.
+# NOTHING HERE TALKS TO A NETWORK: pip runs --no-index against a tree whose
+# sha256 bin/fetch-assets.sh checked, and --no-binary :all: guards against
+# x86-64 wheels the day someone adds an index URL. Unzipped rather than
+# pip-installed, because `pip install` installs FOR the interpreter running
+# it, which is x86-64. .dist-info goes, since nothing on the printer resolves
+# a dependency or runs an entry point; the .data directories go because their
+# console-script shebangs name the build-python under work/.py-host.
 pkg_pywheel() {
     _pw=$1; shift
     _wdir=$(pkg_pysrc "$_pw")
@@ -912,33 +671,15 @@ pkg_pywheel() {
     rm -rf "${PKG_PYSP:?}"/bin "${PKG_PYSP:?}"/*.data
 }
 
-# ------------------------------------------------------------- pkg_pynative
+# pkg_pynative [count] -- assert this package shipped at least `count`
+# (default 1) compiled extension modules. After pkg_ship, so it reads $PKG_OUT.
 #
-#     pkg_pynative [count]
-#
-# Assert this package shipped at least `count` (default 1) compiled extension
-# modules into site-packages. Called after pkg_ship, so it reads $PKG_OUT --
-# the bytes that go into the .ipk.
-#
-# WHAT IT CATCHES, and it is a failure with no other symptom: a package with a
-# native extension AND a pure-python fallback, where the extension fails to
-# cross-compile and setup.py quietly ships the fallback. Nothing errors. The
-# wheel builds, the wheel unpacks, pkg_pywheel is satisfied, the .ipk installs,
-# and the printer gets a pure-python implementation of the thing that was worth
-# compiling -- or, for cffi and lmdb, nothing that works at all. That is not
-# hypothetical: it is exactly what LMDB_FORCE_CPYTHON=1 exists to prevent in
-# pkgs/3rdparty/python-lmdb, and that recipe found out the hard way.
-#
-# It replaced a single "at least twelve .so files in the payload" check in
-# bin/patch.sh. The count was right and the location was wrong: an aggregate
-# over the finished payload can say that SOMETHING fell back but not what, and
-# it went down by one whether the package that lost its extension was
-# markupsafe (a speedup) or cffi (klippy's chelper).
-#
-# Deliberately a count and not a list of module names. The names are upstream's
-# and change on a version bump -- tornado's is speedups.abi3.so and everyone
-# else's carries the interpreter ABI tag -- while "this recipe compiles
-# something" is a fact about the recipe that a bump must not change.
+# WHAT IT CATCHES has no other symptom: a package with a native extension AND
+# a pure-python fallback, where the extension fails to cross-compile and
+# setup.py quietly ships the fallback. Nothing errors, and the printer gets
+# the slow path -- or, for cffi and lmdb, nothing that works at all. A count
+# and not a list of module names, because the names are upstream's and change
+# on a version bump while "this recipe compiles something" must not.
 pkg_pynative() {
     _want=${1:-1}
     _got=$(find "$PKG_OUT/lib/python$PY_MM/site-packages" -name '*.so' 2>/dev/null | wc -l)
@@ -949,27 +690,18 @@ pkg_pynative() {
     pkg_say "$PKG_ID: $_got extension module(s)"
 }
 
-# --------------------------------------------------------------- pkg_ship
-#
-#     pkg_ship <relative-glob> [...]
-#
-# Copy what the package contains out of the staged install and into $PKG_OUT,
-# which is the tree bin/build-packages.sh turns into the .ipk.
-# Globs are relative to the prefix inside the DESTDIR.
+# pkg_ship <relative-glob> [...] -- copy what the package contains out of the
+# staged install into $PKG_OUT, the tree bin/build-packages.sh turns into the
+# .ipk. Globs are relative to the prefix inside the DESTDIR, and what a
+# package contains depends on what it is for, so each recipe says which files
+# rather than taking a default.
 #
 # cp -a and never plain cp: a shared library is three names, two of them
-# symlinks, and the first is the one libnacl's dlopen fallback constructs. A
-# copy that dereferenced them would ship three identical objects and still work.
+# symlinks, and the first is the one libnacl's dlopen fallback constructs.
 #
-# What a package contains depends on what it is for -- a library that ships to
-# the printer ships its .so alone, one that exists to be built against ships
-# headers, .a and .pc -- so neither is the default and each recipe says which
-# it is by what it passes here.
-#
-# PKG_STRIP_ARGS is --strip-unneeded by default, keeping the dynamic symbols
-# anything is going to dlsym; a recipe shipping executables can set it empty
-# for a plain strip-all. Static archives and text files are never stripped:
-# strip on a .a removes symbols the linker still needs.
+# PKG_STRIP_ARGS defaults to --strip-unneeded, keeping the dynamic symbols
+# anything will dlsym; set it empty for a plain strip-all. Static archives are
+# never stripped -- strip on a .a removes symbols the linker still needs.
 pkg_ship() {
     for _g in "$@"; do
         _dstdir="$PKG_OUT/$(dirname "$_g")"
@@ -989,55 +721,28 @@ pkg_ship() {
     # that links against a package rather than against a build tree.
     find "$PKG_OUT" -name '*.la' -delete
 
-    # NEITHER IS PYTHON BYTECODE, and this one was shipping. anvil-core stages
-    # a directory of .py helpers wholesale, and any test that imports one of
-    # them leaves a __pycache__ beside it -- gitignored, so invisible in a
-    # diff, and copied by cp -a like anything else. The result was a package
-    # whose contents depended on whether pytest had been run on the machine
-    # that built it: two builds of one commit, different sha256, and the
-    # cause nowhere in the tree.
-    #
-    # What it shipped is worthless as well as unstable. The .pyc were compiled
-    # by the BUILD IMAGE's python (3.11), and the printer runs the 3.13 this
-    # repo cross-builds, which will not read them.
-    #
-    # Swept here rather than in the recipe because the trap is not
-    # anvil-core's: it is set for any recipe that stages a directory of .py
-    # files. Two recipes had already hit it and each had written its own
-    # sweep -- pkgs/klipper and pkgs/moonraker -- and the third, which had
-    # not, was the one shipping. Both hand-written copies are deleted with
-    # this. Nothing in this feed ships bytecode deliberately, checked across
-    # all 41 packages, so there is nothing for this to take away.
+    # NOR PYTHON BYTECODE. anvil-core stages a directory of .py helpers
+    # wholesale, and any test that imports one leaves a __pycache__ beside it
+    # -- gitignored, so invisible in a diff, and copied by cp -a. That made
+    # package contents depend on whether pytest had run on the build machine.
+    # The .pyc are useless anyway: built by the image's python 3.11, where the
+    # printer runs 3.13. Swept here because the trap is set for any recipe
+    # that stages a directory of .py files.
     find "$PKG_OUT" -name '__pycache__' -type d -prune -exec rm -rf {} + \
         2>/dev/null || true
     find "$PKG_OUT" -name '*.pyc' -delete
 
-    # STATIC ARCHIVES ARE NOT REPRODUCIBLE UNTIL THEY ARE MADE SO. An ar
-    # archive stores a per-member mtime and the uid/gid of whoever ran the
-    # compiler, and the symbol index carries a timestamp of its own, so a
-    # package differs between two builds of one tree and between two
-    # developers' accounts on one commit. SOURCE_DATE_EPOCH and opkg-build's
-    # `-o 0 -g 0` clamp the tarballs one layer up and reach nothing inside a .a.
-    #
-    # The two timestamps take two tools:
-    #
+    # STATIC ARCHIVES ARE NOT REPRODUCIBLE UNTIL MADE SO. An ar archive stores
+    # a per-member mtime and the uid/gid of whoever compiled, and the symbol
+    # index carries a timestamp of its own; SOURCE_DATE_EPOCH and opkg-build's
+    # `-o 0 -g 0` clamp the tarballs above and reach nothing inside a .a.
     #   objcopy -D   zeroes uid, gid and mtime in the MEMBER headers.
     #   ranlib  -D   rewrites the symbol INDEX with a zeroed header.
-    #
-    # The cross binutils is 2.27 and its ranlib does not honour -D for the
-    # index -- measured, it wrote the CURRENT timestamp instead -- so the index
-    # is rewritten with the build machine's ranlib (2.40 in
-    # docker/Dockerfile.build). ar is a container format and ranlib reads
-    # members through BFD, so a modern host binutils indexes mipsel objects
-    # correctly; opkg links against both archives, which is what would fail if
-    # it did not.
-    #
-    # Both passes need the cross toolchain, and a recipe that compiles nothing
-    # never called pkg_toolchain -- it has no archive to normalise and no ELF
-    # to strip. Skipping is safe because qa/replica/test_abi.py reads every
-    # ELF on the installed filesystem, so a recipe that forgot pkg_toolchain
-    # and did produce objects is caught there rather than here by an unbound
-    # variable.
+    # The cross binutils is 2.27 and its ranlib writes the current timestamp
+    # despite -D, so the index is rewritten with the build machine's ranlib;
+    # ar is a container format and BFD reads mipsel members fine. Skipped when
+    # a recipe never called pkg_toolchain, which qa/replica/test_abi.py
+    # backstops.
     if [ -n "${PKG_HOST:-}" ]; then
         find "$PKG_OUT" -name '*.a' -print | while IFS= read -r _a; do
             "$PKG_HOST-objcopy" --enable-deterministic-archives "$_a" \

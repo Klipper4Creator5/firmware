@@ -81,14 +81,13 @@ if [ -f "$WORK/sw/app_startup.sh" ]; then
 fi
 
 # --- 7. the payload's klippy tree
-# The klippy tree is in the PAYLOAD now, not the software component: the
-# klipper service execs $MODDIR/klipper/klippy, so the component copy and the
-# chelper.tar that carried its .so are both gone. Unconditional, because
-# v20260824 passed here by having every check below conditional on files the
-# broken build did not contain. ./klipper alone, not the whole payload --
-# section 8 answers the rest from a listing. ./prog rides along because the two
-# stock-path scripts moved there and still need a syntax gate. Paths carry a
-# leading ./ because bin/pack.sh tars `.` from inside $PAYLOAD_DIR.
+# The klippy tree is in the PAYLOAD now: the klipper service execs
+# $MODDIR/klipper/klippy, so the component copy and the chelper.tar that
+# carried its .so are both gone. Unconditional, because v20260824 passed here
+# by having every check below conditional on files the broken build did not
+# contain. ./klipper alone -- section 8 answers the rest from a listing.
+# ./prog rides along because the two stock-path scripts moved there. Paths
+# carry a leading ./ because bin/pack.sh tars `.` from inside $PAYLOAD_DIR.
 PAYLOAD_TAR=$(ls -1 "$WORK"/anvil.tar.xz 2>/dev/null | head -n1)
 if [ -n "$PAYLOAD_TAR" ]; then
     mkdir -p "$WORK/pl"
@@ -113,11 +112,10 @@ if [ -f "$CHELPER" ]; then
         CHELPER=""
     fi
     if [ -n "$CHELPER" ]; then
-        # NO ABI CHECK HERE. This file used to grep readelf for nan2008, which
-        # was a fourth partial copy of a rule stated in three other places and
-        # read only this one object out of a payload full of them.
-        # qa/replica/test_abi.py asks it once, of every ELF on the installed
-        # filesystem. What is left below is the check that one cannot make.
+        # NO ABI CHECK HERE: this used to grep readelf for nan2008, a fourth
+        # partial copy of a rule stated in three other places, reading one
+        # object out of a payload full of them. qa/replica/test_abi.py asks it
+        # once, of every ELF on the installed filesystem.
         #
         # The failure that reached a printer: a .so older than the klippy tree
         # beside it. cffi resolves lazily; only a symbol check catches it.
@@ -144,14 +142,12 @@ for f in firmwareExe start.sh; do
         || ok "no $f in the software component (anvil-core's \$MODDIR/prog is the only one)"
 done
 
-# The oneshot runner's #!, which is the one thing about the compiled database a
-# host can check: s6-rc-compile bakes in the execline of the stack it was linked
-# against, so this line is what every oneshot on the printer will exec. It used
-# to be asserted in bin/patch.sh, against a native compiler that could be built
-# with the wrong --prefix. The database is compiled in the replica by the
-# s6-rc-compile we ship now, so this should be true by construction -- which is
-# exactly why it is cheap to keep, and it is the assertion that would catch the
-# construction being broken.
+# The oneshot runner's #!, the one thing about the compiled database a host can
+# check: s6-rc-compile bakes in the execline of the stack it was linked
+# against, so this line is what every oneshot on the printer will exec. The
+# database is compiled in the replica by the s6-rc-compile we ship, so this
+# should be true by construction -- which is why it is cheap to keep, and it
+# is the assertion that would catch the construction being broken.
 S6RC_RUNNER=$(ls -d "$WORK/pl/etc/s6-rc/compiled"/db-*/servicedirs/s6rc-oneshot-runner/run 2>/dev/null | head -n1)
 if [ -z "$S6RC_RUNNER" ]; then
     bad "the payload's s6-rc database has no oneshot runner -- has the source tree no oneshots?"
@@ -215,9 +211,9 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
                                           || bad "no s6 in the payload -- bin/patch.sh did not stage the cross-build"
     grep -q 'libexec/s6-ftrigrd' <<<"$LIST" && ok "s6-ftrigrd present in libexec (the waiting verbs can spawn it)" \
                                           || bad "no libexec/s6-ftrigrd -- s6-svwait and s6-svc -w will fail on the printer"
-    # CPython 3.13, which FF_PYTHON points at -- klippy included now, since the
-    # klipper service execs $FF_PYTHON against $MODDIR/klipper/klippy.
-    # The second check is the one worth having: the interpreter runs perfectly
+    # CPython 3.13, which FF_PYTHON points at -- klippy included, since the
+    # klipper service execs $FF_PYTHON against $MODDIR/klipper/klippy. The
+    # second check is the one worth having: the interpreter runs perfectly
     # while _sqlite3 is absent, because a dropped -lm makes configure's link
     # probe fail and CPython records the module missing rather than stopping.
     grep -q 'bin/python3\.13$' <<<"$LIST" \
@@ -233,10 +229,9 @@ if [ -f "$WORK/anvil.tar.xz" ]; then
         && bad "payload ships bin/python3 -- it would shadow FlashForge's interpreter on PATH" \
         || ok "no bin/python3 symlink (nothing shadows FlashForge's python3 on PATH)"
     # lmdb is Moonraker's database at the pinned commit, _cffi_backend is what
-    # klippy dlopens c_helper.so through -- the reason this interpreter had to
-    # be glibc, not musl. Both are what a cross build resolving to a manylinux
-    # wheel gets WRONG rather than missing, and the .so suffix is the
-    # architecture: cpython-313-mipsel-linux-gnu.so, not x86_64.
+    # klippy dlopens c_helper.so through. Both are what a cross build
+    # resolving to a manylinux wheel gets WRONG rather than missing, and the
+    # .so suffix is the architecture: cpython-313-mipsel-linux-gnu.so.
     grep -q 'site-packages/lmdb/cpython.cpython-313-mipsel-linux-gnu\.so' <<<"$LIST" \
         && ok "lmdb's mipsel CPython extension present (Moonraker's database at this pin)" \
         || bad "no mipsel lmdb extension in site-packages -- Moonraker cannot open its database; check work/.pkg-python-lmdb/wheel-lmdb.log"

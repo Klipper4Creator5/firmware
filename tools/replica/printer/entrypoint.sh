@@ -1,10 +1,11 @@
 #!/bin/sh
-# Run a test case inside a replica of the printer, on the printer's own binaries.
+# Run a test case inside a replica of the printer, on the printer's own
+# binaries.
 #
 #   ROOTFS      dir with the extracted rootfs.squashfs        (default /rootfs)
 #   PROG_DUMP   a real /usr/prog taken off a printer (tar or dir), used
 #               verbatim -- this is what removes the stubs entirely
-#   BASE_PKG    stock .tgz to install first, to get an authentic baseline
+#   BASE_PKG    stock .tgz to install first, for an authentic baseline
 #   PKGS        "name=/path/to.tgz ..." -- copied onto the simulated USB stick
 #   FF_KEY      package encryption key
 #   $1          script to execute inside the chroot
@@ -44,23 +45,20 @@ fi
 /opt/printer/assemble.sh
 
 # A real /usr/prog, if we were given one. It goes in before anything else so
-# that nothing -- the stock installer included -- can silently shadow a genuine
-# file. There are no stubs: seed-prog.sh hard-fails rather than substituting
-# anything.
+# nothing -- the stock installer included -- can silently shadow a genuine
+# file. There are no stubs: seed-prog.sh hard-fails rather than substituting.
 if [ -n "${PROG_DUMP:-}" ] && [ -e "$PROG_DUMP" ]; then
-    # A dump may be a whole-filesystem factory image rooted at usr/prog/... ,
-    # or hold the contents of /usr/prog directly. Decide by what is actually
-    # inside it, not by the first entry -- a factory image starts with a bare
-    # "usr/" line.
+    # A dump may be a whole-filesystem factory image rooted at usr/prog/..., or
+    # hold the contents of /usr/prog directly. Decide by what is inside it, not
+    # by the first entry -- a factory image starts with a bare "usr/" line.
     if [ -d "$PROG_DUMP" ]; then
         if [ -d "$PROG_DUMP/usr/prog" ]; then cp -a "$PROG_DUMP/usr/." $R/usr/
         else cp -a "$PROG_DUMP/." $R/usr/prog/; fi
     elif tar -tf "$PROG_DUMP" 2>/dev/null | head -n 200 | grep -q '^\.\?/\?usr/prog/'; then
-        # Extract INTO $R/usr with the leading `usr/` stripped. The archive
+        # Extract INTO $R/usr with the leading `usr/` stripped: the archive
         # carries a `usr/` entry of its own and /usr is on the read-only
         # squashfs, so restoring its mode would fail the whole extraction.
-        # Stripping it means tar only ever writes to prog/ and data/, which
-        # are the writable partition mounts.
+        # Stripping it means tar only writes to the writable partition mounts.
         STRIP=1
         tar -tf "$PROG_DUMP" 2>/dev/null | head -n 1 | grep -q '^\./' && STRIP=2
         tar -xf "$PROG_DUMP" -C $R/usr --strip-components=$STRIP
@@ -80,13 +78,11 @@ case "$ID" in
 esac
 echo "printer-sim: $ID  (real rootfs, qemu-mipsel)"
 
-# The stock package goes on first: that is the only authentic source for
-# /usr/prog/klipper, firmwareExe, unTar, app_startup.sh and friends.
-# Already baked into the image? tools/replica/build-printer-image.sh installs
-# the stock
-# package once at build time and records its md5 here, because doing it per run
-# costs 37 seconds of qemu and real `sleep` calls for a result that is
-# identical every time.
+# The stock package goes on first: the only authentic source for
+# /usr/prog/klipper, firmwareExe, unTar, app_startup.sh and friends. Already
+# baked into the image? build-printer-image.sh installs it once at build time
+# and records its md5 here, because doing it per run costs 37 seconds of qemu
+# for a result that is identical every time.
 BASELINE_SKIP=0
 if [ -n "${BASE_PKG:-}" ] && [ -f "$BASE_PKG" ] && [ "${FORCE_BASELINE:-0}" != 1 ]; then
     HAVE="$(cat $R/usr/prog/.BASELINE 2>/dev/null || true)"
@@ -104,8 +100,7 @@ if [ -n "${BASE_PKG:-}" ] && [ -f "$BASE_PKG" ] && [ "$BASELINE_SKIP" = 0 ]; the
     # kernel-* rewrites eMMC partitions and control-* flashes MCUs over
     # /dev/ttyS*. Neither can do anything useful in a container and both are
     # destructive if they ever found real hardware, so the baseline install is
-    # software+library only. /dev here has no block devices and /sys is
-    # read-only, so even a stray attempt cannot reach a disk.
+    # software+library only.
     rm -f $R/mnt/base/kernel-*.tar.xz $R/mnt/base/control-*.tar.xz
     chmod +x $R/mnt/base/runFirmwareExe.sh
     MACH="$(sed -n 's/^MACHINE=//p' $R/mnt/base/runFirmwareExe.sh | head -1)"
@@ -123,11 +118,8 @@ fi
 #
 # ASSEMBLED FROM THREE MOUNTS, because the repository files it draws on live
 # with the recipes that own them: anvil-core's $MODDIR overlay, its
-# anvil.conf template (which the build normally renders from config.env --
-# here the unrendered defaults are exactly what the cases want), and
-# Klipper's start.sh, which is a /usr/prog file and so lives in prog/.
-# The assembled tree is what /tmp/payload has always been; see the comment on
-# the mounts in qa/lib/replica.py.
+# anvil.conf template, and Klipper's start.sh, which is a /usr/prog file. The
+# assembled tree is what /tmp/payload has always been.
 if [ -d /payload ]; then
     mkdir -p $R/tmp/payload
     cp -a /payload/. $R/tmp/payload/
@@ -161,12 +153,11 @@ RC=$?
 set -e
 
 # DETACH THE STICK'S LOOP DEVICE. assemble.sh attaches /stick.img with
-# `losetup -f --show` and records the device in /stick.loop, and until this
-# existed nothing ever read that file. Loop devices are the HOST's -- they are
-# not namespaced -- so every USB_STICK=1 run leaked one permanently, and a
-# WSL2 kernel has thirteen. Once they were gone every replica run failed with
-# "failed to setup loop device", which looks like a docker problem and is not.
-# `mount -o loop` would autoclear; `losetup` does not, so it has to be here.
+# `losetup -f --show` and records the device in /stick.loop. Loop devices are
+# the HOST's -- not namespaced -- so every USB_STICK=1 run leaked one
+# permanently, and a WSL2 kernel has thirteen; once gone, every replica run
+# failed with "failed to setup loop device". `mount -o loop` would autoclear;
+# `losetup` does not.
 if [ -f /stick.loop ]; then
     umount "$R/mnt" 2>/dev/null || true
     losetup -d "$(cat /stick.loop)" 2>/dev/null || true

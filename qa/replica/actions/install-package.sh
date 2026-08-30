@@ -4,23 +4,18 @@
 # NOTHING HERE RE-IMPLEMENTS THE UPDATE. The package is on a genuine FAT
 # filesystem exposed as /dev/sda1, and the thing that finds it, mounts it,
 # decrypts it and installs it is the machine's OWN /usr/prog/app_startup.sh,
-# run verbatim, exactly as /etc/init.d runs it at boot. This script starts that
-# and waits for it to finish; it makes no decisions and asserts nothing.
+# run verbatim. This script starts that and waits; it makes no decisions and
+# asserts nothing.
 #
-# That distinction is the whole reason this file replaced an earlier
-# install-payload.sh, which copied payload/*.sh and payload/init.d/S* into
-# place by hand. Hand-placing is a SECOND implementation of the install, so the
-# tests downstream of it asserted against a layout the harness had built rather
-# than one the installer produced -- and the real installer could have broken
-# without a single test noticing. case-install.sh's header records the same
-# lesson being learned once already:
-#
-#     An earlier version of this file replayed app_startup.sh by hand -- which
-#     meant a bug in our reading of it could never be caught.
+# That is the whole reason this replaced an earlier install-payload.sh which
+# copied files into place by hand: hand-placing is a SECOND implementation of
+# the install, so the tests downstream asserted against a layout the harness
+# had built rather than one the installer produced -- and the real installer
+# could have broken without a single test noticing.
 #
 # Installing for real also means the payload under test is the built package:
-# the cross-compiled s6, the CPython 3.13, the Klipper extras, staged by
-# bin/patch.sh exactly as they ship. Nothing has to be stood in for.
+# the cross-compiled s6, the CPython 3.13, the Klipper extras, staged exactly
+# as they ship.
 #
 # On the printer a successful install ends in `sleep 100000`, waiting for the
 # user to power-cycle. That is the signal this waits for.
@@ -42,12 +37,11 @@ wait_for() {            # wait_for <seconds> <command...>
     return 1
 }
 
-# NOT `ps | grep`: busybox ps truncates COMMAND to 80 columns when there is no
-# tty, and under qemu every command line is prefixed with
-# "/usr/bin/qemu-mipsel-static ", which pushes the interesting part off the
-# end. `ps | grep 'sleep 100000'` therefore never matches and the wait sits
-# there until it times out on an install that actually succeeded. /proc is
-# exact, and `case` is a builtin so this cannot match itself.
+# NOT `ps | grep`: busybox ps truncates COMMAND to 80 columns with no tty, and
+# under qemu every command line is prefixed with "/usr/bin/qemu-mipsel-static
+# ", which pushes the interesting part off the end -- so the grep never
+# matches and the wait times out on an install that actually succeeded. /proc
+# is exact, and `case` is a builtin so this cannot match itself.
 running() {
     for _p in /proc/[0-9]*; do
         _c=$( { tr '\0' ' ' < "$_p/cmdline"; } 2>/dev/null )   # may exit mid-scan
@@ -82,8 +76,7 @@ killall sleep 2>/dev/null || true
 # `completed` means app_startup.sh fell through to a normal boot instead of
 # reaching the post-install wait -- it did not find or did not accept the
 # package. Baking an image from that would produce a "machine with the mod
-# installed" that has no mod on it, and every test downstream would then be
-# asserting against the stock firmware while believing otherwise.
+# installed" that has no mod on it.
 if [ "$RESULT" != installed ]; then
     echo "install: app_startup.sh did not install the package (it fell through" >&2
     echo "         to a normal boot). Last 40 lines:" >&2

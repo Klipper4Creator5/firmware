@@ -5,22 +5,14 @@
 #   CommMgr::doReleaseExtruderLatest @ 0x7aa394
 # See docs/notes/30-toolchange.md.
 #
-# This exists as a Python extra rather than a set of gcode_macros because the
-# original is a polling state machine: it waits for sensors, retries, and only
-# energises the lock motor once the grab sensor reads active. A gcode_macro
-# renders its whole template before executing any of it, so it cannot poll.
+# A Python extra rather than gcode_macros because the original is a polling
+# state machine: it waits for sensors, retries, and energises the lock motor
+# only once the grab sensor reads active.
 #
-# It deliberately does NOT reimplement current supervision. The app only ever
-# logs motor_value ("extruderGrab/motorValue: %d / %f") and always decides on
-# switch state; E0145 "Lock motor current abnormal" is raised Klipper/MCU-side.
-# Driving the same MOTOR_* macros therefore inherits that behaviour unchanged.
-#
-# Install: copy ff_tool.py and ff_toolchange.py to
-# /usr/data/anvil/klipper/klippy/extras/, then see config/ff-toolchange.cfg.
-#
-# Klipper calls Tn only for lines that reach the gcode engine. We ship upstream
-# virtual_sdcard, which passes tool lines straight through, so a bare "Tn" from
-# any slicer lands here -- no marker comment needed.
+# It deliberately does NOT reimplement current supervision -- the app only
+# logs motor_value and always decides on switch state, and E0145 "Lock motor
+# current abnormal" is raised Klipper/MCU-side. Driving the same MOTOR_*
+# macros inherits that unchanged.
 
 import contextlib
 import logging
@@ -28,10 +20,9 @@ import logging
 EXTRUDER_COUNT = 4
 
 # Timings and retry counts, straight from doGrabExtruderLatest and
-# doReleaseExtruderLatest. The app's waits are "N tries x usleep(50000)"; we
-# express them as wall-clock deadlines (N * 50 ms) because reactor.pause can
-# return later than asked on a busy reactor -- counting iterations would
-# understate the wait (see _poll_until).
+# doReleaseExtruderLatest. The app's waits are "N tries x usleep(50000)";
+# expressed here as wall-clock deadlines, because reactor.pause can return
+# later than asked and counting iterations would understate the wait.
 POLL_INTERVAL = 0.050       # usleep(50000)
 BACKOFF_WAIT = 0.100        # usleep(100000)
 LOCATION_TIMEOUT = 20 * POLL_INTERVAL   # dock prechecks, 0x14 tries
@@ -52,39 +43,27 @@ ERR_RELEASE_FAILED_BASE = 135   # E0135+t  unlock endstop never triggered
 ERR_RELEASE_STATE = 144         # E0144    state error after release verify
 
 
-# ---------------------------------------------------------------------------
-# Where the numbers come from
-#
 # Everything per-unit lives in Klipper's own config:
-#   [ff_tool <n>]   dock_x/dock_y <- FF_IMPORT_FIRMWARE_CONFIG via SAVE_CONFIG
-#                   z_adjust      <- TOOL_Z_ADJUST          via SAVE_CONFIG
-#                   nozzle_x/y/z  <- TOOL_CALIBRATE_TOOL_OFFSET
-#                                                        via SAVE_CONFIG
-#   [ff_tool_offset] station_x/y/z <- TOOL_LOCATE_SENSOR  via SAVE_CONFIG
+#   [ff_tool <n>]    dock_x/dock_y <- FF_IMPORT_FIRMWARE_CONFIG
+#                    z_adjust      <- TOOL_Z_ADJUST
+#                    nozzle_x/y/z  <- TOOL_CALIBRATE_TOOL_OFFSET
+#   [ff_tool_offset] station_x/y/z <- TOOL_LOCATE_SENSOR
 #   [ff_toolchange]  feeds, x_correction, temp_offset, staging positions
-# firmwareExe's JSON (extruder.json / test.json / zoffset.json) is never read
-# at runtime: ff_legacy.py's FF_IMPORT_FIRMWARE_CONFIG copies the factory
-# numbers into the layout above once.
-# ---------------------------------------------------------------------------
+# all via SAVE_CONFIG. firmwareExe's JSON is never read at runtime;
+# ff_legacy.py's FF_IMPORT_FIRMWARE_CONFIG copies the factory numbers in once.
 
 
-# ---------------------------------------------------------------------------
-# klipper-toolchanger-shaped status surface
-#
-# UIs with native tool-changer support (HelixScreen, anything written for
-# viesturz/klipper-toolchanger) discover a toolchanger by object NAME in
-# objects/list: `toolchanger` plus one `tool <name>` per tool. We register
-# those names as read-only views over this module and the [ff_tool n]
-# sections, and provide the commands such UIs send (SELECT_TOOL,
-# UNSELECT_TOOL, INITIALIZE_TOOLCHANGER, ASSIGN_TOOL). Always on: nothing else
-# on this machine could own those names.
+# klipper-toolchanger-shaped status surface. UIs with native tool-changer
+# support discover one by object NAME in objects/list: `toolchanger` plus one
+# `tool <name>` per tool. Those names are registered as read-only views over
+# this module and the [ff_tool n] sections, with the commands such UIs send
+# (SELECT_TOOL, UNSELECT_TOOL, INITIALIZE_TOOLCHANGER, ASSIGN_TOOL).
 #
 # HelixScreen subscribes (src/api/moonraker_discovery_sequence.cpp):
 #   toolchanger : status (ready|changing|error|uninitialized), tool_number,
 #                 tool_numbers[, tool_names, tool]
 #   tool T<n>   : active, mounted, extruder, fan, gcode_x/y/z_offset,
-#                 detect_state (from this tool's on-carriage grab sensor)
-# ---------------------------------------------------------------------------
+#                 detect_state
 
 class _ToolchangerView:
     def __init__(self, toolchanger):
@@ -99,12 +78,10 @@ class _ToolchangerView:
             status = 'error'
         else:
             status = 'ready'
-        # Upstream separates the COMMANDED tool (tool/tool_number) from the
-        # one the hardware reports (detected_tool/detected_tool_number). We
-        # keep no commanded state: every answer here is derived from the dock
-        # and grab sensors, so the two are the same value by construction.
-        # They are reported separately anyway, because a UI that only reads
-        # detected_* must still see a tool.
+        # Upstream separates the COMMANDED tool from the one the hardware
+        # reports. We keep no commanded state -- every answer is derived from
+        # the dock and grab sensors -- so the two are the same by
+        # construction, and both are reported for UIs that read only one.
         name = 'T%d' % mounted if mounted >= 0 else None
         return {'name': 'toolchanger',
                 'status': status,
@@ -267,14 +244,11 @@ class FFToolchange:
         self.offset_x = [0.0] * EXTRUDER_COUNT
         self.offset_y = [0.0] * EXTRUDER_COUNT
         self.offset_z = [0.0] * EXTRUDER_COUNT
-        # Per-tool XYZ lives here, below Klipper's own G-code offset. Built
-        # BEFORE the first refresh_offsets(): that call reads the transform
-        # to decide whether gcode_move's position cache needs invalidating,
-        # and on a calibrated machine it has real numbers to compare, so a
-        # transform created later raised AttributeError at config parse --
-        # on every printer except a factory-fresh uncalibrated one. Only
-        # INSTALLED at connect, once every transform that registers at
-        # config time is in place -- see _handle_connect.
+        # Per-tool XYZ, below Klipper's own G-code offset. Built BEFORE the
+        # first refresh_offsets(), which reads the transform to decide whether
+        # gcode_move's position cache needs invalidating; a transform created
+        # later raised AttributeError at config parse on every calibrated
+        # machine. Only INSTALLED at connect -- see _handle_connect.
         self.gcode_transform = _ToolTransform(self)
         # Print-scoped Z, the job terms of TOOLCHANGE_SET_PRINT_OFFSET.
         # Its own slot rather than a share of homing_origin, so that
@@ -318,20 +292,16 @@ class FFToolchange:
         self.accel_restore = config.getint('accel_restore', None)
 
         # klipper-toolchanger's RESTORE_AXIS. Empty means restore nothing,
-        # which is what this machine did before the parameter existed -- a
-        # stock file's own start block places the toolhead itself, and moving
-        # it again behind the file's back would be a surprise. Set it here to
-        # give T<n> and a bare SELECT_TOOL a default.
+        # which is what this machine did before the parameter existed: a stock
+        # file's start block places the toolhead itself.
         self.restore_axis = self._parse_axes(
             config.get('restore_axis', ''), config.error, 'restore_axis')
         self.restore_feed = config.getint('restore_feed', 9000, minval=1)
 
         # Sensor names.
-        #  position buttons: one per tool, PRESSED == that tool is in its dock
-        #    (CommMgr::checkInLocation indexes these by tool)
-        #  grab buttons: OR'd together == something is currently grabbed
-        #    (CommMgr::getGrabSensorStatus). VERIFY THIS SET ON HARDWARE with
-        #    TOOLCHANGE_STATUS before trusting it -- the exact bit packing of
+        #  position buttons: one per tool, PRESSED == that tool is docked.
+        #  grab buttons: OR'd == something is grabbed. VERIFY THIS SET ON
+        #    HARDWARE with TOOLCHANGE_STATUS -- the bit packing of
         #    ExtruderGrabInfo was not fully pinned down from the decompile.
         self.dock_sensors = config.get(
             'dock_sensors',
@@ -357,16 +327,12 @@ class FFToolchange:
         # default here is to abort and let the user home deliberately.
         self.auto_home = config.getboolean('auto_home', False)
 
-        # Runout / clog sensors. firmwareExe (setFilamentWheelManager
-        # @0x79b060) keeps only the MOUNTED tool's filament_motion_sensor
-        # enabled -- all four off, then RESET + ENABLE=1 for the current
-        # channel -- and pauses on the mounted channel's switch sensor from
-        # its print-engine loop (serialPrint @0x7a0d4c). Here both kinds are
-        # armed for the mounted tool on every grab and disarmed on release;
-        # what a runout DOES is decided by the sensors' runout_gcode
-        # (config/ff-runout.cfg: _FF_RUNOUT). Names are <prefix><tool>;
-        # an empty prefix, or no section with that prefix at all, turns
-        # that kind off.
+        # Runout / clog sensors. firmwareExe keeps only the MOUNTED tool's
+        # filament_motion_sensor enabled and pauses on that channel's switch
+        # sensor. Here both kinds are armed for the mounted tool on every grab
+        # and disarmed on release; what a runout DOES is the sensors'
+        # runout_gcode (ff-runout.cfg: _FF_RUNOUT). Names are <prefix><tool>;
+        # an empty or absent prefix turns that kind off.
         self.runout_switch_prefix = config.get('runout_switch_prefix',
                                                'fd_ex').strip()
         self.runout_motion_prefix = config.get('runout_motion_prefix',
@@ -501,14 +467,12 @@ class FFToolchange:
         # was not visible to the refresh_offsets() in __init__ -- re-derive
         # now that every object exists, or Z would stay in the relative form.
         self.refresh_offsets()
-        # Insert the per-tool frame under gcode_move. Connect, not config
-        # time, so that everything registering a transform in its own
-        # __init__ (bed_mesh, skew_correction) is already installed and ends
-        # up BELOW us: the tool offset has to shift X/Y before bed_mesh
-        # looks up the mesh Z for that point, or the correction is read off
-        # the wrong part of the bed. force=True is how every transform after
-        # the first registers, and it is silent -- so the resulting chain is
-        # logged at ready rather than assumed.
+        # Insert the per-tool frame under gcode_move at connect, not config
+        # time, so everything registering a transform in its own __init__
+        # (bed_mesh, skew_correction) is already installed and ends up BELOW
+        # us: the tool offset must shift X/Y before bed_mesh looks up the mesh
+        # Z, or the correction is read off the wrong part of the bed.
+        # force=True is silent, so the resulting chain is logged at ready.
         gcode_move = self.printer.lookup_object('gcode_move')
         self.gcode_transform.next_transform = gcode_move.set_move_transform(
             self.gcode_transform, force=True)
@@ -581,11 +545,9 @@ class FFToolchange:
             node = getattr(node, 'next_transform', None)
         logging.info("ff_toolchange: move transforms: %s", " -> ".join(chain))
         # bed_mesh and skew_correction install theirs at config time, so the
-        # connect-time install above lands on top of them and the chain is
-        # right. Anything installing at connect AFTER this section would
-        # land on top of US instead, silently, and the mesh Z would then be
-        # read at the unshifted point -- a quarter of a millimetre nobody
-        # can explain later. Cheap to check, so check.
+        # connect-time install above lands on top of them. Anything installing
+        # at connect AFTER this would land on top of US instead, silently, and
+        # the mesh Z would be read at the unshifted point. Cheap to check.
         for name in ('bed_mesh', 'skew_correction'):
             other = self.printer.lookup_object(name, None)
             if other is None or type(other).__name__ in chain:
@@ -734,26 +696,19 @@ class FFToolchange:
 
     # ---------------- which tool is mounted ----------------
     #
-    # Derived from the dock sensors every time it is needed. Nothing is stored.
+    # Derived from the dock sensors every time it is needed; nothing is stored.
     #
-    # firmwareExe cannot do this. Its getGrabSensorStatus(info, tool) @0x76f294
-    # ignores its `tool` argument entirely -- it ORs the four grab bytes and
-    # returns a bare "something is held". So the app never learns WHICH tool it
-    # is carrying and has to keep an imperative index
-    # (extruderConfig()+0x5c / now_extruder): set on grab, reset to -1 on
-    # release and on every home, persisted by syncExtruderConfig, and read in
-    # ~30 places as the truth. checkInstallExtruder @0x781a34 shows the seam:
-    #     installed = dock_sensor[tool] || (anyGrabbed && now_extruder == tool)
-    # -- sensors first, the stored index only to name the held tool.
+    # firmwareExe cannot do this: getGrabSensorStatus ignores its `tool`
+    # argument and returns a bare "something is held", so the app keeps an
+    # imperative index (now_extruder) set on grab and reset on release and on
+    # every home, read in ~30 places as the truth. Our extruder_pos1..4 are
+    # per-tool and carry that identity directly -- the mounted tool is the one
+    # whose dock is empty -- so nothing can go stale after a touchscreen
+    # print, a power cut mid-change, or a manual swap.
     #
-    # Our extruder_pos1..4 are per-tool, so they carry that identity directly:
-    # the mounted tool is the one whose dock is empty. Nothing to store means
-    # nothing to go stale after a touchscreen print, a power cut mid-change, or
-    # a manual swap -- and no persistent state of any kind.
-    #
-    # Anything the sensors cannot explain raises, rather than guessing. Guessing
-    # wrong here means releasing the wrong tool: driving to another tool's dock
-    # and dropping the tool actually being carried into it.
+    # Anything the sensors cannot explain raises rather than guessing. Guessing
+    # wrong means driving to another tool's dock and dropping the tool
+    # actually being carried into it.
 
     def _derive_current_tool(self, eventtime=None):
         """Return (tool, reason); tool is -1 for 'nothing on the carriage'.
@@ -934,12 +889,10 @@ class FFToolchange:
             # Up to 3 attempts; within each, poll up to 1 s for the grab
             # sensor before energising the motor.
             for attempt in range(GRAB_ATTEMPTS):
-                # Re-engage the dock at the top of EVERY attempt. The app
-                # emits this move twice: once before the retry loop and again
-                # as the first statement of each iteration, so that the
-                # back-off to x_approach below is undone before the next
-                # round of polling. Without it, attempts 2 and 3 poll from
-                # the backed-off position and can never mate.
+                # Re-engage the dock at the top of EVERY attempt, as the app
+                # does, so the back-off to x_approach is undone before the
+                # next round of polling. Without it, attempts 2 and 3 poll
+                # from the backed-off position and can never mate.
                 self._run('G1 X%.3f F%d' % (dock_x, self.slow_feed))
                 self._wait_moves()
 
@@ -985,10 +938,9 @@ class FFToolchange:
                        ERR_GRAB_VERIFY_BASE + tool))
 
             # The app activates the extruder and applies the tool offsets
-            # INSIDE doGrabExtruderLatest (toolchange.c 3207-3218), before
-            # MOTOR_STOP and while accel is still 8000 -- so the two
-            # SET_GCODE_OFFSET MOVE=1 moves run at approach accel, not at
-            # the restored limit.
+            # INSIDE doGrabExtruderLatest, before MOTOR_STOP and while accel
+            # is still 8000 -- so the two SET_GCODE_OFFSET MOVE=1 moves run at
+            # approach accel, not at the restored limit.
             self._run('ACTIVATE_EXTRUDER EXTRUDER=%s'
                       % self._extruder_name(tool))
             self._set_tool_frame(tool)
@@ -1149,22 +1101,18 @@ class FFToolchange:
                 self._set_tool_frame(tool)
                 self._arm_runout(tool)
             # No channel to announce. FlashForge's virtual_sdcard tracked one
-            # so it could rewrite bare M104/M109 to " T<channel>" and
-            # SET_PRESSURE_ADVANCE to pa_value_t<channel>. Upstream does no
-            # such rewriting and needs none: both apply to the ACTIVE
-            # extruder, which _grab (or the ACTIVATE_EXTRUDER above) has just
-            # set to this tool. The stock start block's bare `M104 S<t>` lands
-            # on the right hotend for exactly that reason.
+            # so it could rewrite bare M104/M109 and SET_PRESSURE_ADVANCE per
+            # channel. Upstream needs none: both apply to the ACTIVE extruder,
+            # which _grab has just set to this tool.
             if resume is not None:
                 self._restore_position(restore_axis, resume)
         except FFToolchangeError as err:
             raise gcmd.error(str(err))
         except self.printer.command_error:
-            # A raw Klipper error (move out of range, shutdown, macro fault)
-            # escaped the sequence. The finally-clauses restored accel,
-            # motor, and modal state, but the gcode X/Y offsets may still be
-            # zeroed and no tool offsets applied -- tell the operator before
-            # they resume anything.
+            # A raw Klipper error escaped the sequence. The finally-clauses
+            # restored accel, motor and modal state, but the gcode X/Y offsets
+            # may still be zeroed and no tool offsets applied -- tell the
+            # operator before they resume anything.
             self.gcode.respond_info(
                 "ff_toolchange: toolchange aborted mid-sequence; gcode"
                 " offsets may be zeroed. Run TOOLCHANGE_STATUS, then T<n>"
@@ -1216,11 +1164,10 @@ class FFToolchange:
         stale the instant the frame changes."""
         self.gcode_transform.tool = tool
         self._reset_gcode_position()
-        # An uncalibrated tool contributes no measured Z, so its frame is
-        # only z_adjust and Z=0 stays at the station plane -- ~3.2 mm below
-        # the bed, in the crash direction. Prints are gated on this
-        # (ff-print-macros.cfg); a hand-typed G1 Z0 is not, so say so at the
-        # moment the frame goes on rather than only at startup.
+        # An uncalibrated tool contributes no measured Z, so its frame is only
+        # z_adjust and Z=0 stays at the station plane -- ~3.2 mm below the bed,
+        # in the crash direction. Prints are gated on this; a hand-typed G1 Z0
+        # is not, so say so as the frame goes on.
         if tool is not None and not self.tools[tool].calibrated():
             self.gcode.respond_info(
                 "ff_toolchange: WARNING: T%d has no nozzle calibration --"

@@ -1,18 +1,16 @@
 #!/bin/sh
 # /usr/prog/klipper/klipperDaemon -- REPLACED by the mod.
 #
-# Stock, this forks klippy with start-stop-daemon -b. klippy is an s6-rc longrun
-# now, so anything that still calls this -- FlashForge's own code, the UI's
-# restart-firmware path, a habit over ssh -- would put a second, unsupervised
-# klippy next to the supervised one, fighting for /dev/ttyS4 and /tmp/uds. So
-# `start` does nothing, and exits 0 so a caller that treats failure as fatal is
-# not broken by it.
+# Stock, this forks klippy with start-stop-daemon -b. klippy is an s6-rc
+# longrun now, so anything that still calls this would put a second,
+# unsupervised klippy next to the supervised one, fighting for /dev/ttyS4 and
+# /tmp/uds. So `start` does nothing, and exits 0 so a caller that treats
+# failure as fatal is not broken by it.
 #
 # NOTHING MACHINE-SPECIFIC LIVES HERE, which is what lets anvil-link-prog.sh
 # symlink this file like the other two in prog/. KLIPPER_NICENESS used to, and
-# the installer seded the stock value into it on every flash; it is NICE_KLIPPER
-# in anvil.conf now, beside the other two nice values, and etc/s6-rc/source/
-# klipper/run reads it from there.
+# the installer seded the stock value in on every flash; it is NICE_KLIPPER in
+# anvil.conf now.
 MODDIR=/usr/data/anvil
 S6RC=$MODDIR/bin/s6-rc
 
@@ -33,8 +31,7 @@ stop)
 restart)
     # `s6-svc -t` and not two s6-rc transitions: it takes no lock on the live
     # directory, so this is safe to call from inside one, and it leaves the
-    # WANTED state alone -- s6-rc goes on believing klipper is up, which stays
-    # true. -wr returns when the supervisor has started it again.
+    # WANTED state alone. -wr returns when the supervisor has started it again.
     [ -x "$MODDIR/bin/s6-svc" ] || { echo "klipperDaemon: no $MODDIR/bin/s6-svc"; exit 0; }
     exec "$MODDIR/bin/s6-svc" -wr -T 60000 -t "$MODDIR/etc/s6/klipper"
     ;;

@@ -21,26 +21,20 @@ LOCAL   ?=
 
 DOCKER_SOCK := /var/run/docker.sock
 
-# The repo is mounted AT ITS REAL HOST PATH, not at /src. The test targets
-# start sibling containers through the mounted docker socket, and those are
-# created by the host daemon -- which resolves -v paths on the HOST. If the
-# build container saw the repo as /src it would ask the daemon to mount a
-# /src that does not exist there, and the sibling would get empty
-# directories. Keeping the path identical on both sides avoids that entirely.
+# The repo is mounted AT ITS REAL HOST PATH, not at /src: sibling containers
+# are created by the HOST daemon, which resolves -v paths on the host, so a
+# /src the daemon cannot see would hand the sibling empty directories.
 # config.env usually points at a stock package OUTSIDE this repo, so the
-# directory holding it must be mounted too. Override when yours lives
-# elsewhere:  make ASSET_ROOT=/path/to/parent build
+# directory holding it is mounted too:  make ASSET_ROOT=/path/to/parent build
 ASSET_ROOT ?= $(firstword $(wildcard /mnt/c /Users /home))
 
 # Three runners, because the lanes need different things:
 #
 #   RUN       the parts of a build that touch no daemon: the feed, unpack,
 #             pack. No docker socket, no replica settings.
-#   RUNSIM    the test replica. It starts SIBLING containers through the
-#             mounted socket, so it needs that plus the replica's own knobs.
-#   RUNBUILD  `make build`, which needs both: the payload is assembled inside
-#             the replica, and the output has to belong to you. Defined below
-#             the two it borrows from.
+#   RUNSIM    the test replica: sibling containers, so the socket plus the
+#             replica's own knobs.
+#   RUNBUILD  `make build`, which needs both.
 #
 # Test-only variables never enter a build, which is the point of the split.
 DOCKER_BASE = $(DOCKER) run --rm -i \
@@ -48,19 +42,16 @@ DOCKER_BASE = $(DOCKER) run --rm -i \
           $(if $(ASSET_ROOT),-v "$(ASSET_ROOT)":"$(ASSET_ROOT)",) \
           -e MODEL -e TARGET_MACHINE -e CONFIG_ENV
 
-# THE BUILD LANE RUNS AS YOU, NOT AS root. Without this every `make build` and
-# `make packages` fills work/ with root-owned files that the user who started
-# it cannot delete -- so the next `rm -rf work/pkg` fails, and the tempting fix
-# is to run the build outside the container instead. That is how a project ends
-# up with two build environments and packages that differ depending on which
-# one produced them, which is exactly what this image exists to prevent.
+# THE BUILD LANE RUNS AS YOU, NOT AS root. Otherwise every build fills work/
+# with root-owned files the user who started it cannot delete, and the
+# tempting fix is to build outside the container -- which is how a project
+# ends up with two build environments producing different packages.
 #
 # HOME is set because a container user with no passwd entry has none, and
-# anything that wants a dotfile (perl, pip) writes to / and fails.
+# anything wanting a dotfile (perl, pip) writes to / and fails.
 #
-# BUILD LANE ONLY. RUNSIM below keeps root: it talks to the docker socket to
-# start sibling containers, and the socket's ownership inside the container is
-# not the host user's.
+# BUILD LANE ONLY. RUNSIM keeps root: the docker socket's ownership inside the
+# container is not the host user's.
 DOCKER_USER = --user $(shell id -u):$(shell id -g) -e HOME=/tmp
 
 ifeq ($(LOCAL),)
@@ -171,15 +162,13 @@ passwd: image
 vendor: image config.env
 	@$(RUN) ./bin/fetch-assets.sh --all
 
-# A THIRD LANE, because the build needs both halves of the split above.
-# bin/patch.sh assembles the payload by starting the printer replica, so this
-# lane needs the docker socket -- and it still has to run AS YOU, or every
-# build leaves a root-owned work/ the next one cannot delete.
+# A THIRD LANE, because the build needs both halves of the split above:
+# bin/patch.sh assembles the payload by starting the printer replica, so it
+# needs the socket, and it still has to run AS YOU.
 #
 # --group-add is what makes those compatible: the socket is root:docker and a
-# --user container has no supplementary groups, so it gets the socket's own
-# gid instead of root. Read from the socket rather than assumed -- it is 999
-# on some distributions and 1001 here.
+# --user container has no supplementary groups. Read from the socket rather
+# than assumed -- it is 999 on some distributions and 1001 here.
 RUNBUILD = $(DOCKER_BASE) $(DOCKER_USER) \
           --group-add $(shell stat -c %g $(DOCKER_SOCK)) \
           -v $(DOCKER_SOCK):$(DOCKER_SOCK) \
@@ -190,21 +179,19 @@ RUNBUILD = $(DOCKER_BASE) $(DOCKER_USER) \
 build: image config.env
 	@$(RUNBUILD) ./bin/build.sh $(PACKARGS)
 
-# The package feed (docs/notes/85-packaging.md). Builds every
-# recipe under pkgs/ into work/packages/ as .ipk files plus the feed index that
-# makes that directory an opkg repository.
+# The package feed (docs/notes/85-packaging.md). Builds every recipe under
+# pkgs/ into work/packages/ as .ipk files plus the feed index that makes that
+# directory an opkg repository.
 #
-# THE RELEASE PATH IS BUILT ON THIS. It used to say the opposite -- "nothing
-# on the release path depends on this" -- and that was already false when it
-# was written: pkgs/3rdparty/python declares seven build dependencies, pkg_deps
-# resolves them by unpacking their .ipk out of work/packages, and bin/patch.sh
-# builds none of the seven. `make build` on a cold checkout has never worked
-# without this target; it failed deep inside a recipe instead of saying so.
-# bin/patch.sh now checks for the feed up front and names this command.
+# THE RELEASE PATH IS BUILT ON THIS: pkgs/3rdparty/python declares seven build
+# dependencies that pkg_deps resolves by unpacking their .ipk out of
+# work/packages, and bin/patch.sh builds none of them. `make build` on a cold
+# checkout has never worked without this target; it used to fail deep inside a
+# recipe instead of saying so.
 #
-# It still, unlike `build`, needs NO stock FlashForge package -- which is most
-# of the point: packaging has to be runnable in CI on a bare checkout, or the
-# gate only runs where the proprietary firmware is and stops being a gate.
+# Unlike `build` it needs NO stock FlashForge package, which is most of the
+# point: packaging has to be runnable in CI on a bare checkout, or the gate
+# only runs where the proprietary firmware is.
 packages: image config.env
 	@$(RUN) ./bin/build-packages.sh $(PKG)
 
@@ -241,33 +228,27 @@ rootfs: image config.env
 # nothing left to run and is gone. `make qa` is the suite.
 
 # ---------------------------------------------------------------------------
-#  THE qa SUITE
-#
-#  Same machine, same gates, one framework. See qa/conftest.py for the lanes
-#  and docs/qa-migration.md for what moves when. Both suites run in CI until a
-#  case-*.sh has a green replacement here, and then that case script is
-#  deleted -- so there is never a window where coverage drops.
+#  THE qa SUITE -- same machine, same gates, one framework. See qa/conftest.py
+#  for the lanes.
 #
 #    make qa           both lanes
 #    make qa-static    needs nothing: parses, bashisms, names, the probes
 #    make qa-replica   needs docker + the firmware
 #
-#  There is no strictness flag and there is nothing to remember to pass. A
-#  missing tool, daemon, replica image or package FAILS, at the point that
-#  needs it, with the fix in the message. Skips are reserved for a question
-#  that does not apply to this configuration, and there are currently none.
+#  There is no strictness flag and nothing to remember to pass. A missing
+#  tool, daemon, replica image or package FAILS at the point that needs it,
+#  with the fix in the message. Skips are reserved for a question that does
+#  not apply to this configuration.
 #
 #  The replica lane needs two things, and says so if either is absent:
-#
-#    a base replica   PRINTER_IMAGE in test.env (see test.env.example), or
-#                     `make rootfs` from the stock package
+#    a base replica   PRINTER_IMAGE in test.env, or `make rootfs`
 #    a package        work/out/*.tgz, from `make build`
 #
 #  It needs the package because it INSTALLS it, through the printer's own
-#  app_startup.sh off a real FAT stick, rather than hand-placing payload/.
-#  That way the install is under test too, and the payload under test is the
-#  built artefact -- s6 and CPython included, neither of which exists in
-#  payload/. Baked into an image once per package and cached on its md5.
+#  app_startup.sh off a real FAT stick, so the install is under test too and
+#  the payload under test is the built artefact -- s6 and CPython included,
+#  neither of which exists in payload/. Baked into an image once per package
+#  and cached on its md5.
 # ---------------------------------------------------------------------------
 qa: image
 	@$(RUNSIM) python3 -m pytest ./qa -q
@@ -279,20 +260,17 @@ qa-replica: image
 	@$(RUNSIM) python3 -m pytest ./qa/replica -q
 
 # A Docker image that IS the printer: real rootfs, real /usr/prog and
-# /usr/data, with the stock package already installed on top of them.
+# /usr/data, with the stock package already installed on top.
 #
-# Both of those are per-run costs it removes. Measured on this repo:
-#
-#   unpacking the 182MB factory image        22s   every run
-#   installing the stock package under qemu   37s   every run
-#   with the image                           0.7s   once, at build time
+# Measured per-run costs it removes: unpacking the 182MB factory image (22s)
+# and installing the stock package under qemu (37s), against 0.7s once at
+# build time.
 #
 #   make printer-image           build (one image serves both models)
 #   make printer-image-push      build and push to Docker Hub
 #
-# Point PRINTER_IMAGE in test.env at it to use it.
-#
-# The image contains proprietary FlashForge firmware.
+# Point PRINTER_IMAGE in test.env at it to use it. The image contains
+# proprietary FlashForge firmware.
 printer-image: image
 	@$(RUNSIM) ./tools/replica/build-printer-image.sh
 

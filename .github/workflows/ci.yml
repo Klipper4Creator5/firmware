@@ -2,17 +2,14 @@ name: ci
 
 # The stock FlashForge firmware is proprietary and ~93MB, so it is never in
 # the repo. The `test` job therefore runs only what needs no firmware at all:
-# qa/static and the host-side pytest tree. That is enough for the static and
+# qa/static and the host-side pytest tree -- enough for the static and
 # packaging checks, but NOT enough to prove a package will not brick a
 # printer.
 #
-# That proof needs the printer's real rootfs, and so it needs the stock
-# package. `printer-sim` below now always runs, because the packages it needs
-# are publicly mirrored (see env: below) rather than hidden behind a secret
-# nobody had set. It used to be gated on STOCK_URL_CREATOR5PRO, which meant
-# that for its entire existence it never ran once: a grey dash beside two
-# green ticks, reading as "CI passed" while the only gates that decide
-# whether a package bricks a printer were never executed.
+# That proof needs the printer's real rootfs. `printer-sim` below always runs,
+# because the packages it needs are publicly mirrored (see env:). It used to
+# be gated on a secret nobody had set, which meant it never ran once: a grey
+# dash beside two green ticks, reading as "CI passed".
 on:
   push:
     branches: [ main, master ]
@@ -20,16 +17,13 @@ on:
   workflow_dispatch:
 
 # The stock packages and the factory image, from ghzserg/FF -- a public
-# archive of FlashForge firmware that this repo already points at in
-# docs/printer-replica.md. Nothing proprietary is redistributed from here; the
-# workflow fetches what is already published elsewhere.
+# archive this repo already points at. Nothing proprietary is redistributed
+# from here.
 #
-# Every one is pinned by sha256, and the checksum is enforced, not advisory.
-# An unpinned download would let the archive change under us and the suite
-# would keep reporting green while testing a different firmware than the one
-# these gates were written against -- the same class of silent drift as a gate
-# that skips without saying so. Verified byte-for-byte against the maintainer's
-# local copies on 2026-08-24.
+# Every one is pinned by sha256, enforced rather than advisory: an unpinned
+# download would let the archive change under us while the suite kept
+# reporting green against a different firmware. Verified byte-for-byte against
+# the maintainer's local copies on 2026-08-24.
 env:
   STOCK_URL_CREATOR5PRO: https://github.com/ghzserg/FF/releases/download/R/Creator5Pro-1.9.7-1.2.9-20260810.tgz
   STOCK_SHA_CREATOR5PRO: 1f3252feaae6d8fc72d7b0fd1ba832cc63d369659f8b2d2896efcf7adab2976b
@@ -46,14 +40,10 @@ jobs:
 
       # gcc/pkg-config/perl/zlib1g-dev/patch/make are for the SAME reason
       # docker/Dockerfile.build carries them: cross-building CPython 3.13
-      # needs a HOST build-python of its own to freeze modules and
-      # byte-compile the stdlib, and that one needs a host C compiler,
-      # pkg-config (CPython's configure probes libffi through it), perl
-      # (OpenSSL's Configure is a perl program), zlib1g-dev (the build-python
-      # needs a working zlib module or ensurepip cannot even unpack pip's
-      # bundled wheel) and patch (lmdb's setup.py shells out to
-      # /usr/bin/patch by absolute path). See that file's own comment for the
-      # long version.
+      # needs a HOST build-python, which needs a host C compiler, pkg-config
+      # (configure probes libffi through it), perl (OpenSSL's Configure),
+      # zlib1g-dev (or ensurepip cannot unpack pip's bundled wheel) and patch
+      # (lmdb's setup.py shells out to /usr/bin/patch by absolute path).
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -75,19 +65,15 @@ jobs:
           # Warnings are advisory: printed, not enforced.
           shellcheck -s sh -S warning pkgs/*/payload/*.sh pkgs/*/payload/init.d/S* pkgs/*/prog/*.sh pkgs/*/prog/firmwareExe installer/*.sh || true
 
-      # s6 and CPython 3.13 have no BUILD_ flag -- every package ships them
-      # (see bin/fetch-assets.sh) -- so this job builds them for real rather
-      # than stubbing around them the way it stubs Mainsail, HelixScreen and
-      # the Klipper fork. Cached on versions.env: an unchanged pin never
-      # re-fetches the ~203MB Ingenic toolchain and never recompiles either
-      # tree. Both are recipes under work/pkg now -- four for s6, nineteen for
-      # CPython and its site-packages -- and every one carries pkg_stamp's key.
+      # s6 and CPython 3.13 have no BUILD_ flag -- every package ships them --
+      # so this job builds them for real rather than stubbing around them the
+      # way it stubs Mainsail, HelixScreen and the Klipper fork. Cached on
+      # versions.env: an unchanged pin never re-fetches the ~203MB Ingenic
+      # toolchain and never recompiles either tree.
       #
-      # work/pkg is every recipe under pkgs/ at once -- one cache entry instead
-      # of one per package, because pkgs/lib.sh derives the output directory
-      # from the recipe name rather than naming each one in bin/common.sh. A
-      # new recipe therefore needs no edit here, which is the same property
-      # that makes adding a package one directory.
+      # work/pkg is every recipe at once -- one cache entry instead of one per
+      # package, because pkgs/lib.sh derives the output directory from the
+      # recipe name. A new recipe therefore needs no edit here.
       - name: Cache the s6 + CPython 3.13 build inputs and outputs
         uses: actions/cache@v4
         with:
@@ -99,16 +85,11 @@ jobs:
       - name: Fetch the s6 + CPython 3.13 build inputs
         run: |
           set -euo pipefail
-          # This config.env exists purely to let fetch-assets.sh see a
-          # config at all; it skips Mainsail and HelixScreen (still gated on
-          # their own BUILD_ flags, unset here) and fetches what s6, CPython
-          # and the Klipper fork need, none of which has a BUILD_ flag of its
-          # own any more -- BUILD_KLIPPER is gone and the fork is the only
-          # Klipper, so its 27MB tarball comes down here with the rest. This
-          # config.env never reaches patch.sh, only fetch-assets.sh.
-          # The actual cross-build of s6 and CPython happens inside the suite,
-          # in bin/patch.sh sections 5b/5c, the first time it runs against a
-          # vendor/ that now has what those sections need.
+          # This config.env exists purely to let fetch-assets.sh see a config
+          # at all; it skips Mainsail and HelixScreen (gated on their own
+          # BUILD_ flags, unset here) and fetches what s6, CPython and the
+          # Klipper fork need. It never reaches patch.sh. The actual
+          # cross-build happens inside the suite, in bin/patch.sh 5b/5c.
           cat > config.env <<'CFG'
           BUILD_MAINSAIL=0
           BUILD_HELIX=0
@@ -117,16 +98,14 @@ jobs:
           ./bin/fetch-assets.sh
           rm -f config.env
 
-      # The qa suite's static lane. Runs BEFORE the old suite because it is
-      # seconds rather than minutes and it covers the same static ground, so a
-      # syntax error in the payload is reported by name in the first few
-      # seconds of the job rather than several minutes in as one red gate.
+      # The qa suite's static lane, BEFORE the old suite because it is seconds
+      # rather than minutes and covers the same ground, so a syntax error in
+      # the payload is named in the first few seconds of the job.
       #
       # No strictness flag: a missing shellcheck or pyflakes fails on its own,
-      # because there is no configuration in which running this lane without
-      # them is a complete run. Only the static lane here -- this job has no
-      # firmware on purpose, and printer-sim below is where the replica is
-      # proved.
+      # there being no configuration in which running this lane without them
+      # is a complete run. Only the static lane -- this job has no firmware on
+      # purpose.
       - name: qa -- static lane
         run: python3 -m pytest ./qa/static -q
 
@@ -139,9 +118,8 @@ jobs:
 
   # The real check: install the package into a replica of the printer -- the
   # actual rootfs.squashfs under qemu-mipsel, on the printer's own busybox --
-  # and assert the machine still boots. No `if:` guard: this job is the point
-  # of the repo, and a version of it that can quietly not run is worse than
-  # not having it.
+  # and assert the machine still boots. No `if:` guard: a version of this job
+  # that can quietly not run is worse than not having it.
   printer-sim:
     runs-on: ubuntu-latest
     steps:
@@ -206,14 +184,10 @@ jobs:
         env:
           SECRET_FACTORY:     ${{ secrets.FACTORY_URL }}
           SECRET_FACTORY_SHA: ${{ secrets.FACTORY_SHA256 }}
-          # A prebuilt replica image: it carries the factory partitions AND
-          # the stock package already installed, which is about a minute of
-          # setup saved on EVERY replica case -- with a full suite's worth of
-          # them, that is the difference between this job and a coffee break.
-          # Defaults to the public one; vars.PRINTER_IMAGE overrides it for a
-          # fork building its own. Left unset for a long time, silently, which
-          # is what made every run here pay the local-build cost on every
-          # case without anyone deciding that on purpose.
+          # A prebuilt replica image carrying the factory partitions AND the
+          # stock package already installed, which is about a minute saved on
+          # EVERY replica case. Defaults to the public one;
+          # vars.PRINTER_IMAGE overrides it for a fork building its own.
           PRINTER_IMAGE: ${{ vars.PRINTER_IMAGE || 'monstrofil/creator5-printer:latest' }}
         run: |
           set -euo pipefail
@@ -260,13 +234,9 @@ jobs:
       # The replica gates run ./bin/patch.sh, which needs the real Mainsail
       # zip and HelixScreen tarball in vendor/ -- patch.sh does not fetch them
       # itself, bin/build.sh does, and the gates do not go through build.sh.
-      # Nothing here noticed until this job ran for the first time, because
-      # every local run already had a populated vendor/. All are public,
-      # sha256-pinned in versions.env, and re-download only on a version bump.
-      #
-      # Cached because the set now includes the Klipper fork and the ~203MB
-      # MIPS toolchain that compiles its chelper -- this job runs on every
-      # push, and the toolchain host should not pay for that.
+      # All are public, sha256-pinned in versions.env, and re-download only on
+      # a version bump. Cached because the set includes the ~203MB MIPS
+      # toolchain and this job runs on every push.
       - name: Cache the pinned vendor assets
         uses: actions/cache@v4
         with:
@@ -282,16 +252,12 @@ jobs:
       # The replica starts sibling containers through the docker socket and
       # needs loop devices for the simulated USB stick; both work on a stock
       # ubuntu-latest runner.
+      #
       # BUILD THE PACKAGE THE SUITE INSTALLS. The qa replica lane installs for
       # real -- the printer's own app_startup.sh, off a FAT stick -- so it
       # needs a package in work/out, and it never builds one on demand: that
-      # would turn "the suite is slow today" into a mystery. This step used to
-      # be a side effect of run-tests.py, which ran unpack/patch/pack before
-      # its own install gate; that runner is gone, so the build is explicit
-      # now, exactly as the comment here predicted it would have to be.
-      #
-      # It also supplies the cross-built s6 and CPython, because both ship
-      # INSIDE the package; there is no separate build tree to track.
+      # would turn "the suite is slow today" into a mystery. It also supplies
+      # the cross-built s6 and CPython, because both ship INSIDE the package.
       - name: Build the package
         run: |
           docker build -q -t creator5-fw-build -f docker/Dockerfile.build docker
@@ -314,14 +280,13 @@ jobs:
             python3 -m pytest ./qa -q
 
   # The docs make claims about a machine that can be left unbootable, and the
-  # pages cross-link each other and the payload sources heavily -- 30+ links
-  # between README.md, docs/*.md and docs/notes/. This is the cheap half of
-  # keeping them true: --strict fails on a link whose target has moved or been
-  # deleted, so a rename in payload/ cannot quietly leave a doc pointing at
-  # nothing. It cannot check that the prose is still right; only a reader can.
+  # pages cross-link each other and the payload sources heavily. --strict
+  # fails on a link whose target has moved, so a rename in payload/ cannot
+  # quietly leave a doc pointing at nothing. It cannot check that the prose is
+  # still right; only a reader can.
   #
   # Read the Docs builds the same mkdocs.yml with fail_on_warning, so this job
-  # going red is also the warning that the published site is about to fail.
+  # going red also warns that the published site is about to fail.
   docs:
     runs-on: ubuntu-latest
     steps:

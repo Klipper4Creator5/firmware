@@ -8,16 +8,14 @@
 # the listening verbs those exec, and the fifodir tools they need.
 #
 # Eight more are here because s6-rc's GENERATED scripts exec them, which s6's
-# own documentation does not say -- it was found by running a real s6-rc
-# up/down cycle with a PATH containing only the candidates. s6rc-oneshot-runner
-# needs the ipcserver chain and s6-sudod; s6-rc execs s6-sudo, which execs
+# own documentation does not say -- found by running a real s6-rc up/down
+# cycle with a PATH containing only the candidates. s6rc-oneshot-runner needs
+# the ipcserver chain and s6-sudod; s6-rc execs s6-sudo, which execs
 # s6-sudoc; the fdholder servicedir, which s6-rc-compile writes into EVERY
-# database whether our services use it or not, needs s6-fdholder-daemon and
-# s6-ipcclient. Leaving any out gives "s6-rc: warning: unable to spawn
-# subprocess" at boot.
+# database, needs s6-fdholder-daemon and s6-ipcclient. Leaving any out gives
+# "s6-rc: warning: unable to spawn subprocess" at boot.
 #
-# Execline is deliberately left enabled: s6-rc has no flag to disable it and
-# needs an execline-enabled s6.
+# Execline is deliberately left enabled: s6-rc has no flag to disable it.
 set -euo pipefail
 . ./bin/common.sh
 . pkgs/lib.sh
@@ -29,10 +27,9 @@ pkg_unpack "$S6_TGZ"
 
 # glibc 2.29 keeps pthread_mutex_timedlock in libpthread; 2.34 merged it into
 # libc. skalibs' pthread_mutex_tailock reaches it, s6's own PTHREAD_LIB is
-# wired only to --enable-nsss so no configure flag gets there, and its Makefile
-# appends $(LDLIBS) last. Without this the link dies on an undefined reference
-# in a file nobody in this repo wrote. Upstream never sees it and musl never
-# had the split, which is why it appeared the moment the libc changed.
+# wired only to --enable-nsss so no configure flag gets there, and its
+# Makefile appends $(LDLIBS) last. Without this the link dies on an undefined
+# reference in a file nobody in this repo wrote.
 PKG_MAKE_ARGS="LDLIBS=-lpthread"
 
 _sr="$PKG_SYSROOT$MODDIR"

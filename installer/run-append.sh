@@ -10,9 +10,8 @@ esac
 exec >>/usr/data/anvil-install.log 2>&1
 
 # ---- the mod payload -------------------------------------------------------
-# Shipped as anvil.tar.xz in the OUTER package, so it is already sitting on the
-# data partition next to us (/usr/data/update). Never unpacked into /usr/prog:
-# the firmware partition has no room for ~100MB of web UI.
+# Shipped as anvil.tar.xz in the OUTER package, already on the data partition
+# next to us. Never unpacked into /usr/prog: no room for ~100MB of web UI.
 MODTAR=""
 for c in /usr/data/update/anvil.tar.xz /mnt/anvil.tar.xz $WORK_DIR/anvil.tar.xz; do
     [ -f "$c" ] && { MODTAR="$c"; break; }
@@ -28,23 +27,14 @@ if [ -n "$MODTAR" ]; then
     else
         # Keep user-editable state; replace everything we own.
         [ -f $MODDIR/anvil.conf ] && cp -f $MODDIR/anvil.conf /tmp/anvil.conf.keep
-        # HelixScreen keeps every user setting INSIDE its own install tree.
-        # firmwareExe exports HELIX_DATA_DIR=$MODDIR/helixscreen and the binary
-        # resolves its settings as config/settings.json relative to that root,
-        # so the tree below is not ours alone to replace -- the user's screen
-        # brightness, theme, log level, touch calibration and spool assignments
-        # all live in it.
-        #
-        # Backed up before either deletion path below runs (manifest or
-        # compatibility sweep -- both remove $MODDIR/helixscreen) and restored
-        # after extraction. The tarball ships a seeded settings.json of its own,
-        # with "wizard_completed": false, that would otherwise land on top.
-        #
-        # The list is HelixScreen's own HELIX_USER_CONFIG_FILES, from the
-        # install.sh the mod never runs -- it extracts the release tarball
-        # directly -- so the same job has to happen here. settings.json.backup
-        # rides along because Config::init falls back to it when the live file
-        # is missing or has no config_version.
+        # HelixScreen keeps every user setting INSIDE its own install tree
+        # ($MODDIR/helixscreen, via HELIX_DATA_DIR), so brightness, theme, log
+        # level, touch calibration and spool assignments all live in what we
+        # are about to replace. Backed up before either deletion path runs and
+        # restored after extraction, since the tarball ships its own
+        # settings.json with "wizard_completed": false. The list is
+        # HelixScreen's own HELIX_USER_CONFIG_FILES; settings.json.backup rides
+        # along because Config::init falls back to it.
         HELIX_USER_FILES="settings.json settings.json.backup helixscreen.env
                           .disabled_services tool_spools.json crash_history.json"
         HELIX_KEEP=/tmp/anvil-helix-keep
@@ -55,46 +45,29 @@ if [ -n "$MODTAR" ]; then
             cp -f $MODDIR/helixscreen/config/$f $HELIX_KEEP/$f
         done
         # Remove what the PREVIOUS payload installed -- exactly that, and
-        # nothing else.
-        #
-        # THE PROPERTY THIS HAS TO KEEP, which is why anything is removed at
-        # all rather than just extracted over: files used to be overwritten in
-        # place and never removed, which is harmless only while the set of
-        # filenames never changes. It does change -- a renamed script survives
-        # the update and sits next to the one that replaced it. The installed
-        # set must end up exactly the shipped set.
-        #
-        # bin/patch.sh ships a manifest of every path the payload installs --
-        # one per line, relative to $MODDIR, files and directories both, itself
-        # included. Deleting what the LAST manifest lists keeps that property
-        # (a script the last payload shipped and this one does not is named in
-        # that list, so it still goes) without touching a byte we did not put
-        # there.
+        # nothing else. Overwriting in place is harmless only while the set of
+        # filenames never changes, and it does: a renamed script survives the
+        # update and sits next to the one that replaced it. bin/patch.sh ships
+        # a manifest of every path the payload installs, so deleting what the
+        # LAST manifest lists makes the installed set exactly the shipped set
+        # without touching a byte we did not put there.
         MOD_MANIFEST=$MODDIR/.install-manifest
         if [ -s "$MOD_MANIFEST" ]; then
-            # Work from a copy in /tmp. The manifest lists itself, so the
-            # first pass below deletes the very file it is reading; the read
-            # would survive that on Linux, but the second pass opens it again
-            # by name and would find nothing there.
+            # Work from a copy in /tmp: the manifest lists itself, and the
+            # second pass opens it again by name after pass 1 deleted it.
             cp -f "$MOD_MANIFEST" /tmp/anvil.manifest.old
-            # Pass 1 -- the files. Anything that is not a directory, and a
-            # symlink even when it points at one, which is why -L is asked
-            # first: rm -f on a symlink-to-directory removes the link, while
-            # the rmdir pass below would refuse it and leave it behind.
+            # Pass 1 -- files, and a symlink even when it points at a
+            # directory, which is why -L is asked first: the rmdir pass would
+            # refuse such a link and leave it behind.
             while read -r mrel; do
                 [ -n "$mrel" ] || continue
                 case "$mrel" in
                 /*|*..*)
-                    # A manifest is a file on the printer's disk, and this
-                    # loop runs as root with $MODDIR pasted onto the front of
-                    # whatever it says. An absolute path escapes $MODDIR
-                    # outright; `..` walks out of it one component at a time.
-                    # Neither can come out of bin/patch.sh, so one appearing
-                    # here means the file is damaged or forged, and the answer
-                    # is to say so and skip rather than to find out what it
-                    # would have deleted. The `..` test is deliberately blunt
-                    # -- it also rejects a legitimate "foo..bar", and we ship
-                    # no such name.
+                    # This loop runs as root with $MODDIR pasted onto whatever
+                    # the manifest says. Neither an absolute path nor `..` can
+                    # come out of bin/patch.sh, so one appearing here means the
+                    # file is damaged or forged: say so and skip. The `..` test
+                    # is deliberately blunt.
                     echo "!! manifest: refusing '$mrel' -- not a path under $MODDIR"
                     continue ;;
                 esac
@@ -102,13 +75,10 @@ if [ -n "$MODTAR" ]; then
                     rm -f "$MODDIR/$mrel"
                 fi
             done < /tmp/anvil.manifest.old
-            # Pass 2 -- the directories, deepest first and only when empty.
-            # Reverse sort is what makes them deepest-first: "www/mainsail"
-            # sorts after "www", so the child is offered before its parent and
-            # the parent is empty by the time its turn comes. rmdir refusing a
-            # directory that still holds something is not a failure here, it
-            # is the whole point -- a directory holding a file we did not ship
-            # stays, and so does the file.
+            # Pass 2 -- directories, deepest first (reverse sort puts
+            # "www/mainsail" before "www") and only when empty. rmdir refusing
+            # a non-empty directory is the point: a directory holding a file we
+            # did not ship stays, and so does the file.
             sort -r /tmp/anvil.manifest.old | while read -r mrel; do
                 case "$mrel" in ''|/*|*..*) continue ;; esac
                 [ -d "$MODDIR/$mrel" ] && rmdir "$MODDIR/$mrel" 2>/dev/null
@@ -117,36 +87,26 @@ if [ -n "$MODTAR" ]; then
             echo "previous install removed (manifest)"
         else
             # ---- COMPATIBILITY: an install that predates the manifest ------
-            # Those printers have no $MODDIR/.install-manifest and there is no
-            # way to work out after the fact what they installed, so the whole
-            # directory sweep is the only honest answer: without it an upgrade
-            # off one of them leaves every renamed init script in place, which
-            # is the double-start failure described above.
-            #
-            # -s rather than -f: a zero-byte manifest is a broken install, not
-            # a payload that shipped nothing.
+            # No $MODDIR/.install-manifest and no way to work out what such an
+            # install left behind, so the whole-directory sweep is the only
+            # honest answer. -s rather than -f: a zero-byte manifest is a
+            # broken install, not a payload that shipped nothing.
             #
             # DELETE THIS BRANCH once no pre-manifest install can still be
-            # upgraded in the field -- it is the one piece of this installer
-            # that can still destroy a file nobody asked it to.
+            # upgraded -- it is the one piece here that can destroy a file
+            # nobody asked it to.
             rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen $MODDIR/config $MODDIR/moonraker $MODDIR/init.d
             echo "previous install removed (no manifest -- pre-manifest layout)"
         fi
-        # init.d/ AND anvil-service.sh ARE GONE, and go unconditionally rather
-        # than by manifest. The payload ships neither any more: s6-rc is the
-        # CLI, and the tree is started by firmwareExe. A leftover S70klipper is
-        # a script that starts an UNSUPERVISED klippy next to the supervised
-        # one, and a leftover anvil-service.sh is a library something stale
-        # could still source, so neither may be left to a diff that only knows
-        # about files the LAST manifest tracked -- a script planted by hand, or
-        # surviving the one pre-manifest jump every printer takes, is invisible
-        # to that.
+        # init.d/ AND anvil-service.sh ARE GONE, unconditionally rather than by
+        # manifest. A leftover S70klipper starts an UNSUPERVISED klippy beside
+        # the supervised one, and a leftover anvil-service.sh is a library
+        # something stale could source -- and either can be planted by hand or
+        # survive the one pre-manifest jump, which a manifest diff cannot see.
         #
-        # No hot migration is attempted. The install runs from app_startup.sh
-        # DURING BOOT, before firmwareExe starts, so there is no supervision
-        # tree up while this runs and the new one comes up from scratch a
-        # moment later. A `sh run.sh` typed over ssh instead is the exception:
-        # that printer needs a reboot, and nothing here forces one.
+        # No hot migration: the install runs from app_startup.sh DURING BOOT,
+        # so no supervision tree is up. A `sh run.sh` over ssh is the exception
+        # and needs a reboot, which nothing here forces.
         rm -rf $MODDIR/init.d $MODDIR/anvil-service.sh
         mkdir -p $MODDIR
         # Try xz first (FlashForge's own factory installer uses `xz -dc`, so
@@ -160,15 +120,11 @@ if [ -n "$MODTAR" ]; then
             echo "!! could not extract $MODTAR"
         fi
         [ -f /tmp/anvil.conf.keep ] && mv -f /tmp/anvil.conf.keep $MODDIR/anvil.conf
-        # Put HelixScreen's settings back over the tarball's defaults. The
-        # user's copy wins outright: these are settings, not a config file the
-        # mod owns, and there is no include-and-override seam to move an edit
-        # to the way ff-*.cfg has one.
-        #
-        # helixscreen.env is the one file where the shipped version can carry
-        # something new -- the launcher sources it, and a release can add an
-        # option to it -- so when it has actually changed the new one is left
-        # beside the user's as .mod-new rather than thrown away silently.
+        # Put HelixScreen's settings back over the tarball's defaults; the
+        # user's copy wins outright, there being no include-and-override seam
+        # the way ff-*.cfg has one. helixscreen.env is the exception -- the
+        # launcher sources it and a release can add options -- so a changed one
+        # is left beside the user's as .mod-new rather than dropped.
         if [ -d $HELIX_KEEP ]; then
             mkdir -p $MODDIR/helixscreen/config
             for f in $HELIX_USER_FILES; do
@@ -186,41 +142,30 @@ if [ -n "$MODTAR" ]; then
         fi
         chmod a+x $MODDIR/bin/* 2>/dev/null
         # ---- the s6 scandir, swept -------------------------------------
-        # MEASURED: s6-rc-init creates one symlink per service in the scandir
-        # and fails outright -- "unable to supervise service directories ...:
-        # File exists" -- if a name is taken. A printer upgrading from the
-        # pre-s6-rc payload has nginx, moonraker and camera in there as real
-        # directories, and the manifest cannot remove them: it deletes the
-        # files it listed, but s6-supervise created supervise/ and event/
-        # inside each at RUNTIME, so the rmdir correctly refuses and leaves
-        # exactly the name s6-rc-init collides with.
-        #
-        # After the extraction, so the payload's own empty etc/s6 has landed.
+        # MEASURED: s6-rc-init fails outright ("File exists") if a name in the
+        # scandir is taken. A printer upgrading from the pre-s6-rc payload has
+        # nginx, moonraker and camera there as real directories that the
+        # manifest cannot remove -- s6-supervise created supervise/ and event/
+        # inside each at RUNTIME, so rmdir correctly refuses. After the
+        # extraction, so the payload's own empty etc/s6 has landed.
         rm -rf $MODDIR/etc/s6
         mkdir -p $MODDIR/etc/s6
         # /run is a tmpfs, so this matters only for a `sh run.sh` typed over
         # ssh: a live s6-rc state points at the database just replaced.
         rm -rf /run/s6-rc
-        # klipperDaemon is anvil-link-prog.sh's now, below, like the other two
-        # files in $MODDIR/prog. It used to be hand-copied here with the stock
-        # KLIPPER_NICENESS seded into it, which is what made it machine-specific
-        # and therefore unlinkable -- and the guard on that block named
-        # $MODDIR/bin/klipperDaemon, a path it stopped shipping at in 057a3a1,
-        # so it was skipped in silence for several releases and every printer
-        # kept FlashForge's own. The number is NICE_KLIPPER in anvil.conf now.
+        # klipperDaemon is anvil-link-prog.sh's now, like the other two files
+        # in $MODDIR/prog. Hand-copying it with the stock KLIPPER_NICENESS
+        # seded in is what made it machine-specific and unlinkable; the number
+        # is NICE_KLIPPER in anvil.conf now.
         echo "mod payload installed"
-        # Point the stock boot path at the payload's own copies. This has to
-        # be HERE and not earlier: FlashForge's run.sh distributed the
-        # component around line 125 above, long before the payload existed, so
-        # the component cannot carry these links itself -- on a first install
-        # they would dangle and on an upgrade they would resolve to the
-        # payload being replaced. See the script's header.
+        # Point the stock boot path at the payload's own copies. This has to be
+        # HERE: FlashForge's run.sh distributed the component long before the
+        # payload existed, so on a first install these links would dangle and
+        # on an upgrade they would resolve to the payload being replaced.
         [ -x $MODDIR/bin/anvil-link-prog.sh ] && $MODDIR/bin/anvil-link-prog.sh
         # From here on this script runs the printer's own interpreter, so it
-        # needs the same environment the boot path gets -- and it is a hand-run
-        # `sh run.sh` over ssh at least as often as it is a flash, which is
-        # exactly where that environment is not inherited. anvil-env.sh has
-        # just been extracted above.
+        # needs the boot path's environment -- which a hand-run `sh run.sh`
+        # over ssh does not inherit. anvil-env.sh was just extracted.
         [ -f $MODDIR/anvil-env.sh ] && . $MODDIR/anvil-env.sh
     fi
 else
@@ -229,46 +174,32 @@ fi
 sync
 
 # ---- Moonraker -------------------------------------------------------------
-# Nothing to do here. The extracted payload already IS the installation: the
-# entry point lands at $MODDIR/moonraker/moonraker.py and the init script
-# starts the server from there. Nothing is written to /usr/prog -- it is the
-# firmware partition, with no room to spare, and it is what a stock FlashForge
-# flash overwrites while /usr/data/anvil survives one. FlashForge's own tree is
-# left where it is and simply never used.
+# Nothing to do: the extracted payload already IS the installation, with the
+# entry point at $MODDIR/moonraker/moonraker.py. Nothing is written to
+# /usr/prog, which a stock FlashForge flash overwrites while /usr/data/anvil
+# survives one. FlashForge's own tree is left alone and never used.
 
 # ---- klipper + moonraker configs -------------------------------------------
 # Every file here is one the mod ships (ff-*.cfg, printer.chamber.cfg,
-# moonraker.conf); printer.cfg is the user's and is never shipped, so it is
-# never a candidate.
+# moonraker.conf); printer.cfg is the user's and is never a candidate. Two
+# rules, because the two kinds differ in whether the user has somewhere else
+# to put a change.
 #
-# Two rules, because the two kinds of file differ in whether the user has
-# somewhere else to put a change.
+# ff-*.cfg are OURS and are overwritten every update: Klipper's
+# RawConfigParser(strict=False) merges same-named sections and takes the last
+# value, so overriding from printer.cfg AFTER the include survives every
+# flash. printer.base.cfg needs no rule -- anvil-link-prog.sh symlinks
+# $MODDIR/config into /usr/data/config, so an upgrade repoints the link.
 #
-# ff-*.cfg are OURS and are overwritten every update, no questions asked.
-# Klipper hands the user a better seam than editing them: parsing is
-# RawConfigParser(strict=False), so same-named sections MERGE, the last value
-# of an option wins, and a redefined [gcode_macro] replaces the original.
-# Overriding from printer.cfg AFTER the include survives every flash, while an
-# edit here is reverted by the next one. Each file says so in its header.
+# moonraker.conf is KEPT when edited: there is no override seam, and a printer
+# reached through a tuned trusted_clients would lose that access. Byte-identical
+# to what the LAST package wrote (kept in $MODDIR/config-installed, which
+# survives the payload swap) means ours to update; different means the user's
+# to keep, and the shipped one lands as .mod-new. Without that snapshot a
+# config we own could be written once and then be .mod-new forever.
 #
-# printer.base.cfg is on the same footing and needs no rule here: it is
-# anvil-klipper-config's, and anvil-link-prog.sh symlinks $MODDIR/config into
-# /usr/data/config, so an upgrade repoints the link rather than editing a file.
-# printer.chamber.cfg goes the same way -- see the case below.
-#
-# moonraker.conf is KEPT when edited. There is no include-and-override seam for
-# it, and a printer reached through a tuned trusted_clients or cors_domains
-# block would lose that access on an update. So it gets the compare-and-.mod-new
-# dance: still byte-identical to what the LAST package wrote means ours to
-# update, different means the user's to keep. $MODDIR/config-installed holds
-# that last-written copy -- it survives the payload swap and is refreshed only
-# after the comparison below. Without it a config we own could be written only
-# once, then land as .mod-new forever.
-#
-# First install after this rule arrives has no config-installed. An existing
-# file is then treated as edited -- .mod-new, the conservative answer -- UNLESS
-# it still matches FlashForge's pristine runConfig template, which means nobody
-# has touched it and it is ours to replace. See the branch below.
+# A first install has no config-installed, so an existing file is treated as
+# edited UNLESS it still matches FlashForge's pristine runConfig template.
 if [ -d $MODDIR/config ]; then
     mkdir -p /usr/data/config
     for source in $MODDIR/config/*; do
@@ -291,24 +222,18 @@ if [ -d $MODDIR/config ]; then
             ;;
         ff-*.cfg|printer.base.cfg|printer.chamber.cfg|chamber)
             # Ours, and NOT COPIED: anvil-link-prog.sh symlinks these into
-            # /usr/data/config after this loop, so the file the printer reads
-            # is the one the package owns and an `opkg upgrade` changes it
-            # without a .tgz. A copy here would only put a real file in the
-            # way of the link about to replace it.
-            #
-            # printer.chamber.cfg is not a file in $MODDIR/config: chamber/
-            # holds one per model. The directory is named here so it is
-            # skipped rather than falling through to the compare below.
+            # /usr/data/config after this loop, so an `opkg upgrade` changes
+            # them without a .tgz and a copy here would only block the link.
+            # printer.chamber.cfg is a directory (one per model), named here so
+            # it is skipped rather than falling through to the compare.
             continue
             ;;
         esac
-        # FlashForge's own copy, straight off the factory image, is not a
-        # user edit -- and /usr/data/config/moonraker.conf IS on the factory
-        # image, so without this branch the first install lands as .mod-new,
-        # every later one compares the live factory file against the snapshot
-        # of OURS, and the shipped config could never reach the printer at all.
-        # runConfig/ holds the pristine template the machine was built with;
-        # matching it byte for byte means nobody has touched the live copy.
+        # FlashForge's own copy is not a user edit, and
+        # /usr/data/config/moonraker.conf IS on the factory image -- so without
+        # this branch the shipped config could never reach the printer at all.
+        # runConfig/ holds the pristine template; a byte-for-byte match means
+        # nobody has touched the live copy.
         stock="/usr/prog/klipper/runConfig/$name"
         if [ ! -f "$live" ]; then
             cp -f "$source" "$live"
@@ -332,14 +257,10 @@ fi
 sync
 
 # Stale bytecode from the previous Klipper generation is a silent import-time
-# landmine; the stock run.sh only clears four of the __pycache__ dirs.
-#
-# $MODDIR, NOT /usr/prog: the klipper s6-rc service execs
-# $MODDIR/klipper/klippy, so that is the tree whose .pyc files get imported.
-# It also needs the sweep MORE than /usr/prog ever did -- klippy WRITES those
-# directories at runtime on a writable /usr/data, and a path created after
-# install is in no .install-manifest, so the manifest delete above walks past
-# it and leaves last release's bytecode beside this release's source.
+# landmine, and the stock run.sh clears only four __pycache__ dirs. $MODDIR,
+# NOT /usr/prog: the klipper s6-rc service execs $MODDIR/klipper/klippy. It
+# needs the sweep more, too -- klippy WRITES those directories at runtime, so
+# they are in no manifest and the delete above walks past them.
 find $MODDIR/klipper/klippy -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
 # The stock tree is swept too, and only because it costs one line: nothing
 # imports it any more, but a machine that has been through several releases
@@ -348,32 +269,23 @@ find /usr/prog/klipper/klippy -name '__pycache__' -type d -exec rm -rf {} + 2>/d
 sync
 
 # ---- root password, chosen here when none was baked in ---------------------
-# The normal path is ROOT_PW_HASH at build time: patch.sh writes that hash
-# straight into the shadow file the package ships. When it is empty the
-# package cannot carry a password -- one file is flashed by many people, so
-# any baked-in default would be the SAME password on every printer. Pick a
-# random one here instead, on the machine, and write it onto the USB stick we
-# are being flashed from. Every printer gets a different password and it is
-# never guessable from anything printed on the case.
+# The normal path is ROOT_PW_HASH at build time. When it is empty the package
+# cannot carry a password -- one file is flashed by many people, so a baked-in
+# default would be the same password on every printer. Pick a random one on
+# the machine instead and write it onto the USB stick being flashed from.
 #
-# ORDER MATTERS: the password goes onto the stick and is read back BEFORE the
-# printer starts accepting it. A password that was set but never landed on the
-# stick is a locked-out printer, so if the write fails we change nothing at
-# all and say so.
-#
-# An UPDATE must not change the password. The pre-block recorded the hash the
-# printer had before the stock installer replaced the shadow file; when that
-# hash differs from the one the package shipped, a password was already set
-# -- by a previous install, or by hand with `passwd` -- and it is put back
-# unchanged. The stick only ever sees a password once, on the first install.
+# ORDER MATTERS: the password lands on the stick and is read back BEFORE the
+# printer accepts it, because a password set but never written is a locked-out
+# printer. An UPDATE must not change it: when the hash the printer had before
+# the stock installer ran differs from the one the package shipped, a password
+# was already set and is put back unchanged.
 PW_KEEP=""
 if [ "$MOD_PW_AUTO" = "1" ] && [ -f $MODDIR/.prev-root-hash ]; then
     PREV_HASH=`cat $MODDIR/.prev-root-hash 2>/dev/null`
-    # Compare against the hash the PACKAGE ships ($WORK_DIR is the stock
-    # run.sh's own variable, still in scope here), not the live file: the
-    # stock installer has already copied the shipped shadow over the live one
-    # by now, and if that copy ever fails the live file still holds the old
-    # password -- which must read as "set by someone", not as "fresh".
+    # Compare against the hash the PACKAGE ships, not the live file: the stock
+    # installer has already copied the shipped shadow over the live one, and if
+    # that copy failed the live file still holds the old password -- which must
+    # read as "set by someone", not as "fresh".
     SHIPPED_HASH=""
     [ -n "${WORK_DIR:-}" ] && [ -f "$WORK_DIR/shadow" ] &&
         SHIPPED_HASH=`awk 'BEGIN{FS=":"} $1=="root"{print $2}' "$WORK_DIR/shadow" 2>/dev/null`
