@@ -1,0 +1,318 @@
+diff --git a/src/Kconfig b/src/Kconfig
+index 7dcea3bab..7c2904b7f 100644
+--- a/src/Kconfig
++++ b/src/Kconfig
+@@ -121,7 +121,6 @@ config NEED_SENSOR_BULK
+     depends on WANT_SENSORS || WANT_LIS2DW || WANT_LDC1612
+     default y
+ menu "Optional features (to reduce code size)"
+-    depends on HAVE_LIMITED_CODE_SIZE
+ config WANT_GPIO_BITBANGING
+     bool "Support GPIO \"bit-banging\" devices"
+     depends on HAVE_GPIO
+@@ -193,6 +192,13 @@ config HAVE_BOOTLOADER_REQUEST
+ config HAVE_LIMITED_CODE_SIZE
+     bool
+ 
++# FlashForge Creator 5 board selector.  The four stock boards are built from
++# one tree; a command is compiled on every board but its body folds away where
++# the board does not implement it.
++config FF_BOARD_EBOARD
++    bool "FlashForge eBoard (pressure advance sensor)"
++    default n
++
+ config INLINE_STEPPER_HACK
+     # Enables gcc to inline stepper_event() into the main timer irq handler
+     bool
+diff --git a/src/Makefile b/src/Makefile
+index ed98172e4..97bb416c5 100644
+--- a/src/Makefile
++++ b/src/Makefile
+@@ -1,12 +1,10 @@
+ # Main code build rules
+ 
+-src-y += sched.c command.c basecmd.c debugcmds.c
++src-y += sched.c command.c basecmd.c debugcmds.c ff_flashforge.c
+ src-$(CONFIG_HAVE_GPIO) += initial_pins.c gpiocmds.c stepper.c endstop.c \
+     trsync.c
+ src-$(CONFIG_HAVE_GPIO_ADC) += adccmds.c
+-src-$(CONFIG_HAVE_GPIO_SPI) += spicmds.c
+ src-$(CONFIG_HAVE_GPIO_SDIO) += sdiocmds.c
+-src-$(CONFIG_HAVE_GPIO_I2C) += i2ccmds.c
+ src-$(CONFIG_HAVE_GPIO_HARD_PWM) += pwmcmds.c
+ 
+ src-$(CONFIG_WANT_GPIO_BITBANGING) += buttons.c tmcuart.c neopixel.c \
+diff --git a/src/endstop.c b/src/endstop.c
+index 779153982..433c8cc1a 100644
+--- a/src/endstop.c
++++ b/src/endstop.c
+@@ -113,3 +113,28 @@ command_endstop_query_state(uint32_t *args)
+           , oid, !!(eflags & ESF_HOMING), nextwake, gpio_in_read(e->pin));
+ }
+ DECL_COMMAND(command_endstop_query_state, "endstop_query_state oid=%c");
++
++// FlashForge addition, recovered from levelBoard.hex (0x080055c8).  Re-arms
++// an endstop after a homing attempt: the trigger counter is reloaded from
++// the sample count, the trsync is dropped and the endstop is taken out of
++// homing.
++//
++// NOTE: the stock firmware calls ctr_lookup_encoder() directly here rather
++// than going through the sendf() macro.  That skips the DECL_CTR marker, so
++// "endstop_recover_state oid=%c ok=%c" is never registered as a response and
++// the lookup returns NULL at run time.  Reproduced verbatim so that the
++// generated data dictionary matches the stock firmware.
++void
++command_endstop_recover_state(uint32_t *args)
++{
++    uint8_t oid = args[0];
++    struct endstop *e = oid_lookup(oid, command_config_endstop);
++    irq_disable();
++    e->trigger_count = e->sample_count;
++    e->ts = NULL;
++    e->flags = 0;
++    irq_enable();
++    command_sendf(ctr_lookup_encoder("endstop_recover_state oid=%c ok=%c")
++                  , oid, 1);
++}
++DECL_COMMAND(command_endstop_recover_state, "endstop_recover_state oid=%c");
+diff --git a/src/ff_flashforge.c b/src/ff_flashforge.c
+new file mode 100644
+index 000000000..c04245bd4
+--- /dev/null
++++ b/src/ff_flashforge.c
+@@ -0,0 +1,151 @@
++// FlashForge Creator 5 additions to the Klipper MCU firmware.
++//
++// Recovered from the stock board images shipped in control-1.2.9
++// (levelBoard.hex, eBoard.hex, heaterBoard.hex, mainBoardGD.hex).  The
++// four boards are built from one source tree with a board selector: a
++// command is compiled everywhere but its body folds away on the boards
++// that do not implement it, which is why levelBoard carries an empty
++// get_emcu_pa_value while eBoard has the real one.
++//
++// This file reconstructs the command/response layer only.  The eddy
++// front end that produces ff_eddy.value (ADC1 via DMA1 channel 1, with
++// an SPI2 side channel) is not reconstructed here.
++//
++// This file may be distributed under the terms of the GNU GPLv3 license.
++
++#include "autoconf.h"   // CONFIG_FF_BOARD_*
++#include "board/irq.h"  // irq_disable
++#include "command.h"    // DECL_COMMAND
++#include "sched.h"      // DECL_TASK
++
++/****************************************************************
++ * Firmware version reported to the host
++ ****************************************************************/
++
++// levelBoard.hex reports these three constants verbatim.
++#define FF_MCU_YEAR     2026
++#define FF_MCU_DATE      613
++#define FF_MCU_VERSION  7091
++
++void
++command_get_mcu_version(uint32_t *args)
++{
++    sendf("mcu_version year=%u date=%u version=%u"
++          , FF_MCU_YEAR, FF_MCU_DATE, FF_MCU_VERSION);
++}
++DECL_COMMAND(command_get_mcu_version, "get_mcu_version");
++
++/****************************************************************
++ * Inductive ("eddy") sensor
++ ****************************************************************/
++
++// levelBoard globals, named after the host side that drives them
++// (klippy/extras/ff_eddy.py):
++//   value     0x20000158  live reading, updated from the ADC DMA irq
++//   baseline  0x20000144  reference the live reading is compared against
++//   offset    0x2000019C  added to the live reading when re-baselining
++//   peel      0x200001A4  last peel measurement
++//   threshold 0x20000000  trigger threshold, mirrored as int16 at 0x2000003E
++static struct ff_eddy {
++    uint32_t value, baseline, offset;
++    int32_t peel, threshold;
++} ff_eddy;
++
++static int16_t ff_trigger_threshold16;
++
++// Re-arm the comparison against the current reading.  The stock
++// function (0x08007bf4) does this inside an irq_disable/irq_enable
++// pair and additionally clears its sample-ready and counter state.
++static void
++ff_eddy_rebaseline(void)
++{
++    irq_disable();
++    ff_eddy.baseline = ff_eddy.value + ff_eddy.offset;
++    irq_enable();
++}
++
++void
++command_set_trigger_threshold(uint32_t *args)
++{
++    ff_eddy.threshold = args[0];
++    ff_trigger_threshold16 = ff_eddy.threshold;
++    sendf("trigger_threshold threshold=%i", ff_eddy.threshold);
++}
++DECL_COMMAND(command_set_trigger_threshold
++             , "set_trigger_threshold threshold=%i");
++
++void
++command_get_basic_param(uint32_t *args)
++{
++    // args[0] ("num") is accepted and ignored by the stock firmware.
++    irq_disable();
++    uint32_t baseline = ff_eddy.baseline, value = ff_eddy.value;
++    irq_enable();
++    ff_eddy_rebaseline();
++    uint32_t diff = value > baseline ? value - baseline : baseline - value;
++    sendf("param_value value=%u reserve=%u", baseline, diff);
++}
++DECL_COMMAND(command_get_basic_param, "get_basic_param num=%u");
++
++void
++command_remove_peel(uint32_t *args)
++{
++    // args[0] ("action") is accepted and ignored by the stock firmware.
++    irq_disable();
++    int32_t peel = ff_eddy.peel;
++    ff_eddy.baseline = ff_eddy.value;
++    irq_enable();
++    sendf("peel_data value=%i", peel);
++}
++DECL_COMMAND(command_remove_peel, "remove_peel action=%u");
++
++/****************************************************************
++ * Pressure-advance sensor (eBoard only)
++ ****************************************************************/
++
++// Both bodies fold away on every board except the eBoard; the response
++// stays in the data dictionary because DECL_CTR survives dead code
++// elimination.  That is exactly what the stock levelBoard image shows:
++// two "bx lr" handlers and a live "pa_value value=%u" encoder.
++static uint32_t ff_pa_value;
++
++// The eBoard implementation (eBoard.hex 0x080115ec) reconfigures TIM4, TIM8
++// and a DMA1 stream for the pressure-advance pickup.  Not reconstructed.
++static void
++ff_pa_action(uint32_t action, uint32_t pc)
++{
++}
++
++void
++command_get_emcu_pa_value(uint32_t *args)
++{
++    if (!CONFIG_FF_BOARD_EBOARD)
++        return;
++    sendf("pa_value value=%u", ff_pa_value);
++}
++DECL_COMMAND(command_get_emcu_pa_value, "get_emcu_pa_value");
++
++void
++command_pa_action(uint32_t *args)
++{
++    if (!CONFIG_FF_BOARD_EBOARD)
++        return;
++    ff_pa_action(args[0], args[1]);
++}
++DECL_COMMAND(command_pa_action, "pa_action action=%u pc=%u");
++
++/****************************************************************
++ * Board telemetry
++ ****************************************************************/
++
++// Emitted alongside klipper's own shutdown report, and periodically.
++// The three counters are board specific; the stock image names them
++// per board ("Levelboard", "Eboard", "Eheaterboard", "GDMainboard").
++static uint16_t ff_close, ff_close_num, ff_temp_waketime;
++
++void
++ff_report_close(void)
++{
++    sendf("Levelboard close=%hu Close_num=%hu Temp_waketime=%hu"
++          , ff_close, ff_close_num, ff_temp_waketime);
++}
+diff --git a/src/generic/serial_irq.c b/src/generic/serial_irq.c
+index 98910735a..f1ccdf955 100644
+--- a/src/generic/serial_irq.c
++++ b/src/generic/serial_irq.c
+@@ -14,9 +14,12 @@
+ #include "sched.h" // sched_wake_tasks
+ #include "serial_irq.h" // serial_enable_tx_irq
+ 
+-#define RX_BUFFER_SIZE 192
++#define RX_BUFFER_SIZE 384
+ 
+-static uint8_t receive_buf[RX_BUFFER_SIZE], receive_pos;
++// RX_BUFFER_SIZE is 384 here (upstream: 192), so the position index
++// must be wider than the uint8_t upstream uses.
++static uint8_t receive_buf[RX_BUFFER_SIZE];
++static uint16_t receive_pos;
+ static uint8_t transmit_buf[96], transmit_pos, transmit_max;
+ 
+ DECL_CONSTANT("SERIAL_BAUD", CONFIG_SERIAL_BAUD);
+@@ -50,8 +53,8 @@ console_pop_input(uint_fast8_t len)
+ {
+     uint_fast8_t copied = 0;
+     for (;;) {
+-        uint_fast8_t rpos = readb(&receive_pos);
+-        uint_fast8_t needcopy = rpos - len;
++        uint_fast16_t rpos = readw(&receive_pos);
++        uint_fast16_t needcopy = rpos - len;
+         if (needcopy) {
+             memmove(&receive_buf[copied], &receive_buf[copied + len]
+                     , needcopy - copied);
+@@ -59,7 +62,7 @@ console_pop_input(uint_fast8_t len)
+             sched_wake_tasks();
+         }
+         irqstatus_t flag = irq_save();
+-        if (rpos != readb(&receive_pos)) {
++        if (rpos != readw(&receive_pos)) {
+             // Raced with irq handler - retry
+             irq_restore(flag);
+             continue;
+@@ -74,7 +77,8 @@ console_pop_input(uint_fast8_t len)
+ void
+ console_task(void)
+ {
+-    uint_fast8_t rpos = readb(&receive_pos), pop_count;
++    uint_fast16_t rpos = readw(&receive_pos);
++    uint_fast8_t pop_count;
+     int_fast8_t ret = command_find_block(receive_buf, rpos, &pop_count);
+     if (ret > 0)
+         command_dispatch(receive_buf, pop_count);
+diff --git a/src/stm32/Kconfig b/src/stm32/Kconfig
+index 037e37bbe..bac8adc42 100644
+--- a/src/stm32/Kconfig
++++ b/src/stm32/Kconfig
+@@ -247,7 +247,7 @@ config RAM_SIZE
+     default 0x9000 if MACH_STM32G07x
+     default 0x24000 if MACH_STM32G0Bx
+     default 0x20000 if MACH_STM32H7
+-    default 0x10000 if MACH_N32G45x
++    default 0x4000 if MACH_N32G45x # FF levelBoard: SP=0x20004000
+ 
+ config STACK_SIZE
+     int
+@@ -303,7 +303,7 @@ choice
+     config STM32_FLASH_START_1000
+         bool "4KiB bootloader" if MACH_STM32F1 || MACH_STM32F0
+     config STM32_FLASH_START_4000
+-        bool "16KiB bootloader" if MACH_STM32F207 || MACH_STM32F401 || MACH_STM32F4x5 || MACH_STM32F103 || MACH_STM32F072
++        bool "16KiB bootloader" if MACH_STM32F207 || MACH_STM32F401 || MACH_STM32F4x5 || MACH_STM32F103 || MACH_STM32F072 || MACH_N32G45x
+     config STM32_FLASH_START_20000
+         bool "128KiB bootloader" if MACH_STM32H743 || MACH_STM32H723 || MACH_STM32F7
+ 
+diff --git a/src/stm32/serial.c b/src/stm32/serial.c
+index 19aa048ea..db0ed662e 100644
+--- a/src/stm32/serial.c
++++ b/src/stm32/serial.c
+@@ -13,7 +13,7 @@
+ 
+ // Select the configured serial port
+ #if CONFIG_STM32_SERIAL_USART1
+-  DECL_CONSTANT_STR("RESERVE_PINS_serial", "PA10,PA9");
++  DECL_CONSTANT_STR("RESERVE_PINS_serial", "PH10,PH9");
+   #define GPIO_Rx GPIO('A', 10)
+   #define GPIO_Tx GPIO('A', 9)
+   #define USARTx USART1

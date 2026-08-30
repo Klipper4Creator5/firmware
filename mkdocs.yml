@@ -101,6 +101,7 @@ nav:
           - Error code table: notes/70-error-codes.md
           - Overview: notes/00-overview.md
           - Hardware and MCU topology: notes/10-hardware.md
+          - The MCU firmware is Klipper: notes/15-mcu-firmware.md
           - The FlashForge Klipper fork: notes/20-klipper-fork.md
           - firmwareExe vs Klipper: notes/25-app-vs-klipper-ownership.md
           - Toolchange sequences: notes/30-toolchange.md
