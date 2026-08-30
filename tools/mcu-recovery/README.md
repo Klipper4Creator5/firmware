@@ -177,17 +177,15 @@ StdPeriph-style driver library that upstream Klipper does not use.
 1. **The vector table.** Stock declares more slots than we do and fills
    three that Klipper leaves on its weak `DefaultHandler`: NMI (`bx lr`),
    HardFault (`b .`) and SVCall (`bx lr`), at 0x08007DA0/DA4/DA8. It also
-   places its serial handler at **IRQ 36**, where our identically-toolchained
-   build puts it at 37, and its table runs to slot 68 (IRQ 52) where ours
-   stops at 54 (IRQ 37). The handler services the peripheral at 0x40013800,
-   which is USART1 on ST's F103 map -- but this part is not an F103 (its GPIO
-   is at 0x40023400, an F4-style layout), so the numbering and the map both
-   need establishing from the Nations SDK before copying the slot layout.
-   Do not simply move the handler to 36 on the strength of the ST map.
+   places its USART1 handler on the **SPI2 vector** -- see the bugs section
+   below -- and its table runs to slot 68 (IRQ 52) where ours stops at 54
+   (IRQ 37). Reproducing that means declaring the handler on IRQ 36 as
+   FlashForge do, bug and all, and padding the table out.
 2. **The vendor peripheral library** at 0x08008ACC (1,344 B, plus 328 B of
-   helpers). Compiling the right Nations SDK sources, not writing new code.
-   Klipper vendors only `n32g45x_adc.c`, so the USART, RCC and DMA drivers
-   have to come from the SDK.
+   helpers). Compiling the right sources, not writing new code. Klipper
+   vendors only `n32g45x_adc.c`, but the rest is public: the N32G45x SDK
+   ships `n32g45x_usart.c`, `n32g45x_rcc.c` and `n32g45x_dma.c`, which are
+   the three drivers that block accounts for.
 3. **The DMA serial path** (268 B of interrupt handlers plus its setup),
    which sits on top of that library.
 4. **The remaining register-allocation differences** -- see below.
@@ -221,7 +219,20 @@ this kind of gap.
 Do not flash any of this. It is a reconstruction for study, not a
 drop-in image.
 
-## A bug worth knowing about
+## Two bugs worth knowing about
+
+**The USART interrupt handler is installed on the wrong vector.** Stock
+puts a handler that services USART1 -- it reads the status register at
+0x40013800 and tests ORE/RXNE -- at vector slot 36. On this part
+`USART1_IRQn` is 37; 36 is `SPI2_IRQn`, confirmed from the N32G45x SDK's
+own CMSIS header, and `USART1_BASE` really is 0x40013800 there. So the
+handler is registered on an interrupt that cannot fire from USART1, and
+the USART error and idle path is dead code. The serial link works anyway
+because it is driven by DMA (channels 4 and 5), which is presumably why
+this was never noticed.
+
+### endstop_recover_state cannot reply
+
 
 `endstop_recover_state` replies by calling `ctr_lookup_encoder()` directly
 with a string literal instead of going through Klipper's `sendf()` macro.

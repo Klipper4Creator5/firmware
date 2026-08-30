@@ -91,7 +91,7 @@ The remaining ~1 KB is the DMA-driven serial path and a StdPeriph-style
 driver library upstream does not use. See that directory's README for the
 full accounting.
 
-## Two things found on the way
+## Three things found on the way
 
 **`endstop_recover_state` cannot reply.** The handler calls
 `ctr_lookup_encoder()` directly with a string literal instead of going through
@@ -100,6 +100,13 @@ format is never registered as a response: the lookup returns NULL at run time
 and the reply goes to `command_sendf(NULL, ...)`. FlashForge's own klippy
 sends this command — `MCU_endstop._recover_cmd` in `klippy/mcu.py` — and all
 three boards that carry it are affected.
+
+**The USART interrupt is on the wrong vector.** Stock installs a handler that
+services USART1 — it reads the status register at `0x40013800` and tests
+ORE/RXNE — at vector slot 36. On this part `USART1_IRQn` is 37 and 36 is
+`SPI2_IRQn`, confirmed from the N32G45x SDK's own CMSIS header. The handler
+can never fire from USART1, so the error and idle path is dead. The link
+works because it is DMA-driven, which is presumably why nobody noticed.
 
 **`RESERVE_PINS_serial` is `PH10,PH9`.** Upstream says `PA10,PA9` for USART1.
 Port H does not exist on this family and does not appear in the image's own
