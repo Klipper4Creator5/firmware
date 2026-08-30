@@ -8,8 +8,8 @@ name: ci
 #
 # That proof needs the printer's real rootfs, and so it needs the stock
 # package. `printer-sim` below now always runs, because the packages it needs
-# are publicly mirrored (see env: below) rather than hidden behind a secret
-# nobody had set. It used to be gated on STOCK_URL_CREATOR5PRO, which meant
+# are publicly mirrored and pinned in versions.env rather than hidden behind a
+# secret nobody had set. It used to be gated on STOCK_URL_CREATOR5PRO, which meant
 # that for its entire existence it never ran once: a grey dash beside two
 # green ticks, reading as "CI passed" while the only gates that decide
 # whether a package bricks a printer were never executed.
@@ -19,28 +19,23 @@ on:
   pull_request:
   workflow_dispatch:
 
-# The stock packages and the factory image, from ghzserg/FF -- a public
-# archive of FlashForge firmware that this repo already points at in
-# docs/printer-replica.md. Nothing proprietary is redistributed from here; the
-# workflow fetches what is already published elsewhere.
+# The stock packages are no longer fetched here. They are pinned by name and
+# sha256 in versions.env like every other third-party source, and
+# bin/fetch-assets.sh downloads them into vendor/ -- so `make vendor` below
+# gets them the same way a person's checkout does, and this workflow no longer
+# carries a second spelling of "fetch the firmware, check the hash" that could
+# drift from the one humans run.
 #
-# Every one is pinned by sha256, and the checksum is enforced, not advisory.
-# An unpinned download would let the archive change under us and the suite
-# would keep reporting green while testing a different firmware than the one
-# these gates were written against -- the same class of silent drift as a gate
-# that skips without saying so. Verified byte-for-byte against the maintainer's
-# local copies on 2026-08-24.
+# The secrets that used to override the URLs (STOCK_URL_CREATOR5PRO and
+# friends, for a fork testing its own firmware) are gone with them. A fork
+# re-pins versions.env instead, which works locally too -- the secrets only
+# ever worked in CI, and the local build had no equivalent at all.
 #
 # The factory image used to be fetched here too, for PROG_DUMP. Both are gone:
 # the replica is PRINTER_IMAGE and nothing else, and that image carries the
 # real /usr/prog already. PRINTER_IMAGE is pinned to a version tag for the
-# same reason these are pinned by sha256 -- it is now the whole substrate the
+# same reason the sha256s are -- it is now the whole substrate the
 # brick-safety gates run on, so it must not move on its own.
-env:
-  STOCK_URL_CREATOR5PRO: https://github.com/ghzserg/FF/releases/download/R/Creator5Pro-1.9.7-1.2.9-20260810.tgz
-  STOCK_SHA_CREATOR5PRO: 1f3252feaae6d8fc72d7b0fd1ba832cc63d369659f8b2d2896efcf7adab2976b
-  STOCK_URL_CREATOR5: https://github.com/ghzserg/FF/releases/download/R/Creator5-1.9.7-1.2.9-20260810.tgz
-  STOCK_SHA_CREATOR5: 72009be183e74a4562050a927787ba686c6b558a075f00958892197ac52659cc
 
 jobs:
   test:
@@ -174,63 +169,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ~186MB of somebody else's release assets per run (two ~93MB stock
-      # packages), and they never change -- the cache key is their checksums,
-      # so a new pin misses and re-fetches, and an unchanged pin costs the
-      # archive nothing. The 182MB factory image was fetched here too until
-      # every run started discarding it: it fed PROG_DUMP, and PROG_DUMP was
-      # only ever read by a replica built locally from work/rootfs.
-      - name: Cache the stock firmware
-        uses: actions/cache@v4
-        with:
-          path: stock
-          key: stock-${{ env.STOCK_SHA_CREATOR5PRO }}-${{ env.STOCK_SHA_CREATOR5 }}
-
-      - name: Fetch the stock firmware
-        env:
-          # Secrets override the public pins, for a fork testing its own
-          # firmware. Override the URL and you must override the checksum too,
-          # or the fetch refuses to run -- an unverified download is exactly
-          # what this is meant to prevent.
-          SECRET_PRO:     ${{ secrets.STOCK_URL_CREATOR5PRO }}
-          SECRET_PRO_SHA: ${{ secrets.STOCK_SHA256_CREATOR5PRO }}
-          SECRET_STD:     ${{ secrets.STOCK_URL_CREATOR5 }}
-          SECRET_STD_SHA: ${{ secrets.STOCK_SHA256_CREATOR5 }}
-        run: |
-          set -euo pipefail
-          mkdir -p stock
-
-          get() {   # name url sha dest
-            if [ -z "$2" ]; then
-              echo "::error::no URL for $1"; exit 1
-            fi
-            if [ -z "$3" ]; then
-              echo "::error title=Unverified firmware download::$1 has a URL but no sha256. Set the matching STOCK_SHA256_* secret; an unpinned firmware would let this suite report green against bytes nobody checked."
-              exit 1
-            fi
-            if [ -f "$4" ] && echo "$3  $4" | sha256sum -c - >/dev/null 2>&1; then
-              echo "  $1: cache hit, checksum ok"
-              return
-            fi
-            echo "  $1: fetching $2"
-            curl -fsSL "$2" -o "$4"
-            echo "$3  $4" | sha256sum -c -
-          }
-
-          # Written out rather than nested in one expansion: a URL and its
-          # checksum must come from the SAME source, and a clever ${x:+y}${x:-z}
-          # pair silently pastes the URL in where the checksum belongs.
-          PRO_URL="${SECRET_PRO:-$STOCK_URL_CREATOR5PRO}"
-          if [ -n "${SECRET_PRO:-}" ]; then PRO_SHA="${SECRET_PRO_SHA:-}"
-          else PRO_SHA="$STOCK_SHA_CREATOR5PRO"; fi
-
-          STD_URL="${SECRET_STD:-$STOCK_URL_CREATOR5}"
-          if [ -n "${SECRET_STD:-}" ]; then STD_SHA="${SECRET_STD_SHA:-}"
-          else STD_SHA="$STOCK_SHA_CREATOR5"; fi
-
-          get Creator5Pro "$PRO_URL" "$PRO_SHA" stock/Creator5Pro-stock.tgz
-          get Creator5    "$STD_URL" "$STD_SHA" stock/Creator5-stock.tgz
-
       - name: Write test.env (the replica)
         env:
           # THE replica. It carries the printer's rootfs, its real /usr/prog
@@ -261,8 +199,9 @@ jobs:
           MOD_NAME=anvil
           MOD_VER=ci
           TARGET_MACHINE=Creator5Pro
-          STOCK_TGZ_CREATOR5PRO="$PWD/stock/Creator5Pro-stock.tgz"
-          STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
+          # No stock paths: bin/common.sh defaults them into vendor/, where
+          # `make vendor` puts the pinned download. Setting them here would be
+          # the override that suppresses the checksum.
           STOCK_TGZ=""
           # No Klipper source knob any more: pkgs/klipper builds from the
           # commit pinned in versions.env and nothing else. The variable that
@@ -288,7 +227,13 @@ jobs:
           path: vendor
           key: vendor-${{ hashFiles('versions.env') }}
 
-      - name: Fetch the pinned Mainsail, HelixScreen, Moonraker and Klipper assets
+      # `make vendor` is --all --stock, which now also brings down both models'
+      # stock firmware (~186MB) -- this job builds Creator5Pro but the qa lane
+      # reads both baselines. Same cache, keyed on versions.env, so the pins and
+      # the firmware they name move together and an unchanged pin costs nothing.
+      # The `test` job above calls bin/fetch-assets.sh bare and so still gets
+      # no firmware at all, which is what keeps its feed build honest.
+      - name: Fetch the pinned vendor assets and the stock firmware
         run: make vendor ASSET_ROOT=$PWD
 
       # THE FEED, and it is not optional on the release path. bin/payload.sh

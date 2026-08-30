@@ -119,6 +119,14 @@ TEST_ENV="${TEST_ENV:-$ROOT/test.env}"
 MOD_VER="${MOD_VER:-$(date -u +%Y%m%d)}"
 export MOD_VER
 
+# The stock packages are downloads like everything else in vendor/, pinned by
+# name and sha256 in versions.env. Set either variable in config.env to build
+# against firmware you downloaded yourself; leave it and fetch-assets.sh puts
+# the pinned one here. STOCK_FILE_* is defaulted so a checkout with no
+# versions.env names a missing file rather than the vendor DIRECTORY.
+STOCK_TGZ_CREATOR5PRO="${STOCK_TGZ_CREATOR5PRO:-$ROOT/vendor/${STOCK_FILE_CREATOR5PRO:-Creator5Pro-unpinned.tgz}}"
+STOCK_TGZ_CREATOR5="${STOCK_TGZ_CREATOR5:-$ROOT/vendor/${STOCK_FILE_CREATOR5:-Creator5-unpinned.tgz}}"
+
 # Each stock package carries its own firmwareExe and refuses the other model.
 TARGET_MACHINE="${MODEL:-${TARGET_MACHINE:-Creator5Pro}}"
 case "$TARGET_MACHINE" in
@@ -131,3 +139,4 @@ if [ -z "${STOCK_TGZ:-}" ] && [ -n "$_stock" ]; then
 fi
 
 export TARGET_MACHINE TARGET_PID STOCK_TGZ
+export STOCK_TGZ_CREATOR5PRO STOCK_TGZ_CREATOR5

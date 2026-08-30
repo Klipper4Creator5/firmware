@@ -129,7 +129,7 @@ help:
 	@echo
 	@echo 'Other:'
 	@echo '  make passwd       a ROOT_PW_HASH for config.env (prompts, echoes the hash)'
-	@echo '  make vendor       download Mainsail + HelixScreen + Moonraker'
+	@echo '  make vendor       download every pinned source, stock firmware included'
 	@echo '  make image        build the build container'
 	@echo '  make shell        shell inside it'
 	@echo '  make clean | distclean'
@@ -162,11 +162,17 @@ passwd: image
 #  payload/ and assets/, and touches nothing under qa/.
 # ===========================================================================
 
-# Mainsail, HelixScreen and Moonraker are not vendored in the repo. bin/build.sh fetches
+# Nothing third-party is vendored in the repo -- not Mainsail, HelixScreen and
+# Moonraker, and not the stock FlashForge package either. bin/build.sh fetches
 # what the build needs; this target pre-fetches everything, and is a
 # no-op once vendor/ holds files with the sha256 that versions.env pins.
+#
+# --stock adds both models' stock firmware, ~186MB. It is a separate flag from
+# --all because the packaging lane wants none of it: `./bin/fetch-assets.sh
+# --all` is every payload piece and no FlashForge package, which is what keeps
+# `make packages` runnable on a bare checkout.
 vendor: image config.env
-	@$(RUN) ./bin/fetch-assets.sh --all
+	@$(RUN) ./bin/fetch-assets.sh --all --stock
 
 # A THIRD LANE, because the build needs both halves of the split above.
 # bin/payload.sh assembles the payload by starting the printer replica, so this
