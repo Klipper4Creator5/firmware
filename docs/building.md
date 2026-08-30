@@ -40,14 +40,15 @@ pack.sh     generate runFirmwareExe.sh, tar, encrypt
 comes before a cold `make build`; payload.sh says so if it is missing. Each is
 idempotent and safe to re-run.
 
-There is no host-side check of the built file. `bin/verify.sh` used to
-re-implement the printer's install checks in bash; `make qa-replica` makes the
-printer perform them, so that is the gate now.
+There is no host-side check of the built file. `make qa-replica` has the
+printer perform its own install, and that is the gate.
 
-Packages carry only the **software** component by default. The stock installer
-skips any component that is absent, so the kernel, the rootfs image and the
-MCU/board firmware are left untouched — MCU flashing is the riskiest thing in
-a package and there is no reason to run it for a userspace mod. `FULL=1 make
+Packages carry **no FlashForge component at all** — the installer and the
+payload, and nothing that lands on the firmware partition. The stock installer
+skips any component that is absent, so `/usr/prog`, the kernel, the rootfs
+image and the MCU/board firmware are left untouched — MCU flashing is the
+riskiest thing in a package and there is no reason to run it for a userspace
+mod. `FULL=1 make
 <target>` carries all four.
 
 ## One build

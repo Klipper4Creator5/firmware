@@ -67,13 +67,21 @@ jobs:
       - name: shellcheck
         run: |
           sudo apt-get install -y shellcheck
-          # Errors are a gate. These used to end in `|| true`, which meant
-          # shellcheck could report anything it liked and the job stayed green.
-          # payload scripts run under busybox ash on the printer.
-          shellcheck -s sh   -S error pkgs/*/payload/*.sh pkgs/*/payload/init.d/S* pkgs/*/prog/*.sh pkgs/*/prog/firmwareExe installer/*.sh
+          # Errors are a gate; warnings are printed, not enforced.
+          #
+          # The globs here are the ones that still match something. Two did
+          # not -- pkgs/*/payload/init.d/S* and pkgs/*/prog/*.sh, both paths
+          # the recipes stopped using -- and shellcheck given a pattern that
+          # expands to nothing writes usage to stderr and exits 1.
+          # qa/static/test_shell_syntax.py is the thorough version of this
+          # step: it addresses the same files, refuses a glob that matches
+          # nothing, and runs bash -n beside shellcheck.
+          ASH='pkgs/*/payload/*.sh pkgs/*/payload/prog/*.sh pkgs/*/payload/prog/firmwareExe installer/*.sh'
+          # shellcheck disable=SC2086
+          shellcheck -s sh   -S error   $ASH
           shellcheck -s bash -S error bin/*.sh tools/replica/*.sh
-          # Warnings are advisory: printed, not enforced.
-          shellcheck -s sh -S warning pkgs/*/payload/*.sh pkgs/*/payload/init.d/S* pkgs/*/prog/*.sh pkgs/*/prog/firmwareExe installer/*.sh || true
+          # shellcheck disable=SC2086
+          shellcheck -s sh   -S warning $ASH || true
 
       # s6 and CPython 3.13 have no BUILD_ flag -- every package ships them
       # (see bin/fetch-assets.sh) -- so this job builds them for real rather

@@ -32,7 +32,7 @@ STOCK_SW_VER=$(basename "$SW_TARBALL" | sed 's/^software-//; s/\.tar\.xz$//')
 echo ">> extracting software component $STOCK_SW_VER"
 tar -xf "$SW_TARBALL" -C work/software
 
-# runFirmwareExe.sh refuses a MACHINE/PID mismatch; recorded for verify.sh.
+# Recorded for bin/pack.sh, which bakes both into the installer's own gate.
 PKG_MACHINE=$(sed -n 's/^MACHINE=//p' work/outer/runFirmwareExe.sh | head -n1)
 PKG_PID=$(sed -n 's/^PID=//p' work/outer/runFirmwareExe.sh | head -n1)
 echo "${PKG_MACHINE:-unknown}" > work/.pkg_machine

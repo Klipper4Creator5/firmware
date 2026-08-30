@@ -156,8 +156,7 @@ the update package on top:
   see how-it-works — so the factory tree here, the interpreter and
   `moonrakerDaemon` all stay stock, and `moonrakerDaemon` is simply never
   invoked. Nothing the mod installs is written to the prog partition's
-  `moonraker/`, which is what makes it a useful baseline: `case-install.sh`
-  asserts this tree is untouched after an install.)
+  `moonraker/`, which is what makes it a useful baseline.)
 * **Not present at all**: stubs. Without a real prog partition the replica
   refuses to start rather than substitute one.
 * **Neutered, always**: `insmod`, `rmmod`, `modprobe`, `reboot`, `poweroff`,

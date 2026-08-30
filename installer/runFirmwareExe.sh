@@ -154,11 +154,11 @@ for file in /usr/prog/klipper/start.sh /usr/prog/etc/passwd /usr/prog/etc/shadow
         mkdir -p "$dest" && cp -a "$file" "$dest/" && echo "backed up $file"
     fi
 done
-# NOT the previous firmwareExe. install_component wipes the software directory
-# before the new version lands, so by the time anything of ours runs the old
-# binary is already gone. That is also why uninstalling means flashing the
-# STOCK package again: it is the only thing that still carries the genuine
-# binary. See docs/hardware-testing.md and `make test-recovery`.
+# NOT the previous firmwareExe. There is nothing to back up: this is a symlink
+# into $MODDIR, and the genuine binary went the first time a component was
+# installed over it. That is why uninstalling means flashing the STOCK package
+# again -- it is the only thing that still carries the real one. See
+# docs/hardware-testing.md.
 
 # Only the FIRST install sees genuinely stock files, so never let a later
 # re-flash overwrite the pristine copy.
@@ -167,7 +167,7 @@ if [ ! -d "$MODDIR/backup/stock" ]; then
 fi
 
 # A password hash left on disk by installs that predate this one. Nothing reads
-# it any more; do not leave a secret lying in $MODDIR.
+# it; do not leave a secret lying in $MODDIR.
 rm -f "$MODDIR/.prev-root-hash"
 sync
 
@@ -525,9 +525,9 @@ find /usr/prog/klipper/klippy -name '__pycache__' -type d -exec rm -rf {} + 2>/d
 sync
 
 # ---- the root password ------------------------------------------------------
-# Two ways in, and neither writes a shadow file into a package any more: this
-# script edits /usr/prog/etc/shadow on the machine. (/etc is a bind mount of
-# /usr/prog/etc, so that IS the live file dropbear authenticates against.)
+# Two ways in, and both end at the same place: this script edits
+# /usr/prog/etc/shadow on the machine. (/etc is a bind mount of /usr/prog/etc,
+# so that IS the live file dropbear authenticates against.)
 #
 # BAKED. ROOT_PW_HASH at build time, put here by bin/pack.sh. Applied on every
 # flash, which is what the old path did too -- the hash rode in the software

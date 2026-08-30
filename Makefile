@@ -192,12 +192,10 @@ build: image config.env
 # recipe under pkgs/ into work/packages/ as .ipk files plus the feed index that
 # makes that directory an opkg repository.
 #
-# THE RELEASE PATH IS BUILT ON THIS. It used to say the opposite -- "nothing
-# on the release path depends on this" -- and that was already false when it
-# was written: pkgs/3rdparty/python declares seven build dependencies, pkg_deps
-# resolves them by unpacking their .ipk out of work/packages, and bin/payload.sh
-# builds none of the seven. `make build` on a cold checkout has never worked
-# without this target; it failed deep inside a recipe instead of saying so.
+# THE RELEASE PATH IS BUILT ON THIS. pkgs/3rdparty/python declares seven build
+# dependencies, pkg_deps resolves them by unpacking their .ipk out of
+# work/packages, and bin/payload.sh builds none of the seven. `make build` on a
+# cold checkout does not work without this target.
 # bin/payload.sh now checks for the feed up front and names this command.
 #
 # It still, unlike `build`, needs NO stock FlashForge package -- which is most
@@ -209,9 +207,8 @@ packages: image config.env
 # One package per model, collected in dist/. They cannot share content: the
 # two stock packages ship different firmwareExe binaries.
 #
-# It checks nothing itself. bin/verify.sh used to run here and was a host-side
-# re-reading of what the printer does at install time; `make qa-replica` makes
-# the printer actually do it, so THAT is the gate before a release goes out.
+# It checks nothing itself: `make qa-replica` has the printer perform its own
+# install, so THAT is the gate before a release goes out.
 release: image config.env
 	@rm -rf dist && mkdir -p dist
 	@for m in Creator5Pro Creator5; do \
@@ -233,17 +230,11 @@ rootfs: image config.env
 	@$(RUN) ./bin/unpack.sh >/dev/null
 	@$(RUN) ./tools/replica/extract-rootfs.py
 
-# `make test` and `make test-py` used to be here, over test/ -- run-tests.py,
-# then the pytest tree it wrapped. Every case it drove is a module under qa/
-# now, and the host-side units went with the tree. `make qa` is the suite.
-
 # ---------------------------------------------------------------------------
 #  THE qa SUITE
 #
-#  Same machine, same gates, one framework. See qa/conftest.py for the lanes
-#  and docs/qa-migration.md for what moves when. Both suites run in CI until a
-#  case-*.sh has a green replacement here, and then that case script is
-#  deleted -- so there is never a window where coverage drops.
+#  Same machine, same gates, one framework. `make qa` is the suite; see
+#  qa/conftest.py for the lanes.
 #
 #    make qa           both lanes
 #    make qa-static    needs nothing: parses, bashisms, names, the probes
