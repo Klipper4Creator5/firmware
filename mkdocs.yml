@@ -113,6 +113,7 @@ nav:
           - Print lifecycle: notes/50-print-lifecycle.md
           - Nozzle clean, recovered: notes/50a-nozzle-clean-recovered.md
           - Nozzle clean, the port: notes/50b-nozzle-clean-port.md
+          - Automatic pressure advance: notes/51-pa-calibration-recovered.md
           - Filament, calibration, persistent state: notes/60-background.md
           - Migrating to s6: notes/80-s6-migration.md
           - Packaging with opkg: notes/85-packaging.md

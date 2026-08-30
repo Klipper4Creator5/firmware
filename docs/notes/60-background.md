@@ -36,8 +36,10 @@ UI. What is genuinely still unported is marked as such per item. Kept as referen
   `FF_IMPORT_FIRMWARE_CONFIG` — once per install, run for you at the first boot
   by `bin/ff-startup.py` — and is never a runtime source.
 - **Input shaper**: `STEPPER_RESONANCE_FACTORY_CALIBRATE` (fork) / `SHAPER_CALIBRATE`.
-- **Auto PA**: prints slow-fast-slow line patterns per PA candidate, scores via
-  `PA_ACTION`/`PA_GET` (sensor unknown), stores per-tool table via `SET_PA_ADVANCE`.
+- **Auto PA**: seven PA candidates, one slow-fast-slow line each, scored by the closed
+  eBoard MCU via `PA_ACTION`/`PA_GET`; the mean of three passing sweeps is stored as a
+  per-tool table via `SET_PA_ADVANCE`. Host side fully recovered — see
+  [`51-pa-calibration-recovered.md`](51-pa-calibration-recovered.md).
 
 ## Persistent state map (/usr/data/firmwareRes/config/)
 

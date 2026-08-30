@@ -63,7 +63,8 @@ sets to NOZZLE). So with the shipped `tool_material: ['PLA','PLA','PLA','PLA']`,
   assumption as LOAD_FILAMENT; unmeasured.
 - **Cool-down wait** has no timeout (`TEMPERATURE_WAIT`); the app gives up after 180 s with
   E003x. `clean_cool_delta: 0` skips it (much faster, less clean).
-- The PA-test variant (`paTest` flag → `SET_KINEMATIC_POSITION` + `paTestMgr`) and the
+- The PA-test variant (`paTest` flag → `SET_KINEMATIC_POSITION` + `paTestMgr`, now recovered
+  in [`51-pa-calibration-recovered.md`](51-pa-calibration-recovered.md)) and the
   `SET_PA_ADVANCE … ENABLE=0` reset after the loop are not reproduced. Both were
   line-rewriting state in FlashForge's `virtual_sdcard`; upstream rewrites nothing, so
   there is no PA override to reset — see the note in `END_PRINT`.

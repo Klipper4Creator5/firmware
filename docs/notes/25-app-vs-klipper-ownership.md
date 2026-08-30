@@ -55,7 +55,7 @@ START_PRINT's -- and with `prepare_on_m23: 0`, the shipped default, not even tha
 |---|---|---|
 | PID | none — `PID_CALIBRATE` + `SAVE_CONFIG` | upstream |
 | Shaper | none — park + `SHAPER_CALIBRATE` / `STEPPER_RESONANCE_FACTORY_CALIBRATE` (a fork **macro** in `printer.vibration.cfg:45-66` over `stepper_resonance_tester.py`) | already Klipper |
-| PA | `stof(PA_GET)` only; scoring lives in **closed eboard firmware** (`pa_adjust.py` forwards `pa_action` / `get_emcu_pa_value` to `mcu eboard`) | callable, not reproducible; PA tower as fallback |
+| PA | full sweep + selection in the app (`paTestMgr`, `51-pa-calibration-recovered.md`); only the per-line pass/fail verdict is in the **closed eboard firmware** (`pa_adjust.py` forwards `pa_action` / `get_emcu_pa_value` to `mcu eboard`) | host side reproducible, and `[pa_adjust]` already ships — needs `ff_pa.py`; PA tower until then |
 | XY/Z nozzle offsets | 4-point `ESTOP` probes + LS circle fit, two passes | **ported** — see `45-tool-offset-calibration.md` |
 | Dock auto-cal | parses `HDHOME` / `TMCHOME_*_CY` "Result is …", subtracts nominal | portable; exact arithmetic is in stubs |
 
