@@ -81,35 +81,80 @@ gates on the data dictionary.  It needs `work/stock/mcu/levelBoard.dict.json`
 
 ## How close it gets
 
-**The data dictionary matches the stock levelBoard firmware** -- 54/54
-commands, 24/24 responses, and every config constant and enumeration
-identical.  The rebuilt firmware speaks precisely what the stock board
-speaks.
+The goal is a byte-identical image. Not there yet, but the fundamentals are
+pinned and the gap is measured rather than guessed.
 
-The one difference is numbering: 17 of the 54 commands are assigned a
-different message id.  Klipper hands ids out in the order the
-compile-time-request entries land in the image, and the host reads them
-back out of the dictionary at run time, so two builds that disagree only
-on numbering are both correct.  `compare-dict.py` reports the count and
-does not gate on it.  The memory map matches too: load address `0x08004000` behind a
-16 KiB bootloader, initial SP `0x20004000`.
+**Byte-identical already:**
 
-The **machine code is not identical**, and is not meant to be.  The rebuild
-is 17,920 bytes against the stock 26,704.  The ~8.8 KiB difference is the
-part that the dictionary cannot describe and that was not reconstructed:
+- **The data dictionary** -- all 5,663 bytes, including every message id.
+  Ids are not cosmetic: they are baked into the image, so this only fell
+  into place once the FlashForge commands were positioned correctly in the
+  source (see below).
+- **The compressed identify blob** -- all 2,281 bytes as stored in flash.
+- The memory map: load address `0x08004000` behind a 16 KiB bootloader,
+  initial SP `0x20004000`.
 
-- the eddy front end that produces the live reading -- ADC1 sampled over
-  DMA1 channel 1, with an SPI2 side channel;
-- FlashForge's DMA-driven serial path (DMA1 channels 4 and 5).  Upstream's
-  `serial_irq.c` is interrupt-driven a byte at a time; the stock image is
-  not, which is why it can carry a 384-byte receive window;
-- the three `Levelboard close= / Close_num= / Temp_waketime=` counters,
-  whose meaning is not recoverable from the image;
-- `pa_action`, whose eBoard implementation reconfigures TIM4, TIM8 and a
-  DMA stream.
+**Measured progress on code:** 34 of the 54 command handlers are
+instruction-identical to stock, up from 7 before the systematic changes
+below were found. The image is 25,624 bytes against the stock 26,704 -- a
+1,080-byte gap, down from 8,784.
 
-Treat the result as a faithful reconstruction of the **protocol layer**,
-not as a drop-in replacement image.  Do not flash it.
+### What had to be pinned first
+
+The build was not reproducible against *itself*: Klipper stamps
+`?-<timestamp>-<hostname>` into the dictionary it embeds, so two builds a
+second apart differ. Nothing can be matched until that is fixed. Likewise
+the deflate: Fedora's Python links zlib-ng, which produces different bytes
+from classic zlib at the same level, for identical input.
+
+The compiler configuration was then established by measurement, not
+assumption -- each row is the count of instruction-identical handlers:
+
+| | | |
+|---|---|---|
+| `-O2` | **32** | vs 10 (-Os), 3 (-O1), 28 (-O3), 3 (-Og) |
+| `-mcpu=cortex-m4` | **32** | vs 8 for cortex-m3 |
+| no LTO | **32** | vs 5 with Klipper's default `-flto -fwhole-program` |
+
+Upstream Klipper builds with LTO; the stock image does not, which is
+visible directly -- it *calls* `oid_lookup` where an LTO build inlines it.
+
+### Three systematic FlashForge changes
+
+Each one is a small edit repeated across the tree, and each unlocked many
+functions at once.
+
+1. **`shutdown()` latches an error code.** Every site writes a per-site
+   constant to a global before shutting down, so the host can name the
+   fault. All 30 sites recovered; the codes run sequentially in source
+   order within each file, which is how the mapping was confirmed rather
+   than guessed (gpiocmds.c lines 62/89/137/160/183 -> 29/30/31/32/33).
+2. **`sched_add_timer()` takes a call-site tag.** On a "timer scheduled in
+   the past" fault the tag is latched and reported as the `close` field of
+   the board telemetry, naming which call site was late. All 13 sites
+   recovered.
+3. **The FlashForge commands live in `basecmd.c`,** between
+   `clear_shutdown` and `identify`, and `ff_report_close()` sits at the end
+   of the file. This is not a style choice: Klipper assigns message ids
+   from the concatenated per-object `.ctr` files in `src-y` order, and in
+   *reverse* declaration order within a file. Stock's ids put the six
+   commands at 2-7, between identify (1) and clear_shutdown (8), which is
+   only reachable from that one arrangement. Getting it right is what made
+   the dictionary byte-identical.
+
+### What is still missing
+
+The remaining ~1 KB is mostly FlashForge's DMA-driven serial path (DMA1
+channels 4 and 5 plus a USART1 handler for errors and idle) and a
+StdPeriph-style driver library that upstream Klipper does not use.
+
+The 20 handlers that still differ are close -- most have identical
+instruction counts and diverge only in register allocation. Those need
+per-function work of the kind matching decompilation projects do; no
+compiler flag accounts for them (ten were swept, none beat the baseline).
+
+Do not flash any of this. It is a reconstruction for study, not a
+drop-in image.
 
 ## A bug worth knowing about
 
@@ -131,6 +176,10 @@ generated dictionary still matches; a fix is a one-line change to use
 |---|---|
 | `extract-dict.py` | pull the Klipper data dictionary out of a raw image |
 | `compare-dict.py` | gate a rebuilt dictionary against a stock one |
+| `compare-blob.py` | gate the compressed identify blob as stored in flash |
+| `cmpfuncs.py` | count command handlers that are instruction-identical to stock |
+| `shutdownmap2.py` | recover the shutdown error code of every instrumented site |
+| `timertags.py` | recover the call-site tag passed to every sched_add_timer |
 | `klip_cmdtab.py` | find `command_index[]` and map every command to its handler address |
 | `armdis.py` | Thumb-2 disassembly of one function, literals and strings resolved |
 | `xref.py` | literal-pool cross-references, to find what touches a global |

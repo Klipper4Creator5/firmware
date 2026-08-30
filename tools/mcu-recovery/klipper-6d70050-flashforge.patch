@@ -1,3 +1,71 @@
+diff --git a/Makefile b/Makefile
+index 735d18633..e3735648b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -33,7 +33,7 @@ CFLAGS := -iquote $(OUT) -iquote src -iquote $(OUT)board-generic/ \
+ 		-std=gnu11 -O2 -MD -Wall \
+ 		-Wold-style-definition $(call cc-option,$(CC),-Wtype-limits,) \
+     -ffunction-sections -fdata-sections -fno-delete-null-pointer-checks
+-CFLAGS += -flto=auto -fwhole-program -fno-use-linker-plugin -ggdb3
++CFLAGS += -ggdb3
+ 
+ OBJS_klipper.elf = $(patsubst %.c, $(OUT)src/%.o,$(src-y))
+ OBJS_klipper.elf += $(OUT)compile_time_request.o
+diff --git a/scripts/buildcommands.py b/scripts/buildcommands.py
+index b35873840..0a8e04d00 100644
+--- a/scripts/buildcommands.py
++++ b/scripts/buildcommands.py
+@@ -491,6 +491,12 @@ def build_version(extra, cleanbuild):
+     elif 'dirty' in version:
+         cleanbuild = False
+     if not cleanbuild:
++        # Reproducible builds: KLIPPER_BUILD_VERSION pins the whole stamp,
++        # which otherwise carries the wall clock and this machine's hostname
++        # into the data dictionary embedded in the image.
++        forced = os.environ.get('KLIPPER_BUILD_VERSION')
++        if forced:
++            return forced + extra
+         btime = time.strftime("%Y%m%d_%H%M%S")
+         hostname = socket.gethostname()
+         version = "%s-%s-%s" % (version, btime, hostname)
+@@ -526,6 +532,28 @@ def tool_versions(tools):
+     cleanbuild = versions[0] and versions[1] and success == len(tools)
+     return cleanbuild, "gcc: %s binutils: %s" % (versions[0], versions[1])
+ 
++def compress_dict(data):
++    # The stock firmware was deflated with classic zlib.  Some distributions
++    # ship a Python linked against zlib-ng, whose output differs byte for
++    # byte at the same level, which changes the image.  KLIPPER_ZLIB points
++    # at a classic libz when an exact reproduction is wanted.
++    libpath = os.environ.get('KLIPPER_ZLIB')
++    if not libpath:
++        return zlib.compress(data, 9)
++    import ctypes
++    lib = ctypes.CDLL(libpath)
++    lib.compress2.restype = ctypes.c_int
++    lib.compress2.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_ulong),
++                              ctypes.c_char_p, ctypes.c_ulong, ctypes.c_int]
++    n = ctypes.c_ulong(len(data) + len(data) // 100 + 64)
++    buf = ctypes.create_string_buffer(n.value)
++    rc = lib.compress2(buf, ctypes.byref(n), ctypes.c_char_p(data),
++                       ctypes.c_ulong(len(data)), ctypes.c_int(9))
++    if rc != 0:
++        raise error("classic zlib compress2 failed: %d" % (rc,))
++    return buf.raw[:n.value]
++
++
+ # Add version information to the data dictionary
+ class HandleVersions:
+     def __init__(self):
+@@ -570,7 +598,7 @@ class HandleIdentify:
+             f.close()
+ 
+         # Format compressed info into C code
+-        zdatadict = bytearray(zlib.compress(datadict.encode(), 9))
++        zdatadict = bytearray(compress_dict(datadict.encode()))
+         out = []
+         for i in range(len(zdatadict)):
+             if i % 8 == 0:
 diff --git a/src/Kconfig b/src/Kconfig
 index 7dcea3bab..7c2904b7f 100644
 --- a/src/Kconfig
@@ -25,14 +93,14 @@ index 7dcea3bab..7c2904b7f 100644
      # Enables gcc to inline stepper_event() into the main timer irq handler
      bool
 diff --git a/src/Makefile b/src/Makefile
-index ed98172e4..97bb416c5 100644
+index ed98172e4..761479c3b 100644
 --- a/src/Makefile
 +++ b/src/Makefile
 @@ -1,12 +1,10 @@
  # Main code build rules
  
 -src-y += sched.c command.c basecmd.c debugcmds.c
-+src-y += sched.c command.c basecmd.c debugcmds.c ff_flashforge.c
++src-y += sched.c command.c basecmd.c debugcmds.c ff_flashforge.c ff_eddy.c
  src-$(CONFIG_HAVE_GPIO) += initial_pins.c gpiocmds.c stepper.c endstop.c \
      trsync.c
  src-$(CONFIG_HAVE_GPIO_ADC) += adccmds.c
@@ -42,11 +110,320 @@ index ed98172e4..97bb416c5 100644
  src-$(CONFIG_HAVE_GPIO_HARD_PWM) += pwmcmds.c
  
  src-$(CONFIG_WANT_GPIO_BITBANGING) += buttons.c tmcuart.c neopixel.c \
+diff --git a/src/adccmds.c b/src/adccmds.c
+index a27dc8c06..d8ae16155 100644
+--- a/src/adccmds.c
++++ b/src/adccmds.c
+@@ -87,7 +87,7 @@ command_query_analog_in(uint32_t *args)
+     a->range_check_count = args[7];
+     if (! a->sample_count)
+         return;
+-    sched_add_timer(&a->timer);
++    sched_add_timer(&a->timer, 31);
+ }
+ DECL_COMMAND(command_query_analog_in,
+              "query_analog_in oid=%c clock=%u sample_ticks=%u sample_count=%c"
+@@ -129,7 +129,7 @@ analog_in_shutdown(void)
+             a->state = a->sample_count + 1;
+             a->next_begin_time += a->rest_time;
+             a->timer.waketime = a->next_begin_time;
+-            sched_add_timer(&a->timer);
++            sched_add_timer(&a->timer, 0);
+         }
+     }
+ }
+diff --git a/src/basecmd.c b/src/basecmd.c
+index 6d26884df..006e6ba18 100644
+--- a/src/basecmd.c
++++ b/src/basecmd.c
+@@ -10,6 +10,7 @@
+ #include "board/misc.h" // alloc_maxsize
+ #include "board/pgm.h" // READP
+ #include "command.h" // DECL_COMMAND
++#include "ff_flashforge.h" // ff_eddy
+ #include "sched.h" // sched_clear_shutdown
+ 
+ 
+@@ -31,7 +32,7 @@ void *
+ alloc_chunk(size_t size)
+ {
+     if (alloc_end + size > dynmem_end())
+-        shutdown("alloc_chunk failed");
++        shutdown_ec(40, "alloc_chunk failed");
+     void *data = alloc_end;
+     alloc_end += ALIGN(size, __alignof__(void*));
+     memset(data, 0, size);
+@@ -47,7 +48,7 @@ alloc_chunks(size_t size, size_t count, uint16_t *avail)
+     while (can_alloc < count && p + size <= end)
+         can_alloc++, p += size;
+     if (!can_alloc)
+-        shutdown("alloc_chunks failed");
++        shutdown_ec(41, "alloc_chunks failed");
+     void *data = alloc_chunk(p - alloc_end);
+     *avail = can_alloc;
+     return data;
+@@ -87,7 +88,7 @@ move_alloc(void)
+     irqstatus_t flag = irq_save();
+     struct move_node *mf = move_free_list;
+     if (!mf)
+-        shutdown("Move queue overflow");
++        shutdown_ec(42, "Move queue overflow");
+     move_free_list = mf->next;
+     irq_restore(flag);
+     return mf;
+@@ -144,7 +145,7 @@ move_queue_setup(struct move_queue_head *mh, int size)
+     mh->first = mh->last = NULL;
+ 
+     if (size > UINT8_MAX || is_finalized())
+-        shutdown("Invalid move request size");
++        shutdown_ec(43, "Invalid move request size");
+     if (size > move_item_size)
+         move_item_size = size;
+ }
+@@ -170,7 +171,7 @@ static void
+ move_finalize(void)
+ {
+     if (is_finalized())
+-        shutdown("Already finalized");
++        shutdown_ec(44, "Already finalized");
+     struct move_queue_head dummy;
+     move_queue_setup(&dummy, sizeof(*move_free_list));
+     move_list = alloc_chunks(move_item_size, 1024, &move_count);
+@@ -193,7 +194,7 @@ void *
+ oid_lookup(uint8_t oid, void *type)
+ {
+     if (oid >= oid_count || type != oids[oid].type)
+-        shutdown("Invalid oid type");
++        shutdown_ec(45, "Invalid oid type");
+     return oids[oid].data;
+ }
+ 
+@@ -201,7 +202,7 @@ void *
+ oid_alloc(uint8_t oid, void *type, uint16_t size)
+ {
+     if (oid >= oid_count || oids[oid].type || is_finalized())
+-        shutdown("Can't assign oid");
++        shutdown_ec(46, "Can't assign oid");
+     oids[oid].type = type;
+     void *data = alloc_chunk(size);
+     oids[oid].data = data;
+@@ -227,7 +228,7 @@ void
+ command_allocate_oids(uint32_t *args)
+ {
+     if (oids)
+-        shutdown("oids already allocated");
++        shutdown_ec(47, "oids already allocated");
+     uint8_t count = args[0];
+     oids = alloc_chunk(sizeof(oids[0]) * count);
+     oid_count = count;
+@@ -339,7 +340,7 @@ stats_update(uint32_t start, uint32_t cur)
+ void
+ command_emergency_stop(uint32_t *args)
+ {
+-    shutdown("Command request");
++    shutdown_ec(49, "Command request");
+ }
+ DECL_COMMAND_FLAGS(command_emergency_stop, HF_IN_SHUTDOWN, "emergency_stop");
+ 
+@@ -350,6 +351,77 @@ command_clear_shutdown(uint32_t *args)
+ }
+ DECL_COMMAND_FLAGS(command_clear_shutdown, HF_IN_SHUTDOWN, "clear_shutdown");
+ 
++/****************************************************************
++ * FlashForge additions
++ ****************************************************************/
++
++void
++command_remove_peel(uint32_t *args)
++{
++    // args[0] ("action") is accepted and ignored by the stock firmware.
++    int32_t peel = ff_eddy_peel;
++    ff_eddy_baseline = ff_eddy_value;
++    sendf("peel_data value=%i", peel);
++}
++DECL_COMMAND(command_remove_peel, "remove_peel action=%u");
++
++// Both PA bodies fold away on every board except the eBoard; the response
++// stays in the data dictionary because DECL_CTR survives dead code
++// elimination.  That is what the stock levelBoard image shows: two "bx lr"
++// handlers and a live "pa_value value=%u" encoder.
++void
++command_get_emcu_pa_value(uint32_t *args)
++{
++    if (!CONFIG_FF_BOARD_EBOARD)
++        return;
++    sendf("pa_value value=%u", ff_pa_value);
++}
++DECL_COMMAND(command_get_emcu_pa_value, "get_emcu_pa_value");
++
++void
++command_pa_action(uint32_t *args)
++{
++    if (!CONFIG_FF_BOARD_EBOARD)
++        return;
++    ff_pa_action(args[0], args[1]);
++}
++DECL_COMMAND(command_pa_action, "pa_action action=%u pc=%u");
++
++void
++command_get_basic_param(uint32_t *args)
++{
++    // args[0] ("num") is accepted and ignored by the stock firmware.
++    uint32_t baseline = ff_eddy_baseline, value = ff_eddy_value;
++    ff_eddy_rebaseline();
++    uint32_t diff = value > baseline ? value - baseline : baseline - value;
++    sendf("param_value value=%u reserve=%u", baseline, diff);
++}
++DECL_COMMAND(command_get_basic_param, "get_basic_param num=%u");
++
++// levelBoard.hex reports these three constants verbatim.
++#define FF_MCU_YEAR     2026
++#define FF_MCU_DATE      613
++#define FF_MCU_VERSION  7091
++
++void
++command_get_mcu_version(uint32_t *args)
++{
++    sendf("mcu_version year=%u date=%u version=%u"
++          , FF_MCU_YEAR, FF_MCU_DATE, FF_MCU_VERSION);
++}
++DECL_COMMAND(command_get_mcu_version, "get_mcu_version");
++
++void
++command_set_trigger_threshold(uint32_t *args)
++{
++    ff_trigger_threshold = args[0];
++    ff_eddy_threshold = ff_trigger_threshold;
++    sendf("trigger_threshold threshold=%i", ff_trigger_threshold);
++}
++DECL_COMMAND(command_set_trigger_threshold
++             , "set_trigger_threshold threshold=%i");
++
++
+ void
+ command_identify(uint32_t *args)
+ {
+@@ -365,3 +437,16 @@ command_identify(uint32_t *args)
+ }
+ DECL_COMMAND_FLAGS(command_identify, HF_IN_SHUTDOWN,
+                    "identify offset=%u count=%c");
++
++
++// Board telemetry, emitted alongside Klipper's own shutdown report.  The
++// counters are board specific; the stock image names them per board
++// ("Levelboard", "Eboard", "Eheaterboard", "GDMainboard").
++static uint16_t ff_close_num, ff_temp_waketime;
++
++void
++ff_report_close(void)
++{
++    sendf("Levelboard close=%hu Close_num=%hu Temp_waketime=%hu"
++          , ff_timer_close, ff_close_num, ff_temp_waketime);
++}
+diff --git a/src/buttons.c b/src/buttons.c
+index 43c0820af..3b07b4519 100644
+--- a/src/buttons.c
++++ b/src/buttons.c
+@@ -74,7 +74,7 @@ command_config_buttons(uint32_t *args)
+ {
+     uint8_t button_count = args[1];
+     if (button_count > 8)
+-        shutdown("Max of 8 buttons");
++        shutdown_ec(37, "Max of 8 buttons");
+     struct buttons *b = oid_alloc(
+         args[0], command_config_buttons
+         , sizeof(*b) + sizeof(b->pins[0]) * button_count);
+@@ -89,7 +89,7 @@ command_buttons_add(uint32_t *args)
+     struct buttons *b = oid_lookup(args[0], command_config_buttons);
+     uint8_t pos = args[1];
+     if (pos >= b->button_count)
+-        shutdown("Set button past maximum button count");
++        shutdown_ec(38, "Set button past maximum button count");
+     b->pins[pos] = gpio_in_setup(args[2], args[3]);
+ }
+ DECL_COMMAND(command_buttons_add,
+@@ -107,10 +107,10 @@ command_buttons_query(uint32_t *args)
+     b->retransmit_state = BF_ACKED;
+     b->retransmit_count = args[3];
+     if (b->retransmit_count >= BF_NO_RETRANSMIT)
+-        shutdown("Invalid buttons retransmit count");
++        shutdown_ec(39, "Invalid buttons retransmit count");
+     if (! b->rest_ticks)
+         return;
+-    sched_add_timer(&b->time);
++    sched_add_timer(&b->time, 48);
+ }
+ DECL_COMMAND(command_buttons_query,
+              "buttons_query oid=%c clock=%u rest_ticks=%u retransmit_count=%c"
+diff --git a/src/command.h b/src/command.h
+index 21b3f79b8..4cef2a5b8 100644
+--- a/src/command.h
++++ b/src/command.h
+@@ -40,6 +40,18 @@
+ // Shut down the machine (also declares a static string to transmit)
+ #define shutdown(msg)                           \
+     sched_shutdown(_DECL_STATIC_STR(msg))
++// FlashForge: a shutdown also latches a numeric error code, which the host
++// reads back to name the fault.  The codes were recovered from the stock
++// image; they run in source order within each file.
++extern uint32_t ff_shutdown_code;
++#define shutdown_ec(code, msg) do {             \
++        ff_shutdown_code = (code);              \
++        shutdown(msg);                          \
++    } while (0)
++#define try_shutdown_ec(code, msg) do {         \
++        ff_shutdown_code = (code);              \
++        try_shutdown(msg);                      \
++    } while (0)
+ #define try_shutdown(msg)                       \
+     sched_try_shutdown(_DECL_STATIC_STR(msg))
+ 
 diff --git a/src/endstop.c b/src/endstop.c
-index 779153982..433c8cc1a 100644
+index 779153982..d7e9adef5 100644
 --- a/src/endstop.c
 +++ b/src/endstop.c
-@@ -113,3 +113,28 @@ command_endstop_query_state(uint32_t *args)
+@@ -8,6 +8,7 @@
+ #include "board/gpio.h" // struct gpio
+ #include "board/irq.h" // irq_disable
+ #include "command.h" // DECL_COMMAND
++#include "ff_flashforge.h" // ff_endstop_active
+ #include "sched.h" // struct timer
+ #include "trsync.h" // trsync_do_trigger
+ 
+@@ -84,6 +85,8 @@ command_endstop_home(uint32_t *args)
+         // Disable end stop checking
+         e->ts = NULL;
+         e->flags = 0;
++        ff_endstop_active = 0;
++        ff_eddy_free_run = 1;
+         return;
+     }
+     e->rest_time = args[4];
+@@ -92,7 +95,8 @@ command_endstop_home(uint32_t *args)
+     e->flags = ESF_HOMING | (args[5] ? ESF_PIN_HIGH : 0);
+     e->ts = trsync_oid_lookup(args[6]);
+     e->trigger_reason = args[7];
+-    sched_add_timer(&e->time);
++    ff_endstop_active = 1;
++    sched_add_timer(&e->time, 1);
+ }
+ DECL_COMMAND(command_endstop_home,
+              "endstop_home oid=%c clock=%u sample_ticks=%u sample_count=%c"
+@@ -101,15 +105,42 @@ DECL_COMMAND(command_endstop_home,
+ void
+ command_endstop_query_state(uint32_t *args)
+ {
++    ff_endstop_active = 1;
+     uint8_t oid = args[0];
+     struct endstop *e = oid_lookup(oid, command_config_endstop);
+ 
+     irq_disable();
+-    uint8_t eflags = e->flags;
+     uint32_t nextwake = e->nextwake;
++    uint8_t eflags = e->flags;
+     irq_enable();
+ 
+     sendf("endstop_state oid=%c homing=%c next_clock=%u pin_value=%c"
            , oid, !!(eflags & ESF_HOMING), nextwake, gpio_in_read(e->pin));
  }
  DECL_COMMAND(command_endstop_query_state, "endstop_query_state oid=%c");
@@ -70,168 +447,713 @@ index 779153982..433c8cc1a 100644
 +    e->trigger_count = e->sample_count;
 +    e->ts = NULL;
 +    e->flags = 0;
++    ff_endstop_active = 0;
 +    irq_enable();
 +    command_sendf(ctr_lookup_encoder("endstop_recover_state oid=%c ok=%c")
 +                  , oid, 1);
 +}
 +DECL_COMMAND(command_endstop_recover_state, "endstop_recover_state oid=%c");
-diff --git a/src/ff_flashforge.c b/src/ff_flashforge.c
+diff --git a/src/ff_eddy.c b/src/ff_eddy.c
 new file mode 100644
-index 000000000..c04245bd4
+index 000000000..5db216555
 --- /dev/null
-+++ b/src/ff_flashforge.c
-@@ -0,0 +1,151 @@
-+// FlashForge Creator 5 additions to the Klipper MCU firmware.
++++ b/src/ff_eddy.c
+@@ -0,0 +1,608 @@
++// FlashForge Creator5 "levelBoard" eddy-current bed probe front end.
 +//
-+// Recovered from the stock board images shipped in control-1.2.9
-+// (levelBoard.hex, eBoard.hex, heaterBoard.hex, mainBoardGD.hex).  The
-+// four boards are built from one source tree with a board selector: a
-+// command is compiled everywhere but its body folds away on the boards
-+// that do not implement it, which is why levelBoard carries an empty
-+// get_emcu_pa_value while eBoard has the real one.
++// Recovered from the stock image work/stock/mcu/levelBoard.bin
++// (load address 0x08004000, Cortex-M3 Thumb-2, no symbols).  Every
++// non-obvious claim below carries the flash address of the instruction
++// that justifies it.  Anything that could not be pinned down is marked
++// "UNCERTAIN" rather than guessed at.
 +//
-+// This file reconstructs the command/response layer only.  The eddy
-+// front end that produces ff_eddy.value (ADC1 via DMA1 channel 1, with
-+// an SPI2 side channel) is not reconstructed here.
++// What the hardware actually is
++// -----------------------------
++// There is NO ADC in this module.  The probe is an LC oscillator whose
++// frequency is pulled by the steel bed.  The oscillator output is fed
++// into TIM8_ETR (PA0, alternate function 8, 0x08007818..0x0800782E) and
++// TIM8 is put in external-clock mode 2 with ARR=500, so TIM8 raises an
++// update event once every 501 oscillator edges (0x0800783A/0x0800784A).
++// TIM1 free-runs off the internal timer clock as a plain 16-bit tick
++// counter (PSC=0, ARR=0xffff, 0x0800786E..0x0800787C).  DMA1 channel 1
++// is armed circular, one halfword, TIM1->CNT -> a single RAM word, and
++// is requested by the TIM8 update (0x08007780..0x080077FA).  So every
++// DMA completion interrupt hands us the TIM1 tick count at that moment,
++// and the difference between successive captures is
++//
++//     ticks elapsed while the oscillator produced 501 edges
++//
++// i.e. a reciprocal frequency (period) measurement, 16 bits wide.  That
++// difference is "value" as ff_eddy.py sees it.  Larger value == lower
++// oscillator frequency == metal closer.  With CLOCK_FREQ=128000000 one
++// tick is 7.8125 ns.
 +//
 +// This file may be distributed under the terms of the GNU GPLv3 license.
 +
-+#include "autoconf.h"   // CONFIG_FF_BOARD_*
-+#include "board/irq.h"  // irq_disable
-+#include "command.h"    // DECL_COMMAND
-+#include "sched.h"      // DECL_TASK
++#include <stddef.h> // NULL
++#include <stdint.h> // uint32_t
++#include <string.h> // memcpy
++#include "autoconf.h" // CONFIG_CLOCK_FREQ
++#include "board/armcm_boot.h" // armcm_enable_irq
++#include "board/gpio.h" // gpio_out_setup
++#include "board/internal.h" // enable_pclock, gpio_peripheral
++#include "board/irq.h" // irq_disable
++#include "board/misc.h" // timer_read_time
++#include "command.h" // DECL_COMMAND
++#include "ff_flashforge.h" // ff_eddy_value
++#include "sched.h" // DECL_TASK
++
++// Number of external oscillator edges per captured sample.
++// TIM8->ARR, 0x08007836 (movw r1, #0x1f4) -> update every ARR+1 = 501.
++#define FF_EDDY_GATE_ARR 500
++
++// One eddy sample is consumed every 500us by the polling timer
++// (0x08006008: mov.w r0, #0x1f4 -> timer_from_us(500)).
++#define FF_EDDY_SAMPLE_US 500
++
++// Ring buffer used for the noise statistics.  11 entries: the copy loop
++// at 0x08007966 walks &ring[0] .. &ring[0]+0x2c, and the sorted median
++// is taken from index 5 (0x080079B8 reads sp+0x18, array base sp+4).
++#define FF_EDDY_NSAMP 11
++
++// Deviation (in TIM1 ticks) above which a sample is treated as a gross
++// excursion rather than as noise -- 0x080079F4 (cmp r3, #0x96).
++#define FF_EDDY_HARD_DEV 150
++
++// Consecutive gross excursions before the endstop is forced to trigger
++// -- 0x08007B6C (cmp r3, #0xe -> fires on the 15th).
++#define FF_EDDY_HARD_COUNT 15
++
++// Consecutive out-of-threshold samples before the sampling reference is
++// dragged to the current reading -- 0x08007A0C (cmp r3, #0x63).
++#define FF_EDDY_DRIFT_COUNT 100
++
++// The auto-calibrated threshold is 3*sigma clamped to this range
++// -- 0x08007B02 (cmp #0x3c) and 0x08007B0C (cmp #0x14).
++#define FF_EDDY_THRESH_MIN 20
++#define FF_EDDY_THRESH_MAX 60
++
++// The signal must stay quiet this long before a recalibration is
++// accepted -- 0x08007A6A (cmp.w r3, #0x7d0).
++#define FF_EDDY_QUIET_MS 2000
++
++// Debounce depths in ff_eddy_check_trigger() -- 0x08007D12 (cmp #3, so
++// the 4th consecutive sample trips) and 0x08007D4A (cmp #2, the 3rd
++// consecutive sample releases).
++#define FF_EDDY_TRIG_COUNT   4
++#define FF_EDDY_UNTRIG_COUNT 3
++
++// Hysteresis, in ticks, below the trigger threshold -- 0x08007D36
++// (subs r7, #2).
++#define FF_EDDY_HYSTERESIS 2
++
 +
 +/****************************************************************
-+ * Firmware version reported to the host
++ * State
 + ****************************************************************/
 +
-+// levelBoard.hex reports these three constants verbatim.
-+#define FF_MCU_YEAR     2026
-+#define FF_MCU_DATE      613
-+#define FF_MCU_VERSION  7091
++// Initialised data (.data runs 0x20000000..0x20000044 and is copied
++// from flash 0x0800A80C by the reset handler at 0x080088D4).
++
++// Threshold as the host set it.  Written and echoed by
++// set_trigger_threshold (0x08004D0A) and read by nothing else.
++int32_t ff_trigger_threshold = 25;               // 0x20000000
++
++// Virtual endstop pin level.  1 == not triggered, 0 == triggered.
++// gpio_in_read() returns this for one specific pin, see below.
++static uint8_t ff_eddy_pin_state = 1;                   // 0x2000003C
++
++// Threshold actually used by the detector.  set_trigger_threshold
++// writes it (0x08004D0C) but ff_eddy_update() overwrites it on every
++// recalibration (0x08007B14), so a host-supplied value is transient.
++int16_t ff_eddy_threshold = 25;                  // 0x2000003E
++
++// Largest median-absolute-deviation still considered "quiet".
++// Never written anywhere in the image; initialiser 0x0800A844 = 2.
++static uint32_t ff_eddy_mad_limit = 2;                  // 0x20000038
++
++// Zero-initialised data (.bss 0x20000044..0x200003A8, 0x080088EA).
++
++static struct timer ff_eddy_timer;                      // 0x20000110
++static struct task_wake ff_eddy_wake;                   // 0x200000AC
++// Set once the first calibration finished; never cleared (0x0800601C).
++static uint8_t ff_eddy_armed;                           // 0x200000AD
++
++static uint32_t ff_eddy_prev_cnt;                       // 0x2000012C
++static volatile uint32_t ff_eddy_dma_capture;           // 0x20000130
++// Written by ff_eddy_check_trigger() (0x08007CEC) and read by nothing.
++static uint32_t ff_eddy_last_dev;                       // 0x20000134
++// Written by ff_eddy_timer_event() (0x08006030) and read by nothing.
++static uint32_t ff_eddy_dbg_baseline;                   // 0x20000138
++static uint8_t ff_eddy_have_filter;                     // 0x2000013C
++static uint8_t ff_eddy_hard_trigger;                    // 0x2000013D
++static uint32_t ff_eddy_mad;                            // 0x20000140
++uint32_t ff_eddy_baseline;                       // 0x20000144
++static int32_t ff_eddy_trig_acc;                        // 0x20000148
++static uint32_t ff_eddy_filter_acc;                     // 0x2000014C
++static uint32_t ff_eddy_sample_ref;                     // 0x20000150
++static uint32_t ff_eddy_sample;                         // 0x20000154
++uint32_t ff_eddy_value;                          // 0x20000158
++static volatile uint32_t ff_eddy_sample_ready;          // 0x2000015C
++static uint8_t ff_eddy_calibrated;                      // 0x20000160
++static uint16_t ff_eddy_outrange_count;                 // 0x20000162
++static uint32_t ff_eddy_ring[FF_EDDY_NSAMP];            // 0x20000164
++static uint8_t ff_eddy_ring_count;                      // 0x20000190
++static uint8_t ff_eddy_ring_pos;                        // 0x20000191
++static uint16_t ff_eddy_inrange_count;                  // 0x20000192
++static uint32_t ff_eddy_quiet_start_ms;                 // 0x20000194
++static uint8_t ff_eddy_untrig_count;                    // 0x20000198
++// Never written in this image, so effectively a constant zero.  It is
++// read at 0x08007AF6 and 0x08007BFC only.
++uint32_t ff_eddy_offset;                         // 0x2000019C
++static uint8_t ff_eddy_trig_count;                      // 0x200001A0
++int32_t ff_eddy_peel;                            // 0x200001A4
++
++
++/****************************************************************
++ * Small helpers
++ ****************************************************************/
++
++// timer_read_time() is DWT->CYCCNT (0x080086F8) and timer_from_us() is
++// "us << 7" (0x080086EC), i.e. exactly 128 ticks/us.  The stock code
++// divides the raw clock by 128000 with a reciprocal multiply
++// (0x08007A44: 0x10624DD3, then >> 45) to get milliseconds.
++static uint32_t
++ff_eddy_now_ms(void)
++{
++    return timer_read_time() / (CONFIG_CLOCK_FREQ / 1000);
++}
++
++// Insertion sort, ascending.  Open coded twice in the stock image
++// (0x080076FE and 0x08007982) with identical structure.
++static void
++ff_eddy_isort(uint32_t *v, uint32_t count)
++{
++    uint32_t i;
++    for (i = 1; i < count; i++) {
++        uint32_t key = v[i], j = i;
++        while (j && v[j - 1] > key) {
++            v[j] = v[j - 1];
++            j--;
++        }
++        v[j] = key;
++    }
++}
++
++// 0x080076DC: copy the ring, sort it, return the middle element.
++static uint32_t
++ff_eddy_median(void)
++{
++    uint32_t tmp[FF_EDDY_NSAMP];
++    memcpy(tmp, ff_eddy_ring, sizeof(tmp));
++    ff_eddy_isort(tmp, FF_EDDY_NSAMP);
++    return tmp[FF_EDDY_NSAMP / 2];
++}
++
++// Newton iteration, 0x08007A9A..0x08007AB6.
++static uint32_t
++ff_eddy_isqrt(uint32_t v)
++{
++    if (!v)
++        return 0;
++    uint32_t r = (v + 1) >> 1;
++    if (v <= r)
++        return v;
++    for (;;) {
++        uint32_t next = (v / r + r) >> 1;
++        if (r <= next)
++            return r;
++        r = next;
++    }
++}
++
++
++/****************************************************************
++ * Front end: TIM8 gate, TIM1 tick counter, DMA1 channel 1
++ ****************************************************************/
++
++// 0x080076AC.  PA1 is driven as a push-pull output and immediately set
++// high (GPIO_Init then a BSRR write of 0x2 at 0x080076CE).  Nothing
++// ever clears it, so this is best read as "power/enable the oscillator".
++// Semantics of the pin are UNCERTAIN; only the electrical behaviour
++// (output, latched high at startup) is established by the image.
++void
++ff_eddy_pin_init(void)
++{
++    gpio_out_setup(GPIO('A', 1), 1);
++}
++DECL_INIT(ff_eddy_pin_init);
++
++// 0x08007780.  Note DMA_DeInit() is called first (0x0800778E ->
++// 0x08008EA4) which also clears the matching bits in DMA1->IFCR.
++void
++ff_eddy_dma_init(void)
++{
++    enable_pclock((uint32_t)DMA1);              // RCC->AHBENR |= 1, 0x08007788
++
++    DMA1_Channel1->CCR = 0;
++    DMA1_Channel1->CPAR = (uint32_t)&TIM1->CNT; // 0x40012C24, lit @0x08007800
++    DMA1_Channel1->CMAR = (uint32_t)&ff_eddy_dma_capture; // 0x20000130
++    DMA1_Channel1->CNDTR = 1;                   // BufferSize = 1
++    DMA1_Channel1->CCR = (0                     // DIR = peripheral -> memory
++                          // PINC and MINC both disabled
++                          | DMA_CCR_PSIZE_0     // 0x100  peripheral halfword
++                          | DMA_CCR_MSIZE_0     // 0x400  memory halfword
++                          | DMA_CCR_CIRC        // 0x20   circular
++                          | DMA_CCR_PL_1);      // 0x2000 priority high
++
++    // 0x080077CC writes 0x32 to DMA1_Channel1 + 0x10.  On a stock
++    // STM32F103 that offset is the reserved word between channel 1 and
++    // channel 2 and the write is a no-op; on the silicon this board
++    // actually uses it is most likely a per-channel request selector,
++    // which is what lets TIM8's update event drive DMA1 channel 1 at
++    // all (on a real F103, TIM8_UP is a DMA2 request).  UNCERTAIN.
++    *(volatile uint32_t *)((uint32_t)DMA1_Channel1 + 0x10) = 0x32;
++
++    // NVIC_Init{IRQChannel=11, PreemptionPriority=0, SubPriority=7,
++    // Cmd=ENABLE} at 0x080077D0..0x080077E6.  IRQ 11 is
++    // DMA1_Channel1_IRQn and vector[27] @0x0800406C == 0x08007895.
++    armcm_enable_irq(DMA1_Channel1_IRQHandler, DMA1_Channel1_IRQn, 0);
++
++    DMA1_Channel1->CCR |= DMA_CCR_TCIE;         // 0x080077EE, flag 0x2
++    DMA1_Channel1->CCR |= DMA_CCR_EN;           // 0x080077F4
++}
++
++// 0x08007808.  Runs before ff_eddy_dma_init(), which it tail calls
++// (0x08007886).
++void
++ff_eddy_counter_init(void)
++{
++    // --- gate timer: TIM8 counts oscillator edges on its ETR pin ---
++    enable_pclock((uint32_t)TIM8);              // APB2ENR |= 0x2000, 0x08007810
++    // PA0 = TIM8_ETR, alternate function 8, "speed" field 2
++    // (GPIO_InitTypeDef built at 0x0800781C..0x0800782C).
++    gpio_peripheral(GPIO('A', 0), GPIO_FUNCTION(8), 0);
++
++    TIM8->PSC = 0;
++    TIM8->ARR = FF_EDDY_GATE_ARR;               // 0x08007836, 500
++    TIM8->EGR = TIM_EGR_UG;                     // TIM_TimeBaseInit does this
++    // TIM_ETRClockMode2Config(TIM8, prescaler 0, polarity 0, filter 0)
++    // -- 0x08007846 -> 0x08008E20, which ends with SMCR |= ECE.
++    TIM8->SMCR = (TIM8->SMCR & ~(0xf00 | 0x8000 | 0x3000)) | TIM_SMCR_ECE;
++    TIM8->DIER |= TIM_DIER_UDE;                 // 0x0800784A, flag 0x100
++    TIM8->CR1 |= TIM_CR1_CEN;                   // 0x08007856
++
++    // --- tick timer: TIM1 free runs on the internal clock ---
++    enable_pclock((uint32_t)TIM1);              // APB2ENR |= 0x800, 0x0800785E
++    TIM1->PSC = 0;
++    TIM1->ARR = 0xffff;                         // 0x0800786A
++    TIM1->EGR = TIM_EGR_UG;                     // 0x08007876
++    TIM1->CR1 |= TIM_CR1_CEN;                   // 0x0800787C
++
++    ff_eddy_dma_init();
++}
++DECL_INIT(ff_eddy_counter_init);
++
++// 0x08007894.  Vector 27 (IRQ 11).
++void
++DMA1_Channel1_IRQHandler(void)
++{
++    if (!(DMA1->ISR & DMA_ISR_TCIF1))           // DMA_GetITStatus(DMA1_IT_TC1)
++        return;
++    DMA1->IFCR = DMA_IFCR_CTCIF1;               // 0x080078A8, flag 0x2
++
++    uint32_t cnt = ff_eddy_dma_capture;
++    uint32_t delta = (uint16_t)(cnt - ff_eddy_prev_cnt);
++    ff_eddy_prev_cnt = cnt;
++    ff_eddy_sample = delta;
++    ff_eddy_sample_ready = 1;
++    ff_eddy_value = delta;
++    sched_wake_task(&ff_eddy_wake);             // 0x080078CC
++}
++
++
++/****************************************************************
++ * Sample processing and auto calibration
++ ****************************************************************/
++
++// 0x080078EC.  Called from the 500us polling timer, not from the DMA
++// interrupt, so at most one sample is consumed per 500us regardless of
++// how fast the oscillator runs.
++static void
++ff_eddy_update(void)
++{
++    if (!ff_eddy_sample_ready)
++        return;
++
++    uint32_t store;                             // what goes into the ring
++    if (!ff_eddy_armed) {
++        // Not calibrated yet: the raw reading is the signal.
++        ff_eddy_inrange_count = 0;
++        ff_eddy_outrange_count = 0;
++        store = ff_eddy_sample;
++    } else {
++        uint32_t value = ff_eddy_sample;        // 0x080079D0
++        int32_t dev = value - ff_eddy_sample_ref;
++        uint16_t adev = dev < 0 ? -dev : dev;
++        int32_t thr = ff_eddy_threshold;
++        uint16_t athr = thr < 0 ? -thr : thr;
++
++        if (adev <= athr) {
++            // Quiet: feed the raw reading to the statistics.
++            ff_eddy_inrange_count = 0;
++            ff_eddy_outrange_count = 0;
++            store = value;
++        } else if (adev > FF_EDDY_HARD_DEV) {
++            // Gross excursion.  Still fed raw, but after a run of them
++            // the endstop is forced to trigger.
++            store = value;
++            ff_eddy_outrange_count++;
++            if (ff_eddy_outrange_count >= FF_EDDY_HARD_COUNT) {
++                ff_eddy_hard_trigger = 1;       // 0x08007B7A
++                ff_eddy_outrange_count = 0;
++            }
++        } else {
++            // Beyond the threshold but not wildly so: this is what a
++            // real probe touch looks like.  Feed the *baseline* to the
++            // statistics so a trigger does not pollute the noise
++            // estimate (0x08007A04 loads ff_eddy_baseline into the
++            // value that 0x08007920 stores).
++            ff_eddy_outrange_count = 0;
++            store = ff_eddy_baseline;
++            ff_eddy_inrange_count++;
++            if (ff_eddy_inrange_count > FF_EDDY_DRIFT_COUNT - 1) {
++                // Stuck off-baseline for 100 samples: assume drift and
++                // move the reference (0x08007A18..0x08007A20).
++                ff_eddy_inrange_count = 0;
++                ff_eddy_baseline = value;
++                ff_eddy_sample_ref = value;
++                store = value;
++            }
++        }
++    }
++
++    // --- common tail, 0x08007912 ---
++    ff_eddy_sample_ready = 0;
++    ff_eddy_ring[ff_eddy_ring_pos] = store;
++    if (++ff_eddy_ring_pos > FF_EDDY_NSAMP - 1)
++        ff_eddy_ring_pos = 0;
++    if (ff_eddy_ring_count <= FF_EDDY_NSAMP - 1)
++        ff_eddy_ring_count++;
++
++    if (!ff_eddy_have_filter) {
++        // Seed the smoothing filter once the ring is full (0x08007A28).
++        if (ff_eddy_ring_count != FF_EDDY_NSAMP)
++            return;
++        ff_eddy_filter_acc = ff_eddy_median() * 4;
++        ff_eddy_have_filter = 1;
++        ff_eddy_quiet_start_ms = ff_eddy_now_ms();
++        return;
++    }
++
++    // Smoothing filter, held at 4x scale: acc = x + 3*acc/4, so
++    // acc/4 is a first order low pass with alpha = 1/4 (0x08007950).
++    ff_eddy_filter_acc = store + (ff_eddy_filter_acc * 3) / 4;
++
++    // Robust noise estimate: median absolute deviation about the
++    // median of the ring (0x0800795C..0x080079BA).
++    uint32_t center = ff_eddy_median();
++    uint32_t devs[FF_EDDY_NSAMP];
++    uint32_t i;
++    for (i = 0; i < FF_EDDY_NSAMP; i++) {
++        uint32_t s = ff_eddy_ring[i];
++        devs[i] = s > center ? s - center : center - s;
++    }
++    ff_eddy_isort(devs, FF_EDDY_NSAMP);
++    ff_eddy_mad = devs[FF_EDDY_NSAMP / 2];
++
++    if (ff_eddy_mad > ff_eddy_mad_limit) {
++        // Noisy: restart the quiet timer (0x080079C4).
++        ff_eddy_quiet_start_ms = 0;
++        return;
++    }
++    uint32_t now = ff_eddy_now_ms();
++    if (!ff_eddy_quiet_start_ms) {
++        ff_eddy_quiet_start_ms = now;           // 0x08007B56
++        return;
++    }
++    if (now - ff_eddy_quiet_start_ms < FF_EDDY_QUIET_MS)
++        return;
++
++    // --- 2s of quiet: recalibrate (0x08007A70..0x08007B3A) ---
++    int64_t sumsq = 0;
++    for (i = 0; i < FF_EDDY_NSAMP; i++) {
++        int32_t d = ff_eddy_ring[i] - center;
++        sumsq += (int32_t)(d * d);
++    }
++    uint32_t sd = ff_eddy_isqrt((uint32_t)(sumsq / FF_EDDY_NSAMP));
++
++    // Never let sigma fall below 1.5 * MAD (and never below 1).
++    uint32_t floor_sd = ff_eddy_mad + ff_eddy_mad / 2;
++    if (floor_sd < 1)
++        floor_sd = 1;
++    if (sd < floor_sd)
++        sd = floor_sd;
++
++    // Scrub outliers out of the ring.  NOTE: this has no observable
++    // effect, because ff_eddy_ring_count/pos are reset a few lines
++    // below and every slot is overwritten before it is read again.
++    if (ff_eddy_ring_count) {
++        uint32_t lim;
++        if (!ff_eddy_mad) {
++            lim = ff_eddy_mad_limit;            // 0x08007AD2
++        } else {
++            // Saturating 3*MAD, 0x08007B84.
++            uint64_t t = (uint64_t)ff_eddy_mad * 3;
++            lim = t > 0xffffffffull ? 0xffffffffu : (uint32_t)t;
++        }
++        for (i = 0; i < ff_eddy_ring_count; i++) {
++            uint32_t s = ff_eddy_ring[i];
++            uint32_t d = s > center ? s - center : center - s;
++            if (lim < d)
++                ff_eddy_ring[i] = center;
++        }
++    }
++
++    // The trigger threshold is derived from the noise, NOT from what
++    // the host asked for: 3 sigma, truncated to int16, clamped 20..60.
++    int16_t thr = (int16_t)(sd * 3);
++    if (thr >= FF_EDDY_THRESH_MAX)
++        thr = FF_EDDY_THRESH_MAX;
++    if (thr < FF_EDDY_THRESH_MIN)
++        thr = FF_EDDY_THRESH_MIN;
++    ff_eddy_threshold = thr;
++
++    ff_eddy_baseline = ff_eddy_offset + ff_eddy_filter_acc / 4;
++    ff_eddy_sample_ref = ff_eddy_baseline;
++    ff_eddy_have_filter = 0;
++    ff_eddy_ring_count = 0;
++    ff_eddy_ring_pos = 0;
++    ff_eddy_quiet_start_ms = 0;
++    ff_eddy_inrange_count = 0;
++    ff_eddy_outrange_count = 0;
++    ff_eddy_calibrated = 1;
++}
++
++// 0x08005FF8, registered by 0x0800630C.
++static uint_fast8_t
++ff_eddy_timer_event(struct timer *t)
++{
++    ff_eddy_update();
++    if (ff_eddy_calibrated == 1 && !ff_eddy_armed) {
++        // First successful calibration arms the comparator for good;
++        // ff_eddy_armed is never cleared anywhere in the image.
++        ff_eddy_armed = 1;
++        ff_eddy_sample_ref = ff_eddy_baseline;
++        ff_eddy_dbg_baseline = ff_eddy_baseline;
++    }
++    t->waketime += timer_from_us(FF_EDDY_SAMPLE_US);
++    return SF_RESCHEDULE;
++}
 +
 +void
-+command_get_mcu_version(uint32_t *args)
++ff_eddy_timer_init(void)
 +{
-+    sendf("mcu_version year=%u date=%u version=%u"
-+          , FF_MCU_YEAR, FF_MCU_DATE, FF_MCU_VERSION);
++    ff_eddy_timer.func = ff_eddy_timer_event;
++    ff_eddy_timer.waketime = timer_read_time()
++                             + timer_from_us(FF_EDDY_SAMPLE_US);
++    ff_eddy_timer.next = NULL;
++    // The stock sched_add_timer() takes a second argument, a caller id
++    // used by the "Levelboard close=..." debug report; this call site
++    // passes 0x62 (0x0800632C).
++    // tag 0x62, read from the stock call site at 0x0800632c
++    sched_add_timer(&ff_eddy_timer, 98);
 +}
-+DECL_COMMAND(command_get_mcu_version, "get_mcu_version");
++DECL_INIT(ff_eddy_timer_init);
++
 +
 +/****************************************************************
-+ * Inductive ("eddy") sensor
++ * Trigger detection -- drives the virtual endstop pin
 + ****************************************************************/
 +
-+// levelBoard globals, named after the host side that drives them
-+// (klippy/extras/ff_eddy.py):
-+//   value     0x20000158  live reading, updated from the ADC DMA irq
-+//   baseline  0x20000144  reference the live reading is compared against
-+//   offset    0x2000019C  added to the live reading when re-baselining
-+//   peel      0x200001A4  last peel measurement
-+//   threshold 0x20000000  trigger threshold, mirrored as int16 at 0x2000003E
-+static struct ff_eddy {
-+    uint32_t value, baseline, offset;
-+    int32_t peel, threshold;
-+} ff_eddy;
++// 0x08007C98.  Woken once per DMA capture by DMA1_Channel1_IRQHandler.
++// In the stock image the sched_check_wake()/call pair is open coded at
++// the bottom of run_tasks() (0x080063BA..0x080063C6) rather than being
++// dispatched through ctr_run_taskfuncs(); the effect is the same.
++void
++ff_eddy_check_trigger(void)
++{
++    if (!sched_check_wake(&ff_eddy_wake))
++        return;
 +
-+static int16_t ff_trigger_threshold16;
++    irq_disable();
++    uint32_t value = ff_eddy_value;
++    uint8_t hard = ff_eddy_hard_trigger;
++    uint8_t state = ff_eddy_pin_state;
++    if (hard) {
++        ff_eddy_hard_trigger = 0;
++        irq_enable();
++        // Reject value 0 (no oscillator edges at all).
++        if (value - 1 > 0xfffe)
++            return;
++        if (state)
++            ff_eddy_pin_state = 0;
++        ff_eddy_trig_count = 0;
++        ff_eddy_untrig_count = 0;
++        return;
++    }
++    uint32_t baseline = ff_eddy_baseline;
++    int32_t thr = ff_eddy_threshold;
++    irq_enable();
 +
-+// Re-arm the comparison against the current reading.  The stock
-+// function (0x08007bf4) does this inside an irq_disable/irq_enable
-+// pair and additionally clears its sample-ready and counter state.
-+static void
++    if (value - 1 > 0xfffe)
++        return;
++
++    int32_t diff = value - baseline;
++    ff_eddy_peel = diff;                        // 0x08007CE0
++    uint32_t adiff = (uint16_t)(diff < 0 ? -diff : diff);
++    ff_eddy_last_dev = adiff;                   // write only
++
++    // acc += (adiff*16 - acc) / 4; filtered = acc / 16   (0x08007CF2)
++    ff_eddy_trig_acc += (((int32_t)adiff << 4) - ff_eddy_trig_acc) >> 2;
++    int32_t filtered = ff_eddy_trig_acc >> 4;
++
++    if (thr <= filtered) {
++        // Above the threshold.
++        ff_eddy_untrig_count = 0;
++        if (++ff_eddy_trig_count <= FF_EDDY_TRIG_COUNT - 1)
++            return;
++        if (ff_eddy_pin_state)
++            ff_eddy_pin_state = 0;
++        ff_eddy_trig_count = FF_EDDY_TRIG_COUNT;
++        return;
++    }
++    if ((int16_t)(thr - FF_EDDY_HYSTERESIS) > filtered) {
++        // Clearly below the threshold.
++        ff_eddy_trig_count = 0;
++        if (++ff_eddy_untrig_count <= FF_EDDY_UNTRIG_COUNT - 1)
++            return;
++        if (!ff_eddy_pin_state)
++            ff_eddy_pin_state = 1;
++        ff_eddy_untrig_count = FF_EDDY_UNTRIG_COUNT;
++        return;
++    }
++    // Inside the hysteresis band: hold, and reset the counter that
++    // would move us out of the current state (0x08007D60).
++    if (ff_eddy_pin_state)
++        ff_eddy_trig_count = 0;
++    else
++        ff_eddy_untrig_count = 0;
++}
++DECL_TASK(ff_eddy_check_trigger);
++
++
++/****************************************************************
++ * Host commands
++ ****************************************************************/
++
++// 0x08007BF4.  Called by get_basic_param; re-zeroes everything against
++// the current reading and declares the sensor calibrated.
++void
 +ff_eddy_rebaseline(void)
 +{
 +    irq_disable();
-+    ff_eddy.baseline = ff_eddy.value + ff_eddy.offset;
++    uint32_t base = ff_eddy_value + ff_eddy_offset;
++    ff_eddy_baseline = base;
++    ff_eddy_sample_ref = base;
++    ff_eddy_ring_pos = 0;
++    ff_eddy_ring_count = 0;
++    ff_eddy_filter_acc = base * 4;
++    ff_eddy_have_filter = 1;
++    ff_eddy_quiet_start_ms = 0;
++    ff_eddy_inrange_count = 0;
++    ff_eddy_outrange_count = 0;
 +    irq_enable();
++    ff_eddy_trig_acc = 0;
++    ff_eddy_trig_count = 0;
++    ff_eddy_pin_state = 1;
++    ff_eddy_hard_trigger = 0;
++    ff_eddy_untrig_count = 0;
++    ff_eddy_calibrated = 1;
++    ff_eddy_peel = 0;
 +}
+diff --git a/src/ff_flashforge.c b/src/ff_flashforge.c
+new file mode 100644
+index 000000000..d3238697b
+--- /dev/null
++++ b/src/ff_flashforge.c
+@@ -0,0 +1,35 @@
++// FlashForge Creator 5 additions to the Klipper MCU firmware.
++//
++// Recovered from the stock board images shipped in control-1.2.9.  The four
++// boards are built from one source tree with a board selector: a command is
++// compiled everywhere but its body folds away on the boards that do not
++// implement it, which is why levelBoard carries an empty get_emcu_pa_value
++// while eBoard has the real one.
++//
++// The command handlers themselves live in basecmd.c -- that is where the
++// stock message ids place them.  This file holds the shared state.
++//
++// This file may be distributed under the terms of the GNU GPLv3 license.
 +
-+void
-+command_set_trigger_threshold(uint32_t *args)
-+{
-+    ff_eddy.threshold = args[0];
-+    ff_trigger_threshold16 = ff_eddy.threshold;
-+    sendf("trigger_threshold threshold=%i", ff_eddy.threshold);
-+}
-+DECL_COMMAND(command_set_trigger_threshold
-+             , "set_trigger_threshold threshold=%i");
++#include "board/irq.h" // irq_disable
++#include "command.h"   // sendf
++#include "ff_flashforge.h"
 +
-+void
-+command_get_basic_param(uint32_t *args)
-+{
-+    // args[0] ("num") is accepted and ignored by the stock firmware.
-+    irq_disable();
-+    uint32_t baseline = ff_eddy.baseline, value = ff_eddy.value;
-+    irq_enable();
-+    ff_eddy_rebaseline();
-+    uint32_t diff = value > baseline ? value - baseline : baseline - value;
-+    sendf("param_value value=%u reserve=%u", baseline, diff);
-+}
-+DECL_COMMAND(command_get_basic_param, "get_basic_param num=%u");
++// Latched by shutdown_ec() so the host can name the fault.
++uint32_t ff_shutdown_code;
 +
-+void
-+command_remove_peel(uint32_t *args)
-+{
-+    // args[0] ("action") is accepted and ignored by the stock firmware.
-+    irq_disable();
-+    int32_t peel = ff_eddy.peel;
-+    ff_eddy.baseline = ff_eddy.value;
-+    irq_enable();
-+    sendf("peel_data value=%i", peel);
-+}
-+DECL_COMMAND(command_remove_peel, "remove_peel action=%u");
++// The call site of the last timer scheduled in the past.
++uint8_t ff_timer_close;
 +
-+/****************************************************************
-+ * Pressure-advance sensor (eBoard only)
-+ ****************************************************************/
++// Shared with endstop.c: see ff_flashforge.h.
++uint8_t ff_endstop_active;
++uint8_t ff_eddy_free_run;
 +
-+// Both bodies fold away on every board except the eBoard; the response
-+// stays in the data dictionary because DECL_CTR survives dead code
-+// elimination.  That is exactly what the stock levelBoard image shows:
-+// two "bx lr" handlers and a live "pa_value value=%u" encoder.
-+static uint32_t ff_pa_value;
++uint32_t ff_pa_value;
 +
 +// The eBoard implementation (eBoard.hex 0x080115ec) reconfigures TIM4, TIM8
 +// and a DMA1 stream for the pressure-advance pickup.  Not reconstructed.
-+static void
++void
 +ff_pa_action(uint32_t action, uint32_t pc)
 +{
 +}
+diff --git a/src/ff_flashforge.h b/src/ff_flashforge.h
+new file mode 100644
+index 000000000..c21d17a8e
+--- /dev/null
++++ b/src/ff_flashforge.h
+@@ -0,0 +1,25 @@
++#ifndef __FF_FLASHFORGE_H
++#define __FF_FLASHFORGE_H
++// State shared between the FlashForge additions and stock Klipper files.
++#include <stdint.h>
++#include "autoconf.h" // CONFIG_FF_BOARD_EBOARD
 +
-+void
-+command_get_emcu_pa_value(uint32_t *args)
-+{
-+    if (!CONFIG_FF_BOARD_EBOARD)
-+        return;
-+    sendf("pa_value value=%u", ff_pa_value);
-+}
-+DECL_COMMAND(command_get_emcu_pa_value, "get_emcu_pa_value");
++extern uint32_t ff_shutdown_code;   // latched by shutdown_ec()
++extern uint8_t ff_timer_close;      // call site of the last late timer
++extern uint8_t ff_endstop_active;   // an endstop is being queried or homed
++extern uint8_t ff_eddy_free_run;    // endstop checking is off; sampler idles
 +
-+void
-+command_pa_action(uint32_t *args)
-+{
-+    if (!CONFIG_FF_BOARD_EBOARD)
-+        return;
-+    ff_pa_action(args[0], args[1]);
-+}
-+DECL_COMMAND(command_pa_action, "pa_action action=%u pc=%u");
++// The inductive sensor.  These live at fixed, scattered addresses in the
++// stock image, so they are separate objects rather than one struct.
++extern uint32_t ff_eddy_value;      // 0x20000158 live reading
++extern uint32_t ff_eddy_baseline;   // 0x20000144 reference it is compared to
++extern uint32_t ff_eddy_offset;     // 0x2000019C added when re-baselining
++extern int32_t ff_eddy_peel;        // 0x200001A4 last peel measurement
++extern int32_t ff_trigger_threshold;// 0x20000000 host-set trigger threshold
++extern int16_t ff_eddy_threshold;   // 0x2000003E the value actually compared
++extern uint32_t ff_pa_value;
 +
-+/****************************************************************
-+ * Board telemetry
-+ ****************************************************************/
++void ff_eddy_rebaseline(void);
++void ff_pa_action(uint32_t action, uint32_t pc);
 +
-+// Emitted alongside klipper's own shutdown report, and periodically.
-+// The three counters are board specific; the stock image names them
-+// per board ("Levelboard", "Eboard", "Eheaterboard", "GDMainboard").
-+static uint16_t ff_close, ff_close_num, ff_temp_waketime;
-+
-+void
-+ff_report_close(void)
-+{
-+    sendf("Levelboard close=%hu Close_num=%hu Temp_waketime=%hu"
-+          , ff_close, ff_close_num, ff_temp_waketime);
-+}
++#endif // ff_flashforge.h
+diff --git a/src/generic/armcm_timer.c b/src/generic/armcm_timer.c
+index ef38680a9..fd53d7b8c 100644
+--- a/src/generic/armcm_timer.c
++++ b/src/generic/armcm_timer.c
+@@ -86,7 +86,9 @@ timer_reset(void)
+     if (timer_from_us(100000) <= 0xffffff)
+         // Timer in sched.c already ensures SysTick wont overflow
+         return;
+-    sched_add_timer(&wrap_timer);
++    // Tag unknown: 98 belongs to the FlashForge eddy timer (0x0800630c),
++    // and no stock call site could be attributed to this one.
++    sched_add_timer(&wrap_timer, 0);
+ }
+ DECL_SHUTDOWN(timer_reset);
+ 
 diff --git a/src/generic/serial_irq.c b/src/generic/serial_irq.c
 index 98910735a..f1ccdf955 100644
 --- a/src/generic/serial_irq.c
@@ -281,6 +1203,231 @@ index 98910735a..f1ccdf955 100644
      int_fast8_t ret = command_find_block(receive_buf, rpos, &pop_count);
      if (ret > 0)
          command_dispatch(receive_buf, pop_count);
+diff --git a/src/gpiocmds.c b/src/gpiocmds.c
+index 42c9f3712..9ae6eb7d1 100644
+--- a/src/gpiocmds.c
++++ b/src/gpiocmds.c
+@@ -59,7 +59,7 @@ digital_load_event(struct timer *timer)
+     // Apply next update and remove it from queue
+     struct digital_out_s *d = container_of(timer, struct digital_out_s, timer);
+     if (move_queue_empty(&d->mq))
+-        shutdown("Missed scheduling of next digital out event");
++        shutdown_ec(29, "Missed scheduling of next digital out event");
+     struct move_node *mn = move_queue_pop(&d->mq);
+     struct digital_move *m = container_of(mn, struct digital_move, node);
+     uint32_t on_duration = m->on_duration;
+@@ -86,7 +86,7 @@ digital_load_event(struct timer *timer)
+         struct move_node *nn = move_queue_first(&d->mq);
+         uint32_t wake = container_of(nn, struct digital_move, node)->waketime;
+         if (flags & DF_CHECK_END && timer_is_before(end_time, wake))
+-            shutdown("Scheduled digital out event will exceed max_duration");
++            shutdown_ec(30, "Scheduled digital out event will exceed max_duration");
+         end_time = wake;
+         flags |= DF_CHECK_END;
+     }
+@@ -134,7 +134,7 @@ command_set_digital_out_pwm_cycle(uint32_t *args)
+     struct digital_out_s *d = oid_lookup(args[0], command_config_digital_out);
+     irq_disable();
+     if (!move_queue_empty(&d->mq))
+-        shutdown("Can not set soft pwm cycle ticks while updates pending");
++        shutdown_ec(31, "Can not set soft pwm cycle ticks while updates pending");
+     d->cycle_time = args[1];
+     irq_enable();
+ }
+@@ -157,7 +157,7 @@ command_queue_digital_out(uint32_t *args)
+     }
+     uint8_t flags = d->flags;
+     if (flags & DF_CHECK_END && timer_is_before(d->end_time, time))
+-        shutdown("Scheduled digital out event will exceed max_duration");
++        shutdown_ec(32, "Scheduled digital out event will exceed max_duration");
+     d->end_time = time;
+     d->flags = flags | DF_CHECK_END;
+     if (flags & DF_TOGGLING && timer_is_before(d->timer.waketime, time)) {
+@@ -167,7 +167,7 @@ command_queue_digital_out(uint32_t *args)
+         sched_del_timer(&d->timer);
+         d->timer.waketime = time;
+         d->timer.func = digital_load_event;
+-        sched_add_timer(&d->timer);
++        sched_add_timer(&d->timer, 15);
+     }
+     irq_enable();
+ }
+@@ -180,14 +180,14 @@ command_update_digital_out(uint32_t *args)
+     struct digital_out_s *d = oid_lookup(args[0], command_config_digital_out);
+     sched_del_timer(&d->timer);
+     if (!move_queue_empty(&d->mq))
+-        shutdown("update_digital_out not valid with active queue");
++        shutdown_ec(33, "update_digital_out not valid with active queue");
+     uint8_t value = args[1], flags = d->flags, on_flag = value ? DF_ON : 0;
+     gpio_out_write(d->pin, on_flag);
+     if (!on_flag != !(flags & DF_DEFAULT_ON) && d->max_duration) {
+         d->timer.waketime = d->end_time = timer_read_time() + d->max_duration;
+         d->timer.func = digital_load_event;
+         d->flags = (flags & DF_DEFAULT_ON) | on_flag | DF_CHECK_END;
+-        sched_add_timer(&d->timer);
++        sched_add_timer(&d->timer, 14);
+     } else {
+         d->flags = (flags & DF_DEFAULT_ON) | on_flag;
+     }
+diff --git a/src/neopixel.c b/src/neopixel.c
+index bbea09f84..e802161ec 100644
+--- a/src/neopixel.c
++++ b/src/neopixel.c
+@@ -97,7 +97,7 @@ command_config_neopixel(uint32_t *args)
+     struct gpio_out pin = gpio_out_setup(args[1], 0);
+     uint16_t data_size = args[2];
+     if (data_size & 0x8000)
+-        shutdown("Invalid neopixel data_size");
++        shutdown_ec(26, "Invalid neopixel data_size");
+     struct neopixel_s *n = oid_alloc(args[0], command_config_neopixel
+                                      , sizeof(*n) + data_size);
+     n->pin = pin;
+@@ -183,7 +183,7 @@ command_neopixel_update(uint32_t *args)
+     uint_fast8_t data_len = args[2];
+     uint8_t *data = command_decode_ptr(args[3]);
+     if (pos & 0x8000 || pos + data_len > n->data_size)
+-        shutdown("Invalid neopixel update command");
++        shutdown_ec(27, "Invalid neopixel update command");
+     memcpy(&n->data[pos], data, data_len);
+ }
+ DECL_COMMAND(command_neopixel_update,
+diff --git a/src/pulse_counter.c b/src/pulse_counter.c
+index 7837a3c86..7867b7159 100644
+--- a/src/pulse_counter.c
++++ b/src/pulse_counter.c
+@@ -70,7 +70,7 @@ command_query_counter(uint32_t *args)
+     c->poll_ticks = args[2];
+     c->sample_ticks = args[3];
+     c->next_sample_time = c->timer.waketime; // sample immediately
+-    sched_add_timer(&c->timer);
++    sched_add_timer(&c->timer, 56);
+ }
+ DECL_COMMAND(command_query_counter,
+              "query_counter oid=%c clock=%u poll_ticks=%u sample_ticks=%u");
+diff --git a/src/pwmcmds.c b/src/pwmcmds.c
+index d214a95a7..47e64b94d 100644
+--- a/src/pwmcmds.c
++++ b/src/pwmcmds.c
+@@ -28,7 +28,7 @@ struct pwm_move {
+ static uint_fast8_t
+ pwm_end_event(struct timer *timer)
+ {
+-    shutdown("Missed scheduling of next hard pwm event");
++    shutdown_ec(23, "Missed scheduling of next hard pwm event");
+ }
+ 
+ static uint_fast8_t
+@@ -58,7 +58,7 @@ pwm_event(struct timer *timer)
+     uint32_t wake = container_of(nn, struct pwm_move, node)->waketime;
+     if (value != p->default_value && p->max_duration
+         && timer_is_before(p->timer.waketime + p->max_duration, wake))
+-        shutdown("Scheduled pwm event will exceed max_duration");
++        shutdown_ec(24, "Scheduled pwm event will exceed max_duration");
+     p->timer.waketime = wake;
+     return SF_RESCHEDULE;
+ }
+@@ -97,10 +97,10 @@ command_queue_pwm_out(uint32_t *args)
+     sched_del_timer(&p->timer);
+     if (p->timer.func == pwm_end_event
+         && timer_is_before(p->timer.waketime, m->waketime))
+-        shutdown("Scheduled pwm event will exceed max_duration");
++        shutdown_ec(25, "Scheduled pwm event will exceed max_duration");
+     p->timer.func = pwm_event;
+     p->timer.waketime = m->waketime;
+-    sched_add_timer(&p->timer);
++    sched_add_timer(&p->timer, 45);
+ }
+ DECL_COMMAND(command_queue_pwm_out, "queue_pwm_out oid=%c clock=%u value=%hu");
+ 
+diff --git a/src/sched.c b/src/sched.c
+index 44cce558e..c50312ace 100644
+--- a/src/sched.c
++++ b/src/sched.c
+@@ -83,15 +83,17 @@ insert_timer(struct timer *pos, struct timer *t, uint32_t waketime)
+ 
+ // Schedule a function call at a supplied time.
+ void
+-sched_add_timer(struct timer *add)
++sched_add_timer(struct timer *add, uint8_t tag)
+ {
+     uint32_t waketime = add->waketime;
+     irqstatus_t flag = irq_save();
+     struct timer *tl = SchedStatus.timer_list;
+     if (unlikely(timer_is_before(waketime, tl->waketime))) {
+         // This timer is before all other scheduled timers
+-        if (timer_is_before(waketime, timer_read_time()))
++        if (timer_is_before(waketime, timer_read_time())) {
++            ff_timer_close = tag;
+             try_shutdown("Timer too close");
++        }
+         if (tl == &deleted_timer)
+             add->next = deleted_timer.next;
+         else
+@@ -281,7 +283,7 @@ void
+ sched_clear_shutdown(void)
+ {
+     if (!SchedStatus.shutdown_status)
+-        shutdown("Shutdown cleared when not shutdown");
++        shutdown_ec(22, "Shutdown cleared when not shutdown");
+     if (SchedStatus.shutdown_status == 2)
+         // Ignore attempt to clear shutdown if still processing shutdown
+         return;
+diff --git a/src/sched.h b/src/sched.h
+index 0a2bdc4bc..4a2080e6c 100644
+--- a/src/sched.h
++++ b/src/sched.h
+@@ -26,7 +26,10 @@ struct task_wake {
+ };
+ 
+ // sched.c
+-void sched_add_timer(struct timer*);
++// FlashForge: the tag names the call site, and is reported to the
++// host as `close` if this timer is ever scheduled in the past.
++void sched_add_timer(struct timer*, uint8_t tag);
++extern uint8_t ff_timer_close;
+ void sched_del_timer(struct timer *del);
+ unsigned int sched_timer_dispatch(void);
+ void sched_timer_reset(void);
+diff --git a/src/stepper.c b/src/stepper.c
+index 00a8ff012..34fe4005d 100644
+--- a/src/stepper.c
++++ b/src/stepper.c
+@@ -164,7 +164,7 @@ stepper_event_full(struct timer *t)
+     // Next step event is too close to the last unstep
+     int32_t diff = s->time.waketime - min_next_time;
+     if (diff < (int32_t)-timer_from_us(1000))
+-        shutdown("Stepper too far in past");
++        shutdown_ec(14, "Stepper too far in past");
+ reschedule_min:
+     s->time.waketime = min_next_time;
+     return SF_RESCHEDULE;
+@@ -225,7 +225,7 @@ command_queue_step(uint32_t *args)
+     m->interval = args[1];
+     m->count = args[2];
+     if (!m->count)
+-        shutdown("Invalid count parameter");
++        shutdown_ec(15, "Invalid count parameter");
+     m->add = args[3];
+     m->flags = 0;
+ 
+@@ -244,7 +244,7 @@ command_queue_step(uint32_t *args)
+         s->flags = flags;
+         move_queue_push(&m->node, &s->mq);
+         stepper_load_next(s);
+-        sched_add_timer(&s->time);
++        sched_add_timer(&s->time, 22);
+     }
+     irq_enable();
+ }
+@@ -271,7 +271,7 @@ command_reset_step_clock(uint32_t *args)
+     uint32_t waketime = args[1];
+     irq_disable();
+     if (s->count)
+-        shutdown("Can't reset time when stepper active");
++        shutdown_ec(16, "Can't reset time when stepper active");
+     s->next_step_time = s->time.waketime = waketime;
+     s->flags &= ~SF_NEED_RESET;
+     irq_enable();
 diff --git a/src/stm32/Kconfig b/src/stm32/Kconfig
 index 037e37bbe..bac8adc42 100644
 --- a/src/stm32/Kconfig
@@ -303,6 +1450,28 @@ index 037e37bbe..bac8adc42 100644
      config STM32_FLASH_START_20000
          bool "128KiB bootloader" if MACH_STM32H743 || MACH_STM32H723 || MACH_STM32F7
  
+diff --git a/src/stm32/gpio.c b/src/stm32/gpio.c
+index d19437cbe..35b897a72 100644
+--- a/src/stm32/gpio.c
++++ b/src/stm32/gpio.c
+@@ -78,7 +78,7 @@ struct gpio_out
+ gpio_out_setup(uint32_t pin, uint32_t val)
+ {
+     if (!gpio_valid(pin))
+-        shutdown("Not an output pin");
++        shutdown_ec(11, "Not an output pin");
+     GPIO_TypeDef *regs = digital_regs[GPIO2PORT(pin)];
+     gpio_clock_enable(regs);
+     struct gpio_out g = { .regs=regs, .bit=GPIO2BIT(pin) };
+@@ -130,7 +130,7 @@ struct gpio_in
+ gpio_in_setup(uint32_t pin, int32_t pull_up)
+ {
+     if (!gpio_valid(pin))
+-        shutdown("Not a valid input pin");
++        shutdown_ec(12, "Not a valid input pin");
+     GPIO_TypeDef *regs = digital_regs[GPIO2PORT(pin)];
+     struct gpio_in g = { .regs=regs, .bit=GPIO2BIT(pin) };
+     gpio_in_reset(g, pull_up);
 diff --git a/src/stm32/serial.c b/src/stm32/serial.c
 index 19aa048ea..db0ed662e 100644
 --- a/src/stm32/serial.c
@@ -316,3 +1485,56 @@ index 19aa048ea..db0ed662e 100644
    #define GPIO_Rx GPIO('A', 10)
    #define GPIO_Tx GPIO('A', 9)
    #define USARTx USART1
+diff --git a/src/tmcuart.c b/src/tmcuart.c
+index a2f5f8fcd..6e4ab200b 100644
+--- a/src/tmcuart.c
++++ b/src/tmcuart.c
+@@ -198,7 +198,7 @@ command_tmcuart_send(uint32_t *args)
+     uint8_t *write = command_decode_ptr(args[2]);
+     uint8_t read_len = args[3];
+     if (write_len > sizeof(t->data) || read_len > sizeof(t->data))
+-        shutdown("tmcuart data too large");
++        shutdown_ec(2, "tmcuart data too large");
+     memcpy(t->data, write, write_len);
+     t->pos = 0;
+     t->flags = (t->flags & (TU_LINE_HIGH|TU_PULLUP|TU_SINGLE_WIRE)) | TU_ACTIVE;
+@@ -212,7 +212,7 @@ command_tmcuart_send(uint32_t *args)
+     }
+     irq_disable();
+     t->timer.waketime = timer_read_time() + timer_from_us(200);
+-    sched_add_timer(&t->timer);
++    sched_add_timer(&t->timer, 51);
+     irq_enable();
+ }
+ DECL_COMMAND(command_tmcuart_send, "tmcuart_send oid=%c write=%*s read=%c");
+diff --git a/src/trsync.c b/src/trsync.c
+index 3bf7aa669..5a181ffe6 100644
+--- a/src/trsync.c
++++ b/src/trsync.c
+@@ -87,7 +87,7 @@ trsync_add_signal(struct trsync *ts, struct trsync_signal *tss
+ {
+     irqstatus_t flag = irq_save();
+     if (tss->func || !func)
+-        shutdown("Can't add signal that is already active");
++        shutdown_ec(1, "Can't add signal that is already active");
+     tss->func = func;
+     tss->next = ts->signals;
+     ts->signals = tss;
+@@ -121,7 +121,7 @@ command_trsync_start(uint32_t *args)
+     ts->report_time.waketime = args[1];
+     ts->report_ticks = args[2];
+     if (ts->report_ticks)
+-        sched_add_timer(&ts->report_time);
++        sched_add_timer(&ts->report_time, 29);
+     ts->expire_reason = args[3];
+     irq_enable();
+ }
+@@ -138,7 +138,7 @@ command_trsync_set_timeout(uint32_t *args)
+     if (flags & TSF_CAN_TRIGGER) {
+         sched_del_timer(&ts->expire_time);
+         ts->expire_time.waketime = args[1];
+-        sched_add_timer(&ts->expire_time);
++        sched_add_timer(&ts->expire_time, 28);
+     }
+     irq_enable();
+ }

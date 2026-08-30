@@ -64,11 +64,32 @@ Each board is rebased on its own schedule, so a version fingerprint from one
 board says nothing about another.
 
 `tools/mcu-recovery/` reconstructs the levelBoard source from upstream Klipper
-`6d70050` plus a 318-line patch, and `build.sh` gates the rebuild on producing
-the stock dictionary. It does; the machine code is ~8.8 KiB smaller, because
-the eddy front end (ADC1 over DMA1 ch1, SPI2 side channel), the DMA serial
-path and the board telemetry counters were not reconstructed. See that
-directory's README for the full accounting.
+`6d70050` plus a recovered patch, and `build.sh` gates the rebuild against the
+stock image.
+
+Two things now come out **byte-identical**: the 5,663-byte data dictionary
+(including every message id) and the 2,281-byte compressed blob as stored in
+flash. The memory map matches too. On code, 34 of 54 command handlers are
+instruction-identical and the image is 25,624 bytes against the stock 26,704.
+
+Getting there needed three things that are worth knowing about generally:
+
+- **The build was not reproducible against itself.** Klipper stamps a
+  timestamp and hostname into the dictionary it embeds, so two builds a
+  second apart differ. And Fedora's Python links zlib-ng, whose deflate
+  output differs byte for byte from classic zlib on identical input.
+- **FlashForge instrument two things systematically**: `shutdown()` latches a
+  per-site error code, and `sched_add_timer()` carries a call-site tag that
+  names the culprit when a timer is scheduled late. Both were recovered in
+  full from the image.
+- **Message ids are baked into the image**, and Klipper assigns them from
+  declaration order. Matching them pinned down exactly where in the source
+  FlashForge put their commands: inside `basecmd.c`, between
+  `clear_shutdown` and `identify`.
+
+The remaining ~1 KB is the DMA-driven serial path and a StdPeriph-style
+driver library upstream does not use. See that directory's README for the
+full accounting.
 
 ## Two things found on the way
 
