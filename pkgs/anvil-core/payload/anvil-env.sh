@@ -67,8 +67,18 @@ export LD_LIBRARY_PATH
 # interpreter had to be a glibc build.
 #
 # klippy's numpy gap (extras/stepper_resonance_tester.py) is this switch's
-# problem and stays open as a smaller item: the module guards its own import,
-# so the printer runs without it and loses resonance testing.
+# problem and it is NOT a smaller item. This comment used to say the module
+# guards its own import, so the printer runs without it and loses resonance
+# testing. Both halves are wrong: line 1 of that file is a bare
+# `import numpy as np`, and klippy.py:122 loads EVERY config section through a
+# load_object that does not catch ImportError. printer.base.cfg includes
+# FlashForge's printer.vibration.cfg, which declares
+# [stepper_resonance_tester] -- so on this interpreter klippy does not come up
+# at all, rather than coming up without one feature.
+#
+# See docs/notes/44-vfa-calibration.md for the chain and the options. Nothing
+# here is fixed by editing this line; it takes either a packaged numpy or a
+# guarded import in the fork.
 #
 # Note what is NOT on PATH below: $MODDIR/bin is prepended and the interpreter
 # is in there, but it is called python3.13 and only that. bin/payload.sh

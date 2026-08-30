@@ -105,6 +105,7 @@ nav:
           - firmwareExe vs Klipper: notes/25-app-vs-klipper-ownership.md
           - Toolchange sequences: notes/30-toolchange.md
           - Offsets and per-unit config: notes/40-offsets.md
+          - VFA calibration: notes/44-vfa-calibration.md
           - Offset calibration, the port: notes/45-tool-offset-calibration.md
           - Offset calibration, recovered: notes/46-offset-calibration-recovered.md
           - Filament load, recovered: notes/47-filament-load-recovered.md
