@@ -136,7 +136,7 @@ fetch() {  # fetch <url>  -> $SRC/<basename>, cached
 }
 log "fetch sources"
 fetch https://www.python.org/ftp/python/$PY_VER/Python-$PY_VER.tgz
-fetch https://zlib.net/fossils/zlib-$ZLIB_VER.tar.gz
+fetch https://github.com/madler/zlib/releases/download/v$ZLIB_VER/zlib-$ZLIB_VER.tar.gz
 fetch https://github.com/openssl/openssl/releases/download/openssl-$OSSL_VER/openssl-$OSSL_VER.tar.gz
 fetch https://github.com/libffi/libffi/releases/download/v$FFI_VER/libffi-$FFI_VER.tar.gz
 fetch https://www.sqlite.org/2024/$SQLITE_TAR.tar.gz

@@ -102,9 +102,11 @@ get "https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSI
 # in the version number -- hence SQLITE_YEAR.
 get "https://www.sqlite.org/$SQLITE_YEAR/sqlite-autoconf-$SQLITE_VERSION.tar.gz" \
     "$SQLITE_TGZ" "$SQLITE_SHA256"
-# /fossils/, not the front page: zlib.net moves a release there the moment it
-# is superseded, and the front-page URL then 404s for a good pin.
-get "https://zlib.net/fossils/zlib-$ZLIB_VERSION.tar.gz" \
+# madler's own release asset, not zlib.net: that host sits behind an anti-bot
+# interstitial that answers 200 with a 12KB HTML spinner page, which curl -f
+# accepts and only the sha256 rejects -- as a mismatch that reads like
+# tampering. The GitHub asset is byte-identical to the pin below.
+get "https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz" \
     "$ZLIB_TGZ" "$ZLIB_SHA256"
 get "https://github.com/libffi/libffi/releases/download/v$LIBFFI_VERSION/libffi-$LIBFFI_VERSION.tar.gz" \
     "$LIBFFI_TGZ" "$LIBFFI_SHA256"
