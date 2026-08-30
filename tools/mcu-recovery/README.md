@@ -109,19 +109,28 @@ image is 25,624 bytes against the stock 26,704.
 The 1,164-byte code gap is accounted for rather than estimated: 514 bytes
 spread thinly across already-matched functions, and 738 bytes of net
 imbalance from what is missing outright. The missing part is FlashForge's
-peripheral plumbing -- 0x08008ACC (1,344 B) with its helpers (328 B), the
-DMA serial interrupt handlers (268 B) and the eddy task wrapper (80 B) --
-offset by the ADC and interrupt-serial code we still carry and stock does
-not.
+peripheral plumbing -- the vendor library at 0x08008924 (1,824 B), the
+dead DMA interrupt handlers (268 B) and the eddy task wrapper (80 B) --
+offset by the ADC code we still carry and stock does not.
 
-**0x08008ACC is vendor code, not FlashForge logic.** It is a standard
-peripheral library subset -- `USART_Init` with the textbook
-`x25/(4*baud)/100` BRR helper, `RCC_GetClocksFreq`, `DMA_Init`, and a DMA1
-channel-base table at 0x08008F40. Klipper vendors only `n32g45x_adc.c` of
-that library, so FlashForge added the USART, RCC and DMA drivers from the
-Nations SDK. Reproducing that block means compiling the right vendor
-sources, not writing anything new -- which makes it the most tractable
-piece of what is left, given the SDK.
+**The library block is vendor code, not FlashForge logic.** It spans
+0x08008924-0x08009043 (1,824 B) and covers RCC, GPIO, USART, NVIC, DMA and
+TIM -- `USART_Init` with the textbook `x25/(4*baud)/100` BRR helper,
+`RCC_GetClocksFreqValue`, `DMA_Init` and friends. Klipper vendors only
+`n32g45x_adc.c` of that library, so FlashForge added the rest from the
+Nations SDK.
+
+An earlier revision of this note put the block at 0x08008ACC, called it
+1,344 bytes, and claimed a DMA1 channel-base table at 0x08008F40. All
+three were wrong: 0x08008ACC is a 4-byte `GPIO_SetBits` (`str r1,[r0,#24]`
+/ `bx lr`) and 0x08008F40 is `DMA_DeInit`'s literal pool.
+
+Reproducing the block is *not* simply a matter of compiling the published
+SDK. FlashForge's entry points take one argument where the published SDK
+takes two, and their USART register file is 16-bit wide -- which is what
+produces the `strh r2,[r3,#12]` at 0x080083AA. That is consistent with the
+published sources never matching better than a 4-instruction prefix, and
+means this block has to be reconstructed like any other, not downloaded.
 
 ### What had to be pinned first
 
@@ -174,13 +183,23 @@ StdPeriph-style driver library that upstream Klipper does not use.
 
 ### Next, in order of tractability
 
-1. **The vector table.** Stock declares more slots than we do and fills
-   three that Klipper leaves on its weak `DefaultHandler`: NMI (`bx lr`),
-   HardFault (`b .`) and SVCall (`bx lr`), at 0x08007DA0/DA4/DA8. It also
-   places its USART1 handler on the **SPI2 vector** -- see the bugs section
-   below -- and its table runs to slot 68 (IRQ 52) where ours stops at 54
-   (IRQ 37). Reproducing that means declaring the handler on IRQ 36 as
-   FlashForge do, bug and all, and padding the table out.
+1. **The vector table**, now fully specified. Stock's table is exactly
+   69 words -- external IRQs 0..52 -- followed by three `0xffffffff` fill
+   words to 0x120, so the image is gap-filled with 0xff rather than zeros.
+   Only four slots hold a real handler:
+
+   | slot | line | what |
+   |---|---|---|
+   | irq11 | DMA1_Channel1 | the eddy sensor's TIM1 latch |
+   | irq14 | DMA1_Channel4 | dead -- see below |
+   | irq15 | DMA1_Channel5 | dead -- see below |
+   | irq36 | SPI2 | the USART1 handler |
+
+   Everything else is `DefaultHandler`. Declaring the handler on 36 is
+   done and irq11/irq36 now agree; irq14/irq15 and the run out to slot 52
+   remain. Nothing in the image explains the length: IRQ 52 is UART4 and
+   the UART4 base address 0x40004C00 appears nowhere in the image, so the
+   tail is padding whose mechanism is unknown.
 2. **The vendor peripheral library** at 0x08008ACC (1,344 B, plus 328 B of
    helpers) -- a matter of finding the right published source, not writing
    new code. Klipper vendors only `n32g45x_adc.c`, but the rest is public:
@@ -232,17 +251,39 @@ this kind of gap.
 Do not flash any of this. It is a reconstruction for study, not a
 drop-in image.
 
-## Two bugs worth knowing about
+## Two things worth knowing about
 
-**The USART interrupt handler is installed on the wrong vector.** Stock
-puts a handler that services USART1 -- it reads the status register at
-0x40013800 and tests ORE/RXNE -- at vector slot 36. On this part
-`USART1_IRQn` is 37; 36 is `SPI2_IRQn`, confirmed from the N32G45x SDK's
-own CMSIS header, and `USART1_BASE` really is 0x40013800 there. So the
-handler is registered on an interrupt that cannot fire from USART1, and
-the USART error and idle path is dead code. The serial link works anyway
-because it is driven by DMA (channels 4 and 5), which is presumably why
-this was never noticed.
+**The USART handler sits on vector 36, and that should not work.**
+Stock puts a handler that services USART1 -- it reads the status register
+at 0x40013800 and tests ORE/RXNE -- at vector slot 36, and unmasks NVIC
+line 36 through `NVIC_Init`. On the published numbering that is the wrong
+line: the N32G45x CMSIS header numbers this part exactly like an F103, a
+contiguous enum in which 35 is SPI1, **36 is SPI2 and 37 is USART1**, with
+the N32-only interrupts appended from 53 upward. Two independent SDK
+mirrors agree, and there is no gap anywhere in 11..37 that could absorb an
+off-by-one.
+
+The obvious reading is a one-line bug in FlashForge's source. But it does
+not survive contact with the rest of the image:
+
+- the console is **not** DMA-driven. It is upstream Klipper's
+  byte-at-a-time RXNE/TXE interrupt path, so it needs that interrupt;
+- the DMA1 channel 4 and 5 handlers at 0x080083B4/0x080083F4 are real code
+  but dead -- those channels are never configured or enabled and their
+  NVIC lines are never unmasked (`NVIC_Init` has exactly three call sites:
+  IRQ 11, IRQ 36 and SysTick);
+- neither the SPI2 base address nor UART4's appears anywhere in the image;
+- and the printer ships and works.
+
+If the handler really were on SPI2's line, this board's console could not
+receive a byte. So either the shipped silicon numbers USART1 at 36,
+contradicting two published copies of the vendor header, or this image has
+a defect that ought to be fatal. **The binary cannot settle it** -- that
+needs the part's reference manual or a live board. An earlier revision of
+this note asserted the bug as fact; that was premature.
+
+Either way, reproducing the image requires the handler on slot 36, which
+is what the tree now does.
 
 ### endstop_recover_state cannot reply
 

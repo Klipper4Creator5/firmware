@@ -87,9 +87,9 @@ Getting there needed three things that are worth knowing about generally:
   FlashForge put their commands: inside `basecmd.c`, between
   `clear_shutdown` and `identify`.
 
-The remaining ~1 KB is the DMA-driven serial path and a StdPeriph-style
-driver library upstream does not use. See that directory's README for the
-full accounting.
+The remaining ~1 KB is a vendor peripheral library upstream does not use
+(0x08008924-0x08009043) plus a pair of DMA interrupt handlers that turn out
+to be dead code. See that directory's README for the full accounting.
 
 ## Three things found on the way
 
@@ -101,12 +101,22 @@ and the reply goes to `command_sendf(NULL, ...)`. FlashForge's own klippy
 sends this command — `MCU_endstop._recover_cmd` in `klippy/mcu.py` — and all
 three boards that carry it are affected.
 
-**The USART interrupt is on the wrong vector.** Stock installs a handler that
-services USART1 — it reads the status register at `0x40013800` and tests
-ORE/RXNE — at vector slot 36. On this part `USART1_IRQn` is 37 and 36 is
-`SPI2_IRQn`, confirmed from the N32G45x SDK's own CMSIS header. The handler
-can never fire from USART1, so the error and idle path is dead. The link
-works because it is DMA-driven, which is presumably why nobody noticed.
+**The USART interrupt sits on vector 36, and that should not work.** Stock
+installs a handler that services USART1 — it reads the status register at
+`0x40013800` and tests ORE/RXNE — at vector slot 36, and unmasks NVIC line
+36. But the N32G45x CMSIS header numbers this part exactly like an F103: a
+contiguous enum in which 36 is `SPI2_IRQn` and USART1 is 37, with the
+N32-only interrupts appended from 53 up. Two SDK mirrors agree and there is
+no gap in 11..37 to absorb an off-by-one.
+
+That looks like a one-line bug, except the console is *not* DMA-driven — it
+is upstream Klipper's byte-at-a-time interrupt path, and the DMA1 channel 4
+and 5 handlers in the image are never configured, enabled or unmasked. If
+the handler were really on SPI2's line the board could not receive a byte,
+yet the printer works. So either the silicon numbers USART1 at 36 against
+its own published header, or the image has a defect that ought to be fatal.
+The binary cannot settle it; that needs the reference manual or a live
+board.
 
 **`RESERVE_PINS_serial` is `PH10,PH9`.** Upstream says `PA10,PA9` for USART1.
 Port H does not exist on this family and does not appear in the image's own
