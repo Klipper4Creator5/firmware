@@ -187,13 +187,18 @@ StdPeriph-style driver library that upstream Klipper does not use.
    the N32G45x SDK ships `n32g45x_usart.c`, `n32g45x_rcc.c` and
    `n32g45x_dma.c`, exactly the three drivers that block accounts for.
 
-   Confirmed by compiling them: SDK V2.1.0's `RCC_GetClocksFreqValue` at
-   -O2 reproduces stock's first four instructions exactly and the next two
-   are the same pair swapped, and `USART_Init`/`DMA_Init` touch the same
-   registers and fields in the same order. So the family is right and the
-   revision is not. Nine flag combinations were tried and -O2 stays the
-   best fit, which points at a different SDK revision rather than different
-   build options -- other published mirrors are the next thing to try.
+   Confirmed by compiling them: the SDK's `RCC_GetClocksFreqValue` at -O2
+   reproduces stock's first four instructions exactly and the next two are
+   the same pair swapped, and `USART_Init`/`DMA_Init` touch the same
+   registers and fields in the same order. ST's own StdPeriph
+   `RCC_GetClocksFreq` does markedly worse (a 1-instruction prefix over 54
+   instructions, against 4 over 70), so it is the Nations driver rather
+   than the ST original.
+
+   The family is right; the revision is not. Two published mirrors compile
+   to the same code for that function, and nine flag combinations leave -O2
+   the best fit, so what is needed is the particular SDK version FlashForge
+   built against.
 3. **The DMA serial path** (268 B of interrupt handlers plus its setup),
    which sits on top of that library.
 4. **The remaining register-allocation differences** -- see below.
