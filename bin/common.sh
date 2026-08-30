@@ -80,6 +80,8 @@ pypkg_var() {
     _v="PYPKG_${_n}_$2"
     printf '%s' "${!_v-}"
 }
+# The sdist as bin/fetch-assets.sh leaves it in vendor/.
+pypkg_tgz() { printf '%s/vendor/%s' "$ROOT" "$(pypkg_var "$1" FILE)"; }
 # Version taken from the pinned file name, after the LAST dash -- which is what
 # makes inotify_simple-1.3.5 and pyserial-asyncio-0.6 both come out right.
 pypkg_version() {
