@@ -86,9 +86,10 @@ SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh",
 # pkgs/*/build.sh is deliberately not here: the recipes are build-host bash,
 # like everything in bin/, and a bashism in one is not a defect.
 #
-# installer/ is here too: run-pre.sh and run-append.sh are spliced into
-# FlashForge's own run.sh and execute inside the stock installer's shell,
-# which is the same busybox.
+# installer/ is here too, and it matters more than it used to:
+# runFirmwareExe.sh IS the installer now, run by app_startup.sh under the
+# printer's busybox with nothing else between it and the machine. A bashism in
+# it is a package that unpacks and then does nothing.
 #
 # NOT here, and it is a real gap rather than a decision:
 # pkgs/*/payload/bin/*.sh. wifi-action.sh runs on the printer and no lane

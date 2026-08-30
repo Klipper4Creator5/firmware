@@ -11,30 +11,46 @@ busybox init → /etc/init.d/rcS → S99factory_test_shell
              → /usr/prog/app_startup.sh
                  ├─ mounts /dev/sda* on /mnt, globs Creator5Pro-*.tgz
                  ├─ /usr/prog/bin/unTar  (des3 decrypt → /usr/data/update)
-                 └─ runFirmwareExe.sh Creator5Pro 0029
-                        └─ per component: extract → md5 gate → run.sh
+                 └─ runFirmwareExe.sh Creator5Pro 0029   ← OURS
+                        ├─ gates: architecture, model/PID
+                        ├─ per component: extract → md5 gate → run.sh
+                        └─ the mod: payload, symlinks, configs, password
              → firmwareExe  ← the UI, and what starts Klipper
 ```
 
-The mod's entire integration point is **one file**: it replaces
-`/usr/prog/PROGRAM/software/firmwareExe` with a shell script that runs
-HelixScreen. Because everything funnels through that binary, `app_startup.sh`,
-`rcS` and the whole init chain stay **completely stock and unpatched**. The
-genuine binary is not kept anywhere — the stock installer wipes the software
-directory before `run.sh` runs, so nothing on the printer could ever be a
-reliable backup of it. Flashing the stock FlashForge package, which still
-ships it, is the uninstall.
+The mod meets the stock printer in exactly **two files**, and owns both:
 
-Two properties come for free from keeping that name and that place:
+* `runFirmwareExe.sh`, the installer. `app_startup.sh` runs whatever it finds
+  under that name in the package it just decrypted, so owning the name is all
+  it takes to own the install. Ours is `installer/runFirmwareExe.sh`;
+  `bin/pack.sh` bakes the model gate into it. It used to be FlashForge's own
+  file, with the mod's install spliced into the software component's `run.sh`
+  because that was the only place the stock updater would execute anything of
+  ours.
+* `/usr/prog/PROGRAM/software/firmwareExe`, the UI binary, replaced by a shell
+  script that starts the supervisor.
 
-* `app_startup.sh`'s own watchdog greps `ps` for `firmwareExe` five seconds
-  after launch. The wrapper *is* `firmwareExe` and stays in the foreground, so
-  the stock watchdog supervises the mod correctly.
-* If the wrapper is ever removed, `app_startup.sh` restores a `firmwareExe`
-  from a version directory — the last entry of a plain `ls -ld [0-9]*`, which
-  is alphabetical rather than version-sorted, though since the installer keeps
-  only one directory there is normally just the one candidate. The stock
-  recovery path still works.
+Because everything funnels through those two, `app_startup.sh`, `rcS` and the
+whole init chain stay **completely stock and unpatched**. The genuine
+`firmwareExe` is not kept anywhere: the installer wipes the software directory
+before the new version lands, so nothing on the printer is a reliable backup of
+it. Flashing the stock FlashForge package, which still ships it, is the
+uninstall.
+
+One property comes for free from keeping the binary's name and place:
+`app_startup.sh`'s own watchdog greps `ps` for `firmwareExe` five seconds after
+launch. The wrapper *is* `firmwareExe` and stays in the foreground, so the stock
+watchdog supervises the mod correctly.
+
+Its other half does **not** currently work, and it is worth being exact about
+why. When nothing called `firmwareExe` is running, `app_startup.sh` copies one
+out of a version directory — `/usr/prog/PROGRAM/software/<version>/firmwareExe`.
+That directory is the software component the last flash installed, and ours has
+had `firmwareExe` deleted from it since we stopped shipping FlashForge's 21MB
+binary. So the recovery finds nothing to copy, and a printer whose payload
+failed to install shows a blank screen (ssh still answers — dropbear is stock
+init's). Not shipping a software component at all fixes this, because then the
+version directory is FlashForge's own and still holds their binary.
 
 ## Services
 
@@ -82,7 +98,7 @@ One sourced library sits beside them, installed to `/usr/data/anvil` and not
 executable:
 
 * **`anvil-env.sh`** — `PATH`, `LD_LIBRARY_PATH` and `FF_PYTHON`, in the one
-  place that defines them. `run-append.sh`, `firmwareExe`, `start.sh` and every
+  place that defines them. `runFirmwareExe.sh`, `firmwareExe`, `start.sh` and every
   service script source it. A private copy per script is how the installer's
   check and the boot script came to disagree about the library list, with
   moonraker dying on `libpython3.8.so.1.0: cannot open shared object file`.
@@ -149,17 +165,15 @@ store is used in place -- nothing is converted, and reverting to stock is a
 clean round trip.
 
 This was not worked out in advance; v0.9.3 was built, shipped and tried on the
-printer first, and that is what it said. Two things came out of it. The
-installer now asks the printer's own python to import the tree *before* moving
-anything, and keeps the stock server if it cannot — a bad pin refuses to
-install instead of leaving the machine with no web UI. And when bumping the
+printer first, and that is what it said. What came out of it: when bumping the
 pin, the blocker to check is native modules, not the python version.
 
-Moonraker does not come from the update package at all — it exists only on the
-factory image, and the stock `run.sh` copies a hand-written list of paths out
-of the software component rather than extracting it over `/usr/prog`. So the
-tree travels with the mod payload and `run-append.sh` puts it in place, moving
-the old one aside first and restoring it if the copy does not complete.
+There is nothing left for the installer to do about Moonraker. An earlier
+release copied the tree over `/usr/prog/moonraker`, and needed a preflight
+import check and a move-aside-and-roll-back dance because that copy could fail
+on a full firmware partition and leave the printer with no web UI. Both are
+gone with the copy: the payload extracts to `/usr/data/anvil` and that *is* the
+installation, so there is no separate Moonraker step that can fail on its own.
 
 `make test` covers this end to end on the printer replica: that the swap
 happened, that the installed `webcam.py` has the `enabled` field, that the

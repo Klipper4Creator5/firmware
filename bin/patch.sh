@@ -152,60 +152,18 @@ MOD_MANIFEST=.install-manifest
 mv -f work/.install-manifest "$PAYLOAD_DIR/$MOD_MANIFEST"
 say "install manifest: $(wc -l < "$PAYLOAD_DIR/$MOD_MANIFEST") paths -> $MODDIR/$MOD_MANIFEST"
 
-# --- 11. run.sh install step
-# Two blocks are spliced into FlashForge's own run.sh, each wrapped in markers
-# so re-running this script replaces them rather than stacking a second copy:
-#   pre  -- after WORK_DIR is set and before the first cp into /usr/prog, so
-#           the backup it takes still catches the STOCK files
-#   post -- before the final exit, once the stock install has finished
-# Nothing outside this section reads the markers.
-say "run.sh: injecting mod install blocks (pre + post)"
-# Decided at build time and baked in, because only the build knows whether a
-# hash was supplied -- and a baked-in default would be the same password on
-# every printer, so with none the installer picks a random one on the machine.
-if [ -n "${ROOT_PW_HASH:-}" ]; then PW_AUTO=0; else PW_AUTO=1; fi
-python3 - "$SOFTWARE_DIR/run.sh" "$PW_AUTO" <<'PY'
-import re, sys
-
-run, pw_auto = sys.argv[1], sys.argv[2]
-# Each block's name, its source, and the LINE BOUNDARY it lands on. Both
-# regexes are written to end where the block starts, so the insert is always
-# "at the end of this match" and neither block needs a rule of its own:
-#   pre  -- the WORK_DIR line INCLUDING its newline, so the block follows it
-#   post -- a zero-width lookahead at the final exit, so the block precedes it
-BLOCKS = (
-    ("pre",  "installer/run-pre.sh",    r"^WORK_DIR=.*$\n"),
-    ("post", "installer/run-append.sh", r"(?=^exit 0\s*$)"),
-)
-
-src = open(run, encoding='utf-8', errors='surrogateescape').read()
-# Idempotent, and matched by shape rather than by name: a tree patched by an
-# older build carries whatever markers THAT build wrote, and they have to go
-# too. The \n? and the trailing \n take back exactly what the insert below
-# adds -- one blank line in front, one newline closing the end marker -- so a
-# strip returns the file to the byte it was before. Eating any more than that
-# would swallow stock's own blank lines; eating any less left the padding
-# behind, which is why re-patching a tree used to grow it three lines a pass.
-src = re.sub(r"\n?^# >>> anvil .*?^# <<< anvil .*?$\n", "", src,
-             flags=re.S | re.M)
-
-for name, source, anchor in BLOCKS:
-    body = open(source, encoding='utf-8').read()
-    body = re.sub(r"^MOD_PW_AUTO=.*$", "MOD_PW_AUTO=" + pw_auto, body, flags=re.M)
-    # Exactly one match, never "the last one that matched": a stock run.sh with
-    # two candidate lines is one this script has no business guessing about.
-    hits = list(re.finditer(anchor, src, flags=re.M))
-    if len(hits) != 1:
-        raise SystemExit("run.sh: %d lines match %s -- cannot place the %s block"
-                         % (len(hits), anchor, name))
-    at = hits[0].end()
-    src = "%s\n# >>> anvil %s >>>\n%s# <<< anvil %s <<<\n%s" % (
-        src[:at], name, body, name, src[at:])
-    print("   %s-block inserted at %s" % (name, anchor))
-
-open(run, 'w', encoding='utf-8', errors='surrogateescape').write(src)
-PY
-chmod +x "$SOFTWARE_DIR/run.sh"
+# --- 11. run.sh
+# NOTHING, and this is where the mod's install used to reach the printer. Two
+# marked blocks were spliced into FlashForge's own run.sh -- one after its
+# WORK_DIR line so the backup caught the stock files, one before its final exit
+# -- because the software component's run.sh was the ONLY place the stock
+# updater would execute anything of ours. That is what the component was for.
+#
+# installer/runFirmwareExe.sh IS the installer now, run by app_startup.sh
+# directly, and bin/pack.sh stages it. The splice, its idempotence markers and
+# the component itself all went with it, and FlashForge's run.sh is left doing
+# exactly what FlashForge wrote it to do -- on the --full packages that still
+# carry a component to run it from.
 
 echo
 echo "Patched."

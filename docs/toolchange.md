@@ -73,7 +73,7 @@ documented in the file headers.
 A package built from this repo needs no config editing at all. It ships:
 
 * the `ff_*.py` extras, inside the klippy tree `anvil-klipper` installs
-* the `ff-*.cfg`, to `/usr/data/config/` (`run-append.sh`, keeping any you
+* the `ff-*.cfg`, to `/usr/data/config/` (`runFirmwareExe.sh`, keeping any you
   edited and leaving the new one as `.mod-new`)
 * the `[include]` lines for all seven, at the end of `printer.base.cfg` —
   which the stock `run.sh` force-copies to `/usr/data/config/` on every flash

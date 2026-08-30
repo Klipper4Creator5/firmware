@@ -2,7 +2,7 @@
 
 A port of test/integration/printer/case-upgrade.sh, which was 224 lines of ash
 reporting one bit. Same subject, same method: two synthetic payloads are built
-on the printer, the REAL installer/run-append.sh is run over them by the
+on the printer, the REAL installer/runFirmwareExe.sh is run over them by the
 printer's own busybox, and every question below is put to the filesystem
 afterwards. Nothing here greps the installer -- a grep would pass on an
 installer that deletes nothing and fail on a variable rename, and neither
@@ -12,7 +12,7 @@ WHY IT MATTERS. Deleting whole directories at the start of an update is right
 only while every file under them is ours, and $MODDIR/bin holds the supervisor
 and the interpreter and is the obvious place for someone to leave a script of
 their own. So bin/patch.sh ships a manifest of the paths the payload installs
-and run-append.sh deletes what the PREVIOUS list named, nothing else. Two
+and runFirmwareExe.sh deletes what the PREVIOUS list named, nothing else. Two
 claims that pull against each other: either alone is trivially satisfiable
 (delete everything, or delete nothing) and only holding both at once means
 anything. The negative control -- a hand-dropped file in the SAME directory as
@@ -24,7 +24,7 @@ package shipped"; nothing about them is real and no shipped file has those
 names. The case script used init.d/S60web, S60nginx and S62moonraker because
 the failure that prompted all this was a renamed init script surviving an
 update and starting nginx twice. Those names are NOT reused here, for a
-reason worth recording: run-append.sh now removes $MODDIR/init.d and
+reason worth recording: runFirmwareExe.sh now removes $MODDIR/init.d and
 $MODDIR/anvil-service.sh UNCONDITIONALLY, whatever any manifest says, so an
 assertion about a file under init.d cannot distinguish the manifest from the
 sweep and would pass on an installer whose manifest logic had been deleted
@@ -33,7 +33,7 @@ manifest is asserted with names in directories only it governs.
 
 WHAT THIS MODULE DOES TO THE MACHINE. The `printer` fixture is a replica with
 the real package installed, and the first thing here is `rm -rf $MODDIR`: what
-is under test is run-append.sh, whose entire input is a tarball plus whatever
+is under test is runFirmwareExe.sh, whose entire input is a tarball plus whatever
 the last install left on disk, and a hand-built five-file payload exercises
 that exactly as well as a 100MB one while leaving the assertions legible.
 The container is module-scoped and nothing else shares it, so the wipe costs
@@ -56,13 +56,20 @@ MODDIR = "/usr/data/anvil"
 MANIFEST = MODDIR + "/.install-manifest"
 LOG = "/usr/data/anvil-install.log"
 
-# run-append.sh is never a file on a printer: bin/patch.sh splices it into
-# FlashForge's own run.sh. It is staged into the chroot from the checkout so
-# that the thing under test is the file in the tree, not a copy of it.
-INSTALLER = "/tmp/anvil-run-append.sh"
-SOURCE = ROOT / "installer" / "run-append.sh"
+# The installer is a real file on a printer now -- app_startup.sh runs it out
+# of /usr/data/update and deletes it afterwards -- but it is staged here from
+# the CHECKOUT rather than read off the replica, so that the thing under test
+# is the file in the tree and not the copy a bake happened to leave behind.
+#
+# Unsubstituted: bin/pack.sh rewrites MACHINE=/PID=/MOD_PW_AUTO= when it stages
+# it into a package, and the checkout's MOD_PW_AUTO=0 is what keeps these runs
+# from rerolling the replica's root password. The model gate is skipped by
+# passing no arguments, which is the case FlashForge's own script documents as
+# "old firmware, upgradeable".
+INSTALLER = "/tmp/anvil-installer.sh"
+SOURCE = ROOT / "installer" / "runFirmwareExe.sh"
 
-# Where the two payloads are built, and where run-append.sh looks for one.
+# Where the two payloads are built, and where the installer looks for one.
 BUILD = "/tmp/anvil-qa"
 MODTAR = "/usr/data/update/anvil.tar.xz"
 
@@ -74,7 +81,7 @@ INSTALL_T = 300
 # --------------------------------------------------------------- the actions
 
 def _pack(box, src, with_manifest):
-    """Stage `src` as the payload run-append.sh will find on the disk.
+    """Stage `src` as the payload runFirmwareExe.sh will find on the disk.
 
     The manifest is generated the way bin/patch.sh generates it -- find over
     the staged tree, plus the manifest's own name, LC_ALL=C sort -u -- rather
@@ -87,7 +94,7 @@ def _pack(box, src, with_manifest):
     root is dropped with the grep the case script used instead.
 
     A plain tar under the .xz name, deliberately: the printer's busybox
-    decompresses xz but cannot create it, and run-append.sh documents a
+    decompresses xz but cannot create it, and runFirmwareExe.sh documents a
     fallback from `xz -dc` to plain tar for exactly the case of a build that
     shipped it uncompressed. Packing this way means the fallback is executed
     by every run instead of being taken on trust -- and asserted, below.
@@ -119,7 +126,7 @@ def _pack(box, src, with_manifest):
 def _install(box):
     """Run the real installer and return everything it logged.
 
-    The log is TRUNCATED first, and that is not tidiness. run-append.sh sends
+    The log is TRUNCATED first, and that is not tidiness. The installer sends
     its own output to $LOG with an `exec >>` append, and this replica was
     assembled by installing the real package -- so the log already carries a
     "mod payload installed" from the bake. Reading it whole would let every
@@ -139,13 +146,13 @@ def _tail(log, lines=25):
 
 @pytest.fixture(scope="module")
 def installer(printer):
-    """The checkout's run-append.sh, staged into the machine."""
+    """The checkout's runFirmwareExe.sh, staged into the machine."""
     if not SOURCE.is_file():
         pytest.fail(
             "no installer to test: %s is missing from the checkout, and it is "
-            "the file under test -- bin/patch.sh splices it into FlashForge's "
-            "run.sh, so it is never a file on a printer and cannot be read "
-            "off the replica instead." % SOURCE)
+            "the file under test -- the copy a printer runs is deleted by "
+            "app_startup.sh as soon as the install finishes, so it cannot be "
+            "read off the replica instead." % SOURCE)
     printer.write(INSTALLER, SOURCE.read_text())
     return printer
 
@@ -200,7 +207,7 @@ def upgraded(first_install):
     reading the manifest can tell the two apart.
 
     init.d/S70klipper and anvil-service.sh are planted too, and they are the
-    opposite claim: run-append.sh removes both unconditionally because the
+    opposite claim: runFirmwareExe.sh removes both unconditionally because the
     payload ships neither any more, and a leftover S70klipper starts an
     unsupervised klippy beside the supervised one.
 
@@ -239,14 +246,14 @@ def legacy(upgraded):
     """The compatibility path: a printer whose install predates the manifest.
 
     Every printer running a package built before the manifest existed has no
-    $MODDIR/.install-manifest and no way to reconstruct one, so run-append.sh
+    $MODDIR/.install-manifest and no way to reconstruct one, so runFirmwareExe.sh
     falls back to the old sweep of whole directories. An upgrade off one of
     those that left a renamed script in place would be the double-start
     failure all over again, on the printers least able to report it.
 
     NOT asserted here, because it cannot be: a hand-dropped bin/not-ours does
     not survive this path. The sweep has no way to know it was not ours, which
-    is the cost of the branch and the reason run-append.sh marks it for
+    is the cost of the branch and the reason runFirmwareExe.sh marks it for
     deletion once no pre-manifest install can still be upgraded.
     """
     box = upgraded
@@ -294,7 +301,7 @@ def test_the_upgrade_ran_and_said_so(upgraded):
     """First, because every check that follows is of the form "is this file
     there?" and all of them would answer just as happily if the installer had
     never run -- apart from those that would then fail, which is only half a
-    defence. run-append.sh says so in its own log, on the printer, in the
+    defence. runFirmwareExe.sh says so in its own log, on the printer, in the
     words a support request quotes back."""
     assert "mod payload installed" in upgraded.upgrade_log, (
         "%s has no record of the update:\n%s"
@@ -312,7 +319,7 @@ def test_the_upgrade_took_the_manifest_branch(upgraded):
 
 
 def test_the_plain_tar_fallback_is_what_ran(upgraded):
-    """The payload is an uncompressed tar under the .xz name, so run-append's
+    """The payload is an uncompressed tar under the .xz name, so the installer's
     documented `xz -dc` -> `tar -xf` fallback is what extracted it. If this
     ever reports (xz), the fallback stopped being covered by this module."""
     assert "extracted (plain tar)" in upgraded.upgrade_log, (
@@ -398,7 +405,7 @@ def test_anvil_conf_is_removed_rather_than_kept(upgraded):
 
 def test_config_installed_survives_the_payload_swap(upgraded):
     """config-installed is the snapshot of the configs the last package wrote,
-    and the three-way diff further down run-append.sh cannot tell "unmodified"
+    and the three-way diff further down runFirmwareExe.sh cannot tell "unmodified"
     from "edited" without it -- lose it and a config we own lands as .mod-new
     forever. It is never shipped, so it is never in a manifest, and this is
     what proves the deletion respects that."""
