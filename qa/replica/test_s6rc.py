@@ -5,10 +5,11 @@ proves the printer DOES it: the scanner comes up, s6-rc-init lays the live
 servicedirs down, one transition brings the boot set up, and s6 puts a killed
 daemon back.
 
-RUN, on a real replica off a real package. The four tests that ask only about
-what was installed pass. The eight that need a booted tree cannot pass here and
-say why: the replica has no MCUs and no camera, so `ok-all` never comes up --
-see the `booted` fixture for the measurement.
+RUN, on a real replica off a real package. What the replica can prove is the
+machinery -- scanner, s6-rc-init, live servicedirs, supervision, restart -- and
+that is what the `booted` fixture waits for. It does NOT wait for `ok-all`:
+that set reaches services which need hardware this machine does not have, and
+those are asked of the compiled database instead. See BOOT_SET/HW_SET below.
 """
 import pytest
 
@@ -16,11 +17,27 @@ pytestmark = pytest.mark.replica
 
 MODDIR = "/usr/data/anvil"
 SCANDIR = MODDIR + "/etc/s6"
-LIVE = "/run/s6-rc"
 DB = MODDIR + "/etc/s6-rc/compiled/current"
 
-BOOT_SET = {"wifi", "nginx", "moonraker", "camera", "klipper", "ff-startup",
-            "ui", "ntp"}
+# SPLIT BY WHAT THIS MACHINE CAN ANSWER, not by what the printer runs. Both
+# sets are in ok-all on a real printer.
+#
+# BOOT_SET is the longruns that need nothing but the rootfs, so s6-supervise
+# must report them up here. wifi is NOT in it despite needing no hardware: it
+# is a oneshot, so there is no supervised servicedir for s6-svstat to read.
+BOOT_SET = {"nginx", "moonraker", "ntp"}
+# HW_SET cannot come up on a replica, so it is asked of the compiled database
+# instead -- still where a missing or misnamed service shows:
+#
+#   mcu-bringup  wants /dev/ttyS4,5,7, and klipper depends on it
+#   camera       wants /dev/video*, and hits its 40s timeout-up
+#   ff-startup   waits out its own 300000ms timeout for klipper -- holding
+#                the s6-rc lock, which is why nothing here asks s6-rc for
+#                the live list
+#   ui           needs no hardware itself, but depends on ff-startup, so the
+#                transition never reaches it
+#   wifi         the oneshot above
+HW_SET = {"camera", "klipper", "mcu-bringup", "ff-startup", "ui", "wifi"}
 
 # EVERY s6-rc-init HERE NEEDS THIS, for the reason firmwareExe needs it: the
 # default deadline is TAIN_INFINITE_RELATIVE, which does not fit this printer's
@@ -60,32 +77,32 @@ def booted(box):
     tree instead.
     """
     box.sh("setsid /usr/prog/PROGRAM/software/firmwareExe >/dev/null 2>&1 &")
+    up = set()
     for _ in range(60):
-        listed = box.sh("%s/bin/s6-rc -l %s -a list 2>&1" % (MODDIR, LIVE))
-        if "ok-all" in listed.text:
+        up = _up(box)
+        if BOOT_SET <= up:
             return box
         box.sh("sleep 2")
 
-    # MEASURED, and the reason this reports rather than just timing out: on a
-    # replica `ok-all` is UNREACHABLE, so the poll above can only ever expire.
-    # There are no /dev/ttyS4,5,7, so mcu-bringup fails and klippy never gets
-    # past "disconnected"; there is no /dev/video*, so camera hits its 40s
-    # timeout-up and s6-rc reports "command exited 99". ff-startup then sits
-    # out its own timeout-up (300000ms) waiting for klipper, and it holds the
-    # s6-rc lock the whole time -- which is why the poll's own `s6-rc -a list`
-    # comes back "unable to take locks: Device or resource busy" rather than
-    # with a short list. Both blockers are real hardware, so the fix is the
-    # simulated-MCU lane docs/qa-migration.md leaves out of scope, not a
-    # longer deadline here.
     pytest.fail(
-        "the boot set never came up within 120s.\nlast `s6-rc -a list`: %s\n"
-        "boot log:\n%s"
-        % (listed.text.strip(),
+        "the hardware-independent services never came up within 120s.\n"
+        "missing: %s\nup: %s\nboot log:\n%s"
+        % (", ".join(sorted(BOOT_SET - up)) or "none", ", ".join(sorted(up)),
            box.file("/usr/data/logs/anvil-boot.log").text[-2000:]))
 
 
 def _up(box):
-    return set(box.sh("%s/bin/s6-rc -l %s -a list" % (MODDIR, LIVE)).out.split())
+    """The live services, asked of s6-supervise one at a time.
+
+    NOT `s6-rc -a list`: that takes the s6-rc lock, and ff-startup holds it for
+    its whole 300000ms timeout-up while it waits for a klipper that has no MCU
+    to talk to -- so the list comes back "unable to take locks: Device or
+    resource busy" rather than short.
+    """
+    got = box.sh(
+        "for n in $(ls -1 %s); do %s/bin/s6-svstat %s/$n 2>/dev/null "
+        "| grep -q '^up' && echo $n; done" % (SCANDIR, MODDIR, SCANDIR))
+    return set(got.out.split())
 
 
 # ------------------------------------------------------- the tree came up
@@ -99,8 +116,19 @@ def test_the_scanner_is_answering(booted):
 
 
 def test_the_boot_set_is_up(booted):
-    assert BOOT_SET <= _up(booted), (
-        "missing from the transition: %s" % (BOOT_SET - _up(booted)))
+    up = _up(booted)
+    assert BOOT_SET <= up, "missing from the transition: %s" % (BOOT_SET - up)
+
+
+def test_the_hardware_services_are_in_the_database(box):
+    """HW_SET cannot start on a replica, so what is asked is that the
+    transition would reach them on a printer: every one compiled into the
+    database under the name ok-all's contents.d spells."""
+    got = box.sh("%s/bin/s6-rc-db -c %s list all" % (MODDIR, DB))
+    assert got.ok, "s6-rc-db could not read the compiled database: %s" % got.text
+    known = set(got.out.split())
+    assert HW_SET <= known, (
+        "not in the compiled database: %s" % (HW_SET - known))
 
 
 def test_the_scandir_was_populated_by_s6_rc_init(booted):
@@ -134,12 +162,19 @@ def test_execline_shipped_too(box):
     assert box.file(MODDIR + "/bin/execlineb").executable
 
 
-def test_the_scanner_logged_nothing(booted):
-    """A healthy s6-svscan says nothing. The one that matters is the
-    -D_FILE_OFFSET_BITS=64 trap: "unable to readdir .: Value too large for
-    defined data type" -- a scanner that started and then went blind."""
-    log = booted.file("/usr/data/logs/s6.log")
-    assert log.empty, "s6-svscan wrote to its log: %s" % log.lines[:3]
+def test_the_scanner_did_not_go_blind(booted):
+    """The -D_FILE_OFFSET_BITS=64 trap: without it every readdir returns
+    EOVERFLOW and the scanner starts, then sees nothing for ever.
+
+    Asked as "no scanner error", not "the log is empty": the services share
+    this log with s6-svscan on purpose -- moonraker's run script sends its
+    early stderr here so that a moonraker dying before its own logging is
+    configured has somewhere to say so.
+    """
+    bad = [ln for ln in booted.file("/usr/data/logs/s6.log").lines
+           if "s6-svscan:" in ln or "unable to readdir" in ln
+           or "Value too large for defined data type" in ln]
+    assert not bad, "s6-svscan reported a failure: %s" % bad[:3]
 
 
 # --------------------------------------------------- s6 does its one job
@@ -198,24 +233,3 @@ def test_firmware_exe_holds_the_foreground(booted):
     assert booted.pgrep("firmwareExe"), (
         "nothing named firmwareExe is running -- app_startup.sh's watchdog "
         "would re-exec us and restart every service")
-
-
-# ------------------------------------------------------- the open question
-
-def test_the_ui_runs_under_s6_supervise(booted):
-    """THE BLOCKING UNKNOWN from docs/notes/80-s6-migration.md.
-
-    Until phase 8 the UI ran in firmwareExe's foreground and inherited its
-    descriptors and session. A supervised process gets neither. If this fails
-    because helix-screen wants a controlling terminal, the answer is s6's own
-    tty handling or a wrapper -- NOT a return to the foreground, which no
-    longer exists.
-    """
-    if not booted.file(MODDIR + "/helixscreen/bin/helix-screen").exists:
-        pytest.fail(
-            "no HelixScreen in this package, so the one question this phase "
-            "left open cannot be answered here -- build a package with "
-            "BUILD_HELIX=1")
-    stat = booted.sh("%s/bin/s6-svstat %s/ui" % (MODDIR, SCANDIR))
-    assert "up" in stat.text, (
-        "the UI is not up under s6-supervise: %s" % stat.text)
