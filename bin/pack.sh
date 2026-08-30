@@ -10,7 +10,8 @@
 #     anvil.tar.xz        the payload, everything under $MODDIR
 #
 # plus start.img, end.img and play, which are what the owner sees and hears
-# while it runs.
+# while it runs. start.img is ours (installer/start.img); end.img and play
+# still come from the stock package.
 #
 # Shipping no software component is what keeps app_startup.sh's own recovery
 # working: /usr/prog/PROGRAM/software goes on holding FlashForge's version
@@ -139,7 +140,15 @@ if [ -f work/software/shadow ]; then
         exit 1
     fi
 fi
-for f in start.img end.img play; do
+# start.img is ours now, not FlashForge's: a raw 480x800@32 framebuffer dump
+# rendered once with ffscreen.py and committed, the same tool that draws every
+# later boot frame. To regenerate:
+#   python3 pkgs/anvil-core/payload/bin/ffscreen.py --fb installer/start.img \
+#       --size 480x800@32 --title "Reforge" --status "Installing..." --note "DO NOT POWER OFF"
+# (the file must already exist -- ffscreen.py refuses to write a device/path
+# that isn't there yet -- so `touch installer/start.img` first if recreating.)
+cp -f installer/start.img work/stage/start.img
+for f in end.img play; do
     [ -f "work/outer/$f" ] && cp -f "work/outer/$f" work/stage/
 done
 if [ "$SLIM" = "0" ]; then
