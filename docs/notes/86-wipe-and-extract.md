@@ -14,13 +14,14 @@ of it is an argument about files that turned out not to matter.
     mkdir -p $MODDIR
     xz -dc "$MODTAR" | tar -xf - -C $MODDIR
 
-That is the whole deletion strategy. `installer/run-append.sh` loses about 150
-lines and `bin/patch.sh` loses eleven.
+That is the whole deletion strategy. `installer/runFirmwareExe.sh` loses about
+240 lines and `bin/payload.sh` loses eleven.
 
 ## What the manifest was for
 
 `80-s6-migration.md:93` introduced it, replacing the seven-directory sweep that
-still survives as the compatibility branch at `installer/run-append.sh:136`:
+still survives as the compatibility branch at
+`installer/runFirmwareExe.sh:309`:
 
     rm -rf $MODDIR/bin $MODDIR/www $MODDIR/nginx $MODDIR/helixscreen \
            $MODDIR/config $MODDIR/moonraker $MODDIR/init.d
@@ -45,74 +46,65 @@ Against the seven-directory sweep the manifest rescues almost nothing:
 manifest because the package ships only `nginx/nginx.conf`; plus whatever an
 owner has dropped into one of those seven directories by hand.
 
-Against a **full wipe** it also rescues three pieces of printer-local state
-that live under `$MODDIR` and are in no payload, so a wipe deletes them rather
-than replacing them. These, not the nginx log, are the reason the manifest
-looked load-bearing. Each is examined below, and none of them survives the
-examination.
+Against a **full wipe** it also rescues printer-local state that lives under
+`$MODDIR` and is in no payload, so a wipe deletes it rather than replacing it.
+That, not the nginx log, is the reason the manifest looks load-bearing. There
+are two such files left, and neither survives examination.
 
-HelixScreen's settings are a fourth candidate and are already handled:
-`run-append.sh:52-59` copies `settings.json`, `settings.json.backup`,
+HelixScreen's settings are a third candidate and are already handled:
+`runFirmwareExe.sh:225-233` copies `settings.json`, `settings.json.backup`,
 `helixscreen.env`, `.disabled_services`, `tool_spools.json` and
 `crash_history.json` to `/tmp/anvil-helix-keep` before *either* deletion path
-runs, and `:183-196` puts them back after extraction. Both existing branches
+runs, and `:356-369` puts them back after extraction. Both existing branches
 already remove `$MODDIR/helixscreen`, so a wipe costs nothing here and this
 mechanism is unchanged by this proposal. It is also the precedent for how the
-other three could have been handled, had any of them needed it.
+other two could have been handled, had either needed it.
 
 ### backup/stock — nothing reads it
 
-`installer/run-pre.sh:34` copies the first install's backup to
+`installer/runFirmwareExe.sh:165` copies the first install's backup to
 `$MODDIR/backup/stock`, guarded by `if [ ! -d ... ]` for a stated reason: only
 the first install sees genuinely stock files, because by the second one
 `/usr/prog` holds our own. `qa/replica/test_install.py:332` asserts it exists.
 
 That is the entire lifecycle. **No script restores from it.** The documented
-recovery is `docs/hardware-testing.md:12` — flashing the stock package back
+recovery is `docs/hardware-testing.md:11-13` — flashing the stock package back
 from a USB stick, "the only recovery step that needs nothing but a USB port".
 It captures `start.sh`, `passwd` and `shadow`, and explicitly *not*
-`firmwareExe`, the one file a restore would really need, because the stock
-outer installer deletes that before `run-pre.sh` gets control (`run-pre.sh:24-30`).
+`firmwareExe`, which the script itself explains at `:157-161`: that path is a
+symlink into `$MODDIR` and the genuine binary went the first time a component
+was installed over it.
 
-**Decision: stop creating it.** `run-pre.sh` loses the `BACKUP=` stamp
-directory, the three-file copy loop and the `backup/stock` promotion;
-`test_install.py:332-340` goes with them. The timestamped `backup/<STAMP>`
-directories go too — they are snapshots of an already-modded printer, which is
-what the `stock` guard exists to say.
+**Decision: stop creating it.** `runFirmwareExe.sh:149-167` loses the `BACKUP=`
+stamp directory, the three-file copy loop and the `backup/stock` promotion;
+`qa/replica/test_install.py:332-340` goes with them. The timestamped
+`backup/<STAMP>` directories go too — they are snapshots of an already-modded
+printer, which is what the `stock` guard exists to say.
 
-### .prev-root-hash — removed by the password branch
+### .prev-root-hash — already resolved
 
-`run-pre.sh:46` writes the printer's current root password hash at the **top**
-of `run.sh`; `run-append.sh:383` reads it at the **bottom** of the same
-invocation and `:398` deletes it. It never needs to outlive one script run — it
-is in `$MODDIR` only because that was the directory in scope.
+Earlier releases recorded the printer's root password hash here so the install
+could put it back. That is gone: `runFirmwareExe.sh:169-171` now only deletes
+the file, with the reason in the comment — *"A password hash left on disk by
+installs that predate this one. Nothing reads it; do not leave a secret lying
+in `$MODDIR`."*
 
-A wipe between the write and the read would destroy it in flight, leaving
-`PW_KEEP` empty, and on the normal build with no `ROOT_PW_HASH`
-(`MOD_PW_AUTO=1`) the installer would mint a **fresh random root password on
-every update**, including over one the owner set by hand with `passwd`.
-
-**This is handled elsewhere and is not this change's problem.** A separate
-branch replaces the record-and-restore dance with a hardcoded original hash,
-replacing the live one only when it is unchanged, which removes
-`.prev-root-hash` entirely — no file, no in-flight state, nothing for a wipe to
-destroy.
-
-**Assumption, stated so it is not lost:** this change assumes that branch. If
-the wipe were to land first, every update on a `MOD_PW_AUTO=1` build would
-regenerate the root password until the password branch caught up.
+So there is no in-flight state for a wipe to destroy, and no ordering
+constraint against any other branch. The wipe subsumes those three lines as
+well: a directory that is deleted wholesale cannot be carrying a stale secret,
+so the cleanup can go with everything else.
 
 ### config-installed — dies with the compare it serves
 
-`run-append.sh:340-342` snapshots `$MODDIR/config/*` into
+`runFirmwareExe.sh:505-507` snapshots `$MODDIR/config/*` into
 `$MODDIR/config-installed` after each install, so the next update can ask
 whether a live config still matches what the last package wrote.
-`qa/replica/test_upgrade.py:399` pins it, and `run-append.sh:277` states the
-stake: *"Without it a config we own could be written only once, then land as
-.mod-new forever."*
+`qa/replica/test_upgrade.py:406` pins it, and `runFirmwareExe.sh:442` states
+the stake: *"Without it a config we own could be written only once, then land
+as .mod-new forever."*
 
 **It is a twelve-file directory answering one question about one file.** The
-`case` at `run-append.sh:291-306` `continue`s on `moonraker-custom.conf`,
+`case` at `runFirmwareExe.sh:456-481` `continue`s on `moonraker-custom.conf`,
 `ff-*.cfg`, `printer.base.cfg`, `printer.chamber.cfg` and `chamber`. Every file
 any package ships into `config/` is one of those — `ff-chamber`, `ff-filament`,
 `ff-legacy`, `ff-print-macros`, `ff-runout`, `ff-toolchange`, `ff-tool-offset`,
@@ -123,7 +115,8 @@ And the one question it answers should not be asked at all:
 
 * **The shipped file contradicts itself, and the footer is the half an owner
   reads.** `moonraker.conf`'s header promises the compare-and-`.mod-new`
-  treatment. Its footer — the paragraph sitting directly above
+  treatment — and still credits it to `run.sh`, which stopped being the
+  installer. Its footer — the paragraph sitting directly above
   `[include moonraker-custom.conf]`, where someone looking for where to put a
   setting actually lands — says "this file is mod-owned and every update
   overwrites it." Two mechanisms cannot both be described by one file.
@@ -134,8 +127,8 @@ And the one question it answers should not be asked at all:
   `not_in_nav` (`mkdocs.yml:61`), so it builds but nothing links to it and no
   owner is likely to have read it. It shows what the mod *intends*, not what
   anyone was told.
-* **The stated rationale is obsolete.** `run-append.sh:271` justifies the net
-  with "There is no include-and-override seam for it, and a printer reached
+* **The stated rationale is obsolete.** `runFirmwareExe.sh:436` justifies the
+  net with "There is no include-and-override seam for it, and a printer reached
   through a tuned `trusted_clients` or `cors_domains` block would lose that
   access on an update." That seam exists now: `[include moonraker-custom.conf]`
   is the last line of `moonraker.conf`, applied last, so exactly that block
@@ -157,27 +150,29 @@ Property (b) in general. Preserving an arbitrary owner file *anywhere* under
 the requirement is circular, so a wipe cannot satisfy it partially.
 
 **Decision: accept the loss.** `$MODDIR` is our install tree; `/usr/data` is
-where an owner's own files belong.
-`qa/replica/test_upgrade.py:350`
+where an owner's own files belong. `qa/replica/test_upgrade.py:357`
 (`test_a_file_nothing_ever_shipped_survives`) inverts to assert the wipe
-removes it, and `docs/testing.md:34` loses its "and **only** that" claim.
+removes it, and `docs/testing.md:41` loses its "and **only** that" claim.
 
 ## What this deletes
 
+All line numbers are `installer/runFirmwareExe.sh` unless said otherwise.
+
 | Where | What | Why it can go |
 |---|---|---|
-| `bin/patch.sh:143-153` | manifest generation | nothing reads a manifest any more |
-| `run-append.sh:61-138` | both delete passes, the forged-path guard, the reverse-sort `rmdir` pass, the pre-manifest branch | replaced by one `rm -rf` |
-| `run-append.sh:139-162` | unconditional `rm -rf` of `init.d`, `anvil-service.sh`, `anvil.conf` | subsumed by the wipe |
-| `run-append.sh:199-211` | the `etc/s6` scandir sweep | existed *only* because the manifest cannot remove a directory `s6-supervise` wrote into at runtime |
-| `run-append.sh:251-343` | the config compare, `$stock` template branch, `.mod-new`, `config-installed` | `moonraker.conf` is overwritten like every other mod-owned config |
-| `run-append.sh:348-355` | the `$MODDIR` `__pycache__` sweep | existed *only* because bytecode written at runtime is in no manifest. The `/usr/prog` sweep at `:359` stays — different tree, not wiped |
-| `run-pre.sh:11-36` | the backup stamp dir, the copy loop, `backup/stock` | no restore path exists |
+| `bin/payload.sh:101-111` | manifest generation | nothing reads a manifest any more |
+| `:234-311` | both delete passes, the forged-path guard, the reverse-sort `rmdir` pass, the pre-manifest branch | replaced by one `rm -rf` |
+| `:312-335` | unconditional `rm -rf` of `init.d`, `anvil-service.sh`, `anvil.conf` | subsumed by the wipe |
+| `:372-384` | the `etc/s6` scandir sweep | existed *only* because the manifest cannot remove a directory `s6-supervise` wrote into at runtime |
+| `:416-508` | the config compare, `$stock` template branch, `.mod-new`, `config-installed` | `moonraker.conf` is overwritten like every other mod-owned config |
+| `:511-520` | the `$MODDIR` `__pycache__` sweep | existed *only* because bytecode written at runtime is in no manifest. The `/usr/prog` sweep at `:524` stays — different tree, not wiped |
+| `:149-167` | the backup stamp dir, the copy loop, `backup/stock` | no restore path exists |
+| `:169-171` | the `.prev-root-hash` cleanup | a wiped directory cannot hold a stale secret |
 | `qa/replica/test_upgrade.py` | rewritten | see the gate below |
 | `qa/replica/test_install.py:332-340` | the `backup/stock` assertion | the thing it asserts is gone |
 
-Docs: `docs/testing.md:34`, `docs/upgrading.md:56-57` (the `.mod-new` footnote),
-`docs/qa-migration.md:73`, and the phase notes below.
+Docs: `docs/testing.md:41`, `docs/upgrading.md:56-57` (the `.mod-new`
+footnote), `docs/qa-migration.md:73`, and the phase notes below.
 
 ## What this cancels
 
@@ -189,7 +184,7 @@ file database of ours *or* of opkg's for that purpose. The `.list` files still
 ship and still describe the payload; nothing on the printer reads them at
 upgrade time.
 
-`85-packaging.md:603` records a known gap — a printer that runs `opkg install`
+`85-packaging.md:620` records a known gap — a printer that runs `opkg install`
 for something extra and then flashes a `.tgz` keeps that package's files but
 loses its stanza. Under a wipe the gap closes in the other direction: the files
 go too, and the printer's opkg database once again describes the filesystem
@@ -205,15 +200,15 @@ works, and this note is the argument that it can go.
 
 Every printer takes the same path, whatever it is upgrading from. A
 pre-manifest install, a manifest install and a fresh flash are indistinguishable
-to `run-append.sh` once the directory is deleted wholesale, so the compatibility
-branch — which the code itself calls "the one piece of this installer that can
-still destroy a file nobody asked it to" — has nothing left to be compatible
-with.
+to `runFirmwareExe.sh` once the directory is deleted wholesale, so the
+compatibility branch — which the code itself calls "the one piece of this
+installer that can still destroy a file nobody asked it to" — has nothing left
+to be compatible with.
 
 **No migration is needed.** Printers carrying `$MODDIR/backup/`,
-`$MODDIR/config-installed` or `$MODDIR/.install-manifest` from an earlier
-release have them removed by the first wipe, which is the correct outcome for
-all three.
+`$MODDIR/config-installed`, `$MODDIR/.prev-root-hash` or
+`$MODDIR/.install-manifest` from an earlier release have them removed by the
+first wipe, which is the correct outcome for all four.
 
 ## Risks
 
@@ -234,17 +229,15 @@ all three.
   before extracting, so the exposure window is the same one that exists today.
   `app_startup.sh` restores a stock `firmwareExe` from a version directory and
   the printer still boots.
-* **Ordering.** Must land after the password branch — see `.prev-root-hash`
-  above.
 
 ## The gate
 
 `qa/replica/test_upgrade.py` rewritten against the same method it uses now: two
-synthetic payloads built on the printer, the real `run-append.sh` run over them
-by the printer's own busybox, every question put to the filesystem afterwards.
-The pair of claims it must hold changes shape — the "and only that" half is
-gone, so the negative control moves from "a file nobody shipped survives" to
-"a file nobody shipped is removed too":
+synthetic payloads built on the printer, the real `runFirmwareExe.sh` run over
+them by the printer's own busybox, every question put to the filesystem
+afterwards. The pair of claims it must hold changes shape — the "and only that"
+half is gone, so the negative control moves from "a file nobody shipped
+survives" to "a file nobody shipped is removed too":
 
 * a file the previous payload shipped and this one does not is gone
 * a renamed file leaves no stale twin
