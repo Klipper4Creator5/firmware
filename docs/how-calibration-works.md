@@ -11,6 +11,7 @@ section.
 | **XYZ tool offsets** | after flashing, and whenever a tool or the station is disturbed | [XYZ tool calibration](calibration.md) |
 | **Bed mesh** | automatically, at every print start | [Bed mesh](bed-mesh.md) |
 | **Input shaping** | once, and after mechanical changes | — |
+| **VFA compensation** | rarely — it is a property of the motors, and it ships calibrated | — |
 
 ---
 
@@ -223,3 +224,55 @@ mass describes a machine you do not own. Which head it picks is configurable,
 and it stays mounted afterwards.
 
 The stock application did the same thing for the same reason.
+
+---
+
+## VFA compensation
+
+VFA is *vertical fine artifacts* — the fine vertical banding a stepper's own
+torque ripple prints onto a wall. **It is not input shaping**, and the
+distinction matters because the touchscreen listed the two next to each other.
+Input shaping changes how moves are planned. This changes the current going
+into the motor: a small sinusoid added at one, two and four times the
+electrical frequency, phased to cancel the ripple that the motor produces by
+existing.
+
+That correction is applied by the driver, not by Klipper. The main board runs a
+closed-loop, current-controlled stepper driver — it is told winding resistance,
+inductance, torque constant and current-loop gains, and it synthesises the
+phase currents itself — so the compensation lives inside that loop and is
+active on every move, whether or not anything is calibrating. Klipper's part is
+only to hand it six numbers per motor and to remember them.
+
+That is why this is the calibration you are least likely to need. The numbers
+are a property of your specific motors, they are already calibrated when the
+machine reaches you, and nothing about printing drifts them. Re-run it if you
+replace a motor, or if you can see fine vertical banding that input shaping
+does not touch.
+
+### Running it
+
+There is no wizard, and this one is console work:
+
+```
+STEPPER_RESONANCE_FACTORY_CALIBRATE
+SAVE_CONFIG
+```
+
+It sweeps each motor at the speed that puts its electrical frequency on
+resonance, reads the accelerometer, and searches amplitude and phase for each
+harmonic — roughly nineteen short moves per harmonic per direction, so the
+whole run takes a while and the machine is deliberately noisy during it.
+
+**`SAVE_CONFIG` is not optional and is not part of the macro.** The search
+applies each result immediately so it can measure the next one, and stages the
+final numbers for saving — but only `SAVE_CONFIG` writes them. Without it the
+calibration is lost at the next restart. It is left as a separate step because
+`SAVE_CONFIG` restarts Klipper, which is not something a macro should do to you
+mid-session. The stock application split it exactly the same way.
+
+Like the input-shaper commands, the search grabs a head first if the carriage
+is empty, for the same moving-mass reason.
+
+The stock application ran this from its own calibration flow; the commands
+underneath are FlashForge's, unchanged.
