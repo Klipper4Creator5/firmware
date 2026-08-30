@@ -5,7 +5,7 @@ itself), disassembled with capstone; addresses below are verified against machin
 Ghidra. The host side is fully recovered. The *scoring* is not host code at all -- it lives in
 the closed eBoard MCU image -- see [section 5](#5-what-the-eboard-actually-does).
 
-This supersedes two earlier claims: "sensor unknown" in
+The port is built -- see [section 7](#7-the-port). This supersedes two earlier claims: "sensor unknown" in
 [`60-background.md`](60-background.md) and "callable, not reproducible" in
 [`25-app-vs-klipper-ownership.md`](25-app-vs-klipper-ownership.md). The *host* procedure is
 reproducible in full; only the pass/fail verdict stays behind the MCU boundary, and that
@@ -164,6 +164,25 @@ then the window has already been closed. The eBoard is not being handed a tight 
 window; it is being told "a line is coming" and "that was the last one", and it finds the event
 itself.
 
+How loose, precisely: what bounds the stream is Klipper throttling G-code *input* inside
+`toolhead.move()` -> `_check_pause()` once queued motion exceeds `BUFFER_TIME_HIGH` (2.0 s,
+`toolhead.py:194`). One line is about 4.94 s of motion --
+
+| segment | mm | mm/s | s |
+|---|---|---|---|
+| X40->X60 | 20 | 18 | 1.11 |
+| X60->X100 | 40 | 183 | 0.25 |
+| X100->X120 | 20 | 18 | 1.11 |
+| X120->X140 | 20 | 18 | 1.11 |
+| X140->X180 | 40 | 183 | 0.25 |
+| X180->X200 | 20 | 18 | 1.11 |
+
+-- so `ACTION=0` lands with roughly 2 s still queued and the capture closes partway through the
+line, losing the last flow step and possibly more. The app hits the same throttle, because it
+feeds G-code through the same input path, so this is not a defect we introduce by copying it.
+`FF_PA_CALIBRATE VERBOSE=1` prints the unflushed figure per line; if verdicts ever look like
+mush, that number is the first thing to reach for.
+
 Consequence for the port: reproduce the sequence **verbatim, including the absence of `M400`
 between the last `G1` and `PA_ACTION ACTION=0`**. Adding barriers to "make it more correct"
 changes the timing the closed scorer was tuned against.
@@ -262,70 +281,90 @@ It does not block the port either way: we have no per-tool-PA-aware `virtual_sdc
 no override to install or reset, and stock `SET_PRESSURE_ADVANCE EXTRUDER=extruderN ADVANCE=x`
 does the job.
 
-## 7. Porting it to our Klipper
+## 7. The port
 
-### What already works today
+Built: `pkgs/klipper/payload/klipper/klippy/extras/ff_pa.py` and
+`pkgs/klipper-config/payload/config/ff-pa.cfg`, included from `printer.base.cfg`.
 
-`pa_adjust.py` is in our tree byte-identical to FlashForge's, and
-`pkgs/klipper-config/payload/config/printer.base.cfg:257` already has `[pa_adjust]` against
-`[mcu eboard]`. **`PA_ACTION` and `PA_GET` should already be callable on a Reforge machine.**
-That is the first thing to check, and it needs no code:
+### Why it is Python and not a macro
 
-```
-PA_ACTION ACTION=11 PC=666
-G1 X40 Y50 F30000
-G1 F1080  ; G1 X60 E1.13573
-...
-PA_ACTION ACTION=0 PC=666
-M400
-PA_GET                       -> expect "Result is value=<n>"
-```
+`PA_GET` only calls `gcmd.respond_info(...)`, and a Jinja macro cannot read another command's
+response — so the sweep has to be Python whatever else is decided. `ff_pa.py` borrows
+`pa_adjust`'s already-bound MCU command wrappers rather than the `PA_GET` text, which drops the
+`find("=")`/`stoi` parsing the app needs and its failure modes.
 
-If that returns a value, everything below is host-side work with no unknowns left.
+It **borrows** rather than declaring its own `lookup_query_command`. Declaring our own would be
+safe — `MCU.lookup_query_command` builds a fresh wrapper per call and registers no lasting
+handler (`SerialRetryCommand` registers per send and unregisters after), and klippy runs commands
+serially so two wrappers cannot be in flight at once. But it would put a second copy of a closed
+MCU's protocol strings in our tree to drift out of sync on a fork bump, and it would need a
+`register_config_callback` on `[mcu eboard]`, which would let a report-only tool block startup on
+a machine whose eBoard is unplugged. The wrappers are resolved on first use, not at
+`klippy:connect`: `pa_adjust` binds them from its own MCU config callback, and the ordering
+between the two handlers depends only on section order, which nothing enforces.
 
-### This cannot be a G-code macro
+### What it does
 
-`PA_GET` only calls `gcmd.respond_info(...)`. A Jinja macro cannot read another command's
-response, so the sweep has to be Python. The clean shape is a new
-`klippy/extras/ff_pa.py` that talks to the eBoard directly rather than through the `PA_GET`
-text:
+`FF_PA_CALIBRATE [TOOL=] [TEMP=] [SWEEPS=] [WINNERS=] [CANDIDATES=] [PASS_VALUE=] [Y_START=]
+[Y_STEP=] [Z=] [VERBOSE=1] [DRY_RUN=1]` runs section 3 verbatim — same seven candidates in the
+same scrambled order, same Y ladder, same 5-sweep / 3-winner / mean-of-3 selection, same "only 9
+passes" — and **reports**. Every constant is overridable from `[ff_pa]`, but the defaults are
+FlashForge's, because they are matched to a scorer we cannot read.
 
-```python
-pa = self.printer.lookup_object('pa_adjust')
-value = pa._pa_value_get_cmd.send()["value"]      # skip the string round-trip entirely
-```
+`FF_PA_PROBE [PA=] [Y=]` draws one line and prints one verdict. This is the bring-up instrument:
+it is how you answer "does the eBoard discriminate?" without committing to a full run.
 
-That also removes the `find("=")`/`stoi` parsing the app needs and its failure modes.
+`FF_PA_STATUS` shows the config in force, whether the eBoard commands are bound, the driver pin
+state, and the last run's table.
 
-### Suggested shape
+### Deliberate divergences from the app
 
-`FF_PA_CALIBRATE [TOOL=n] [SAVE=1]`, in `ff_pa.py`, driving the loop from section 3 verbatim:
-same seven candidates, same scrambled order, same Y ladder, same 5-pass / 3-winner / mean-of-3
-selection, same "only 9 passes". Resist tuning any of it until a machine has produced numbers --
-the constants are matched to a scorer we cannot read.
+- **The extruder's own pressure advance is restored on exit.** The app leaves the last candidate
+  (0.0400) installed — it can afford that because it immediately overrides it via
+  `SET_PA_ADVANCE`, and we do not. Leaving it would mean the command silently applied something,
+  and the wrong thing.
+- **A run where every line returned the same verdict is refused** (`require_discrimination`).
+  This is the failure that matters: if the eBoard is not discriminating and answers 9 for
+  everything, the smallest passing candidate is `candidates[0]` on every sweep, and the mean is
+  `0.0100` — a number that looks exactly like a measurement and is an artefact. The app accepts
+  it. Related, and printed with every result: because the rule is *smallest passing wins*, this
+  procedure can structurally never report below its smallest candidate.
+- **Cold extruder, empty tool, out-of-range geometry are refused before anything moves**, rather
+  than failing mid-line with the eBoard armed and the drivers latched.
+- **`SET_KINEMATIC_POSITION` is not replayed.** The app needs it because its caller force-drove
+  the axes; our sweep is plain `G1` under Klipper's own kinematics, so replaying it would only
+  lie to Klipper about where the carriage is.
+- **`SAVE_GCODE_STATE`/`RESTORE_GCODE_STATE`** wrap the run; the app leaks its modal state.
+- **`min()` on floats**, not the app's lexicographic sort of fixed-width strings. Identical for
+  its own seven values, correct for an override with mixed decimal widths.
+- **Not wired into print start.** Thirty-five 160 mm lines is minutes and about a gram of
+  filament before every print; the app gets away with it only because it sits behind a flag. A
+  user-invoked calibration matches how PID and shaper already work here
+  ([`25-app-vs-klipper-ownership.md`](25-app-vs-klipper-ownership.md)).
 
-Store the result the way every other per-unit number is stored here: a `pressure_advance` key on
-`[ff_tool N]`, autosaved into printer.cfg's `SAVE_CONFIG` block, applied by `ff_toolchange` on
-grab next to the XY/Z offsets (see [`45-tool-offset-calibration.md`](45-tool-offset-calibration.md)).
-That gives per-tool PA without needing `SET_PA_ADVANCE`, survives restarts, and stays visible to
-the user.
+The result is **not** persisted and **not** applied on a toolchange. It is printed, with the
+`[extruder<n>] pressure_advance:` line to paste and the `SET_PRESSURE_ADVANCE` to try it for the
+session.
 
-Do **not** wire it into the print-start clean the way FlashForge does. Thirty-five 160 mm lines
-is minutes of purge and a sheet of plastic on the bed before every print; the app gets away with
-it because it only runs behind a flag. A user-invoked calibration that saves a number is the
-right default, and matches how PID and shaper already work here
-([`25-app-vs-klipper-ownership.md`](25-app-vs-klipper-ownership.md)).
+### Bring-up, in order — each stage gates the next
 
-### Order of work
+1. **Does the round-trip answer?** Needs no new code — `[pa_adjust]` already shipped before this
+   port. By hand: `PA_ACTION ACTION=11 PC=666`, a few moves, `PA_ACTION ACTION=0 PC=666`, `M400`,
+   `PA_GET` -> `Result is value=<n>`. Record the value even if it is 0: a 0 that arrives is very
+   different from a query that times out.
+2. **Does it discriminate?** `FF_PA_PROBE` across the seven candidates, repeated two or three
+   times. Looking for more than one distinct verdict, the same candidate landing the same way
+   across runs, and passing candidates clustering rather than scattering. All-9 or never-9 means
+   stop — `FF_PA_CALIBRATE` will refuse anyway, and it is right to.
+3. **The command.** `FF_PA_CALIBRATE DRY_RUN=1` to read the emitted script and the computed Z
+   without moving, then `SWEEPS=1` (~1 min), then the full run three or four times. Check
+   afterwards that `pressure_advance`, both `enable_pin_tmc_*` and `max_accel` /
+   `square_corner_velocity` are back where they started.
+4. **Is it right?** Against a hand-tuned PA tower on the same filament.
 
-1. On a machine: `PA_ACTION`/`PA_GET` round-trip returns a value. If it does not, stop -- the
-   rest is dead.
-2. One hand-run sweep of the seven candidates, recording every verdict. Confirm that the scores
-   are not all-9 or all-not-9, i.e. that the eBoard actually discriminates.
-3. `ff_pa.py` + `FF_PA_CALIBRATE`, `[ff_tool N] pressure_advance`, applied on grab.
-4. Compare against a hand-tuned PA tower on the same filament before recommending it.
-
-Until step 2 has real numbers the PA tower stays the documented method.
+Until stage 2 produces real numbers the PA tower stays the documented method and this is an
+experiment. Nothing in the repo can load klippy off-hardware, so `pyflakes` (via `make qa-static`)
+and the replica's include-wiring check are the whole automated story.
 
 ## Addresses
 
