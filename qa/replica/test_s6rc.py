@@ -20,7 +20,7 @@ LIVE = "/run/s6-rc"
 DB = MODDIR + "/etc/s6-rc/compiled/current"
 
 BOOT_SET = {"wifi", "nginx", "moonraker", "camera", "klipper", "ff-startup",
-            "ui"}
+            "ui", "ntp"}
 
 # EVERY s6-rc-init HERE NEEDS THIS, for the reason firmwareExe needs it: the
 # default deadline is TAIN_INFINITE_RELATIVE, which does not fit this printer's

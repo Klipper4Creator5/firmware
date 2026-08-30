@@ -58,6 +58,7 @@ wifi         oneshot   wlan0 + wpa_supplicant + udhcpc
 nginx        longrun   nginx (Mainsail) on :80
 moonraker    longrun   moonraker on :7125
 camera       longrun   mjpg-streamer on :8080 (nginx proxies it at /webcam/)
+ntp          longrun   sntpd, the clock (there is no RTC and no battery)
 ff-startup   oneshot   waits until the printer is usable
                        (depends on klipper, moonraker)
 ui           longrun   HelixScreen       (depends on ff-startup)

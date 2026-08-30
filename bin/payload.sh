@@ -42,7 +42,7 @@ say "payload: installing the feed with the printer's own opkg"
 # which is the one command that has to work on a printer.
 MOD_ROOTS="anvil-core anvil-opkg anvil-s6-rc anvil-klipper
            anvil-moonraker anvil-python-pillow anvil-python-preprocess-cancellation
-           anvil-mainsail anvil-helixscreen anvil-busybox"
+           anvil-mainsail anvil-helixscreen anvil-busybox anvil-sntpd"
 
 # Named, not versioned -- except anvil-core, whose PKG_VERSION is MOD_VER, so a
 # feed built yesterday would install yesterday's anvil-core.

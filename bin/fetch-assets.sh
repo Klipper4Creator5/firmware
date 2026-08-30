@@ -165,6 +165,12 @@ fi
   fi )
 say "cached  opkg-utils $OPKG_UTILS_VERSION ($OPKG_UTILS_COMMIT)"
 
+# --- the clock
+# No BUILD_ flag: a printer with no RTC has the wrong time until this runs, and
+# every printer here has no RTC.
+get "https://github.com/troglobit/sntpd/releases/download/v$SNTPD_VERSION/sntpd-$SNTPD_VERSION.tar.gz" \
+    "$SNTPD_TGZ" "$SNTPD_SHA256"
+
 # The toolchain, on the pkg_needs condition that decides whether payload.sh has
 # to compile at all. Wrong here is not a slow build but a stopped one.
 if [ "$ALL" = 1 ] \
