@@ -27,9 +27,9 @@ still survives as the compatibility branch at `installer/run-append.sh:136`:
 
 It was asked to keep two properties at once:
 
-* **(a) the installed set must end up exactly the shipped set** — a renamed
-  init script must not survive an update and start nginx twice, which is the
-  failure that prompted the whole mechanism.
+* **(a) the installed set must end up exactly the shipped set** — a file the
+  last release shipped under a different name must not survive beside the one
+  that replaced it.
 * **(b) a file nobody shipped must survive** — the sweep deletes whole
   directories, and `$MODDIR/bin` is where s6 and our Python live.
 
@@ -69,8 +69,7 @@ the first install sees genuinely stock files, because by the second one
 
 That is the entire lifecycle. **No script restores from it.** The documented
 recovery is `docs/hardware-testing.md:12` — flashing the stock package back
-from a USB stick, "the only recovery step that needs nothing but a USB port" —
-and `make test-recovery`, which that page still references, no longer exists.
+from a USB stick, "the only recovery step that needs nothing but a USB port".
 It captures `start.sh`, `passwd` and `shadow`, and explicitly *not*
 `firmwareExe`, the one file a restore would really need, because the stock
 outer installer deletes that before `run-pre.sh` gets control (`run-pre.sh:24-30`).
@@ -196,8 +195,11 @@ loses its stanza. Under a wipe the gap closes in the other direction: the files
 go too, and the printer's opkg database once again describes the filesystem
 exactly. That is a better answer than the one that phase was going to give.
 
-`80-s6-migration.md:93` (phase 1) is superseded and should say so where it
-stands, rather than being edited to pretend the manifest never existed.
+Both notes carry a pointer here, each marked as a proposal rather than a
+decision: phase 1 in `80-s6-migration.md` shipped and this would retire it,
+phase 2's on-printer half in `85-packaging.md` would be cancelled rather than
+done. Neither is edited to pretend the manifest never existed — it shipped, it
+works, and this note is the argument that it can go.
 
 ## The field-upgrade path
 
@@ -251,13 +253,13 @@ gone, so the negative control moves from "a file nobody shipped survives" to
   defaults, and `helixscreen.env` still lands as `.mod-new` when it changed
 * `moonraker.conf` is overwritten even when the live copy was edited
 * `/usr/data/config/printer.cfg` and `moonraker-custom.conf` are untouched —
-  they are outside `$MODDIR` and no longer protected by anything in the
-  installer, so this is the assertion that they never needed to be
+  they sit outside `$MODDIR`, so nothing in the installer's deletion path
+  protects them, and this is the assertion that nothing needs to
 * no `.install-manifest` is written, and the log says the wipe ran
 
 `qa/static/test_ipk.py:457` (`test_every_payload_file_is_owned_by_a_package`)
 loses `.install-manifest` from its allowlist, which shrinks that list to four —
 `config/moonraker-custom.conf` and opkg's own `var`, `var/lib`, `var/run`.
-`85-packaging.md:671` calls that allowlist phase 2's remaining to-do list, and
-its own docstring at `qa/static/test_ipk.py:463` says it "should shrink and
-must not grow by accident". This shrinks it.
+Its own docstring at `qa/static/test_ipk.py:463` says that list "should shrink
+and must not grow by accident". This shrinks it, and what remains is one user
+file plus scaffolding opkg makes for itself.
