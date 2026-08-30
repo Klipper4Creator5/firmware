@@ -3,7 +3,7 @@
 # Without it the upgrade writes a new $MODDIR/prog/firmwareExe and the printer
 # goes on running the copy /usr/prog already had.
 #
-# The same script runs from installer/run-append.sh on the .tgz path. Its own
+# The same script runs from installer/runFirmwareExe.sh on the .tgz path. Its own
 # /usr/prog/app_startup.sh guard is what makes this a no-op when the build
 # installs this package rather than a printer.
 set -e

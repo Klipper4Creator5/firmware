@@ -1,6 +1,6 @@
 """A `[ -f $MODDIR/... ]` guard that can only ever be false.
 
-THE BUG THIS EXISTS FOR. `installer/run-append.sh` replaces FlashForge's
+THE BUG THIS EXISTS FOR. `installer/runFirmwareExe.sh` replaces FlashForge's
 `klipperDaemon` -- whose `start` forks a second, unsupervised klippy beside the
 s6-supervised one -- and it guarded that work with
 
@@ -45,12 +45,6 @@ GUARD = re.compile(r"\[\s+-[fxdesr]\s+\$\{?MODDIR\}?/([A-Za-z0-9_.][A-Za-z0-9_./
 
 # Not shipped by any package, and correctly so.
 ALLOWED = {
-    # Templated from config.env by bin/payload.sh and then preserved across
-    # updates by run-append.sh -- user state, so a package member would
-    # overwrite a printer's settings on the first upgrade.
-    "anvil.conf",
-    # Written at runtime by the installer to notice a changed root filesystem.
-    ".prev-root-hash",
     # Inside anvil-helixscreen's upstream tarball, which pkgs/helixscreen
     # unpacks at build time -- so it is shipped, just not committed here.
     "helixscreen/bin/helix-launcher.sh",

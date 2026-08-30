@@ -37,7 +37,7 @@ rm -rf "$PKG_WORK/stage$MODDIR/moonraker/tests"
 # started there, not a decision anybody made.
 #
 # It installs to $MODDIR/config, which is a STAGING directory rather than
-# where Moonraker reads it: installer/run-append.sh copies $MODDIR/config/*
+# where Moonraker reads it: installer/runFirmwareExe.sh copies $MODDIR/config/*
 # into /usr/data/config/, and moonraker.conf takes the compare-and-.mod-new
 # branch there because a printer reached through a tuned trusted_clients block
 # must not lose that access on an update. payload/ mirrors the install, so the

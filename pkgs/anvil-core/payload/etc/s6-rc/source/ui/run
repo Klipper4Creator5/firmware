@@ -20,7 +20,7 @@ else
 fi
 
 # HELIX_DATA_DIR is the root HelixScreen resolves config/settings.json against,
-# which is why run-append.sh backs that tree up across an update.
+# which is why runFirmwareExe.sh backs that tree up across an update.
 HELIX_DATA_DIR=$MODDIR/helixscreen
 HELIX_LOG_DEST=file
 HELIX_LOG_FILE=/usr/data/logs/helixscreen.log

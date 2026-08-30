@@ -476,7 +476,7 @@ def test_anvil_conf_is_removed_on_the_legacy_path(legacy):
 
     The pre-manifest sweep removes seven DIRECTORIES, and anvil.conf is a file
     at the top of $MODDIR, so nothing in that branch touches it. It goes only
-    because run-append.sh removes it unconditionally alongside init.d and
+    because runFirmwareExe.sh removes it unconditionally alongside init.d and
     anvil-service.sh -- which is exactly why it is removed there and not left
     to the manifest.
     """

@@ -9,7 +9,7 @@
 #
 # EVERY DIRECTORY HERE IS SHIPPED. There used to be a seed/ beside payload/
 # holding anvil.conf.in, templated at build time and preserved across updates
-# by installer/run-append.sh -- user state that happened to ship with a
+# by installer/runFirmwareExe.sh -- user state that happened to ship with a
 # default, and the one thing in this recipe an `opkg upgrade` could not simply
 # overwrite. anvil.conf is gone and so is the exception: what it configured is
 # stated once each in the service that uses it, under payload/etc/s6-rc/source/,

@@ -177,7 +177,7 @@ def test_a_populated_scandir_is_swept_not_collided_with(box):
     """MEASURED: s6-rc-init creates one symlink per service in the scandir and
     dies with "unable to supervise service directories: File exists" if the
     name is taken. An upgrade from a phase-4/5 payload has nginx, moonraker
-    and camera sitting there, so run-append.sh sweeps -- this is that sweep,
+    and camera sitting there, so runFirmwareExe.sh sweeps -- this is that sweep,
     asked of the machine."""
     box.sh("mkdir -p %s/nginx && rm -rf /run/probe2" % SCANDIR)
     got = box.sh("%s/bin/s6-rc-init -t %d -c %s -l /run/probe2 %s 2>&1"

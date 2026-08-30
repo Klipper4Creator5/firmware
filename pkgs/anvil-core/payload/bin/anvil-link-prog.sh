@@ -10,15 +10,17 @@
 # the only place anything is installed and `opkg upgrade` is enough to change
 # what the printer runs.
 #
-# ORDERING. Stock run.sh distributes the software component at its lines
-# 107-179, before run-append.sh extracts the payload at line 180. So the
-# component cannot ship these symlinks itself: on a first install they would
+# ORDERING. This runs straight after the installer extracts the payload, and
+# again from anvil-core's postinst on an `opkg upgrade`. It cannot run earlier
+# and the links cannot be shipped as files: on a first install they would
 # dangle, and on an upgrade they would resolve to the payload being replaced.
-# This runs after extraction, and again from anvil-core's postinst. The
-# component no longer carries firmwareExe or start.sh at all -- nothing execs
-# either before this point, and a wrapper without a payload behind it is worse
-# than no wrapper (app_startup.sh restores the stock binary from a version
-# directory; the wrapper would just sit there and never start a UI).
+#
+# The targets under /usr/prog are left alone until then, on purpose. A release
+# ships no software component, so /usr/prog/PROGRAM/software still holds
+# FlashForge's version directory and their firmwareExe -- which is what
+# app_startup.sh's watchdog restores from when a payload never lands. A
+# wrapper with nothing behind it would sit there and never start a UI; their
+# binary at least brings the printer up.
 set -e
 
 MODDIR=${MODDIR:-/usr/data/anvil}
