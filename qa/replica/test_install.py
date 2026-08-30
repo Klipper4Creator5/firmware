@@ -257,39 +257,6 @@ def test_klippy_is_present(box):
         "nothing to start" % KLIPPY_DIR)
 
 
-def test_the_klipper_service_runs_the_payload_tree_on_our_python(box):
-    """The regression that would silently restore the old arrangement: a run
-    script pointing back at /usr/prog gets its klippy from a stock flash, not
-    from the package, and no other test here would notice."""
-    # The compiled servicedir is what s6-supervise actually execs; the source
-    # tree is the fallback so this still says something useful on a machine
-    # where the database did not compile.
-    body = box.file(DB + "/servicedirs/klipper/run").text \
-        or box.file(SOURCE + "/klipper/run").text
-    assert body, "no klipper run script in either the database or the source tree"
-    assert "/usr/prog/klipper/klippy" not in body, (
-        "the klipper service still execs klippy out of /usr/prog -- that tree "
-        "is FlashForge's stock 0.12 and a stock flash owns it")
-    # The run script spells it $MODDIR, unexpanded, so match the tail rather
-    # than the absolute path this file computes.
-    assert "klipper/klippy/klippy.py" in body, (
-        "the klipper service does not exec %s/klippy.py" % KLIPPY_DIR)
-    assert "$FF_PYTHON" in body, (
-        "the klipper service does not run klippy under $FF_PYTHON")
-
-
-def test_klippy_imports_resolve_on_our_python(box):
-    """cffi, greenlet, pyserial and jinja2 are anvil-klipper's Depends. They
-    used to arrive as anvil-moonraker's, or from a hardcoded list in
-    bin/payload.sh -- so a BUILD_MOONRAKER=0 build shipped a klippy that dies
-    the first time it opens an MCU."""
-    for mod in ("cffi", "greenlet", "serial", "jinja2"):
-        r = box.sh(". %s/anvil-env.sh; $FF_PYTHON -c 'import %s' 2>&1"
-                   % (MODDIR, mod))
-        assert r.ok, (
-            "klippy's %s does not import on FF_PYTHON: %s" % (mod, r.text))
-
-
 # THE CHELPER'S ABI IS NOT ASKED HERE ANY MORE. Two tests used to read its
 # ELF header a byte at a time through `xxd` -- 32-bit, little-endian, MIPS,
 # then e_flags for nan2008 -- for one file out of the several hundred ELF

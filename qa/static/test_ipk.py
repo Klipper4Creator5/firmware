@@ -6,8 +6,12 @@ the format, they check the things that are OURS and that upstream cannot know
 about: that the layout we hand it puts every path under $MODDIR, that the
 architecture string is one no public feed can satisfy, that a package is
 reproducible, and that the payload is exactly the feed installed.
-Plus one structural gate per worry that has already cost time once -- a recipe
-growing its own copy of the cross-build, or a package escaping the ABI check.
+
+WHAT IS ASKED IS THE BUILT ARTIFACT, never the text of a script in this repo.
+A gate that grepped bin/ or pkgs/lib.sh for a spelling went red on a rename
+and stayed green through a real regression, so the several that did are gone
+rather than rewritten -- the questions they asked are ones only a built
+package or the replica can answer.
 
 Every test builds its own package out of a synthetic tree -- three files and
 two symlinks, no compiler, no firmware image -- so the lane stays fast and
@@ -243,151 +247,12 @@ RECIPES = sorted(list((ROOT / "pkgs").glob("*/build.sh"))
                  + list((ROOT / "pkgs" / "3rdparty").glob("*/build.sh")))
 
 
-def recipe_dir(name):
-    """Where a recipe lives -- the python half of pkgs/lib.sh's pkg_dir."""
-    for c in (ROOT / "pkgs" / name, ROOT / "pkgs" / "3rdparty" / name):
-        if (c / "pkg.conf").is_file():
-            return c
-    return None
-
-
 def test_there_are_recipes():
     assert RECIPES, "no recipes under pkgs/ -- has the layout moved?"
 
 
 @pytest.mark.parametrize("recipe", RECIPES,
                          ids=[p.parent.name for p in RECIPES])
-def test_a_recipe_does_not_rebuild_the_shared_parts(recipe):
-    """No recipe carries its own copy of the cross-build.
-
-    A recipe goes through pkgs/lib.sh rather than spelling the
-    toolchain-unpack, the gcc-wrapper trick and the configure/make/install
-    dance again -- copies of those drift, and one that forgets to gate its
-    compiler wrapper before trusting it ships the wrong ABI. Checked by looking
-    for the shapes that mean "I wrote my own": a gcc wrapper heredoc, a bare
-    ./configure --host, an untarred toolchain.
-
-    THE RULE IS ABSOLUTE, with no per-project exceptions: a recipe never runs a
-    configure script itself. pkg_build has knobs for what projects actually
-    differ in (which configure, whether it takes --host, what to make, what to
-    install), and a project it cannot express should GROW pkg_build -- a verb
-    per awkward project is three mechanisms with one user each.
-    """
-    text = recipe.read_text()
-    assert ". pkgs/lib.sh" in text, (
-        "%s does not source pkgs/lib.sh, so whatever it does instead is a "
-        "second copy of the cross-build" % recipe)
-
-    body = "\n".join(ln for ln in text.splitlines()
-                     if not ln.lstrip().startswith("#"))
-    # The toolchain is pkg_toolchain's job, exclusively.
-    assert not re.search(r"tar .*(mips-toolchain|musl-toolchain)", body), (
-        "%s unpacks a toolchain itself; pkg_toolchain does that" % recipe)
-    assert "-mnan=2008" not in body, (
-        "%s spells its own compiler flags; pkg_toolchain owns the ABI flags"
-        % recipe)
-    # Running a configure script is pkg_build's job, with no exceptions.
-    # ./Configure as well as ./configure: OpenSSL's is the capitalised one, and
-    # a rule that only knew the lowercase spelling would have let it through.
-    for line in body.splitlines():
-        # PKG_CONFIGURE=./Configure DECLARES which script pkg_build should run.
-        # That is the knob doing its job, not a recipe running a build.
-        if line.lstrip().startswith("PKG_CONFIGURE"):
-            continue
-        if re.search(r"\./[Cc]onfigure\b", line):
-            assert False, (
-                "%s runs a configure script directly:\n  %s\nUse pkg_build. "
-                "If it cannot express what this project needs, add a knob to "
-                "pkg_build -- a verb per awkward project is how this ended up "
-                "with three mechanisms and one user each."
-                % (recipe, line.strip()))
-
-    # And the verbs that preceded pkg_build, named so that bringing one back
-    # is a red test rather than a quiet regression.
-    for gone in ("pkg_autotools", "pkg_make ", "pkg_dep_autotools"):
-        assert gone not in body, (
-            "%s calls %s, which no longer exists -- pkg_build replaced it"
-            % (recipe, gone.strip()))
-
-
-def test_the_payload_is_the_feed_installed():
-    """Nothing ships twice, because the payload IS the packages.
-
-    This test used to assert the opposite of what it asserts now, and the
-    property it protects is the same one. bin/payload.sh used to run each recipe
-    and copy its build tree into the payload, so the risk was that the
-    tarball's copy and the packaged copy came from different code -- and the
-    test demanded that payload.sh run the recipe's own build.sh, which was the
-    cheapest way to make "one build, two vehicles" true.
-
-    There is one vehicle now. payload.sh installs the .ipk files into a staging
-    root and ships what lands there, so the payload cannot disagree with the
-    package: it is the package. What has to be checked instead is that nobody
-    reintroduces the second path, which is why the assertions below are
-    negative.
-    """
-    patch = (ROOT / "bin" / "payload.sh").read_text()
-
-    # Every recipe whose output reaches the payload. Listed rather than
-    # derived, because the property under test is that a HUMAN decided each of
-    # these ships -- a list read off payload.sh would agree with payload.sh by
-    # construction and assert nothing.
-    staged = ("libsodium", "mainsail", "moonraker", "helixscreen",
-              "skalibs", "execline", "s6", "s6-rc", "anvil-core", "python",
-              "klipper", "klipper-config")
-    for recipe in staged:
-        d = recipe_dir(recipe)
-        assert d is not None, (
-            "the payload is expected to carry the %s recipe's package and "
-            "there is no such recipe" % recipe)
-        rel = d.relative_to(ROOT)
-        assert (d / "build.sh").is_file(), (
-            "%s has no build.sh, so bin/build-packages.sh cannot build the "
-            ".ipk the payload is assembled from" % rel)
-        assert "bash %s/build.sh" % rel not in patch, (
-            "bin/payload.sh runs %s/build.sh again. The payload is installed "
-            "from the feed now, so a recipe run here is a second build of "
-            "something already in an .ipk -- and the two can drift" % rel)
-
-    # The staging path itself, in the two spellings it would come back as.
-    body = "\n".join(ln for ln in patch.splitlines()
-                     if not ln.lstrip().startswith("#"))
-    assert "pkg_out" not in body, (
-        "bin/payload.sh reads a recipe's build tree through pkg_out. The payload "
-        "comes out of the .ipk; work/pkg is the packager's business")
-    assert "work/pkg" not in body, (
-        "bin/payload.sh names work/pkg -- see pkg_out above")
-
-    # And it must install them the one supported way. WHICH opkg:
-    # bin/build-payload.py runs the PRINTER'S, inside the replica, against /,
-    # so maintainer scripts execute where they will on a machine. An offline
-    # root here would mean they are not running at all, and
-    # --force-postinstall would mean the database claims work that never
-    # happened.
-    assert "offline_root" not in body and "--offline-root" not in body, (
-        "bin/payload.sh points an opkg at an offline root again. The payload is "
-        "installed on the printer now (bin/build-payload.py) -- an offline "
-        "root means maintainer scripts are not running")
-    assert "build-payload.py" in body, (
-        "bin/payload.sh does not call bin/build-payload.py -- how is the "
-        "payload being assembled?")
-    assert "--force-postinstall" not in body, (
-        "bin/payload.sh still forces postinstall. That flag existed to make an "
-        "offline-root database say installed; the printer's own opkg "
-        "configures for real and needs no such claim")
-
-    # And the reverse direction: payload.sh must not grow its own copy of a build
-    # it delegates. A `./configure` anywhere in it would mean some component is
-    # compiled in two places again.
-    body = "\n".join(ln for ln in patch.splitlines()
-                      if not ln.lstrip().startswith("#"))
-    for gone in ("--enable-static-libc", "MUSL_TOOLCHAIN", "S6_STAMP"):
-        assert gone not in body, (
-            "bin/payload.sh still mentions %s -- the s6 build moved to pkgs/ and "
-            "the musl toolchain was deleted with it" % gone)
-
-
-
 def _mod_roots():
     """MOD_ROOTS as bin/payload.sh's own shell reads it.
 
@@ -604,102 +469,6 @@ GATE_WORDS = ("nan2008", "mips_abi_gate")
 # under tools/ and nothing they build reaches a printer.
 GATE_FLAGS = "0x7000140"
 
-# The decision the wrapper check makes, not the message it prints: a test
-# pinned to the message goes green the moment someone edits the wording, and
-# pkgs/lib.sh mentions both words again in its pkg_die string.
-WRAPPER_CASE = "0x70001405|0x70001407)"
-
-
-def test_there_is_exactly_one_abi_gate_and_it_is_the_replica_one():
-    """The ABI question is asked of one thing, in one place: the filesystem
-    the kernel will actually load from.
-
-    It used to be asked in six. mips_abi_gate in bin/common.sh, called at the
-    packaging boundary by bin/build-packages.sh and again by two recipes that
-    did not trust it; a narrower readelf|grep in bin/verify.sh over a single
-    .so; two tests in qa/replica/test_install.py reading one header a byte at
-    a time; and two more in tools/, which pinned the e_flags word EXACTLY and
-    were therefore strict enough to be wrong -- the low three bits are
-    NOREORDER/PIC/CPIC and vary between objects of identical ABI.
-
-    Six implementations of one rule, each over a different subset of the
-    files, and between them they still could not see the largest binary we
-    ship: bin/payload.sh unpacks HelixScreen into /usr/prog and none of them
-    read that tree.
-
-    This test is the ratchet. Two gates that disagree about which files are
-    exempt is how the first six ended up with a hole in them, so a seventh
-    must not be able to grow back quietly.
-    """
-    gate = ROOT / "qa" / "replica" / "test_abi.py"
-    assert gate.is_file(), (
-        "qa/replica/test_abi.py is gone -- nothing checks the ABI of anything "
-        "this repo ships")
-    for name in ("nan2008", "o32", "mips32r2"):
-        assert name in gate.read_text(), (
-            "qa/replica/test_abi.py no longer mentions %s, so it is not the "
-            "gate this test thinks it is" % name)
-
-    back = []
-    for f in _buildish_scripts():
-        rel = str(f.relative_to(ROOT))
-        # Comments are stripped: a file is allowed to EXPLAIN where the gate
-        # went, and several of them now do.
-        body = "\n".join(ln for ln in f.read_text().splitlines()
-                          if not ln.lstrip().startswith("#"))
-        hit = [w for w in GATE_WORDS if w in body]
-        # The hex words are the wrapper check's, and only in the four files
-        # that are allowed to make it.
-        if GATE_FLAGS in body and rel not in WRAPPER_CHECK_OK:
-            hit.append(GATE_FLAGS)
-        if hit:
-            back.append("%s (%s)" % (rel, ", ".join(hit)))
-    assert not back, (
-        "an ABI gate is back in the build path: %s. There is one gate and it "
-        "is qa/replica/test_abi.py, which reads the installed filesystem; a "
-        "second one over a different subset of the files is what the first "
-        "six were. The toolchain wrapper check is the one exception and is "
-        "allowed only in %s."
-        % ("; ".join(back), ", ".join(sorted(WRAPPER_CHECK_OK))))
-
-
-def test_the_toolchain_wrapper_is_still_checked_before_anything_is_built():
-    """The check that survived the consolidation, kept honest from the side
-    that matters: it has to still be there.
-
-    A wrapper that lost -mnan=2008 produces a tree that compiles, links and
-    passes every test on the build host, and is refused by the printer's
-    kernel at exec(). qa/replica/test_abi.py would eventually say so -- about
-    several hundred files at once, minutes later, in the replica lane. This
-    says it about the compiler, in a second, before the feed is built.
-    """
-    body = (ROOT / "pkgs" / "lib.sh").read_text()
-    assert WRAPPER_CASE in body, (
-        "pkgs/lib.sh no longer checks what its cross compiler emits, so a "
-        "wrapper that lost -mnan=2008 would build an entire feed of objects "
-        "the printer's kernel refuses, and nothing would say so until the "
-        "replica lane ran")
-
-
-def test_the_archives_are_built_by_upstream():
-    """We drive opkg-build; we do not reimplement it.
-
-    There was a hand-written ar-and-two-tarballs packager here for one
-    revision. It worked, and it was still 120 lines of this repo re-deriving a
-    format somebody else maintains -- including the parts whose failure mode is
-    a package that inspects fine and installs nowhere. If those lines come
-    back, this goes red.
-    """
-    build = (ROOT / "bin" / "build-packages.sh").read_text()
-    assert "opkg-build" in build and "opkg-make-index" in build
-    assert not (ROOT / "bin" / "mkipk.sh").exists(), (
-        "bin/mkipk.sh is back -- opkg-utils is the packager")
-    body = "\n".join(ln for ln in build.splitlines()
-                     if not ln.lstrip().startswith("#"))
-    assert "ar rD" not in body and "debian-binary" not in body, (
-        "bin/build-packages.sh is assembling the archive itself again")
-
-
 # --------------------------------------------------------------------------
 # One recipe, one package.
 #
@@ -719,51 +488,6 @@ def _sh(snippet):
 
 def _conf(recipe, var):
     return _sh('pkg_conf %s; printf "%%s" "$%s"' % (recipe, var))
-
-
-@pytest.mark.parametrize("recipe", RECIPES,
-                         ids=[p.parent.name for p in RECIPES])
-def test_one_recipe_builds_one_package(recipe):
-    """A recipe names one source and seals one tree.
-
-    NOT "one package" -- one BUILD. A recipe may emit a second archive,
-    <name>-dev, holding the headers and static library a printer has no use
-    for; that is PKG_DEV_FILES and it is a partition of one build, checked by
-    test_a_dev_split_partitions_the_build. What this test forbids is a recipe
-    building several different upstream projects, which is what pkgs/3rdparty/opkg did
-    with zlib and libarchive until each became a recipe of its own.
-
-    Counting the source verbs is the cheap structural expression of the rule:
-    a recipe that unpacks two tarballs is building somebody else's package
-    inside its own, which is exactly the shape this layout replaced. If a
-    recipe genuinely needs a second source, that source is a package.
-
-    THE COUNT IS OVER ALL SOURCE VERBS TOGETHER, not over pkg_unpack alone.
-    There are three ways for a recipe to say where its inputs come from --
-    pkg_unpack for a pinned download, pkg_intree for the files in this
-    checkout, pkg_prebuilt for a binary named by config.env -- and counting
-    only the first would let a recipe use another to acquire a source the rule
-    was meant to count. One of one of them, never one of each.
-    """
-    body = "\n".join(ln for ln in recipe.read_text().splitlines()
-                     if not ln.lstrip().startswith("#"))
-    for verb, want in (("pkg_begin", 1), ("pkg_end", 1)):
-        got = len(re.findall(r"^\s*%s\b" % verb, body, re.M))
-        assert got == want, (
-            "%s calls %s %d time(s), expected %d -- one recipe builds one "
-            "package" % (recipe, verb, got, want))
-    sources = len(re.findall(r"^\s*(?:pkg_unpack|pkg_intree|pkg_prebuilt)\b",
-                             body, re.M))
-    assert sources == 1, (
-        "%s names its source %d time(s), expected exactly 1 -- a recipe "
-        "unpacks one pinned archive (pkg_unpack), builds from this checkout "
-        "(pkg_intree) or takes one binary from outside the build "
-        "(pkg_prebuilt), never two of them and never one twice"
-        % (recipe, sources))
-    assert "pkg_dep_autotools" not in body, (
-        "%s uses pkg_dep_autotools, which built a dependency inside the "
-        "recipe that needed it. Make it a package and name it in "
-        "PKG_BUILD_DEPENDS." % recipe)
 
 
 def test_an_arch_all_package_has_no_native_code():
@@ -907,32 +631,6 @@ def test_asking_for_one_recipe_builds_its_dependencies():
                 "pkg_order %s omits its build dependency %s" % (r, dep))
 
 
-def test_a_build_dependency_is_not_a_runtime_dependency():
-    """PKG_BUILD_DEPENDS must never reach the control file.
-
-    zlib and libarchive are linked INTO opkg. A package that also declared them
-    as Depends would refuse to install unless two development packages were on
-    the printer, for libraries already inside the file being installed.
-    """
-    build = (ROOT / "bin" / "build-packages.sh").read_text()
-    body = "\n".join(ln for ln in build.splitlines()
-                     if not ln.lstrip().startswith("#"))
-
-    # The property, not a spelling. Depends is written once, from a value the
-    # caller passes -- PKG_DEPENDS for a runtime package, the runtime package's
-    # own name for its -dev half. What matters is that PKG_BUILD_DEPENDS is not
-    # among the things that can reach it.
-    assert "Depends: %s" in body, (
-        "bin/build-packages.sh no longer writes a Depends field at all")
-    assert '"$PKG_DEPENDS"' in body, (
-        "bin/build-packages.sh no longer passes PKG_DEPENDS into the control "
-        "file -- a package's declared runtime dependencies have stopped "
-        "reaching opkg")
-    assert "PKG_BUILD_DEPENDS" not in body, (
-        "bin/build-packages.sh reads PKG_BUILD_DEPENDS while writing the "
-        "package; build dependencies are pkg_deps' business, not opkg's")
-
-
 def test_a_dev_package_ships_what_its_dependents_need():
     """A library that exists to be built against ships headers, .a and .pc.
 
@@ -962,69 +660,6 @@ def test_a_dev_package_ships_what_its_dependents_need():
     for want in ("include/skalibs", "lib/libskarnet.a", "lib/skalibs"):
         assert want in ska, "pkgs/3rdparty/skalibs does not ship %s" % want
 
-
-def test_dependencies_are_unpacked_by_upstream():
-    """opkg-unbuild fills the sysroot -- we do not open .ipk files by hand.
-
-    Same argument as opkg-build for making them: the format is somebody else's
-    and the pinned checkout already carries the tool for reading it. It is also
-    what makes opkg an ordinary recipe rather than a bootstrap stage, since
-    nothing needs a working opkg in order to build packages.
-    """
-    lib = (ROOT / "pkgs" / "lib.sh").read_text()
-    assert "OPKG_UNBUILD_BIN" in lib, (
-        "pkgs/lib.sh no longer uses opkg-unbuild to fill a build sysroot")
-    assert (OPKG_UTILS / "opkg-unbuild").is_file(), (
-        "vendor/opkg-utils has no opkg-unbuild -- check the pinned commit")
-    body = "\n".join(ln for ln in lib.splitlines()
-                     if not ln.lstrip().startswith("#"))
-    assert "ar x" not in body and "debian-binary" not in body, (
-        "pkgs/lib.sh is taking .ipk files apart itself again")
-
-
-def test_no_cache_stamp_is_spelled_in_two_places():
-    """A stamp compared by one file and written by another must be defined once.
-
-    This is not hypothetical tidiness. bin/fetch-assets.sh compared
-    work/.s6/.version against "$SKALIBS_VERSION $S6_VERSION" while bin/payload.sh
-    wrote three fields into it, so the test could never be false: a 71MB
-    toolchain was re-fetched on every single run, and the comment above the
-    condition described a fast path that had never once been taken. One
-    definition is what makes that class of bug impossible rather than unlikely.
-    """
-    # The rule, not the variable. S6_STAMP itself is gone -- s6 is a recipe and
-    # pkg_stamp computes its key -- so naming it here would test nothing. What
-    # survives is the property it existed to guarantee, and the property has to
-    # be stated over every stamp rather than over the one that broke.
-    for var in ("S6_STAMP", "PY_STAMP"):
-        spelled = sorted(p.name for p in (ROOT / "bin").glob("*.sh")
-                         if '%s="' % var in p.read_text())
-        assert spelled in ([], ["common.sh"]), (
-            "%s is assigned in %s; a cache stamp is defined in bin/common.sh "
-            "alone, or not at all once its build became a recipe"
-            % (var, ", ".join(spelled)))
-
-    # And the fields themselves, because moving the definition is only half of
-    # it: a file that re-derives the same string under another name has
-    # reintroduced the bug with the evidence removed. These are the two stamps
-    # this repo has actually got wrong -- s6's three fields, and CPython's
-    # eight, which were spelled in THREE places and happened to agree.
-    for name in ("payload.sh", "fetch-assets.sh"):
-        text = (ROOT / "bin" / name).read_text()
-        assert '"$SKALIBS_VERSION $S6_VERSION' not in text, (
-            "bin/%s spells the s6 stamp out by hand" % name)
-        assert '"$PY_VERSION $OPENSSL_VERSION' not in text, (
-            "bin/%s spells the CPython stamp out by hand -- CPython is "
-            "pkgs/3rdparty/python and pkg_stamp derives its key from PKG_BUILD_DEPENDS"
-            % name)
-
-    # The fetcher must ask the recipes rather than compare a string it wrote
-    # itself. This is what makes the whole class impossible for anything under
-    # pkgs/: one implementation computes the key and one reads it.
-    fetch = (ROOT / "bin" / "fetch-assets.sh").read_text()
-    assert "pkg_needs" in fetch, (
-        "bin/fetch-assets.sh no longer asks pkg_needs -- it is back to "
-        "deciding whether a recipe is stale by a rule of its own")
 
 def test_the_python_package_list_and_the_recipes_agree():
     """PYPKG_LIST and pkgs/3rdparty/python-* are one list, and it is checked.
