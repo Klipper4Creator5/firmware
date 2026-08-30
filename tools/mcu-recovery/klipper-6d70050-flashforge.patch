@@ -12,10 +12,25 @@ index 735d18633..e3735648b 100644
  OBJS_klipper.elf = $(patsubst %.c, $(OUT)src/%.o,$(src-y))
  OBJS_klipper.elf += $(OUT)compile_time_request.o
 diff --git a/scripts/buildcommands.py b/scripts/buildcommands.py
-index b35873840..0a8e04d00 100644
+index b35873840..ab1566c0d 100644
 --- a/scripts/buildcommands.py
 +++ b/scripts/buildcommands.py
-@@ -491,6 +491,12 @@ def build_version(extra, cleanbuild):
+@@ -222,7 +222,13 @@ class Handle_arm_irq:
+             # The ResetHandler was not defined - don't build VectorTable
+             return ""
+         max_irq = max(self.irqs.keys())
+-        table = ["    DefaultHandler,\n"] * (max_irq + armcm_offset + 1)
++        # FlashForge leave the undeclared system-exception slots null and
++        # only point the peripheral IRQ slots at DefaultHandler; stock
++        # levelBoard has zeroes at 0x010..0x034 where upstream Klipper has
++        # DefaultHandler.  armcm_offset is 16, so slots below it are the
++        # system exceptions.
++        table = (["    0,\n"] * armcm_offset
++                 + ["    DefaultHandler,\n"] * (max_irq + 1))
+         defs = []
+         for num, func in self.irqs.items():
+             if num < 1 - armcm_offset:
+@@ -491,6 +497,12 @@ def build_version(extra, cleanbuild):
      elif 'dirty' in version:
          cleanbuild = False
      if not cleanbuild:
@@ -28,7 +43,7 @@ index b35873840..0a8e04d00 100644
          btime = time.strftime("%Y%m%d_%H%M%S")
          hostname = socket.gethostname()
          version = "%s-%s-%s" % (version, btime, hostname)
-@@ -526,6 +532,28 @@ def tool_versions(tools):
+@@ -526,6 +538,28 @@ def tool_versions(tools):
      cleanbuild = versions[0] and versions[1] and success == len(tools)
      return cleanbuild, "gcc: %s binutils: %s" % (versions[0], versions[1])
  
@@ -57,7 +72,7 @@ index b35873840..0a8e04d00 100644
  # Add version information to the data dictionary
  class HandleVersions:
      def __init__(self):
-@@ -570,7 +598,7 @@ class HandleIdentify:
+@@ -570,7 +604,7 @@ class HandleIdentify:
              f.close()
  
          # Format compressed info into C code
@@ -1139,6 +1154,41 @@ index 000000000..c21d17a8e
 +void ff_pa_action(uint32_t action, uint32_t pc);
 +
 +#endif // ff_flashforge.h
+diff --git a/src/generic/armcm_boot.c b/src/generic/armcm_boot.c
+index 9d2ce0bbf..5dd62502c 100644
+--- a/src/generic/armcm_boot.c
++++ b/src/generic/armcm_boot.c
+@@ -115,6 +115,30 @@ ResetHandler(void)
+ }
+ DECL_ARMCM_IRQ(ResetHandler, -15);
+ 
++// FlashForge fill three of the fault vectors that Klipper leaves on the
++// weak DefaultHandler.  Recovered from levelBoard.hex: NMI and SVCall
++// return immediately (0x08007da0, 0x08007da8), HardFault spins
++// (0x08007da4).
++void
++NMIHandler(void)
++{
++}
++DECL_ARMCM_IRQ(NMIHandler, -14);
++
++void
++HardFaultHandler(void)
++{
++    for (;;)
++        ;
++}
++DECL_ARMCM_IRQ(HardFaultHandler, -13);
++
++void
++SVCallHandler(void)
++{
++}
++DECL_ARMCM_IRQ(SVCallHandler, -5);
++
+ // Code called for any undefined interrupts
+ void
+ DefaultHandler(void)
 diff --git a/src/generic/armcm_timer.c b/src/generic/armcm_timer.c
 index ef38680a9..fd53d7b8c 100644
 --- a/src/generic/armcm_timer.c

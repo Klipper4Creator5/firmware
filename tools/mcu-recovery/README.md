@@ -94,10 +94,34 @@ pinned and the gap is measured rather than guessed.
 - The memory map: load address `0x08004000` behind a 16 KiB bootloader,
   initial SP `0x20004000`.
 
-**Measured progress on code:** 34 of the 54 command handlers are
-instruction-identical to stock, up from 7 before the systematic changes
-below were found. The image is 25,624 bytes against the stock 26,704 -- a
-1,080-byte gap, down from 8,784.
+**Measured progress on code.** Over the stock image's 20,484-byte code
+region, across 194 discovered functions:
+
+| | functions | bytes | share |
+|---|---:|---:|---:|
+| instruction-identical or near (EXACT+CLOSE) | 104 | 9,248 | **45.1 %** |
+| adding partial matches | 127 | 11,604 | 56.7 % |
+| no counterpart of any kind | — | **2,244** | 11.0 % |
+
+34 of the 54 command handlers are instruction-identical, up from 7. The
+image is 25,624 bytes against the stock 26,704.
+
+The 1,164-byte code gap is accounted for rather than estimated: 514 bytes
+spread thinly across already-matched functions, and 738 bytes of net
+imbalance from what is missing outright. The missing part is FlashForge's
+peripheral plumbing -- 0x08008ACC (1,344 B) with its helpers (328 B), the
+DMA serial interrupt handlers (268 B) and the eddy task wrapper (80 B) --
+offset by the ADC and interrupt-serial code we still carry and stock does
+not.
+
+**0x08008ACC is vendor code, not FlashForge logic.** It is a standard
+peripheral library subset -- `USART_Init` with the textbook
+`x25/(4*baud)/100` BRR helper, `RCC_GetClocksFreq`, `DMA_Init`, and a DMA1
+channel-base table at 0x08008F40. Klipper vendors only `n32g45x_adc.c` of
+that library, so FlashForge added the USART, RCC and DMA drivers from the
+Nations SDK. Reproducing that block means compiling the right vendor
+sources, not writing anything new -- which makes it the most tractable
+piece of what is left, given the SDK.
 
 ### What had to be pinned first
 
@@ -148,10 +172,51 @@ The remaining ~1 KB is mostly FlashForge's DMA-driven serial path (DMA1
 channels 4 and 5 plus a USART1 handler for errors and idle) and a
 StdPeriph-style driver library that upstream Klipper does not use.
 
-The 20 handlers that still differ are close -- most have identical
-instruction counts and diverge only in register allocation. Those need
-per-function work of the kind matching decompilation projects do; no
-compiler flag accounts for them (ten were swept, none beat the baseline).
+### Next, in order of tractability
+
+1. **The vector table.** Stock declares more slots than we do and fills
+   three that Klipper leaves on its weak `DefaultHandler`: NMI (`bx lr`),
+   HardFault (`b .`) and SVCall (`bx lr`), at 0x08007DA0/DA4/DA8. It also
+   places its serial handler at **IRQ 36**, where our identically-toolchained
+   build puts it at 37, and its table runs to slot 68 (IRQ 52) where ours
+   stops at 54 (IRQ 37). The handler services the peripheral at 0x40013800,
+   which is USART1 on ST's F103 map -- but this part is not an F103 (its GPIO
+   is at 0x40023400, an F4-style layout), so the numbering and the map both
+   need establishing from the Nations SDK before copying the slot layout.
+   Do not simply move the handler to 36 on the strength of the ST map.
+2. **The vendor peripheral library** at 0x08008ACC (1,344 B, plus 328 B of
+   helpers). Compiling the right Nations SDK sources, not writing new code.
+   Klipper vendors only `n32g45x_adc.c`, so the USART, RCC and DMA drivers
+   have to come from the SDK.
+3. **The DMA serial path** (268 B of interrupt handlers plus its setup),
+   which sits on top of that library.
+4. **The remaining register-allocation differences** -- see below.
+
+### The open puzzle
+
+The 20 handlers that still differ are close: most have identical instruction
+counts and diverge only in where a value is kept across a call. Stock
+consistently uses one fewer callee-saved register than we do and spills to
+the stack instead -- which is the *more* expensive choice, so it is not a
+size or speed preference.
+
+What makes it interesting is that it is not global:
+
+- `command_get_clock` matches instruction for instruction, and it *does*
+  keep a value in a callee-saved register across a call. So the allocator
+  is not behaving differently in general.
+- `command_debug_ping` does not match, and it is untouched upstream code in
+  `debugcmds.c`. Same compiler, same flags, same source should give the same
+  instructions -- so one of those three is not actually the same, and the
+  source is the one we have least reason to trust.
+
+Twenty-odd flags have been swept without beating the baseline, including
+every register-allocator knob (`-fira-algorithm`, `-fira-region`,
+`-fno-ira-share-*`, `-fsched-pressure`, `-fno-ipa-ra`, `-fno-caller-saves`)
+and the obvious codegen ones. `permute.py` in the scratch tree drives the
+next step: search semantically equivalent source formulations for the one
+that reproduces stock, which is how matching decompilation projects close
+this kind of gap.
 
 Do not flash any of this. It is a reconstruction for study, not a
 drop-in image.
@@ -180,6 +245,9 @@ generated dictionary still matches; a fix is a one-line change to use
 | `cmpfuncs.py` | count command handlers that are instruction-identical to stock |
 | `shutdownmap2.py` | recover the shutdown error code of every instrumented site |
 | `timertags.py` | recover the call-site tag passed to every sched_add_timer |
+
+`eddy-sensor.md` is the full recovered description of the inductive sensor:
+every claim cites the flash address of the instruction that justifies it.
 | `klip_cmdtab.py` | find `command_index[]` and map every command to its handler address |
 | `armdis.py` | Thumb-2 disassembly of one function, literals and strings resolved |
 | `xref.py` | literal-pool cross-references, to find what touches a global |
