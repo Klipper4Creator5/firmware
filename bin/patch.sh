@@ -153,45 +153,59 @@ mv -f work/.install-manifest "$PAYLOAD_DIR/$MOD_MANIFEST"
 say "install manifest: $(wc -l < "$PAYLOAD_DIR/$MOD_MANIFEST") paths -> $MODDIR/$MOD_MANIFEST"
 
 # --- 11. run.sh install step
+# Two blocks are spliced into FlashForge's own run.sh, each wrapped in markers
+# so re-running this script replaces them rather than stacking a second copy:
+#   pre  -- after WORK_DIR is set and before the first cp into /usr/prog, so
+#           the backup it takes still catches the STOCK files
+#   post -- before the final exit, once the stock install has finished
+# Nothing outside this section reads the markers.
 say "run.sh: injecting mod install blocks (pre + post)"
-POST=work/.run-post.sh
-# A baked-in default would be the same password on every printer.
-if [ -z "${ROOT_PW_HASH:-}" ]; then
-    PW_AUTO=1
-else
-    PW_AUTO=0
-fi
-sed -e "s/^MOD_PW_AUTO=.*/MOD_PW_AUTO=$PW_AUTO/" \
-    installer/run-append.sh > "$POST"
-python3 - "$SOFTWARE_DIR/run.sh" installer/run-pre.sh "$POST" <<'PY'
-import sys, re
-run, pre_f, post_f = sys.argv[1], sys.argv[2], sys.argv[3]
-B1, E1 = "# >>> anvil pre >>>",  "# <<< anvil pre <<<"
-B2, E2 = "# >>> anvil begin >>>", "# <<< anvil end <<<"
+# Decided at build time and baked in, because only the build knows whether a
+# hash was supplied -- and a baked-in default would be the same password on
+# every printer, so with none the installer picks a random one on the machine.
+if [ -n "${ROOT_PW_HASH:-}" ]; then PW_AUTO=0; else PW_AUTO=1; fi
+python3 - "$SOFTWARE_DIR/run.sh" "$PW_AUTO" <<'PY'
+import re, sys
+
+run, pw_auto = sys.argv[1], sys.argv[2]
+# Each block's name, its source, and the LINE BOUNDARY it lands on. Both
+# regexes are written to end where the block starts, so the insert is always
+# "at the end of this match" and neither block needs a rule of its own:
+#   pre  -- the WORK_DIR line INCLUDING its newline, so the block follows it
+#   post -- a zero-width lookahead at the final exit, so the block precedes it
+BLOCKS = (
+    ("pre",  "installer/run-pre.sh",    r"^WORK_DIR=.*$\n"),
+    ("post", "installer/run-append.sh", r"(?=^exit 0\s*$)"),
+)
+
 src = open(run, encoding='utf-8', errors='surrogateescape').read()
-# idempotent: strip any previous injection
-for b, e in ((B1, E1), (B2, E2)):
-    src = re.sub(re.escape(b) + r".*?" + re.escape(e) + r"\n?", "", src, flags=re.S)
+# Idempotent, and matched by shape rather than by name: a tree patched by an
+# older build carries whatever markers THAT build wrote, and they have to go
+# too. The \n? and the trailing \n take back exactly what the insert below
+# adds -- one blank line in front, one newline closing the end marker -- so a
+# strip returns the file to the byte it was before. Eating any more than that
+# would swallow stock's own blank lines; eating any less left the padding
+# behind, which is why re-patching a tree used to grow it three lines a pass.
+src = re.sub(r"\n?^# >>> anvil .*?^# <<< anvil .*?$\n", "", src,
+             flags=re.S | re.M)
 
-pre  = B1 + "\n" + open(pre_f,  encoding='utf-8').read() + E1 + "\n"
-post = B2 + "\n" + open(post_f, encoding='utf-8').read() + E2 + "\n\n"
+for name, source, anchor in BLOCKS:
+    body = open(source, encoding='utf-8').read()
+    body = re.sub(r"^MOD_PW_AUTO=.*$", "MOD_PW_AUTO=" + pw_auto, body, flags=re.M)
+    # Exactly one match, never "the last one that matched": a stock run.sh with
+    # two candidate lines is one this script has no business guessing about.
+    hits = list(re.finditer(anchor, src, flags=re.M))
+    if len(hits) != 1:
+        raise SystemExit("run.sh: %d lines match %s -- cannot place the %s block"
+                         % (len(hits), anchor, name))
+    at = hits[0].end()
+    src = "%s\n# >>> anvil %s >>>\n%s# <<< anvil %s <<<\n%s" % (
+        src[:at], name, body, name, src[at:])
+    print("   %s-block inserted at %s" % (name, anchor))
 
-# After WORK_DIR is defined, before the first cp into /usr/prog.
-m = re.search(r"^WORK_DIR=.*$", src, flags=re.M)
-if not m:
-    raise SystemExit("run.sh has no WORK_DIR assignment -- cannot place the pre-block")
-i = m.end()
-src = src[:i] + "\n\n" + pre + src[i:]
-print("   pre-block inserted after WORK_DIR")
-
-m = list(re.finditer(r"^exit 0\s*$", src, flags=re.M))
-j = m[-1].start() if m else len(src)
-src = src[:j] + post + src[j:]
-print("   post-block inserted before exit")
 open(run, 'w', encoding='utf-8', errors='surrogateescape').write(src)
 PY
 chmod +x "$SOFTWARE_DIR/run.sh"
-rm -f "$POST"
 
 echo
 echo "Patched."
