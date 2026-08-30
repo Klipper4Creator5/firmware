@@ -153,27 +153,42 @@ jobs:
       - name: Build both models
         run: make release ASSET_ROOT=$PWD
 
-      - name: End-to-end update test on the packages that will actually ship
-        # The suite above tested a package built from the same tree; this
-        # tests the exact files that get attached to the release.
-        #
-        # REAL_PKG points the replica lane at one exact package instead of the
-        # newest thing in work/out. Two models ship per release and they are
-        # not interchangeable, so each is installed and asserted against in
-        # turn -- 22 named results per package where sim-install.py gave one
-        # exit code. `make qa-replica` passes REAL_PKG through (see RUNSIM).
-        run: |
-          set -euo pipefail
-          for p in dist/*.tgz; do
-            echo "=== $p ==="
-            REAL_PKG="$p" make qa-replica ASSET_ROOT=$PWD
-          done
-
+      # BEFORE the end-to-end test, so a build that produced packages hands
+      # them over even when the lane below fails. This is not a weakening of
+      # the release gate: Publish runs after that step and the job stops if it
+      # fails, so a red run still cannot reach the release page.
       - uses: actions/upload-artifact@v4
         with:
           name: firmware-packages
           path: dist/*.tgz
           retention-days: 30
+
+      - name: End-to-end update test on the package that will actually ship
+        # The suite above tested a package built from the same tree; this
+        # tests the exact file that gets attached to the release.
+        #
+        # ONE MODEL, NOT BOTH. Two models are built and both are attached, but
+        # there is one replica and it is a Creator5Pro -- its own app_startup.sh
+        # globs /mnt/Creator5Pro-*.tgz and refuses anything else, which is the
+        # model gate doing its job. Feeding it the Creator5 package produced 123
+        # errors that all said "could not install", and the package it was
+        # complaining about was correct.
+        #
+        # This loop used to run both because sim-install.py picked its own
+        # machine per package; the replica lane takes PRINTER_IMAGE from
+        # test.env and there is one of those. A Creator5 end-to-end needs a
+        # Creator5 replica image, which nothing publishes yet.
+        #
+        # REAL_PKG points the replica lane at one exact package instead of the
+        # newest thing in work/out -- 22 named results where sim-install.py
+        # gave one exit code. `make qa-replica` passes it through (see RUNSIM).
+        run: |
+          set -euo pipefail
+          p=$(ls dist/${TARGET_MACHINE}-*.tgz)
+          echo "=== $p ==="
+          REAL_PKG="$p" make qa-replica ASSET_ROOT=$PWD
+        env:
+          TARGET_MACHINE: Creator5Pro
 
       - name: Assemble the release notes
         if: startsWith(github.ref, 'refs/tags/')
