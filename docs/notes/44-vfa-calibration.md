@@ -73,9 +73,66 @@ Per motor (`stepper_x`, `stepper_y`), per harmonic (`td1`, `td2`, `td4`), per di
    and `configfile.set('mclib stepper_x', 'td2_amp', …)` stages it for `SAVE_CONFIG`.
    A per-run CSV of every measurement lands in `/tmp/`.
 
-On the next boot `mclib.py` reads `td{1,2,4}_{amp,phase1,phase2}` from
-`[mclib stepper_x]` / `[mclib stepper_y]` and replays them as MCU config commands
-(`mclib.py:90-95`), so a saved calibration is applied before the first move.
+## What consumes the numbers — none of it is stock Klipper
+
+The calibration produces six numbers per motor (`amp`, `phase1`, `phase2` × td1/td2/td4).
+Two layers consume them, and only the first is ours to touch.
+
+**Layer 1 — `klippy/extras/mclib.py`, the transport.** A fork-only extra; upstream
+Klipper has nothing like it. Its header names the author:
+
+```
+# GD32 mcu motor control library configuration
+# Copyright (C) 2024  Dongzhi Yu <dongzhi.yu@gigadevice.com>
+```
+
+so `mclib` is **GigaDevice's** motor-control library, not FlashForge's. `MCLIB` binds to
+a `[stepper_x]`-style section, resolves the real stepper at `klippy:mcu_identify`, and in
+`_build_config` emits the whole motor description as **`add_config_cmd`** — the config
+block Klipper replays on every MCU connect. That is the persistence path: `SAVE_CONFIG`
+writes `td*_amp` / `td*_phase1` / `td*_phase2` into printer.cfg's autosave, `mclib.py`
+reads them back at startup (`mclib.py:40-48`) and re-sends them (`mclib.py:90-95`) before
+the first move. `MCLIB_SET_RESONANCE_DAMP` is the same message sent live, which is how
+the search loop probes a candidate without a restart.
+
+**Layer 2 — the GD32 firmware, where it is actually applied.** The main board is a
+**GD32H757ZG at 600 MHz** (Cortex-M7), and its command set is not a step/dir driver's:
+
+```
+config_mclib            oid stepper rs ls km      ; phase R, phase L, torque constant
+mclib_set_current       oid run_current hold_current
+mclib_set_pid_params    oid kp ki                 ; current-loop PI
+mclib_identify_motor    oid umax umin             ; motor parameter identification
+mclib_config_microstep  oid interpolate mstep
+mclib_config_stalldetect oid stallthrs
+mclib_set_resonance_damp oid tdx amp phase1 phase2
+```
+
+Feeding a firmware winding resistance, inductance, torque constant, bus voltage and
+current-loop gains means it is synthesising phase currents, not toggling a step pin —
+a closed-loop, current-controlled driver in place of a TMC-class chip. The harmonic
+injection itself lives in that loop: `amp`/`phase` are added to the commutation waveform
+at 1×, 2× and 4× electrical frequency, in real time, on the MCU. `stepper=%u` resolves
+through the dictionary's own enumeration (`stepper_x: 0, stepper_y: 1, stepper_z: 2,
+extruder: 3`).
+
+**That layer is closed, and it does not matter.** The fork's tarball ships upstream's
+`src/` (atsam, atsamd, ar100, …) but **no GD32 port and no `mclib.c`** — the only mclib
+artifact anywhere in it is the host-side `mclib.py`. We cannot rebuild `mainBoardGD.bin`
+and cannot read the injection maths. We also never flash it: `ff_mcu_bringup.py`
+"flashes nothing", so the printer keeps FlashForge's firmware, whose dictionary already
+carries `mclib_set_resonance_damp`. The black box is on the far side of a wire we only
+ever write to.
+
+One consequence worth stating plainly: **the compensation is a property of the motors,
+applied by the driver, and it is live whether or not `stepper_resonance_tester.py` can
+import numpy.** A printer with saved `td*` values in printer.cfg keeps them. Only the
+*calibration* needs numpy — `mclib.py` itself imports nothing but `logging` and
+`stepper`.
+
+Phases are normalised before they leave: `_quadrature_estimate` and the final
+`_r2_sinusoidal_fit` both `% (2*np.pi)`, so nothing negative reaches
+`int(phase * 1000)` and the `%u` field on the wire.
 
 ## Where Reforge stands
 
