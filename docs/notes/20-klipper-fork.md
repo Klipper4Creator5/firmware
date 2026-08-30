@@ -40,10 +40,11 @@ when `pa_enable == 1` (479-487). `ff_toolchange.py` used to issue
 ### `c_helper.so` is built from the tree it ships with
 
 `pkgs/klipper` cross-compiles the .so from the chelper sources of the tree
-being shipped, using the Ingenic toolchain pinned in `versions.env`, and gates
-the result on both the ELF flags (MIPS32r2/nan2008/o32) and
-`test/test-chelper.py`'s symbol check. There is one source: the commit pinned
-in `versions.env`. `KLIPPER_FORK` — the `config.env` knob that pointed the
+being shipped, using the Ingenic toolchain pinned in `versions.env`. There is
+one source: the commit pinned in `versions.env`, and that single-source rule is
+now the whole defence — the recipe itself checks nothing about the object. The
+ELF flags (MIPS32r2/nan2008/o32) are asked once of the installed filesystem in
+`qa/replica/test_abi.py`, and the symbol check went with the `test/` tree. `KLIPPER_FORK` — the `config.env` knob that pointed the
 build at a local checkout instead — is gone with the move to `pkgs/`, because a
 recipe names its source exactly once and the second source is precisely what
 went wrong below.
@@ -60,8 +61,9 @@ arg-count TypeError is Python-vs-Python — a mixed klippy tree — because the
 cdef and the caller both live in the tree; a stale .so shows up as a missing
 symbol (`AttributeError`) instead, since cffi resolves symbols lazily.
 There is now no fork build with no fork tree to refuse: `pkgs/klipper` has one
-source and `pkg_unpack` fails on a missing tarball. `verify.sh` still fails a
-fork package that lacks the klippy tree or its `c_helper.so`, and the
+source and `pkg_unpack` fails on a missing tarball. A fork package that lacks
+the klippy tree or its `c_helper.so` is caught on the installed machine, by
+`qa/replica/test_install.py::test_klippy_is_present` and `test_abi.py`, and the
 compile-from-shipped-sources rule makes a stale .so unrepresentable in a
 release. Both are read out of the PAYLOAD now: the klippy tree moved to
 `$MODDIR/klipper/klippy` — the `klipper` s6-rc service execs it there, on our

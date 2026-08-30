@@ -16,7 +16,6 @@ MODDIR=/usr/data/anvil
 # Read HERE, not inherited: s6-supervise starts this from the SCANNER's
 # environment, which is firmwareExe's at boot but whatever an ssh session had
 # when the service is restarted by hand.
-[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
 [ -f $MODDIR/anvil-env.sh ] && . $MODDIR/anvil-env.sh
 
 # One moonraker, on the DATA partition -- /usr/prog is what a stock flash
@@ -123,5 +122,7 @@ MOONRAKER_PORT=`awk '
 # moonraker that dies before its own logging is configured explains itself.
 #
 # `nice` sets its own priority and then execs in place, so this is still one
-# process. NICE_MOONRAKER protects klippy from it; 0 or unset = normal.
-exec nice -n "${NICE_MOONRAKER:-0}" "$FF_PYTHON" "$MOONRAKER_MAIN" -d "$MOONRAKER_DATA" 3>&-
+# process. The nice value protects klippy from it, and is modest on purpose:
+# this is the print path, so starving it delays the UI, not just background
+# work.
+exec nice -n 5 "$FF_PYTHON" "$MOONRAKER_MAIN" -d "$MOONRAKER_DATA" 3>&-

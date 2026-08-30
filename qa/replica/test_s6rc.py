@@ -20,7 +20,7 @@ LIVE = "/run/s6-rc"
 DB = MODDIR + "/etc/s6-rc/compiled/current"
 
 BOOT_SET = {"wifi", "nginx", "moonraker", "camera", "klipper", "ff-startup",
-            "ui"}
+            "ui", "ntp"}
 
 # EVERY s6-rc-init HERE NEEDS THIS, for the reason firmwareExe needs it: the
 # default deadline is TAIN_INFINITE_RELATIVE, which does not fit this printer's
@@ -104,7 +104,7 @@ def test_the_boot_set_is_up(booted):
 
 
 def test_the_scandir_was_populated_by_s6_rc_init(booted):
-    """It ships EMPTY -- bin/patch.sh stopped copying servicedirs in when the
+    """It ships EMPTY -- bin/payload.sh stopped copying servicedirs in when the
     database took over -- so anything here arrived at boot."""
     names = booted.sh("ls -1 %s" % SCANDIR).out.split()
     assert "nginx" in names, "s6-rc-init laid nothing down: %s" % names
@@ -177,7 +177,7 @@ def test_a_populated_scandir_is_swept_not_collided_with(box):
     """MEASURED: s6-rc-init creates one symlink per service in the scandir and
     dies with "unable to supervise service directories: File exists" if the
     name is taken. An upgrade from a phase-4/5 payload has nginx, moonraker
-    and camera sitting there, so run-append.sh sweeps -- this is that sweep,
+    and camera sitting there, so runFirmwareExe.sh sweeps -- this is that sweep,
     asked of the machine."""
     box.sh("mkdir -p %s/nginx && rm -rf /run/probe2" % SCANDIR)
     got = box.sh("%s/bin/s6-rc-init -t %d -c %s -l /run/probe2 %s 2>&1"

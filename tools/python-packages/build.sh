@@ -3,7 +3,7 @@
 # Cross-build the third-party Python packages Moonraker and klippy import, for
 # the CPython 3.13 that tools/python/build.sh produces (Ingenic mipsel).
 #
-# SPIKE. Nothing here is wired into bin/patch.sh yet.
+# SPIKE. Nothing here is wired into bin/payload.sh yet.
 #
 # Same non-negotiables as tools/python/build.sh:
 #   * e_flags 0x70001405 for an EXEC, 0x70001407 for a DYN. Every .so is

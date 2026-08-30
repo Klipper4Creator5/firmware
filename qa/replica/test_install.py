@@ -41,7 +41,7 @@ WHAT A REPLICA CANNOT ANSWER, so it is not asked here:
     landed, so there is no stick to install from a second time. The property
     that matters -- an update keeps what the user edited and drops only what
     the last package shipped -- is asserted directly in test_upgrade.py, which
-    drives run-append.sh over two payloads.
+    drives runFirmwareExe.sh over two payloads.
   * boot 3's UI liveness: `ok-all` is unreachable on a replica (no
     /dev/ttyS4,5,7, no /dev/video*), so "the UI is running and the stock
     watchdog is satisfied" cannot be asked. The static half of it -- that the
@@ -147,14 +147,14 @@ def test_the_stock_paths_are_symlinks_into_the_payload(box):
     stopped carrying firmwareExe and start.sh.
 
     anvil-core installs all three at $MODDIR/prog/ and anvil-link-prog.sh points
-    the stock paths at them -- from run-append.sh on a flash and from the
+    the stock paths at them -- from runFirmwareExe.sh on a flash and from the
     postinst on `opkg upgrade anvil-core`. A REGULAR FILE at any of these means
     the link step did not run, and the printer would go on executing whatever
     the last install happened to leave there while an upgrade quietly rewrote
     $MODDIR.
 
     klipperDaemon is here for a second reason. It was hand-copied by the
-    installer until the nice value moved to anvil.conf, and the guard on that
+    installer until the nice value it carried went away, and the guard on that
     copy named a path the file had stopped shipping at -- so for several
     releases the block was skipped in silence and every printer kept
     FlashForge's own, whose `start` forks a second unsupervised klippy beside
@@ -281,7 +281,7 @@ def test_the_klipper_service_runs_the_payload_tree_on_our_python(box):
 def test_klippy_imports_resolve_on_our_python(box):
     """cffi, greenlet, pyserial and jinja2 are anvil-klipper's Depends. They
     used to arrive as anvil-moonraker's, or from a hardcoded list in
-    bin/patch.sh -- so a BUILD_MOONRAKER=0 build shipped a klippy that dies
+    bin/payload.sh -- so a BUILD_MOONRAKER=0 build shipped a klippy that dies
     the first time it opens an MCU."""
     for mod in ("cffi", "greenlet", "serial", "jinja2"):
         r = box.sh(". %s/anvil-env.sh; $FF_PYTHON -c 'import %s' 2>&1"
@@ -326,20 +326,6 @@ def test_the_user_printer_cfg_was_not_clobbered(box):
     assert cfg.exists, "user printer.cfg was clobbered by the install"
 
 
-# ---------------------------------------------------------- the rollback copy
-
-def test_a_pristine_snapshot_was_kept(box):
-    """run-pre.sh copies the first install's backup to backup/stock and never
-    overwrites it, so there is always one snapshot taken before the mod ever
-    touched the machine -- later backups are of an already-modded printer."""
-    stock = box.file(MODDIR + "/backup/stock")
-    assert stock.is_dir, (
-        "no pristine snapshot at %s/backup/stock -- there is nothing taken "
-        "before the mod to restore from" % MODDIR)
-    assert box.sh("ls %s/backup/stock" % MODDIR).out.split(), (
-        "%s/backup/stock is empty" % MODDIR)
-
-
 # ------------------------------------------------------------ the install log
 
 def test_the_installer_said_it_installed(box):
@@ -348,7 +334,7 @@ def test_the_installer_said_it_installed(box):
     something else entirely and several would still pass."""
     log = box.file(INSTALL_LOG)
     assert log.exists, (
-        "no %s -- run-append.sh never ran, so nothing here is asserting "
+        "no %s -- runFirmwareExe.sh never ran, so nothing here is asserting "
         "against an install" % INSTALL_LOG)
     assert "mod payload installed" in log.text, (
         "the install log does not say the payload was installed:\n%s"
@@ -356,8 +342,9 @@ def test_the_installer_said_it_installed(box):
 
 
 def test_the_installer_left_no_payload_in_the_scratch_directory(box):
-    """/usr/data/update is the STOCK installer's scratch space -- run-append.sh
-    reads anvil.tar.xz out of it. MEASURED: the directory itself survives the
+    """/usr/data/update is where app_startup.sh unpacks the package, and where
+    runFirmwareExe.sh finds anvil.tar.xz beside itself. MEASURED: the directory
+    itself survives the
     install, empty, so its mere existence is not the question the case script
     thought it was asking. What must not survive is its CONTENTS: an ~80MB
     half-unpacked tree on the data partition that a later install could trip
@@ -372,10 +359,11 @@ def test_the_root_password_was_dealt_with_exactly_once(box):
     """A random root password is generated on the FIRST install only. Doing it
     again on every update would mean a printer whose password changes under its
     owner each time they upgrade."""
-    # NOT a raw count. FlashForge's own run.sh runs under `set -x` and
-    # run-append.sh is spliced into it, so every echo appears twice -- once as
-    # the `+ echo ...` trace and once as its output. Counting the raw string
-    # says two on a single generation.
+    # `+`-prefixed lines are skipped because the software component's run.sh
+    # still runs under FlashForge's `set -x` and its trace lands in the same
+    # log. None of OUR echoes can appear that way any more -- the installer is
+    # its own file and is not spliced into anything -- but a trace line that
+    # merely quotes the string would still be counted, and this stays cheap.
     log = box.file(INSTALL_LOG).text
     generated = len([ln for ln in log.splitlines()
                      if "root password set (random" in ln

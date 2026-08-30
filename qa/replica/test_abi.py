@@ -9,7 +9,7 @@ recipe staged, so the gate could only ever answer "did this recipe produce the
 right ABI", once per recipe, and only for the trees that go through
 build-packages.sh. It never saw:
 
-  * anything bin/patch.sh writes into /usr/prog -- firmwareExe, prog/*.sh and
+  * anything bin/payload.sh writes into /usr/prog -- firmwareExe, prog/*.sh and
     whatever a future one adds. pkgs/helixscreen/pkg.conf carried a note
     saying exactly that, for a package with a 24MB binary in it.
   * what the INSTALL produced, as opposed to what the build staged. Those are
@@ -328,7 +328,7 @@ def test_every_object_the_package_ships_is_the_printers_abi(elves):
 # --------------------------------------------------------- the whole machine
 
 def test_every_loadable_object_on_the_filesystem_is_the_printers_abi(elves):
-    """Not just ours: /usr/prog is written by bin/patch.sh, which no gate has
+    """Not just ours: /usr/prog is written by bin/payload.sh, which no gate has
     ever read, and the stock tree is what the mod has to keep working."""
     bad = [e for e in elves
            if e.loadable and not e.conforms and e.path != STOCK_ARM]

@@ -69,7 +69,7 @@ def run():
     packages[index.name] = str(index)
 
     config = Config.load()
-    replica = Replica.start(config, want_output=_echo)
+    replica = Replica.start(config)
     out = ROOT / "work" / ".payload-out"
     replica.run_case(
         ROOT / CASE, packages=packages, out_dir=out, on_output=_echo,
@@ -94,7 +94,7 @@ def run():
     payload_dir.mkdir(parents=True)
     # --strip-components=1 drops the leading anvil/ the case tarred with.
     # No -p and no --same-owner: the archive carries the printer's root, this
-    # runs as the build user, and run-append.sh extracts as root on the
+    # runs as the build user, and runFirmwareExe.sh extracts as root on the
     # machine -- ownership in the payload means nothing.
     subprocess.run(["tar", "-xf", str(tar), "-C", str(payload_dir),
                     "--strip-components=1"], check=True)

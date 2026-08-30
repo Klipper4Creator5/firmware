@@ -8,6 +8,15 @@ Each phase below is independently shippable and independently revertable, and
 each names the gate that proves it. Do not start a phase whose predecessor's
 gate is not passing.
 
+**Where this ended up.** The plan is kept as written. Two things about it have
+since gone the other way, so read the phases as a record rather than as a
+description of the tree: `anvil.conf` and every `MOD_*` switch in it were
+removed outright — a component runs because it is installed, and the settings
+worth keeping are stated in the service that uses them — so the phases below
+that read `anvil.conf` at runtime describe an intermediate state that no longer
+exists. The gates named as `test/integration/printer/case-*.sh` are modules
+under `qa/replica/` now.
+
 ## Why, in one paragraph
 
 `pkgs/anvil-core/payload/anvil-service.sh` hand-rolls in `ash` what a supervisor does in C:
@@ -102,6 +111,11 @@ behind (that is why `init.d` is in the list at all).
 a file the previous payload shipped and this one does not is gone, (b) a file
 nothing shipped -- drop one in `bin/` by hand -- survives, (c) `anvil.conf` and
 `config-installed` still survive as they do today.
+
+**Shipped, then retired -- see `86-wipe-and-extract.md`.** Deleting `$MODDIR`
+wholesale on update keeps the stale-twin property for free and gives up the
+rest deliberately. That note is the audit behind it: of everything the
+manifest protected, nothing turned out to need protecting.
 
 ## Phase 2 -- build s6 into the package
 

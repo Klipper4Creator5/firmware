@@ -1,5 +1,5 @@
 # The part of a cross-build that is the same for every package. Sourced by
-# every recipe's build.sh after bin/common.sh, and by bin/patch.sh for pkg_out
+# every recipe's build.sh after bin/common.sh, and by bin/payload.sh for pkg_out
 # alone. Recipes run as their own process, so no cross CC leaks onward.
 #
 # ONE RECIPE BUILDS ONE SOURCE: exactly one source verb per recipe, counted by

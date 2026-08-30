@@ -15,8 +15,8 @@ for f in klipper/klippy nginx/sbin/nginx Python-3.8.2/bin/python3 \
          openssl-1.0.2d/bin/openssl app_startup.sh; do
     [ -e "$R/usr/prog/$f" ] && continue
     echo "seed-prog: /usr/prog/$f is missing -- this is not a real prog partition." >&2
-    echo "           Set PROG_DUMP to a factory image, or use a printer image that" >&2
-    echo "           has one baked in. See docs/printer-replica.md." >&2
+    echo "           The image should carry one in /parts/prog -- rebuild it with" >&2
+    echo "           'make printer-image'. See docs/printer-replica.md." >&2
     exit 1
 done
 

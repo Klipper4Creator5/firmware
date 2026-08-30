@@ -15,10 +15,17 @@ So the replica runs the printer's own userland.
 ## What it is
 
 ```
-work/rootfs/          rootfs.squashfs, extracted from the stock package's
-                      kernel component -- the printer's real root filesystem
+PRINTER_IMAGE         a docker image that IS the printer: rootfs.squashfs
                       (busybox 1.31.1, glibc 2.33, MIPS32r2 nan2008, mipsel)
+                      extracted from the stock package's kernel component,
+                      the real /usr/prog and /usr/data from the factory
+                      image, and the stock package already installed on top
 ```
+
+That image is the replica. `tools/replica/build-printer-image.sh` bakes it,
+downloading the firmware itself, so nothing proprietary has to be staged on
+disk and `config.env` is not consulted. Set `PRINTER_IMAGE` in `test.env` —
+`test.env.example` carries the published tag.
 
 `tools/replica/ffsim/replica.py` starts a privileged container that:
 
@@ -96,19 +103,16 @@ into the printer's filesystem.
 the full thing ships in the factory firmware (see below — it is published).
 Two things supply it to the replica, and there is no third:
 
-1. **`PROG_DUMP`** — a real `/usr/prog` off a printer, used verbatim:
+1. **The replica image**, which has the genuine `/usr/prog` and `/usr/data`
+   baked in at `/parts`. Nothing is stubbed: the klipper daemons, `nginx`,
+   `python3`, `checkEboard` and the printer's own OpenSSL 1.0.2d are all
+   real, and the `-md md5` substitution disappears because the genuine 1.0.2d
+   binary runs under qemu.
 
-   ```sh
-   ssh root@printer 'tar -cf - /usr/prog' > prog.tar
-   # then in test.env:
-   PROG_DUMP="/path/to/prog.tar"
-   ```
-
-   With one, nothing below is stubbed: the klipper daemons, `nginx`,
-   `python3`, `checkEboard` and the printer's own OpenSSL 1.0.2d all become
-   genuine, and the `-md md5` substitution disappears because the real 1.0.2d
-   binary runs under qemu. This is the single highest-value artefact you can
-   hand the test suite.
+   A `PROG_DUMP` setting used to be the way to supply this — a tar off your
+   own machine, or the factory image, unpacked into a locally built replica
+   on every case. It is gone with that replica; the image carries the same
+   partitions and carries them once.
 
 2. **FlashForge's own installer**, run inside the replica, which installs the
    parts an update package does carry on top of it.
@@ -128,9 +132,9 @@ md5 d2fdc0e1deb17c41cbb6016d55ab3031   182MB compressed, 828MB extracted
 It is the genuine `/usr/prog` and `/usr/data` off a Creator 5 Pro —
 `Python-3.8.2`, `nginx`, `openssl-1.0.2d`, `moonraker`, `qt-4.8.6`,
 `ffmpeg-4.0.2`, `opencv-4.10`, the klipper tree, `firmwareRes`, the stock
-configs. Point `PROG_DUMP` (in `test.env`) at the `.tar.xz` directly; the replica works out
-whether an archive is a whole-filesystem image or the contents of `/usr/prog`
-and unpacks it accordingly.
+configs. `tools/replica/printer/Dockerfile.full` downloads it at image-build
+time and unpacks `usr/prog` and `usr/data` into `/parts`, so a replica run
+never touches the 182MB archive at all.
 
 With it, the replica decrypts packages using the printer's **own** OpenSSL
 1.0.2d binary under qemu — so the `-md md5` packing is verified against the
@@ -156,8 +160,7 @@ the update package on top:
   see how-it-works — so the factory tree here, the interpreter and
   `moonrakerDaemon` all stay stock, and `moonrakerDaemon` is simply never
   invoked. Nothing the mod installs is written to the prog partition's
-  `moonraker/`, which is what makes it a useful baseline: `case-install.sh`
-  asserts this tree is untouched after an install.)
+  `moonraker/`, which is what makes it a useful baseline.)
 * **Not present at all**: stubs. Without a real prog partition the replica
   refuses to start rather than substitute one.
 * **Neutered, always**: `insmod`, `rmmod`, `modprobe`, `reboot`, `poweroff`,
@@ -207,14 +210,18 @@ logged instead.
 ## Running it
 
 ```sh
-make rootfs          # once -- extracts rootfs.squashfs from the stock package
 make qa-replica      # the replica suite: install, upgrade, boot, supervision
-make test-py         # klipper config, and rootfs paths when one is present
 ```
+
+It needs two things: `PRINTER_IMAGE` in `test.env` and a package in
+`work/out/*.tgz` from `make build`. There is no third way to get a replica —
+`make rootfs` was one, unsquashing the rootfs out of a stock package for a
+container to mount, and it is gone: every caller set `PRINTER_IMAGE` anyway,
+and `make printer-image` builds the image from the same public firmware
+without needing a stock package at all.
 
 `make qa-replica` does not skip when a stock package is missing: it fails at
 the point that needs one, with the command that fixes it in the message. There
 is no flag and nothing for a workflow to remember to set, which is why
-`ALLOW_SKIP` is gone entirely. `REQUIRE_PRINTER_SIM` survives only for the two
-single-purpose wrappers that can still skip — `make rootfs` and
-`make boot-screen-sim`.
+`ALLOW_SKIP` is gone entirely. `REQUIRE_PRINTER_SIM` survives only for the one
+single-purpose wrapper that can still skip — `make boot-screen-sim`.

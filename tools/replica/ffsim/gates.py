@@ -1,91 +1,31 @@
-"""The gates themselves.
+"""What is left of the gates: the cross-built python tree, as a tarball.
 
-Each one is a plain function that returns normally, raises Skip when its
-precondition is genuinely absent, or raises Fail when it ran and the answer
-was no.
+THERE ARE NO GATES IN HERE. There were fifteen, driving thirteen case
+scripts, and every one of them is a module under qa/ now. The name is kept
+because the two survivors have no better home yet and a rename would be the
+only thing in the diff that could break an import.
 
-WHAT IS LEFT. This was fifteen gates driving thirteen case scripts; every one
-of them is a module under qa/ now. `extract_rootfs` survives because it is not
-a gate at all -- it unpacks the printer's real userland, which `make rootfs`
-does and which a locally built replica needs. The python
-tarball helpers survive because `make boot-screen-sim` renders its frames with
-the cross-built interpreter.
+What survives, and why:
+
+  _python_trees / _python_tarball   `make boot-screen-sim` renders its frames
+                                    with the interpreter we cross-build, so
+                                    something has to hand it that tree.
+
+`extract_rootfs` was the other survivor -- it unsquashed the printer's real
+userland out of the stock package for a locally built replica. There is no
+such replica any more: PRINTER_IMAGE is the one source of a machine, and
+tools/replica/build-printer-image.sh does its own extraction from the public
+firmware without needing a stock package at all.
 """
-import os
 import shutil
-import subprocess
 import tarfile
 
-from . import Fail
 
-
-def extract_rootfs(config, on_output=None):
-    """Pull the printer's real root filesystem out of the stock package.
-
-    The kernel-*.tar.xz component carries ota_kernel_emmc/ota_v1/
-    rootfs.squashfs -- the genuine buildroot rootfs: busybox 1.31.1,
-    /etc/inittab, /etc/init.d including the stock S50dropbear, the real ash.
-    Never committed: it is FlashForge's proprietary firmware.
-    """
-    root = config.root
-    if not shutil.which("unsquashfs"):
-        raise Fail("need squashfs-tools (the build image has it)")
-
-    outer = root / "work" / "outer"
-    if not outer.is_dir():
-        raise Fail("run bin/unpack.sh first (no %s)" % outer)
-
-    kernels = sorted(outer.glob("kernel-*.tar.xz"))
-    if not kernels:
-        raise Fail("no kernel-*.tar.xz in the package (a --slim build has none)")
-    kernel_tarball = kernels[0]
-
-    kerndir = root / "work" / "kern"
-    rootfs = root / "work" / "rootfs"
-    for d in (kerndir, rootfs):
-        if d.exists():
-            _rmtree(d)
-    kerndir.mkdir(parents=True)
-
-    with tarfile.open(str(kernel_tarball)) as tf:
-        _extract_all(tf, kerndir)
-
-    squash = None
-    for path in kerndir.rglob("rootfs.squashfs*"):
-        squash = path
-        break
-    if squash is None:
-        raise Fail("no rootfs.squashfs inside %s" % kernel_tarball.name)
-
-    if on_output:
-        on_output(">> %s" % squash.name)
-    completed = subprocess.run(
-        ["unsquashfs", "-q", "-d", str(rootfs), str(squash)],
-        capture_output=True, text=True)
-    if completed.returncode != 0:
-        raise Fail("unsquashfs failed:\n%s" % completed.stderr.strip())
-    _rmtree(kerndir)
-
-    if not (rootfs / "bin").is_dir():
-        raise Fail("unsquashfs produced no %s/bin" % rootfs)
-
-    if on_output:
-        initd = rootfs / "etc" / "init.d"
-        dropbear = rootfs / "usr" / "sbin" / "dropbear"
-        on_output("printer rootfs: work/rootfs\n"
-                  "   init.d : %s\n"
-                  "   dropbear: %s"
-                  % (" ".join(sorted(p.name for p in initd.iterdir()))
-                     if initd.is_dir() else "MISSING",
-                     "present" if dropbear.exists() else "MISSING"))
-
-
-# ------------------------------------------------------------- replica gates
 def _python_trees(config):
     """Every recipe output that makes up the printer's python prefix.
 
     NINETEEN TREES, NOT ONE. This used to be work/.py313, the single directory
-    bin/patch.sh cross-built the interpreter and its site-packages into
+    bin/payload.sh cross-built the interpreter and its site-packages into
     together. CPython is pkgs/3rdparty/python now and each of the eighteen
     third-party packages is a pkgs/3rdparty/python-* of its own, so what a
     printer sees is the union of their bin/ and lib/ -- which is exactly what
@@ -134,25 +74,3 @@ def _python_tarball(config):
             if (staged / sub).is_dir():
                 tar.add(str(staged / sub), arcname=sub)
     return str(out)
-
-
-def _rmtree(path):
-    shutil.rmtree(str(path), ignore_errors=True)
-
-
-def _extract_all(tf, dest):
-    """tar extraction that cannot write outside dest.
-
-    Python 3.12 warns about this and 3.14 changes the default; being explicit
-    means the same behaviour on every interpreter the build image might carry.
-    """
-    dest = os.path.abspath(str(dest))
-    for member in tf.getmembers():
-        target = os.path.abspath(os.path.join(dest, member.name))
-        if not (target == dest or target.startswith(dest + os.sep)):
-            raise Fail("refusing to extract %s outside %s"
-                       % (member.name, dest))
-    try:
-        tf.extractall(str(dest), filter="data")
-    except TypeError:      # filter= arrived in 3.12
-        tf.extractall(str(dest))

@@ -21,30 +21,36 @@ and every target runs inside it. `make shell` drops you into it.
 
 The test targets get the docker socket mounted through, so they can start the
 replica as a sibling container — and so does `make shell`, which shares their
-run flags. A build cannot reach the docker daemon.
+run flags. So does `make build`, which is newer: `payload.sh` assembles the
+payload by installing the feed *inside* the replica, so the build lane needs
+the daemon too. Only the feed, the unpack and the pack run without it.
 
 ## The pipeline
 
 ```
 fetch-assets.sh  download Mainsail + HelixScreen + Moonraker into vendor/
-unpack.sh   decrypt the stock .tgz, open the software component
-patch.sh    apply the mods to work/software/, and install the .ipk feed
-            into work/modpayload-root/ to make the payload
-pack.sh     regenerate md5sum.list, tar, encrypt → work/out/<Model>-anvil-<date>.tgz
-verify.sh   simulate every check the printer performs, against the built file
+unpack.sh   decrypt the stock .tgz for the boot images and the two facts
+            pack.sh reads out of FlashForge's software component
+payload.sh  install the .ipk feed into work/modpayload-root/ to make the
+            payload
+pack.sh     generate runFirmwareExe.sh, tar, encrypt
+            → work/out/<Model>-anvil-<date>.tgz
 ```
 
-`make build` runs the first four. It needs the .ipk feed to exist first --
-`patch.sh` assembles the payload by installing it -- so `make packages`
-comes before a cold `make build`; patch.sh says so if it is missing.
-`verify.sh` is NOT one of them -- run
-`make verify` after it, as the hardware checklist does. Each is idempotent and
-safe to re-run.
+`make build` runs all four. It needs the .ipk feed to exist first --
+`payload.sh` assembles the payload by installing it -- so `make packages`
+comes before a cold `make build`; payload.sh says so if it is missing. Each is
+idempotent and safe to re-run.
 
-Packages carry only the **software** component by default. The stock installer
-skips any component that is absent, so the kernel, the rootfs image and the
-MCU/board firmware are left untouched — MCU flashing is the riskiest thing in
-a package and there is no reason to run it for a userspace mod. `FULL=1 make
+There is no host-side check of the built file. `make qa-replica` has the
+printer perform its own install, and that is the gate.
+
+Packages carry **no FlashForge component at all** — the installer and the
+payload, and nothing that lands on the firmware partition. The stock installer
+skips any component that is absent, so `/usr/prog`, the kernel, the rootfs
+image and the MCU/board firmware are left untouched — MCU flashing is the
+riskiest thing in a package and there is no reason to run it for a userspace
+mod. `FULL=1 make
 <target>` carries all four.
 
 ## One build
@@ -102,28 +108,41 @@ and then re-runs the end-to-end install against the exact `dist/*.tgz` files
 that get attached — not against a package built from the same tree, but those
 files. Releases are marked pre-release.
 
-## Two kinds of flag
+## One kind of flag
 
-This distinction is the one to keep straight:
+There used to be two, and the distinction was the thing to keep straight.
+There is one now:
 
 * **`BUILD_*`** decides what goes *into* a package. Read at build time only,
   defaulted in `bin/common.sh`, never present on the printer.
   (`BUILD_TOOLCHANGE`, `BUILD_MAINSAIL`, `BUILD_MOONRAKER`,
   `BUILD_HELIX`.)
-* **`MOD_*`** are runtime tunables. They are written into
-  `/usr/data/anvil/anvil.conf`, which the printer re-reads at every boot, so
-  they can be changed over ssh afterwards and survive a mod update.
-  (`MOD_SPLASH`, `MOD_STARTUP`, `MOD_IMPORT`, `MOD_S6`, the `MOD_CAM_*` camera
-  settings and the `NICE_*` priorities.)
 
-  There used to be five more — `MOD_WEB`, `MOD_CAM`, `MOD_UI`, `MOD_SSH`,
-  `MOD_WIFI` — and they are gone. Each was an on/off switch that defaulted to
-  on, and what each described was a half-installed printer: Mainsail with no
-  moonraker behind it, a screen dark on purpose, a root password deliberately
-  not set on a machine whose recovery story is ssh. The web stack, the camera,
-  the screen and wifi now run because they are installed. **To leave a piece
-  out, leave it out** — that is what the `BUILD_*` flags are for — or
-  `opkg remove` it on the printer.
+The other kind was `MOD_*`: runtime switches written into
+`/usr/data/anvil/anvil.conf`, which the printer re-read at every boot. **That
+file is gone**, and so is every switch that lived in it — the whole of
+`MOD_SPLASH`, `MOD_STARTUP`, `MOD_IMPORT`, `MOD_S6`, the `MOD_CAM_*` camera
+settings, the `NICE_*` priorities, and before them `MOD_WEB`, `MOD_CAM`,
+`MOD_UI`, `MOD_SSH` and `MOD_WIFI`.
+
+Every one of them defaulted to on, and what each described was a
+half-installed printer: Mainsail with no moonraker behind it, a screen dark on
+purpose, a camera installed and switched off, a root password deliberately not
+set on a machine whose recovery story is ssh. Nobody chose that state on
+purpose, and everything downstream had to carry a second answer for it.
+
+So the components run because they are installed, and the settings that were
+worth keeping — the startup timeout, the camera's resolution, the nice values
+— are each stated once, in the service that uses them, under
+`pkgs/anvil-core/payload/etc/s6-rc/source/`. Changing one is an edit there and
+a rebuild, not a file on the printer.
+
+**To leave a piece out, leave it out** — that is what the `BUILD_*` flags are
+for — or `opkg remove` it on the printer.
+
+Upgrading a printer that has an `anvil.conf` needs nothing: the installer
+deletes it, edits and all, because nothing reads it any more and a file that
+still looks editable is worse than no file.
 
 ## Third-party pieces are downloaded, not vendored
 
@@ -184,9 +203,9 @@ If the stick cannot be written, no password is set — a password nobody can rea
 is no better than no access, and leaving a guessable one behind would be worse
 than saying so.
 
-`bin/patch.sh` decides which of the two applies and sets `MOD_PW_AUTO` in the
-injected install block; `installer/run-append.sh` does the on-device half with
-the printer's own `mkpasswd`.
+`bin/pack.sh` decides which of the two applies and bakes `MOD_PW_AUTO` into
+`installer/runFirmwareExe.sh`, which does the on-device half with the printer's
+own `mkpasswd`.
 
 ## Two config files
 
@@ -223,9 +242,10 @@ pkgs/<recipe>/seed/      templated or seeded user state: not a package member,
 pkgs/<recipe>/control/   maintainer scripts, copied verbatim into the .ipk's
                         CONTROL/ -- metadata, not content
 
-installer/              run-pre.sh, run-append.sh -- never files on the
-                        printer at all: patch.sh splices them into the stock
-                        run.sh
+installer/              runFirmwareExe.sh -- THE installer. app_startup.sh
+                        runs whatever it finds under this name in the package
+                        it decrypted, so this file is the whole install;
+                        pack.sh bakes the model gate into it
 ```
 
 Which is to say:
@@ -243,7 +263,6 @@ pkgs/anvil-core/            what makes the machine ours, and nothing else
                               the absolute paths the stock scripts read
             prog/firmwareExe  the wrapper that replaces the stock binary
             prog/start.sh     replaces the stock Klipper launcher
-  seed/     anvil.conf.in     runtime switches, preserved across mod updates
 pkgs/klipper/
   payload/  klipper/klippy/extras/  ff_*.py
 pkgs/klipper-config/        every Klipper config the mod owns
@@ -260,20 +279,19 @@ pkgs/helixscreen/
                               the entry that makes it a toolchanger
 ```
 
-The init scripts stay with `anvil-core` and do NOT move to the components
-they start, which looks inconsistent and is not. Those services are gated at
-RUNTIME by flags in `anvil.conf`; the packages that would own the scripts are
-gated at BUILD time by `BUILD_HELIX`. A
-`BUILD_HELIX=0` tarball has no `anvil-helixscreen` package, so it would carry
-no `S80ui`, and nothing would decide about the screen at all. The script that
-reads a flag must not itself sit behind a second, different flag.
+The service definitions stay with `anvil-core` and do NOT move to the
+components they start, which looks inconsistent and is not. They are one
+source tree, and `bin/payload.sh` compiles the whole of it into a single s6-rc
+database on the build host. A tree split across packages would be a database
+assembled from whichever of them happened to be installed — and there is no
+compiler on the printer to assemble it with.
 
 **Builds it** — host-side, never installed:
 
 ```
-bin/            fetch-assets -> unpack -> patch -> pack, plus verify.
+bin/            fetch-assets -> unpack -> patch -> pack.
                 build-packages.sh is the packaging lane below, and the four
-                steps need it to have run: patch.sh checks for the feed and
+                steps need it to have run: payload.sh checks for the feed and
                 refuses without one
 versions.env    pinned Mainsail / HelixScreen / Moonraker versions + sha256
 vendor/         where fetch-assets.sh caches them (gitignored), plus the
@@ -302,7 +320,7 @@ pkgs/           package recipes: one directory per component, each a
                   configure/make/install, the build cache. A recipe that
                   needs something this cannot express should grow it --
                   qa/static/test_ipk.py fails a recipe that goes around it.
-  libsodium/      bin/patch.sh section 5d's build, moved. patch.sh runs it,
+  libsodium/      bin/payload.sh section 5d's build, moved. payload.sh runs it,
                   so the payload's copy and the packaged copy are one build.
   opkg/           the package manager itself: static musl, with zlib and
                   libarchive as build-only dependencies linked into it. This
@@ -314,25 +332,16 @@ pkgs/           package recipes: one directory per component, each a
 ```
 qa/             THE SUITE. static/ needs nothing but a checkout;
                 replica/ needs docker and the firmware. `make qa`
-test/           28 host-side unit tests over our own Python, and the two
-                fixtures they share. `make test-py`
-  conftest.py     the merged config tree the config gates read
-  ffcfg.py        Klipper config parsing, as klippy's own parser sees it
-  integration/    test_startup.py, test_tool_transform.py, test_ffscreen.py,
-                  test_chamber.py, test_gcode.py -- see docs/testing.md
-  test-chelper.py in neither suite: pkgs/klipper/build.sh and
-                  bin/verify.sh call it
 tools/replica/  THE REPLICA, which is a build tool as much as a test one --
-                bin/patch.sh assembles the payload inside it
-  printer/        the machine: binfmt, the mount layout, its two Dockerfiles
-                  and the entrypoint that runs inside it on the printer's own
+                bin/payload.sh assembles the payload inside it
+  printer/        the machine: binfmt, the mount layout, Dockerfile.full and
+                  the entrypoint that runs inside it on the printer's own
                   binaries -- SHELL, because the printer's busybox ash is the
                   only interpreter that matters there
   ffsim/          the host half: config loading and the docker plumbing
-  extract-rootfs.py       pulls the real rootfs out of the stock package
   sim-boot-screen.py      renders the boot frames, via the docker socket
-  build-printer-image.sh  bakes a prebuilt replica image
-test.env        replica settings only -- factory image, partition sizes
+  build-printer-image.sh  bakes the replica image, fetching the firmware itself
+test.env        replica settings only -- the replica image, partition sizes
 docs/           the documentation
 ```
 
@@ -350,9 +359,9 @@ what the suite proves. See [testing.md](testing.md#why-the-harness-is-python)
 for why the host half moved.
 
 Two things keep the boundary from eroding: the only files of ours that
-`patch.sh` copies into a package are the ones under a recipe's `payload/`,
-`prog/` or `seed/`, and `make verify` fails if a built package contains any
-file byte-identical to one in `bin/`, `test/` or `docker/`.
+`payload.sh` copies into a package are the ones under a recipe's `payload/`,
+`prog/` or `seed/`, and `qa/replica/test_what_ships.py` fails if any file on
+the installed printer is byte-identical to one in `bin/` or `docker/`.
 
 ## Rebuilding chelper
 
@@ -366,15 +375,19 @@ sha256 in `versions.env` and fetched into `vendor/` like every other asset.
 You do not rebuild it by hand any more. `pkgs/klipper` compiles the .so from
 the chelper sources of the very tree it is about to ship — the fork tarball
 pinned in `versions.env`, which since the recipe landed is the only source
-there is. Two gates then run inside the recipe, so `make packages` enforces
-them as well as a firmware build: the ELF-flag check above, and
-`test/test-chelper.py`, which checks every function the klippy tree cdefs against the .so's dynamic
-symbol table. The symbol gate exists because cffi resolves lazily: a stale
-.so imports cleanly and dies only at `Internal error during connect` on the
-printer, with a traceback that names cffi and not the build. Both a stale
-prebuilt .so (v0.12 binary under a v0.13 tree) and a package that skipped
-the fork entirely (v20260824-nova-kakhovka) have shipped; the compile-fresh
-rule plus these gates are what make the third time structurally hard.
+there is. One gate then runs inside the recipe, so `make packages` enforces
+it as well as a firmware build: the ELF-flag check above.
+
+A symbol gate used to run beside it, comparing the .so's dynamic symbols
+against what klippy cdefs, because cffi resolves lazily -- a stale .so imports
+cleanly and dies only at `Internal error during connect` on the printer, with
+a traceback that names cffi and not the build. It is gone. What stands in its
+place is the compile-fresh rule itself: the .so is built from the chelper
+sources of the tree that ships, so a .so older than its klippy is not
+something this recipe can produce. Both a stale prebuilt .so (v0.12 binary
+under a v0.13 tree) and a package that skipped the fork entirely
+(v20260824-nova-kakhovka) have shipped, and that rule is what makes the third
+time structurally hard.
 
 ## The docs site
 

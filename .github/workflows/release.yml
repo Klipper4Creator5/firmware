@@ -3,17 +3,21 @@ name: release
 # A release is blocked on the printer replica passing.
 #
 # The replica is the printer's real rootfs.squashfs, chrooted under
-# qemu-mipsel, with /usr/prog installed by FlashForge's own updater, so the
-# installer under test runs on the printer's busybox, tar, md5sum and unTar.
-# If that fails, nothing ships.
+# qemu-mipsel, with /usr/prog installed by FlashForge's own updater. The
+# installer under test runs on the printer's busybox, tar, md5sum and unTar --
+# not on Debian stand-ins. If that fails, nothing ships.
 #
-# The stock packages and the factory image are large but not secret: this
-# fetches what is already public at ghzserg/FF, pinned by sha256 and enforced,
-# so the archive cannot change under us while the gates report green.
+# The stock FlashForge packages and the factory image are large but not
+# secret: they are published at ghzserg/FF and this workflow fetches what is
+# already public, exactly as ci.yml does. Every one is pinned by sha256 and
+# the checksum is enforced, not advisory -- an unpinned download would let the
+# archive change under us while the gates kept reporting green against a
+# different firmware than they were written for.
 #
-# TAGS. `v<YYYYMMDD>-<city>`, e.g. v20260824-nova-kakhovka: the release date
-# and a Ukrainian city under occupation. Only the date reaches the package
-# filename, so the city is carried by the tag and the release title.
+# TAGS. `v<YYYYMMDD>-<city>`, e.g. v20260824-nova-kakhovka: the release date,
+# and the name of a Ukrainian city under occupation. Only the date reaches the
+# package filename -- the installer's version field is a date and nothing else
+# -- so the city is carried by the tag and the release title.
 
 on:
   push:
@@ -29,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch the stock firmware and the factory image
+      - name: Fetch the stock firmware
         # Same artefacts, same checksums as ci.yml. Enforced: a mismatch here
         # means the thing we test against is not the thing we tested against
         # last time, and that has to stop the release rather than colour it.
@@ -38,34 +42,40 @@ jobs:
           STOCK_SHA_CREATOR5PRO: 1f3252feaae6d8fc72d7b0fd1ba832cc63d369659f8b2d2896efcf7adab2976b
           STOCK_URL_CREATOR5: https://github.com/ghzserg/FF/releases/download/R/Creator5-1.9.7-1.2.9-20260810.tgz
           STOCK_SHA_CREATOR5: 72009be183e74a4562050a927787ba686c6b558a075f00958892197ac52659cc
-          FACTORY_URL: https://github.com/ghzserg/FF/releases/download/R/Creator5Pro-factory.tar.xz
-          FACTORY_SHA: 45657924298a41b5cd48c0f4412b4b2fb67df624af666b494d6bcea969cc5b7b
         run: |
           set -euo pipefail
           mkdir -p stock
           curl -fsSL "$STOCK_URL_CREATOR5PRO" -o stock/Creator5Pro-stock.tgz
           curl -fsSL "$STOCK_URL_CREATOR5"    -o stock/Creator5-stock.tgz
-          curl -fsSL "$FACTORY_URL"           -o stock/factory.tar.xz
           # Exactly two spaces before the path: sha256sum -c reads everything
           # after them as the filename, so a column-aligned line looks for a
           # file whose name begins with spaces and fails as "not found".
           echo "$STOCK_SHA_CREATOR5PRO  stock/Creator5Pro-stock.tgz" | sha256sum -c -
           echo "$STOCK_SHA_CREATOR5  stock/Creator5-stock.tgz" | sha256sum -c -
-          echo "$FACTORY_SHA  stock/factory.tar.xz" | sha256sum -c -
           ls -lh stock
 
-      - name: Write test.env (the replica's /usr/prog)
+      - name: Write test.env (the replica)
         env:
-          # A prebuilt replica image carrying the factory partitions AND the
-          # stock package already installed, about a minute saved per case.
-          # The end-to-end test reinstalls the baseline itself when the
-          # package under test is for the other model, so this only changes
-          # how long it takes, never what it proves.
-          PRINTER_IMAGE: ${{ vars.PRINTER_IMAGE || 'monstrofil/creator5-printer:latest' }}
+          # THE replica: the printer's rootfs, its real /usr/prog and
+          # /usr/data, and the stock package already installed on top. The
+          # end-to-end test reinstalls the baseline itself when the package
+          # under test is for the other model, so this only ever changes how
+          # long a run takes, never what it proves. vars.PRINTER_IMAGE
+          # overrides it for a fork building its own.
+          #
+          # A VERSION TAG, NOT :latest. A release is blocked on this image, so
+          # it is as much a pinned input as the stock packages above -- and it
+          # is the only one whose contents nothing here checksums. A floating
+          # tag would let the substrate a release was proved on change without
+          # a commit, which is exactly what the sha256 lines exist to stop.
+          PRINTER_IMAGE: ${{ vars.PRINTER_IMAGE || 'monstrofil/creator5-printer:1.9.7-1.2.9-20260810' }}
         run: |
           set -euo pipefail
-          echo "PROG_DUMP=\"$PWD/stock/factory.tar.xz\"" > test.env
-          [ -z "${PRINTER_IMAGE:-}" ] || echo "PRINTER_IMAGE=\"$PRINTER_IMAGE\"" >> test.env
+          if [ -z "${PRINTER_IMAGE:-}" ]; then
+            echo "::error title=No replica::PRINTER_IMAGE is empty and there is no other way to get a replica."
+            exit 1
+          fi
+          echo "PRINTER_IMAGE=\"$PRINTER_IMAGE\"" > test.env
           cat test.env
 
       - name: Write config.env
@@ -73,36 +83,42 @@ jobs:
           cat > config.env <<CFG
           MOD_NAME=anvil
           # The tag is v<YYYYMMDD>-<city>; the package version is the date
-          # alone, which FlashForge's installer compares as a number. A manual
-          # run has no tag, so leave it empty and let the build stamp today's
-          # UTC date. The optional trailing letter (20260824b) is the same-day
-          # re-release convention and only keeps the outer filenames distinct.
+          # alone. FlashForge's installer reads this as the software version
+          # and it is compared as a number, so the codename stays in the tag.
+          # A manual run has no tag -- GITHUB_REF_NAME would be the branch --
+          # so leave it empty and let the build stamp today's UTC date.
+          # The optional trailing letter is the same-day re-release
+          # convention common.sh documents (20260824b): nothing on the printer
+          # reads it, so it only keeps the outer filenames distinct.
           MOD_VER=$(case "$GITHUB_REF" in
                       refs/tags/*) echo "${GITHUB_REF_NAME#v}" | sed -n 's/^\([0-9]\{8\}[a-z]\{0,1\}\).*/\1/p' ;;
                       *) echo "" ;;
                     esac)
-          SW_VER=""
           TARGET_MACHINE=Creator5Pro
           STOCK_TGZ_CREATOR5PRO="$PWD/stock/Creator5Pro-stock.tgz"
           STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
           STOCK_TGZ=""
           # No Klipper source knob any more: pkgs/klipper builds from the
-          # commit pinned in versions.env. KLIPPER_FORK used to be settable
-          # here, and setting it to "" is what made v20260824 ship the stock
-          # 0.12-era klippy.
-          #
-          # The password secret is INTENTIONALLY unset: a hash baked in here
-          # would be the same root password in every public release. Empty
-          # means each printer picks a random one on first install. The
-          # plumbing stays so a fork can bake one in deliberately.
+          # commit pinned in versions.env and cross-compiles c_helper.so from
+          # those same sources. KLIPPER_FORK used to be settable here, and
+          # setting it to "" is what made v20260824 ship the stock 0.12-era
+          # klippy; a recipe names one source, so that cannot recur.
+          # The secret is INTENTIONALLY unset: a hash baked in here would be
+          # the same root password in every public release. Empty means each
+          # printer picks a random one on its first install and writes it to
+          # anvil-password.txt on the stick; updates keep it. The plumbing
+          # stays so a fork can bake one in deliberately.
           ROOT_PW_HASH='${{ secrets.ROOT_PW_HASH }}'
           FF_KEY='FFP0331&*%root'
           CFG
 
-      # Before the suite, not after: the replica gates run ./bin/patch.sh
-      # directly and it expects vendor/ already populated. Cached because the
-      # set includes the Klipper fork and the ~203MB MIPS toolchain; the key
-      # is the pin file.
+      # Before the suite, not after: the replica gates run ./bin/payload.sh
+      # directly and it expects vendor/ already populated. `make release`
+      # further down would have fetched them, but that runs after the gates.
+      #
+      # Cached because the set now includes the Klipper fork and the ~203MB
+      # MIPS toolchain that compiles its chelper; the key is the pin file, so
+      # a version bump refetches and anything else reuses.
       - name: Cache the pinned vendor assets
         uses: actions/cache@v4
         with:
@@ -112,45 +128,46 @@ jobs:
       - name: Fetch the pinned Mainsail, HelixScreen, Moonraker and Klipper assets
         run: make vendor ASSET_ROOT=$PWD
 
-      - name: Extract the printer rootfs
-        run: make rootfs ASSET_ROOT=$PWD
+      # THE FEED FIRST. bin/payload.sh builds the payload by installing it, so
+      # it refuses to start without one, and the python recipes resolve their
+      # build dependencies out of it. This used to run unpack/patch/pack with
+      # no feed at all and could not have passed.
+      - name: Build the package feed
+        run: make packages ASSET_ROOT=$PWD
+
+      - name: Build the package the suite installs
+        run: make build ASSET_ROOT=$PWD
 
       - name: Brick-safety suite, replica required
         # No REQUIRE_PRINTER_SIM and no ALLOW_SKIP: qa has no skip mode, so a
         # missing docker, image or package fails at the point that needs it.
-        run: |
-          docker build -q -t creator5-fw-build -f docker/Dockerfile.build docker
-          docker run --rm \
-            -v "$PWD":"$PWD" -w "$PWD" \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            creator5-fw-build \
-            sh -c './bin/unpack.sh && ./bin/patch.sh && ./bin/pack.sh \
-                   && python3 -m pytest ./qa -q'
+        #
+        # Through `make`, not around it. These steps used to hand-roll their
+        # own `docker run`, which meant two things: the release path exercised
+        # entry points no human uses -- so a bug in one of the Makefile's own
+        # runners could not be caught here -- and the container ran as root,
+        # leaving a work/ that the `make release` below, which runs as the
+        # runner user, could not write to.
+        run: make qa ASSET_ROOT=$PWD
 
       - name: Build both models
         run: make release ASSET_ROOT=$PWD
 
       - name: End-to-end update test on the packages that will actually ship
         # The suite above tested a package built from the same tree; this
-        # tests the exact files attached to the release.
-        #
-        # In the build image, not on the runner: every earlier step ran as
-        # root inside that image, so work/ and dist/ belong to root and the
-        # replica cannot create its scratch directory as the runner user. It
-        # also needs the docker socket.
+        # tests the exact files that get attached to the release.
         #
         # REAL_PKG points the replica lane at one exact package instead of the
-        # newest in work/out. Two models ship per release and they are not
-        # interchangeable, so each is installed and asserted against in turn.
+        # newest thing in work/out. Two models ship per release and they are
+        # not interchangeable, so each is installed and asserted against in
+        # turn -- 22 named results per package where sim-install.py gave one
+        # exit code. `make qa-replica` passes REAL_PKG through (see RUNSIM).
         run: |
-          docker run --rm \
-            -v "$PWD":"$PWD" -w "$PWD" \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            creator5-fw-build sh -c '
-              for p in dist/*.tgz; do
-                echo "=== $p ==="
-                REAL_PKG="$p" python3 -m pytest ./qa/replica -q || exit 1
-              done'
+          set -euo pipefail
+          for p in dist/*.tgz; do
+            echo "=== $p ==="
+            REAL_PKG="$p" make qa-replica ASSET_ROOT=$PWD
+          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -160,10 +177,11 @@ jobs:
 
       - name: Assemble the release notes
         if: startsWith(github.ref, 'refs/tags/')
-        # The fixed half is the same every time; the half naming the city is
-        # not. docs/releases/<tag>.md carries it and is appended when it
-        # exists, so that story lives in the repo at the tagged commit rather
-        # than only on a hand-edited release page.
+        # The fixed half is the same every time; the half that names the city
+        # is not. docs/releases/<tag>.md carries it, and is appended when it
+        # exists -- so the story of the city the release is named for lives in
+        # the repo at the tagged commit, not only in a hand-edited release
+        # page that nothing reproduces.
         run: |
           set -euo pipefail
           cat > RELEASE_NOTES.md <<'NOTES'
@@ -205,7 +223,8 @@ jobs:
           files: dist/*.tgz
           # Every build so far is a pre-release: this replaces the stock UI on
           # a machine whose only recovery path is a USB stick with the stock
-          # package on it. Worth saying with the flag, not just in prose.
+          # package on it. That is worth saying with the flag, not just in
+          # prose people scroll past.
           prerelease: true
           name: ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md

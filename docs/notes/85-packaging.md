@@ -364,10 +364,11 @@ Two things the recipe took with it. `KLIPPER_FORK` — the `config.env` knob
 that pointed the build at a local checkout instead of the pin — is **gone**: a
 recipe names its source exactly once, a checkout beside a pinned tarball is
 the second source that rule forbids, and it is the *same* variable that let
-v20260824 ship a klippy tree nobody had built. And `test/test-chelper.py` no
-longer falls back to reading `KLIPPER_FORK` out of `config.env` when given no
-argument — that fallback printed `SKIP: no KLIPPER_FORK configured`, a green
-line for a check that had not run.
+v20260824 ship a klippy tree nobody had built. `test/test-chelper.py` had
+already stopped falling back to reading `KLIPPER_FORK` out of `config.env` when
+given no argument — that fallback printed `SKIP: no KLIPPER_FORK configured`, a
+green line for a check that had not run — and the script itself is gone now,
+deleted with the rest of `test/`.
 
 The package installs the tree under `$MODDIR/klipper`, where nothing reads it
 yet: klippy is still started by the stock `/usr/prog/klipper/klipperDaemon`,
@@ -438,11 +439,12 @@ which is the failure this layout is actually for — a misfiled file is caught
 by a build, an unruled directory is caught by nothing.
 
 **prog/ and seed/ are the not-yet-packaged residue, and that is the point of
-naming them.** Both empty out on the way to the end state: `seed/` when
-maintainer-script support lands and a postinst seeds `anvil.conf.default` only
-when the real file is absent; `prog/` when a postinst run against a STAGING
-ROOT places `/usr/prog/PROGRAM/software/firmwareExe` as a symlink into
-`$MODDIR`. The second is the interesting one, and it is only possible because
+naming them.** Both empty out on the way to the end state. `seed/` got there
+first and by a route this section did not predict: rather than a postinst
+seeding `anvil.conf.default` when the real file is absent, `anvil.conf` was
+removed outright and `seed/` left `anvil-core` with it. `prog/` empties when a
+postinst run against a STAGING ROOT places
+`/usr/prog/PROGRAM/software/firmwareExe` as a symlink into `$MODDIR`. The second is the interesting one, and it is only possible because
 `/usr/prog` is written by a tarball this repo bakes, not by a flash we do not
 control: the install can happen in the build container, which is what "the
 tarball becomes a view of the feed" below already assumes. The trap there is
@@ -504,39 +506,55 @@ may touch — plus the three files that are in the payload and in no package.
 **The on-printer half — not started.** `.install-manifest` still exists and
 `installer/run-append.sh` still deletes by it. Replacing it with opkg's own
 `.list` files changes what happens on real printers during an upgrade and
-rewrites `test/integration/printer/case-upgrade.sh`; it is a separate change
+rewrites what is now `qa/replica/test_upgrade.py`; it is a separate change
 with a different risk profile. Keeping the halves apart is what made the first
 one provable: on-printer behaviour is unchanged, so correctness reduced to a
 payload diff.
 
+**Cancelled rather than done -- see `86-wipe-and-extract.md`.** `$MODDIR` is
+deleted wholesale on update now, so a printer never deletes selectively and
+needs no file database for the purpose — ours or opkg's. There was nothing
+left for this half to replace `.install-manifest` *with*. The `.list` files
+still ship and still describe the payload; nothing reads them at upgrade
+time.
+
 ### What it is assembled with
 
-**A host opkg.** `pkg_buildopkg` (`pkgs/lib.sh`) builds an x86-64 opkg from
-the same pinned tarball the mipsel one comes from, cached at `work/.opkg-host`,
-shaped as `pkg_buildpython`'s twin. It resolves `Depends`, enforces
-`Conflicts`, reads `Provides` and handles `conffiles` — all of which decide
-what the payload should contain.
+**The printer's own opkg, on the printer's own filesystem.** `bin/patch.sh`
+runs `bin/build-payload.py`, which starts the replica, puts the feed on the
+simulated stick and lets the machine's `opkg` install it. The tree is tarred
+back out and becomes `$MODDIR`. Maintainer scripts therefore run where they
+will run on a printer, and the install that ships is the install that was
+tested.
 
-The database is therefore written by the same program that will later read it
-on the printer, which is what makes "phase 2 is a swap rather than a
-migration" true rather than an argument about format compatibility.
+The database is written by the same binary that will later read it on the
+machine — not merely by the same program built twice — which is what makes
+"phase 2 is a swap rather than a migration" true rather than an argument
+about format compatibility.
 
-**`--prefix=$MODDIR`, and it is the trap.** opkg bakes its state directory in
-at compile time (`libopkg/Makefile.am`: `-DVARDIR="@localstatedir@"`). Built
-with any other prefix it looks for its status file somewhere else no matter
-what `--offline-root` it is given, comes up believing nothing is installed,
-and reinstalls the world. `--disable-shared` is the second half: the prefix
-goes into `libopkg` too, so a shared build produces a `bin/opkg` that looks
-for `libopkg.so.1` at a path that exists on the printer and not here.
-`pkg_buildopkg` checks both against the binary it produced.
+**This is why `make build` needs the docker socket.** The build lane runs on
+`RUNBUILD` (Makefile), which is `RUN` plus the socket and the socket's own
+gid, and still `--user` so the output belongs to you. A build that could not
+reach the daemon could not assemble a payload.
 
-**A chroot was tried and rejected.** It works, and it marks packages
-`installed` without `--force-postinstall`, but it needs root: unprivileged
-`chroot` is `Operation not permitted` and `unshare -Ur` is blocked by Docker's
-seccomp profile. The payload then comes out root-owned and the build-lane user
-cannot delete it, so the next `make build` dies on its own `rm -rf` — the
-failure `Makefile:48-61` exists to prevent. It is also more code: opkg plus an
-`ldd` loop for ten shared libraries, against a nine-line config file.
+**A host opkg was the previous answer, and it is gone.** `pkg_buildopkg`
+cross-built an x86-64 opkg from the same pinned tarball, cached at
+`work/.opkg-host`, and installed the feed into a staging root with
+`--offline-root`. It worked, but everything about it was an imitation of the
+machine: `--prefix=$MODDIR` was mandatory and easy to get wrong (opkg bakes
+its state directory in at compile time — `libopkg/Makefile.am`:
+`-DVARDIR="@localstatedir@"` — so any other prefix comes up believing nothing
+is installed and reinstalls the world), `--disable-shared` was mandatory for
+the same reason one layer down, and postinst scripts had to be forced because
+nothing could execute a MIPS binary. The replica has none of those problems
+because it is not imitating anything.
+
+**A chroot on the host was tried and rejected** before either of those. It
+needs root: unprivileged `chroot` is `Operation not permitted` and
+`unshare -Ur` is blocked by Docker's seccomp profile. The payload then comes
+out root-owned and the build-lane user cannot delete it, so the next
+`make build` dies on its own `rm -rf` — the failure `Makefile:48-61` exists
+to prevent.
 
 ### What the set is
 
@@ -644,8 +662,11 @@ synthetic stock fixture with the real vendored assets:
 | added | `klipper/**`, `var/lib/opkg/**`, `bin/opkg` |
 | two builds in a row | byte-identical |
 
-`bin/verify.sh` passes every check including the ship boundary; `make test`
-runs `build-packages → unpack → patch → pack → verify` with 9 gates green.
+`bin/verify.sh` passed every check including the ship boundary; `make test`
+ran `build-packages → unpack → patch → pack → verify` with 9 gates green.
+(Measured while both existed. `bin/verify.sh` and `make test` have since been
+retired -- the ship boundary is now `qa/replica/test_what_ships.py`, asked of
+the installed machine.)
 
 **One bug fell out of it.** `PKG_EXCLUDE` was applied with `find -name`, which
 matches a basename at any depth, so `.version` deleted Mainsail's own
@@ -656,10 +677,11 @@ payload's contents is what surfaced it.
 
 **Still owed by this phase**, and the allowlist in
 `test_every_payload_file_is_owned_by_a_package` is the list: `.install-manifest`
-(generated), `anvil.conf` and `config/moonraker-custom.conf` (user state, and
-arguably `conffiles` once the on-printer half lands), `bin/busybox` (optional,
-from `config.env`), and opkg's own `var`, `var/lib`, `var/run`. Six entries,
-three of them opkg's.
+(generated), `config/moonraker-custom.conf` (user state, and arguably
+`conffiles` once the on-printer half lands), and opkg's own `var`, `var/lib`,
+`var/run`. Five entries, three of them opkg's. `anvil.conf` was a sixth until
+it was removed outright -- the test says so where the entry used to be, so it
+cannot come back under an exemption.
 
 ## Phase 3 — a feed  *(~2–3 days)*
 

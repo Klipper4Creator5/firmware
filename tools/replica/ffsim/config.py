@@ -28,11 +28,11 @@ from . import Fail, repo_root
 # What the harness reads. Anything else in those files belongs to the build.
 WANTED = (
     "FF_KEY",
-    "PRINTER_IMAGE", "PROG_DUMP", "PROG_MB", "DATA_MB",
+    "PRINTER_IMAGE", "PROG_MB", "DATA_MB",
 )
 
 # Of those, the ones a caller is expected to override per-run.
-OVERRIDABLE = ("PRINTER_IMAGE", "PROG_DUMP", "PROG_MB", "DATA_MB", "FF_KEY")
+OVERRIDABLE = ("PRINTER_IMAGE", "PROG_MB", "DATA_MB", "FF_KEY")
 
 # `.` on a file with a syntax error returns non-zero and does NOT stop the
 # shell, so the && form quietly carried on with half the file applied. That is

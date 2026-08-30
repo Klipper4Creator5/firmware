@@ -9,7 +9,7 @@
 # klipperDaemon would be a second way to start klippy: unsupervised, invisible
 # to s6-rc, and fighting the supervised copy for /dev/ttyS4.
 #
-# bin/patch.sh stages this as a software component and FlashForge's run.sh
+# bin/payload.sh stages this as a software component and FlashForge's run.sh
 # copies it onto /usr/prog/klipper, which is why a stock flash replaces it.
 MODDIR=/usr/data/anvil
 

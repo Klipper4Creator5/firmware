@@ -12,11 +12,10 @@ There is one flash: the firmware package for your model.
 before you flash anything.** Flashing it back is the uninstall, and it is the
 only recovery step that needs nothing but a USB port — no ssh, no screen.
 
-It used to be proven by `make test-recovery`, which installed the mod into the
-replica and flashed the stock package over it. **That gate has been retired
-and nothing has replaced it yet** — see
-[qa-migration.md](qa-migration.md). It passed on its last run, but treat the
-rollback as unverified against the current build.
+**Nothing currently tests that rollback** — no gate installs the mod into the
+replica and flashes the stock package back over it (see
+[qa-migration.md](qa-migration.md)). It worked when it was last checked, but
+treat it as unverified against the current build.
 
 ---
 
@@ -42,13 +41,16 @@ Find yours in Settings → About, or in
 `TARGET_MACHINE` in `config.env`. Then:
 
 ```sh
-make build && make verify          # one model
+make build                         # one model
 make release                       # both, into dist/
 ```
 
-`verify.sh` fails loudly on a mismatch. **You must start from a stock package
-built for your own model** — the mod inherits the gate from whatever package
-you unpack.
+**You must start from a stock package built for your own model** — the mod
+inherits the gate from whatever package you unpack, so a package built from
+the wrong stock file carries the wrong gate and your printer will refuse it
+with "Firmware does not match machine type". Nothing on the build host warns
+you first; `make qa-replica` catches it by installing the package the way the
+printer does.
 
 ## Before the first flash
 
@@ -60,7 +62,8 @@ you unpack.
       restores a placeholder serial and you may need to put yours back.
 - [ ] Confirm you can reach the printer's IP.
 - [ ] `make qa` passes.
-- [ ] `make rootfs && make qa-replica` passes — this parses every script that
+- [ ] `make qa-replica` passes — needs `PRINTER_IMAGE` in `test.env` and a
+      package from `make build`; this parses every script that
       will run on the printer using the printer's own busybox ash.
 
 Two USB sticks, FAT32, both packages at the **root** of the stick (not in a
@@ -89,11 +92,13 @@ verification files honest as the macros change.
 
 ## Keeping the verification files honest
 
-`make test-py` checks both files against the shipped macros and the configured
-axis limits: every command in them must be one the mod's Klipper config or
-`pkgs/klipper/payload/klipper/klippy/extras/` defines (bar an explicit allowlist of Klipper
-built-ins, currently just `SET_PRESSURE_ADVANCE`), `TOOLS=` must list every
-tool the feature print uses, and the safe file's own lines must stay cold and
-above Z50 — the check reads the file, so it does not see what an implicit
-`START_PRINT` does before it. A renamed macro breaks the suite rather than the
-print.
+Nothing checks them automatically any more. `make test-py` used to: every
+command in them had to be one the mod's Klipper config or
+`pkgs/klipper/payload/klipper/klippy/extras/` defines (bar an explicit
+allowlist of Klipper built-ins, currently just `SET_PRESSURE_ADVANCE`),
+`TOOLS=` had to list every tool the feature print uses, and the safe file's own
+lines had to stay cold and above Z50. That check went with the `test/` tree.
+
+So a renamed macro now breaks the print rather than the suite. If you rename or
+remove a macro, read `gcode/creator5-safe-moves.gcode` and
+`gcode/creator5-feature-test.gcode` before you ship it.

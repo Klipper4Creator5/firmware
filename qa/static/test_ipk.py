@@ -314,23 +314,23 @@ def test_the_payload_is_the_feed_installed():
     """Nothing ships twice, because the payload IS the packages.
 
     This test used to assert the opposite of what it asserts now, and the
-    property it protects is the same one. bin/patch.sh used to run each recipe
+    property it protects is the same one. bin/payload.sh used to run each recipe
     and copy its build tree into the payload, so the risk was that the
     tarball's copy and the packaged copy came from different code -- and the
-    test demanded that patch.sh run the recipe's own build.sh, which was the
+    test demanded that payload.sh run the recipe's own build.sh, which was the
     cheapest way to make "one build, two vehicles" true.
 
-    There is one vehicle now. patch.sh installs the .ipk files into a staging
+    There is one vehicle now. payload.sh installs the .ipk files into a staging
     root and ships what lands there, so the payload cannot disagree with the
     package: it is the package. What has to be checked instead is that nobody
     reintroduces the second path, which is why the assertions below are
     negative.
     """
-    patch = (ROOT / "bin" / "patch.sh").read_text()
+    patch = (ROOT / "bin" / "payload.sh").read_text()
 
     # Every recipe whose output reaches the payload. Listed rather than
     # derived, because the property under test is that a HUMAN decided each of
-    # these ships -- a list read off patch.sh would agree with patch.sh by
+    # these ships -- a list read off payload.sh would agree with payload.sh by
     # construction and assert nothing.
     staged = ("libsodium", "mainsail", "moonraker", "helixscreen",
               "skalibs", "execline", "s6", "s6-rc", "anvil-core", "python",
@@ -345,7 +345,7 @@ def test_the_payload_is_the_feed_installed():
             "%s has no build.sh, so bin/build-packages.sh cannot build the "
             ".ipk the payload is assembled from" % rel)
         assert "bash %s/build.sh" % rel not in patch, (
-            "bin/patch.sh runs %s/build.sh again. The payload is installed "
+            "bin/payload.sh runs %s/build.sh again. The payload is installed "
             "from the feed now, so a recipe run here is a second build of "
             "something already in an .ipk -- and the two can drift" % rel)
 
@@ -353,49 +353,50 @@ def test_the_payload_is_the_feed_installed():
     body = "\n".join(ln for ln in patch.splitlines()
                      if not ln.lstrip().startswith("#"))
     assert "pkg_out" not in body, (
-        "bin/patch.sh reads a recipe's build tree through pkg_out. The payload "
+        "bin/payload.sh reads a recipe's build tree through pkg_out. The payload "
         "comes out of the .ipk; work/pkg is the packager's business")
     assert "work/pkg" not in body, (
-        "bin/patch.sh names work/pkg -- see pkg_out above")
+        "bin/payload.sh names work/pkg -- see pkg_out above")
 
     # And it must install them the one supported way. WHICH opkg:
     # bin/build-payload.py runs the PRINTER'S, inside the replica, against /,
     # so maintainer scripts execute where they will on a machine. An offline
-    # root would mean they are not running at all, and --force-postinstall
-    # would mean the database claims work that never happened.
+    # root here would mean they are not running at all, and
+    # --force-postinstall would mean the database claims work that never
+    # happened.
     assert "offline_root" not in body and "--offline-root" not in body, (
-        "bin/patch.sh points an opkg at an offline root again. The payload is "
+        "bin/payload.sh points an opkg at an offline root again. The payload is "
         "installed on the printer now (bin/build-payload.py) -- an offline "
         "root means maintainer scripts are not running")
     assert "build-payload.py" in body, (
-        "bin/patch.sh does not call bin/build-payload.py -- how is the "
+        "bin/payload.sh does not call bin/build-payload.py -- how is the "
         "payload being assembled?")
     assert "--force-postinstall" not in body, (
-        "bin/patch.sh still forces postinstall. That flag existed to make an "
+        "bin/payload.sh still forces postinstall. That flag existed to make an "
         "offline-root database say installed; the printer's own opkg "
         "configures for real and needs no such claim")
 
-    # And the reverse direction: patch.sh must not grow its own copy of a build
+    # And the reverse direction: payload.sh must not grow its own copy of a build
     # it delegates. A `./configure` anywhere in it would mean some component is
     # compiled in two places again.
     body = "\n".join(ln for ln in patch.splitlines()
                       if not ln.lstrip().startswith("#"))
     for gone in ("--enable-static-libc", "MUSL_TOOLCHAIN", "S6_STAMP"):
         assert gone not in body, (
-            "bin/patch.sh still mentions %s -- the s6 build moved to pkgs/ and "
+            "bin/payload.sh still mentions %s -- the s6 build moved to pkgs/ and "
             "the musl toolchain was deleted with it" % gone)
 
 
 
 def _mod_roots():
-    """MOD_ROOTS as bin/patch.sh's own shell reads it.
+    """MOD_ROOTS as bin/payload.sh's own shell reads it.
 
     No model substitution to resolve: anvil-klipper-config carries both
     chamber configs and anvil-link-prog.sh picks on the printer.
     """
-    patch = (ROOT / "bin" / "patch.sh").read_text()
+    patch = (ROOT / "bin" / "payload.sh").read_text()
     m = re.search(r'^MOD_ROOTS="(.*?)"', patch, re.M | re.S)
-    assert m, "bin/patch.sh has no MOD_ROOTS -- has section 0 been rewritten?"
+    assert m, "bin/payload.sh has no MOD_ROOTS -- has section 0 been rewritten?"
     assert "$MODEL_PKG" not in m.group(1), (
         "MOD_ROOTS expands $MODEL_PKG -- the chamber configs are one package, "
         "chosen on the printer rather than by the build")
@@ -405,7 +406,7 @@ def _mod_roots():
 def test_the_payload_roots_name_real_packages():
     """A typo in MOD_ROOTS is silent, so it gets a test instead.
 
-    patch.sh skips a root with no .ipk in the feed, because that is how a
+    payload.sh skips a root with no .ipk in the feed, because that is how a
     PKG_WHEN-gated recipe -- BUILD_HELIX=0, BUILD_TOOLCHANGE=0 -- drops out
     without the flags being restated here. The cost is that a misspelled root
     drops out the same way: no error, one package quietly missing from the
@@ -415,8 +416,8 @@ def test_the_payload_roots_name_real_packages():
     names = {_conf(p.parent.name, "PKG_NAME") for p in RECIPES}
     for root in _mod_roots():
         assert root in names, (
-            "bin/patch.sh installs '%s' and no recipe under pkgs/ builds a "
-            "package by that name. patch.sh cannot tell this from a recipe "
+            "bin/payload.sh installs '%s' and no recipe under pkgs/ builds a "
+            "package by that name. payload.sh cannot tell this from a recipe "
             "that PKG_WHEN gated off, so it would ship without it" % root)
 
 
@@ -441,15 +442,15 @@ def test_the_payload_roots_stay_a_short_list():
 
 # --------------------------------------------------- the assembled payload
 #
-# These read work/modpayload-root, which exists only after bin/patch.sh has
-# run -- which needs a stock FlashForge package, so it cannot be a
-# precondition of this lane. When the tree IS there they are the only
-# questions asked of the thing that actually ships.
+# These read work/modpayload-root, which exists only after bin/payload.sh has
+# run. That needs a stock FlashForge package, so it cannot be a precondition
+# of this lane -- but when the tree IS there the questions are worth asking,
+# and they are the only ones asked of the thing that actually ships.
 
 def _payload():
     p = ROOT / "work" / "modpayload-root" / "usr" / "data" / "anvil"
     if not (p / "var" / "lib" / "opkg" / "status").is_file():
-        pytest.skip("no assembled payload -- run bin/patch.sh")
+        pytest.skip("no assembled payload -- run bin/payload.sh")
     return p
 
 
@@ -472,15 +473,11 @@ def test_every_payload_file_is_owned_by_a_package():
     assert owned, "the opkg database lists no files at all"
 
     allowed = {
-        # Generated here, after everything is installed: the list the NEXT
-        # update deletes by. Cannot be a package member -- it describes the
-        # payload, so it is not finished until the payload is.
-        MODDIR + "/.install-manifest",
-        # User state, both of them: anvil.conf is templated from config.env
-        # and preserved across updates by installer/run-append.sh;
-        # moonraker-custom.conf is created once and never overwritten. A
-        # package member is overwritten on every upgrade by definition.
-        MODDIR + "/anvil.conf",
+        # User state: created once and never overwritten. A package member is
+        # overwritten on every upgrade by definition, which is exactly what
+        # this must not be. $MODDIR/anvil.conf was the other entry here until
+        # it was removed outright -- it is not merely unshipped, so it must
+        # not reappear under any exemption.
         MODDIR + "/config/moonraker-custom.conf",
         # opkg's own scaffolding, made by opkg as it installs.
         MODDIR + "/var",
@@ -501,9 +498,9 @@ def test_every_payload_file_is_owned_by_a_package():
                 continue
             # The compiled s6-rc database. case-build-payload.sh runs
             # s6-rc-compile over the source tree anvil-core ships, AFTER the
-            # payload is installed, so it is generated for the same reason
-            # .install-manifest is. The SOURCE it is compiled from is
-            # package-owned and checked like everything else.
+            # payload is installed, so it describes the payload and cannot be
+            # finished before the payload is. The SOURCE it is compiled from
+            # is package-owned and checked like everything else.
             if rel.startswith(MODDIR + "/etc/s6-rc/compiled"):
                 continue
             extra.append(rel)
@@ -521,7 +518,7 @@ def test_the_payload_database_has_no_clock_in_it():
 
     opkg stamps Installed-Time from time() and honours SOURCE_DATE_EPOCH only
     for a man-page date, so its database differs between two builds a second
-    apart. patch.sh normalises the field: this is an image being baked, not a
+    apart. payload.sh normalises the field: this is an image being baked, not a
     machine being installed.
 
     Asked of the database rather than of anvil.tar.xz, which is not
@@ -533,7 +530,7 @@ def test_the_payload_database_has_no_clock_in_it():
     assert stamps, "the opkg status file records no Installed-Time at all"
     assert len(set(stamps)) == 1, (
         "the payload's database carries %d different Installed-Time values "
-        "(%s...). bin/patch.sh is meant to normalise them, so two builds of "
+        "(%s...). bin/payload.sh is meant to normalise them, so two builds of "
         "one commit differ by one line per package"
         % (len(set(stamps)), sorted(set(stamps))[:3]))
 
@@ -552,7 +549,7 @@ def test_the_payload_keeps_libsodium_as_a_symlink():
     pkgs/3rdparty/libsodium/build.sh already asserts this about its own build
     tree, and test_symlinks_stay_symlinks asserts opkg-build puts a symlink in
     an archive. Neither covers the step between them -- opkg unpacking the
-    archive into the payload -- and that is the step bin/patch.sh used to
+    archive into the payload -- and that is the step bin/payload.sh used to
     check by hand.
     """
     lib = _payload() / "lib" / "libsodium.so"
@@ -567,7 +564,7 @@ def test_the_payload_keeps_libsodium_as_a_symlink():
 # Scripts that build or ship something, and could therefore host a gate.
 def _buildish_scripts():
     named = ["bin/common.sh", "bin/build-packages.sh", "bin/verify.sh",
-             "bin/patch.sh", "bin/pack.sh", "pkgs/lib.sh",
+             "bin/payload.sh", "bin/pack.sh", "pkgs/lib.sh",
              "tools/python/build.sh", "tools/python-packages/build.sh",
              "tools/python-packages/build-libsodium.sh"]
     found = [ROOT / n for n in named]
@@ -577,14 +574,15 @@ def _buildish_scripts():
 
 
 # The compiler wrapper check is NOT a second gate and these four files may
-# keep it: it compiles a hello-world and reads THAT object's header, so it
-# judges the toolchain rather than anything the build produced -- a question
-# qa/replica/test_abi.py structurally cannot answer. It also fails in a
-# second, before a whole feed is built on a wrapper that lost -mnan=2008.
+# keep it. It compiles a hello-world and reads THAT object's header, so what
+# it judges is the toolchain, not anything the build produced -- a question
+# qa/replica/test_abi.py structurally cannot answer, because a filesystem
+# sweep cannot see a compiler. It also fails in a second, before a whole feed
+# is built on a wrapper that quietly lost -mnan=2008.
 #
 # They are allowed the raw e_flags words and nothing else: an artefact gate
-# needs to say nan2008/o32/mips32r2 (or call mips_abi_gate), and the wrapper
-# checks never do, so that vocabulary stays forbidden everywhere.
+# needs to say nan2008/o32/mips32r2 (or call mips_abi_gate) to do its job, and
+# the wrapper checks never do, so that vocabulary stays forbidden everywhere.
 WRAPPER_CHECK_OK = {
     "pkgs/lib.sh",
     "tools/python/build.sh",
@@ -593,10 +591,11 @@ WRAPPER_CHECK_OK = {
 }
 
 # "nan2008" and not "mips32r2": an artefact gate has to read the NaN encoding
-# out of the header, and only a gate says that word -- whereas mips32r2 is
-# ALSO an ISA compiler flag, which pkgs/3rdparty/openssl/build.sh legitimately
-# passes. A guard word that collides with a build flag reports the flag, and
-# once that is tuned out it is a guard nobody reads.
+# out of the header, and only a gate ever says that word -- whereas mips32r2
+# is ALSO the name of an ISA compiler flag, and pkgs/3rdparty/openssl/build.sh
+# legitimately passes -mips32r2 to put the ISA back where the printer is. A
+# guard word that collides with a build flag reports the flag, which is a
+# false alarm and, once it is tuned out, a guard nobody reads.
 GATE_WORDS = ("nan2008", "mips_abi_gate")
 
 # The raw e_flags words. Forbidden outside the four files allowed the wrapper
@@ -625,7 +624,7 @@ def test_there_is_exactly_one_abi_gate_and_it_is_the_replica_one():
 
     Six implementations of one rule, each over a different subset of the
     files, and between them they still could not see the largest binary we
-    ship: bin/patch.sh unpacks HelixScreen into /usr/prog and none of them
+    ship: bin/payload.sh unpacks HelixScreen into /usr/prog and none of them
     read that tree.
 
     This test is the ratchet. Two gates that disagree about which files are
@@ -702,10 +701,11 @@ def test_the_archives_are_built_by_upstream():
 
 
 # --------------------------------------------------------------------------
-# One recipe, one package -- the rule the pkgs/ layout exists to enforce. A
-# recipe that builds its dependencies inline leaves them with no version, no
-# package and no way to be reused, which is how one zlib comes to be
-# cross-built twice.
+# One recipe, one package.
+#
+# The rule the pkgs/ layout exists to enforce. A recipe that builds its
+# dependencies inline leaves them with no version, no package and no way to be
+# reused -- which is how one zlib comes to be cross-built twice.
 
 def _sh(snippet):
     """Run a snippet with bin/common.sh and pkgs/lib.sh sourced, from ROOT."""
@@ -949,14 +949,15 @@ def test_a_dev_package_ships_what_its_dependents_need():
                  "lib/pkgconfig/libarchive.pc"):
         assert want in arch, "pkgs/3rdparty/libarchive does not ship %s" % want
 
-    # skalibs is why this test is not just "headers and an archive".
-    # lib/skalibs is a directory of CROSS-COMPILE ANSWERS ABOUT THE LIBC --
-    # does this target have /dev/urandom, does posix_spawn return early --
-    # that skalibs would normally settle by compiling and running a probe,
-    # which a cross-build cannot do. execline, s6 and s6-rc read it through
-    # --with-sysdeps and refuse to configure without it. It is not a header,
-    # an archive or a .pc, so a rule written around those three would have let
-    # it be dropped.
+    # skalibs is the interesting one, and the reason this test is not just
+    # "headers and an archive". lib/skalibs is a directory of CROSS-COMPILE
+    # ANSWERS ABOUT THE LIBC -- does this target have /dev/urandom, does
+    # posix_spawn return early -- that skalibs would normally settle by
+    # compiling and running a probe, which a cross-build cannot do. execline,
+    # s6 and s6-rc all read it through --with-sysdeps and refuse to configure
+    # without it, naming a missing FILE rather than a missing flag. It is not a
+    # header, not an archive and not a .pc, so a rule written around those
+    # three would have let it be dropped.
     ska = (ROOT / "pkgs" / "3rdparty" / "skalibs" / "build.sh").read_text()
     for want in ("include/skalibs", "lib/libskarnet.a", "lib/skalibs"):
         assert want in ska, "pkgs/3rdparty/skalibs does not ship %s" % want
@@ -985,7 +986,7 @@ def test_no_cache_stamp_is_spelled_in_two_places():
     """A stamp compared by one file and written by another must be defined once.
 
     This is not hypothetical tidiness. bin/fetch-assets.sh compared
-    work/.s6/.version against "$SKALIBS_VERSION $S6_VERSION" while bin/patch.sh
+    work/.s6/.version against "$SKALIBS_VERSION $S6_VERSION" while bin/payload.sh
     wrote three fields into it, so the test could never be false: a 71MB
     toolchain was re-fetched on every single run, and the comment above the
     condition described a fast path that had never once been taken. One
@@ -1007,8 +1008,8 @@ def test_no_cache_stamp_is_spelled_in_two_places():
     # it: a file that re-derives the same string under another name has
     # reintroduced the bug with the evidence removed. These are the two stamps
     # this repo has actually got wrong -- s6's three fields, and CPython's
-    # eight, spelled in THREE places that happened to agree.
-    for name in ("patch.sh", "fetch-assets.sh"):
+    # eight, which were spelled in THREE places and happened to agree.
+    for name in ("payload.sh", "fetch-assets.sh"):
         text = (ROOT / "bin" / name).read_text()
         assert '"$SKALIBS_VERSION $S6_VERSION' not in text, (
             "bin/%s spells the s6 stamp out by hand" % name)
@@ -1036,8 +1037,8 @@ def test_the_python_package_list_and_the_recipes_agree():
     alone has no source to build from.
 
     This checks both directions at once, without building anything. It used to
-    say that bin/patch.sh checked the first one at build time as it looped over
-    the list; patch.sh installs packages now and has no such loop, so this is
+    say that bin/payload.sh checked the first one at build time as it looped over
+    the list; payload.sh installs packages now and has no such loop, so this is
     the only thing asking.
     """
     listed = set(_sh('printf "%s" "$PYPKG_LIST"').split())
@@ -1070,12 +1071,16 @@ def test_a_python_package_does_not_pin_its_version_twice():
 
 
 # test_bin_patch_builds_every_python_package WAS HERE and is deleted rather
-# than rewritten: it asserted patch.sh looped over $PYPKG_LIST running each
-# recipe's build.sh, and patch.sh installs packages now without knowing which
-# are wheels. The property it protected -- a pin in PYPKG_LIST with no recipe
-# is fetched, hashed and never built -- is
+# than rewritten. It asserted that bin/payload.sh contained
+# `for p in $PYPKG_LIST; do` and ran each pkgs/3rdparty/python-$p/build.sh,
+# which was how the eighteen wheels reached the payload. payload.sh installs
+# packages now and does not know which of them are wheels, so the loop is
+# gone.
+#
+# Nothing is lost: the property it was protecting -- a pin in PYPKG_LIST with
+# no recipe is fetched, hashed and never built -- is
 # test_the_python_package_list_and_the_recipes_agree above, which checks it in
-# BOTH directions.
+# BOTH directions and needs neither a build nor a shell script to read.
 
 def test_every_declared_dependency_is_a_package_this_feed_builds():
     """A Depends the feed cannot satisfy is an install that refuses itself.

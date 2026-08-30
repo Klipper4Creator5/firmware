@@ -10,8 +10,9 @@ under qemu-mipsel) or read out of the objects with `readelf`, not off a
 project page. `build.sh` beside this file rebuilds the whole thing in a
 throwaway container and is where the numbers came from;
 `pkg/python` is the same build wired into the real build lane,
-and `test/integration/printer/case-python.sh` is the gate that proves the
-result works on the printer's own kernel.
+and `qa/replica/` is what proves the result works on the printer's own kernel
+-- `test_install.py` over the installed interpreter, `test_boot_screen.py`
+running our own code on it, and `test_abi.py` over every ELF it ships.
 
 ## Why: one missing module, two releases of consequences
 
@@ -109,7 +110,7 @@ The reason is not size, it is **isolation**. A shared build needs an
 carries `libffi.so.8` while the rootfs carries `libffi.so.7`, FlashForge's
 openssl is 1.0.2d, and a stock OTA can replace any of it. Statically linked,
 the interpreter maps *nothing* under `/usr/prog` -- which
-`case-python.sh` section 3 proves by reading `/proc/self/maps` of a process
+`case-python.sh` section 3 proved by reading `/proc/self/maps` of a process
 that has imported `ssl`, `ctypes`, `sqlite3`, `lzma`, `zlib` and `hashlib`
 first. Zero mappings. It also means it starts with `LD_LIBRARY_PATH` empty,
 which FlashForge's cannot.
@@ -146,8 +147,8 @@ the second stating the link line outright so pkg-config cannot reorder `-lm`
 out from under the probe. And because a silent failure fixed by an
 easily-deleted export is a silent failure waiting to come back, **both copies
 of this build hard-fail when `_sqlite3` is absent**, `bin/verify.sh` checks
-the packaged tree for it, and `case-python.sh` does not merely import it: it
-creates a database, inserts rows, closes it, and reopens it from disk **in a
+the packaged tree for it, and `case-python.sh` did not merely import it: it
+created a database, inserted rows, closed it, and reopened it from disk **in a
 second process**. An import proves the `.so` loaded. Only the second process
 proves there is a database.
 
@@ -184,9 +185,9 @@ this interpreter has to be handed a `cafile` of its own until somebody ships a
 `ca-certificates` bundle into that directory -- which is ~200KB and an open
 piece of work, not a decision.
 
-`case-python.sh` prints the trust-store paths and says which of the two states
-the printer is in, rather than asserting either, so the day someone ships a
-bundle the gate reports it instead of failing.
+`case-python.sh` printed the trust-store paths and said which of the two states
+the printer was in, rather than asserting either, so the day someone shipped a
+bundle the gate would report it instead of failing.
 
 ## Sizes and time
 
@@ -214,7 +215,7 @@ build rather than quietly adding a name to PATH.
 
 **Cold build: 142 seconds** (`tools/python/build.sh`, 16 cores), of which about
 90 is the x86-64 build-python. In the build lane it is ~100s and it happens
-**once**: `bin/patch.sh` caches the cross-built tree in `work/.py313` under a
+**once**: `bin/payload.sh` caches the cross-built tree in `work/.py313` under a
 stamp of all eight versions, so every later build copies rather than compiles.
 The stamp is all eight and not just CPython's, because a bumped OpenSSL under
 an unchanged `PY_VERSION` has to rebuild.
@@ -248,8 +249,8 @@ sit *in front of* FlashForge's for every process that sources it, and anything
 saying `python3` rather than `"$FF_PYTHON"` would change interpreter without
 anyone deciding to. The build deletes it before staging and asserts that
 `bin/` contains `python3.13` and nothing else; `bin/verify.sh` checks the
-packaged tree for it; and `case-python.sh` section 6 asks the *shell*, with
-the mod's own PATH in force, what `python3` resolves to. The answer is still
+packaged tree for it; and `case-python.sh` section 6 asked the *shell*, with
+the mod's own PATH in force, what `python3` resolved to. The answer is still
 FlashForge's binary.
 
 ## It ships. Nothing runs it.
@@ -284,14 +285,14 @@ record and for trying a version bump before it becomes a pin. It is not how
 the shipped interpreter is built: `pkg/python` compiles it inside the repo's
 own build image, from the sha256-pinned tarballs, against the seven static
 libraries the feed builds as their own `-dev` packages, and caches it in
-`work/pkg/python`. `bin/patch.sh` section 5c runs that recipe and stages what
+`work/pkg/python`. `bin/payload.sh` section 5c runs that recipe and stages what
 it produced; it no longer contains a compiler invocation of its own.
 
 The gate, against the tree the build actually produced:
 
-    tar -czf work/.py-gate.tgz -C work/.py313 python3.13
-    PRINTER_IMAGE=monstrofil/creator5-printer:latest \
-        ./test/integration/printer-exec.py \
-        test/integration/printer/case-python.sh py.tgz=work/.py-gate.tgz
+    make build && make qa-replica
 
-or `make test-python`, which does both.
+`case-python.sh`, `printer-exec.py` and the `make test-python` target that
+drove them are gone. The replica lane installs the real package through the
+printer's own installer and asks its questions of that, which is strictly more
+than hand-feeding a tarball into a case script could.

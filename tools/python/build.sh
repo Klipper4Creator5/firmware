@@ -42,8 +42,8 @@ XZ_VER=5.4.7
 BZIP2_VER=1.0.8
 EXPAT_VER=2.6.4
 EXPAT_TAG=R_2_6_4
-# The mod's prefix root on the printer, and the same --prefix bin/patch.sh
-# builds with. The one difference: patch.sh deletes the `python3` symlink (and
+# The mod's prefix root on the printer, and the same --prefix bin/payload.sh
+# builds with. The one difference: payload.sh deletes the `python3` symlink (and
 # idle3/pydoc3/*-config) before staging, so $MODDIR/bin on PATH cannot quietly
 # change what `python3` means. This harness leaves the tree as `make install`
 # produced it, because the sizes reported below are of that tree.
@@ -53,7 +53,7 @@ PREFIX=/usr/data/anvil
 if [ "${1:-}" != "--in-container" ]; then
     [ -x "$TOOLCHAIN_HOST/bin/mips-linux-gnu-gcc" ] || {
         echo "!! no toolchain at $TOOLCHAIN_HOST" >&2
-        echo "   run ./bin/fetch-assets.sh, then any build (bin/patch.sh unpacks it)" >&2
+        echo "   run ./bin/fetch-assets.sh, then any build (bin/payload.sh unpacks it)" >&2
         exit 1; }
     exec docker run --rm \
         -v "$TOOLCHAIN_HOST":/toolchain:ro \
@@ -120,7 +120,7 @@ fetch() {  # fetch <url>  -> $SRC/<basename>, cached
 }
 log "fetch sources"
 fetch https://www.python.org/ftp/python/$PY_VER/Python-$PY_VER.tgz
-fetch https://zlib.net/fossils/zlib-$ZLIB_VER.tar.gz
+fetch https://github.com/madler/zlib/releases/download/v$ZLIB_VER/zlib-$ZLIB_VER.tar.gz
 fetch https://github.com/openssl/openssl/releases/download/openssl-$OSSL_VER/openssl-$OSSL_VER.tar.gz
 fetch https://github.com/libffi/libffi/releases/download/v$FFI_VER/libffi-$FFI_VER.tar.gz
 fetch https://www.sqlite.org/2024/$SQLITE_TAR.tar.gz

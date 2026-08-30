@@ -19,7 +19,7 @@ SRC=/printer-src        # the squashfs contents
 R=/printer              # the assembled machine
 ROOTFS=${ROOTFS:-/rootfs}
 
-[ -d "$ROOTFS/bin" ] || { echo "assemble: no rootfs at $ROOTFS (run 'make rootfs')" >&2; exit 1; }
+[ -d "$ROOTFS/bin" ] || { echo "assemble: no rootfs at $ROOTFS -- the image is built wrong, rebuild it with 'make printer-image'" >&2; exit 1; }
 
 rm -rf $SRC; mkdir -p $SRC $R
 rsync -a --exclude=/proc/ --exclude=/sys/ "$ROOTFS/" $SRC/

@@ -1,6 +1,7 @@
 """Running one gate on its own, from the command line.
 
-`make rootfs` and `make boot-screen-sim` land here. The qa suite does not:
+`make boot-screen-sim` lands here -- it is the only caller left. The qa suite
+does not:
 pytest
 imports the gate functions and calls them, so nothing between a gate and the
 thing counting results has to agree on a text format.

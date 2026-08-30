@@ -11,9 +11,23 @@ description: Build the .ipk feed, or add a new package recipe under pkgs/. Use w
 ## Building
 
 ```
+make vendor                # once -- the pinned sources and the toolchain
 make packages              # everything, plus the feed index
 make packages PKG=<id>     # that recipe and what it builds against
 ```
+
+`make vendor` first on a cold checkout: `build-packages.sh` does not fetch,
+and dies naming `./bin/fetch-assets.sh` when opkg-utils or a pinned tarball
+is missing.
+
+**The feed is a prerequisite of `make build`, not a side quest.** `bin/payload.sh`
+builds the payload by *installing* the feed with the printer's own opkg, and
+refuses to start when `work/packages` holds no `.ipk`. Recipes with
+`PKG_BUILD_DEPENDS` also resolve them out of that directory. Order is
+`make vendor` -> `make packages` -> `make build`.
+
+Unlike `build`, this target needs no stock FlashForge package, which is what
+lets CI build the feed on a bare checkout.
 
 **Always through `make`.** It runs inside `docker/Dockerfile.build`, which is
 the only supported build environment. Running `./bin/build-packages.sh`
@@ -74,12 +88,6 @@ pkg_end
 | `pkg_ship <glob>...` | copy from staging into the package; globs are relative to the prefix |
 | `pkg_end` | seal the cache |
 
-`pkg_buildopkg` is not a recipe verb: it builds the x86-64 opkg that
-`bin/patch.sh` assembles the payload with, cached at `work/.opkg-host`. It has
-to be configured `--prefix=$MODDIR` and `--disable-shared` — opkg bakes its
-state directory into both the binary and libopkg at compile time — and it
-checks its own output for both.
-
 Three more exist only for python packages:
 
 | verb | what it does |
@@ -132,7 +140,7 @@ retry with different flags. See `pkgs/3rdparty/openssl/build.sh`.
    | directory | where its contents end up |
    | --- | --- |
    | `payload/` | staged into the .ipk, laid out exactly as it lands under `$MODDIR` |
-   | `prog/` | placed on `/usr/prog` by `bin/patch.sh` — not packageable, because every path in a package of ours is under the prefix |
+   | `prog/` | placed on `/usr/prog` by `bin/payload.sh` — not packageable, because every path in a package of ours is under the prefix |
    | `seed/` | templated or seeded user state, deliberately not a package member |
 
    A recipe with a `payload/` needs `PKG_STAMP_EXTRA="$(pkg_payload_hash)"`.
@@ -170,12 +178,23 @@ printer.
 ## Checking
 
 ```
-python3 -m pytest qa/static -q
+make packages && python3 -m pytest qa/static -q
 ```
 
-Every recipe is checked for shape automatically. The ABI gate reads every ELF
-in every package and refuses anything that is not nan2008/o32/mips32r2 — it
-has caught a library built with the host compiler more than once.
+In that order, and it matters. Every recipe is checked for shape with nothing
+but the checkout, but the questions about what is *inside* an `.ipk` — the
+dev-split partition, `Architecture: all` carrying no ELF, the feed comparison
+— return quietly when `work/packages` does not exist. Run the static lane on
+a bare tree and it reports a pass having never opened a package.
+
+**The ABI gate is not here.** It is `qa/replica/test_abi.py`, and it is the
+only one: it reads every ELF on the *installed filesystem* — ours, the stock
+tree's, and whatever `bin/payload.sh` staged — and refuses anything that is not
+nan2008/o32/mips32r2. There were six partial versions of it once, spread over
+`bin/`, `tools/` and the recipes, and between them they still could not see
+the largest binary we ship. `qa/static` now only asserts that a seventh does
+not grow back (`test_there_is_exactly_one_abi_gate_and_it_is_the_replica_one`),
+which is why `nan2008` is a forbidden word in the build scripts.
 
 Two cold builds must produce byte-identical `.ipk` files. If one does not, the
 cause is usually an embedded timestamp or a mode that came from the builder's

@@ -16,22 +16,29 @@ Selection is pytest's: `-k nginx`, `-m static`, or a single test id.
 
 | Lane | Needs | What it asks |
 |---|---|---|
-| `static` | nothing but the checkout | every shipped script parses and is free of bashisms, every name resolves, the recipe layout holds, and the `.ipk`s are what we mean to ship |
+| `static` | the checkout; the feed for part of it | every shipped script parses and is free of bashisms, every name resolves, the recipe layout holds, and -- when `work/packages` exists -- the `.ipk`s are what we mean to ship |
 | `replica` | docker + qemu + the firmware | what the printer *does* -- on a machine the real `app_startup.sh` installed the real package onto |
 
-The replica lane needs a built package in `work/out/*.tgz` (`make build`) and a
-base image: put `PRINTER_IMAGE` in `test.env`, or let it build one from
-`work/rootfs` after `make rootfs`. The install is baked into an image once per
-package, keyed on the package's md5, so rebuilding gets you a fresh bake and
-not yesterday's.
+The replica lane needs a built package in `work/out/*.tgz` (`make build`) and
+`PRINTER_IMAGE` in `test.env` — that image *is* the replica, and there is no
+other way to get one. `test.env.example` carries the published tag; `make
+printer-image` builds your own from public firmware. The install is baked into
+an image once per package, keyed on the package's md5, so rebuilding gets you
+a fresh bake and not yesterday's.
+
+**The static lane is worth running twice**, and CI does. A good part of it
+asks what is inside the `.ipk` files, and those questions do not fail on a
+checkout that has no feed — they return quietly, and the lane reports a pass
+having never opened a package. Run it once for the fast parse-and-name
+feedback, then again after `make packages`, when the rest of it can bite.
 
 ### The replica lane, module by module
 
 | module | asks |
 |---|---|
-| `test_install.py` | what the machine's own installer produced: the stock boot chain is untouched and still parses, the wrapper is installed and starts the supervisor, every installed script is `sh -n`-clean under the printer's own busybox, klipper and the UI are services in the compiled database, klipper depends on the bring-up, the config include set is wired up, the user's `printer.cfg` survived, a pristine `backup/stock` was kept, and a boot with no stick does not go looking for an update |
-| `test_abi.py` | the ABI gate, and the only one there is: every ELF object on the installed filesystem -- ours, the stock tree's and whatever `bin/patch.sh` staged -- is 32-bit little-endian MIPS, and every one the kernel's loader will handle is `nan2008/o32/mips32r2`. Two exemptions, both measured and both narrow: kernel modules are `ET_REL` and have no FP ABI to agree about, and FlashForge ships one inert ARM binary |
-| `test_upgrade.py` | an update deletes what the last package shipped and **only** that -- the user's edits, their `moonraker-custom.conf`, their HelixScreen settings and anything nobody shipped all survive, over both the manifest path and the pre-manifest sweep |
+| `test_install.py` | what the machine's own installer produced: the stock boot chain is untouched and still parses, the wrapper is installed and starts the supervisor, every installed script is `sh -n`-clean under the printer's own busybox, klipper and the UI are services in the compiled database, klipper depends on the bring-up, the config include set is wired up, the user's `printer.cfg` survived, and a boot with no stick does not go looking for an update |
+| `test_abi.py` | the ABI gate, and the only one there is: every ELF object on the installed filesystem -- ours, the stock tree's and whatever `bin/payload.sh` staged -- is 32-bit little-endian MIPS, and every one the kernel's loader will handle is `nan2008/o32/mips32r2`. Two exemptions, both measured and both narrow: kernel modules are `ET_REL` and have no FP ABI to agree about, and FlashForge ships one inert ARM binary |
+| `test_upgrade.py` | an update replaces the whole of `/usr/data/anvil` -- a renamed file leaves no stale twin, and a file nobody shipped goes too -- while HelixScreen's settings are carried across it and `/usr/data/config`, where `printer.cfg` and `moonraker-custom.conf` live, is never touched |
 | `test_supervisor.py` | the s6 we cross-compiled: all 13 binaries load on the printer's kernel, and `s6-svwait -U` really waits for readiness rather than returning on the fork |
 | `test_boot_screen.py` | the first-boot screen renders on our own CPython 3.13, one screen's worth of correctly packed bytes, and degrades to "no screen" rather than raising when there is no panel |
 | `test_web.py` | nginx and moonraker come up under s6, nginx comes back from a kill and stays down after a stop, and moonraker serves on `:7125` on our interpreter |
@@ -43,38 +50,26 @@ hardware, not a bug: there are no `/dev/ttyS4,5,7` and no `/dev/video*`, so
 klippy never connects, `camera` times out, and the `ok-all` bundle is
 unreachable. See [qa-migration.md](qa-migration.md). Everything else is green.
 
-## What is left in `test/`
+## `test/` is gone
 
-`test/run-tests.py` is **gone**, and `make test` with it. What remains is not a
-suite -- it is 28 host-side unit tests over our own Python, which need neither
-docker nor the firmware:
+`test/run-tests.py` went first, and `make test` with it. The 28 host-side unit
+tests that outlived it -- `test_startup.py`, `test_tool_transform.py`,
+`test_ffscreen.py`, `test_chamber.py`, `test_gcode.py` and the two fixtures
+they shared -- are deleted too, along with `make test-py` and the CI step that
+ran them. `qa/` is the only suite.
 
-```sh
-make test-py   # 28 tests, well under a second
-```
-
-| file | tests | what it is for |
-|---|---|---|
-| `test_startup.py` | 8 | the stamp discipline in `ff-startup.py`: no stamp is written unless the values are verifiably saved, because a stamp written early is a printer that has silently lost its factory calibration for good. Plus the handover order -- the boards, then klipper, again on every retry |
-| `test_tool_transform.py` | 7 | the per-tool frame arithmetic in `ff_toolchange`, whose failures are a nozzle in the wrong place |
-| `test_ffscreen.py` | 5 | restraint: never write outside the framebuffer, never guess at a pixel format, never raise into the migration it decorates |
-| `test_chamber.py` | 4 | the chamber macros branching on the model, whose failures are silent until they have cost a print |
-| `test_gcode.py` | 4 | the two `gcode/` files name commands we ship, and the safe one is cold and stays above its floor |
-
-This was 186 tests in twelve files as recently as the qa migration. The cut to
-28 was deliberate and is recorded in
-[qa-migration.md](qa-migration.md#the-second-cut): what went was everything
-whose subject had become the fake it was built on, or whose failure the printer
-reports loudly the first time. What is kept is the mistakes that RUN
-PERFECTLY and are wrong.
-
-`test/test-chelper.py` sits outside both suites: `pkgs/klipper/build.sh` and
-`bin/verify.sh` call it directly at build time.
+What this costs is worth naming rather than leaving to be discovered. The
+replica lane covers the boot screen on the real interpreter
+(`qa/replica/test_boot_screen.py`) and the install end to end, but nothing now
+checks the tool-frame arithmetic in `ff_toolchange`, the chamber macros'
+per-model branching, the stamp discipline in `ff-startup.py`, or the
+verification G-code against the macros we ship. Those were host-side unit
+tests over our own Python, and they have no replacement.
 
 ## The replica is a tool, not a test
 
 `tools/replica/` builds the machine both suites run against, and the build
-uses it too -- `bin/patch.sh` assembles the payload by running the printer's
+uses it too -- `bin/payload.sh` assembles the payload by running the printer's
 own `opkg` inside it. It is not under `test/` because nothing in it is a test:
 
 ```
@@ -84,8 +79,8 @@ tools/replica/
   ffsim/                    the host half -- config loading and the docker
                             plumbing. NOT a test framework; it was one, and
                             what is left of it launches containers
-  build-printer-image.sh    bakes a prebuilt replica image
-  extract-rootfs.py         `make rootfs`
+  build-printer-image.sh    bakes the replica image -- fetches the firmware
+                            itself, so it needs no stock package on disk
   sim-boot-screen.py        `make boot-screen-sim`
 ```
 
@@ -152,28 +147,19 @@ privileged container and the result is committed. The md5 of the package that
 was installed is recorded in `/usr/prog/.BASELINE`; `entrypoint.sh` reinstalls
 only if a run asks for a different one.
 
-With `PRINTER_IMAGE` set in `test.env`, a replica starts in **0.7s** and the
-whole end-to-end update test takes **~70s**. Without it, the same test spends
-a minute on setup before it begins. That image contains proprietary FlashForge
-firmware.
+A replica now starts in **0.7s** and the whole end-to-end update test takes
+**~70s**. That image contains proprietary FlashForge firmware.
 
-`run-tests.py` stamps every header with elapsed seconds, so a run says for
-itself where the time went. The headers, in the order they are printed:
+There used to be a second way in, and it is where the numbers in that table
+came from: `make rootfs` unsquashed `rootfs.squashfs` out of a stock package
+into `work/rootfs`, and a thin container mounted it and unpacked the factory
+image for `/usr/prog` on every single case. It is gone. Every caller set
+`PRINTER_IMAGE` anyway — CI extracted a rootfs on every push and read none of
+it — and `make printer-image` builds the image from the same public firmware
+without needing a stock package at all, so the slow path was a second route to
+the same machine that nothing chose. When the image goes stale, rebuild it.
 
-```
-== shell syntax ==
-== no bashisms in the on-printer payload ==
-== extracting the printer rootfs ==            (skipped if already extracted)
-== python checks ==
-== packaging, on a synthetic stock package ==
-== build on the fixture ==
-== printer replica ==                          (or: MCU bring-up runs on the
-                                                printer's own Python)
-== end-to-end update on the printer replica ==
-== recovery: a stock package reverts the mod ==
-```
-
-What takes the time is real work: two full package builds (the payload is
+What takes the time now is real work: two full package builds (the payload is
 55MB through `xz`) and two replica runs. If it needs to get faster again,
 that is where to look — not in the harness.
 
@@ -228,15 +214,18 @@ Tests that cannot fail are worse than no tests, because they read as coverage:
   - `test-ash-conformance` parsed the payload with the printer's busybox;
     `qa/replica/test_install.py` runs `sh -n` over every *installed* script
     with the same qemu'd busybox.
-  - `test-model-gate` checked what `verify.sh` §8b/§9 checks and what
+  - `test-model-gate` checked what `bin/verify.sh` §8b/§9 checked and what
     `pack.sh` already refuses to build. Its header claimed it proved the two
-    models ship different files; no such check existed in it.
+    models ship different files; no such check existed in it. `verify.sh` has
+    since been retired; the model gate is now enforced where it always
+    mattered, by `runFirmwareExe.sh` refusing a foreign package -- which the
+    replica lane exercises on every install.
   - `test-base-cfg` compared our `printer.base.cfg` against
-    `work/software/.../printer.base.cfg` — which `bin/patch.sh` overwrites
-    *with our own file* before the test reads it. It had been diffing our file
-    against itself: green on a cold tree, red on a second build, and
-    blind to real drift either way. The comparison moved into `bin/unpack.sh`,
-    where a pristine stock tree actually exists.
+    `work/software/.../printer.base.cfg` — which the build overwrote *with our
+    own file* before the test read it. It had been diffing our file against
+    itself: green on a cold tree, red on a second build, and blind to real
+    drift either way. The comparison moved into `bin/unpack.sh`, where a
+    pristine stock tree actually exists.
   - `test-applets`' command-word scan only extracted the first word of a
     simple, unprefixed command: `if timeout 5 foo; then` yielded
     `['if','echo','fi']`, so the one failure its docstring named was invisible

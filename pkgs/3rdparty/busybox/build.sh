@@ -6,11 +6,11 @@
 # be built here: the printer's own busybox works, and this one is a
 # convenience for the applets FlashForge left out.
 #
-# WHY IT IS A PACKAGE AT ALL. It used to be a `cp` in bin/patch.sh, and it was
+# WHY IT IS A PACKAGE AT ALL. It used to be a `cp` in bin/payload.sh, and it was
 # the ONE file in the payload that no package owned -- which cost an allowance
 # in the "every file is owned" test, an ABI gate of its own because the
-# payload-wide one ran before the copy, and a file that .install-manifest
-# listed but no `opkg remove` could take away.
+# payload-wide one ran before the copy, and a file no `opkg remove` could
+# take away.
 set -euo pipefail
 . ./bin/common.sh
 . pkgs/lib.sh

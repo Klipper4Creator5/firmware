@@ -71,7 +71,7 @@ export LD_LIBRARY_PATH
 # so the printer runs without it and loses resonance testing.
 #
 # Note what is NOT on PATH below: $MODDIR/bin is prepended and the interpreter
-# is in there, but it is called python3.13 and only that. bin/patch.sh
+# is in there, but it is called python3.13 and only that. bin/payload.sh
 # deliberately drops the `python3` symlink CPython installs, so adding our
 # bin/ to PATH cannot quietly change what `python3` means.
 FF_PYTHON=$MODDIR/bin/python3.13

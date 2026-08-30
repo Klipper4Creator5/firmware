@@ -1,0 +1,86 @@
+#!/bin/sh
+# The clock. Exec'd by s6-supervise, never by hand.
+#
+# THIS PRINTER HAS NO RTC AND NO BATTERY. The kernel starts every boot at
+# whatever was compiled into it, and without this service it stays there for
+# as long as the machine is on: a print started on Tuesday is filed under
+# 1970, Moonraker's job history sorts by a timestamp that never moves, and
+# anything that checks a TLS certificate's validity dates decides the
+# certificate is not valid yet. `date -s` over ssh fixes it until the next
+# power cut, which is not a fix.
+#
+# A LONGRUN, NOT A ONESHOT AFTER WIFI, and the difference is the whole design:
+#
+#   * The wifi oneshot runs ONCE, at boot, and returns immediately (read its
+#     `up`: the waits are backgrounded on purpose). A time sync hung off the
+#     end of it would fire while wlan0 was still associating, fail, and never
+#     be tried again -- and would not fire at all for the printer whose owner
+#     joins a network from the HelixScreen panel an hour after boot.
+#   * A clock is not set once. There is no RTC to hold the answer, so the
+#     correction has to be maintained for as long as the printer is up.
+#
+# sntpd does both by design: with the network down it logs "will try again
+# later" and keeps its schedule, rather than exiting, so THIS SERVICE NEEDS NO
+# WIFI DEPENDENCY -- which is just as well, because nothing may depend on the
+# wifi oneshot (see its `up`). It syncs whenever the network turns up, from
+# whichever direction.
+MODDIR=/usr/data/anvil
+
+# anvil-env.sh is read HERE, not inherited. s6-supervise starts this script
+# from the SCANNER's environment, which is firmwareExe's at boot but whatever
+# an ssh session had when the service is restarted by hand.
+[ -f $MODDIR/anvil-env.sh ] && . $MODDIR/anvil-env.sh
+
+SNTPD=$MODDIR/sbin/sntpd
+LOG=/usr/data/logs/anvil-ntp.log
+
+# ---- the whole policy, which is an argument list -------------------------
+#
+# ONE POOL ENTRY IS ENOUGH. pool.ntp.org resolves to several addresses and
+# sntpd rotates through them itself when one stops answering, so a list of
+# named servers here would buy nothing the pool does not already give.
+#
+# iburst: eight packets two seconds apart once a server is unreachable. It is
+# what turns "wifi just came up" into a corrected clock in seconds instead of
+# on the next poll.
+SERVERS="pool.ntp.org,iburst"
+
+# THE POLL INTERVAL IS ALSO THE RETRY CEILING, which is why it is 300 and not
+# upstream's 600. A server that has missed a probe is retried on an
+# exponential backoff CAPPED AT THIS NUMBER (peer_spacing() in the sntpd
+# source), so it doubles as the longest a printer that joined wifi late can
+# sit on the wrong time. 300s is inside what pool.ntp.org asks of clients;
+# halving the worst case is worth one extra query every ten minutes.
+INTERVAL=300
+
+# The same place every other service of ours logs, appending rather than
+# truncating so a respawn cannot erase the reason for the respawn. sntpd is
+# quiet: at the default level it writes when it corrects the clock and when
+# the network comes and goes, not once per poll.
+mkdir -p /usr/data/logs
+exec >>"$LOG" 2>&1
+
+# The prerequisite. anvil-core deliberately Depends on nothing it can start
+# (see its pkg.conf), so `opkg remove anvil-sntpd` is a thing a printer owner
+# may do -- and then this service must still say, in a log, that the clock is
+# unattended, rather than failing an exec once a second. The sleep is a minute
+# rather than the five seconds the other services use because a removed
+# package is a permanent condition, not a race.
+if [ ! -x "$SNTPD" ]; then
+    echo "ntp: !! no $SNTPD -- anvil-sntpd is not installed, the clock stays wrong"
+    sleep 60
+    exit 1
+fi
+
+# -n  Do not fork: the process this script turns into IS the service. Without
+#     it s6-supervise would hold a process that exited immediately, call the
+#     service dead, and respawn it forever beside a real sntpd supervised by
+#     nobody. It also puts the log on stdout, which is the redirection above.
+#
+# -p 0  NO SERVER MODE. sntpd answers NTP queries on UDP 123 by default. A
+#     3D printer on somebody's home LAN has no business being a time source --
+#     least of all this one, whose own clock is whatever it last read.
+#
+# And `exec`, so the SIGTERM behind `s6-rc -d change ntp` reaches sntpd rather
+# than a shell that ignores it.
+exec "$SNTPD" -n -p 0 -i "$INTERVAL" $SERVERS

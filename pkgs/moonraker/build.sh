@@ -16,7 +16,7 @@ pkg_begin moonraker || exit 0
 pkg_unpack "$MOONRAKER_TGZ"
 
 _src="$PKG_WORK/src/moonraker-$MOONRAKER_VERSION/moonraker"
-# The guard bin/patch.sh has always had, kept: a tarball whose shape changed
+# The guard bin/payload.sh has always had, kept: a tarball whose shape changed
 # under us would otherwise stage nothing, which looks like a clean build and a
 # dead web UI.
 [ -f "$_src/moonraker.py" ] || pkg_die \
@@ -29,7 +29,7 @@ rm -rf "$PKG_WORK/stage$MODDIR/moonraker/tests"
 # its components -- and is meaningless without the server it configures.
 #
 # It installs to $MODDIR/config, a STAGING directory rather than where
-# Moonraker reads it: installer/run-append.sh copies $MODDIR/config/* into
+# Moonraker reads it: installer/runFirmwareExe.sh copies $MODDIR/config/* into
 # /usr/data/config/, and moonraker.conf takes the compare-and-.mod-new branch
 # there, because a printer reached through a tuned trusted_clients block must
 # not lose that access on an update.

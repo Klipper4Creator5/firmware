@@ -3,7 +3,7 @@
 Ported from test/run-tests.py's check_shell_syntax and check_no_bashisms. The
 logic is theirs; what changes is the granularity. There, one gate covered ~25
 files and reported one bit, so a syntax error in S62moonraker and a syntax
-error in patch.sh were the same red line. Here each file is its own test, named
+error in payload.sh were the same red line. Here each file is its own test, named
 after itself, and `pytest -k S62moonraker` runs exactly one.
 
 The original's docstring made a deliberate choice worth preserving:
@@ -78,8 +78,10 @@ SYNTAX_GLOBS = ("bin/*.sh", "pkgs/*/payload/*.sh",
 # would fail at container start and read as "the replica is broken on this
 # machine" -- a harness failure wearing a machine failure's clothes.
 #
-# installer/ is here too: run-pre.sh and run-append.sh are spliced into
-# FlashForge's own run.sh and execute inside the stock installer's shell.
+# installer/ matters more than it used to: runFirmwareExe.sh IS the
+# installer now, run by app_startup.sh under the printer's busybox with
+# nothing between it and the machine. A bashism in it is a package that
+# unpacks and then does nothing.
 #
 # NOT here, and a real gap rather than a decision: pkgs/*/payload/bin/*.sh.
 # wifi-action.sh runs on the printer and no lane checks its dialect.
@@ -90,9 +92,9 @@ ASH_GLOBS = ("pkgs/*/payload/*.sh",
              "installer/*.sh", "qa/replica/actions/*.sh")
 
 PY_GLOBS = ("bin/*.py", "pkgs/*/payload/bin/*.py",
-            "pkgs/*/payload/klipper/klippy/extras/*.py", "test/*.py",
-            "test/integration/*.py", "tools/replica/*.py",
-            "tools/replica/ffsim/*.py", "qa/*.py", "qa/lib/*.py",
+            "pkgs/*/payload/klipper/klippy/extras/*.py",
+            "tools/replica/*.py", "tools/replica/ffsim/*.py",
+            "qa/*.py", "qa/lib/*.py",
             "qa/static/*.py", "qa/replica/*.py")
 
 

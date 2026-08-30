@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # libsodium, cross-compiled for the printer into $SODIUM_BUILD.
 #
-# One build and one vehicle: the .ipk this produces is what bin/patch.sh
+# One build and one vehicle: the .ipk this produces is what bin/payload.sh
 # installs into the payload, so there is no second copy to drift from.
 #
 # WHOSE INTERPRETER DLOPENS IT: libnacl reaches libsodium through

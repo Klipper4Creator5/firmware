@@ -2,15 +2,19 @@
 # Klipper -- the fork's klippy tree, with c_helper.so built from the chelper
 # sources that ship inside it.
 #
-# THE .so IS BUILT FROM THE TREE THAT SHIPS, which is why this recipe compiles
-# anything rather than shipping a prebuilt object. cffi resolves symbols
-# LAZILY, so a c_helper.so built from older sources than the klippy beside it
-# imports cleanly, passes an ABI check, installs, boots -- and dies at
-# "Unhandled exception during connect" on the printer. That happened. One
+# THE .so IS BUILT FROM THE TREE THAT SHIPS, and that is the whole reason this
+# recipe compiles anything rather than shipping a prebuilt object. cffi
+# resolves symbols LAZILY, so a c_helper.so built from older sources than the
+# klippy beside it imports cleanly, passes an ABI check, installs, boots --
+# and dies at "Unhandled exception during connect" on the printer. That
+# happened: a .so built four days before kin_extruder.c gained
+# extruder_stepper_free shipped and bricked klippy startup on hardware. One
 # source verb means one tree, so the failure is unrepresentable here.
 #
-# NO CACHE OF ITS OWN: pkg_begin's stamp is the pinned commit and the
-# toolchain filename, so a bump to either rebuilds and nothing else does.
+# NO CACHE OF ITS OWN. bin/payload.sh kept a $FORK/.version stamp and an
+# `is the .so older than any .c` mtime test, both of which pkg_begin's stamp
+# replaces -- the stamp is the pinned commit and the toolchain filename, so a
+# bump to either rebuilds and nothing else does.
 set -euo pipefail
 . ./bin/common.sh
 . pkgs/lib.sh
@@ -20,18 +24,20 @@ pkg_toolchain
 pkg_unpack "$KLIPPER_TGZ"
 
 # GitHub's generated tarball wraps the repository in klipper-<sha>/, and the
-# unpack keeps that wrapper rather than hiding the archive's shape behind
-# --strip-components. The guard is bin/patch.sh's, kept: a tarball whose shape
-# changed under us would build nothing, which looks like a clean build and a
-# printer that cannot move.
+# unpack keeps that wrapper rather than hiding the shape of the archive behind
+# --strip-components -- the same choice pkgs/moonraker makes and for the same
+# reason. The guard is bin/payload.sh's, kept: a tarball whose shape changed
+# under us would build nothing, which looks like a clean build and a printer
+# that cannot move.
 _top="klipper-$KLIPPER_VERSION"
 [ -f "$PKG_WORK/src/$_top/klippy/chelper/__init__.py" ] || pkg_die \
     "klipper: no klippy/chelper/__init__.py in $(basename "$KLIPPER_TGZ")"
 
-# THE LINK LINE IS KLIPPER'S OWN. Every flag is copied from COMPILE_ARGS in
-# klippy/chelper/__init__.py -- what the printer would use if it could
-# compile, which it cannot: the stock rootfs has no cc. -shared -fPIC and $CC
-# come from pkg_build, so the ABI is the wrapper's and not this file's.
+# THE LINK LINE IS KLIPPER'S OWN. Every flag below is copied from COMPILE_ARGS
+# in klippy/chelper/__init__.py -- what the printer would use if it could
+# compile, which it cannot: the stock rootfs has no cc, which is why klippy's
+# usual first-run build never happens here. -shared -fPIC and $CC come from
+# pkg_build, so the ABI is the wrapper's and not this file's.
 PKG_CC_SHARED='-Wall -g -O2 -flto -fwhole-program -fno-use-linker-plugin
                -o klippy/chelper/c_helper.so klippy/chelper/*.c'
 pkg_build "$_top"
@@ -45,34 +51,40 @@ pkg_stage "$PKG_WORK/src/$_top/klippy" "klipper/klippy"
 
 # The toolchanger extras, ON TOP of the fork's own -- the order stock run.sh
 # used, kept because klippy has no search path: it resolves an extra as
-# dirname(klippy.py)/extras/<name>.py and nothing else.
+# dirname(klippy.py)/extras/<name>.py and nothing else. Being inside the tree
+# is the whole reason these can be a package member at all.
 #
 # NOT gated on BUILD_TOOLCHANGE. An extra is inert until a config section
-# instantiates it, and those sections are anvil-klipper-config's, where the
+# instantiates it and those sections are anvil-klipper-config's, where the
 # flag still applies -- so gating here bought nothing and cost the mismatch
-# that kept these five files on /usr/prog.
+# that kept these five files on /usr/prog: this recipe had a gate of its own
+# and they had a different one, and a package cannot hold files gated
+# differently from itself.
 for _e in "$PKG_DIR"/payload/klipper/klippy/extras/ff_*.py; do
     pkg_stage "$_e" "klipper/klippy/extras/$(basename "$_e")"
 done
 
-# The __pycache__ sweep that used to be here is pkg_ship's now. It was written
-# twice, here and in pkgs/moonraker, and the recipe that needed it most did
-# not have it.
+# The __pycache__ sweep that used to be here is pkg_ship's now. It was
+# written twice, here and in pkgs/moonraker, and the recipe that needed it
+# most did not have it: anvil-core stages a directory of .py helpers and was
+# shipping bytecode whenever a test had imported one of them.
 pkg_ship "klipper"
 
-# ------------------------------------------------------------------- the gate
-# Over $PKG_OUT rather than the staging tree, so it reads the bytes that
-# actually ship -- pkg_ship strips ELF on the way out.
+# --------------------------------------------------------------- no gate here
+# This recipe checks nothing about the object it just built, and both halves of
+# what used to be here left for a reason.
 #
-# The ABI of this .so is NOT checked here: that question is asked once, of the
-# installed filesystem, in qa/replica/test_abi.py, which covers both vehicles
-# this tree travels on instead of only the one a build.sh can see.
+# THE ABI -- o32/nan2008/mips32r2, which the kernel answers with ENOEXEC -- is
+# asked once now, of the installed filesystem, in qa/replica/test_abi.py. That
+# covers both vehicles this tree travels on (the .ipk and the SOFTWARE component
+# bin/payload.sh stages) rather than only the one a build.sh can see.
 #
-# Symbols are a check the ABI one cannot make: a .so with a perfect header and
-# a missing symbol is exactly the stale build described at the top of this
-# file. Running it here fails the build that produced the .ipk rather than
-# only a full firmware run.
-python3 "$ROOT/test/test-chelper.py" "$PKG_OUT/klipper" || pkg_die \
-    "klipper: c_helper.so does not export everything the shipped klippy declares"
+# THE SYMBOLS -- every function klippy cdefs, against the .so's dynamic symbol
+# table -- went with the test/ tree. cffi resolves lazily, so a .so built from
+# older sources than the klippy beside it imports cleanly and dies on the
+# printer at connect; that is the failure described at the top of this file.
+# What keeps it out is no longer a check but the shape of the recipe: the .so is
+# compiled from the chelper sources of the very tree it is about to ship, so a
+# .so older than its klippy is not something this build can produce.
 
 pkg_end

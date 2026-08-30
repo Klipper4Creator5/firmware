@@ -1,38 +1,44 @@
 #!/bin/sh
 # The camera, as s6 supervises it: mjpg_streamer on :8080, in the FOREGROUND.
 #
-# THE ONE RULE: never fork the streamer, never background it. `exec` at the
-# bottom makes the process s6 supervises BE mjpg_streamer, so a stop signals
-# the streamer rather than a shell that has long since gone.
+# THE ONE RULE: never fork the streamer, never background it, never return
+# while the camera is meant to be running. `exec` at the bottom makes the
+# process s6 supervises BE mjpg_streamer, so s6-svstat reports its pid and a
+# stop signals the streamer rather than a shell that has long since gone.
 #
-# LD_LIBRARY_PATH matters: libjpeg.so.9 lives in the mjpg-streamer directory.
-# That one directory is prepended here rather than in anvil-env.sh -- putting
-# a plugin directory with its own libjpeg in front of every python process
-# would risk a version conflict to benefit one service.
+# LD_LIBRARY_PATH matters: libjpeg.so.9 lives in the mjpg-streamer directory
+# itself. That one directory is prepended here rather than in anvil-env.sh --
+# it is a plugin directory with its own libjpeg, and putting it in front of
+# every python process on the printer would risk a version conflict to benefit
+# one service.
 #
-# THE BINARY, THE PLUGINS AND -w ARE ABSOLUTE PATHS despite the `cd`: relative
-# plugin names worked in the replica (glibc's dlopen falls back to
-# LD_LIBRARY_PATH for a bare name) but not on real hardware.
+# THE BINARY, THE PLUGINS AND -w ARE ABSOLUTE PATHS below even though
+# `cd "$CAMDIR"` still happens: relative plugin names worked in the replica
+# (glibc's dlopen falls back to LD_LIBRARY_PATH for a bare name) but not on
+# real hardware.
 MODDIR=/usr/data/anvil
-# anvil.conf is read HERE, not inherited: s6-supervise starts this from the
-# SCANNER's environment, which on a `s6-svc -u` typed over ssh is whatever
-# that session had. Reading the file here is what makes MOD_CAM_RES/FPS/PORT
-# mean the same on both paths.
-[ -f $MODDIR/anvil.conf ] && . $MODDIR/anvil.conf
+# anvil-env.sh is read HERE, not inherited. s6-supervise starts this script
+# from the SCANNER's environment, which is whatever firmwareExe had at boot --
+# and on a `s6-svc -u` typed over ssh it is whatever that ssh session had,
+# which is not the same thing at all.
 [ -f $MODDIR/anvil-env.sh ] && . $MODDIR/anvil-env.sh
 
 CAMDIR=/usr/prog/mjpg-streamer
 VIDEO=/dev/video0
 LOG=/usr/data/logs/mjpg.log
-RES="${MOD_CAM_RES:-1280x720}"
-FPS="${MOD_CAM_FPS:-30}"
-PORT="${MOD_CAM_PORT:-8080}"
+# The shape of the stream, stated here and nowhere else. Edit and restart the
+# service (`s6-svc -r /usr/data/anvil/etc/s6/camera`) to change it.
+RES=1280x720
+FPS=30
+PORT=8080
 
-# The log file the troubleshooting notes name. mjpg_streamer is chatty enough
-# that leaving it on the inherited descriptor would put it in the boot log of
-# a boot that finished hours ago -- s6-svscan's descriptors outlive
-# firmwareExe's redirection. Appending, not truncating, so a respawn cannot
-# erase the reason for the respawn.
+# The same log file the hand-rolled loop wrote to, for the same reason: it is
+# the file the troubleshooting notes name, and mjpg_streamer is chatty enough
+# (a banner per start, a line per plugin option) that leaving it on the
+# inherited descriptor would put it in the boot log of a boot that finished
+# hours ago -- s6-svscan's descriptors outlive firmwareExe's redirection
+# exactly as the scanner itself does. Appending, not truncating, so a respawn
+# cannot erase the reason for the respawn.
 mkdir -p /usr/data/logs
 exec >>"$LOG" 2>&1
 
@@ -45,11 +51,12 @@ if [ ! -x "$CAMDIR/mjpg_streamer" ]; then
     exit 1
 fi
 
-# THE UPGRADE PATH. A printer on the pre-s6 payload has our old respawn loop
-# alive with its pid in this file; left alone it keeps putting mjpg_streamer
-# back on :8080 and fights this service for the port. The loop dies first --
-# killing only the streamer gets it restarted three seconds later. Delete once
-# no pre-s6 install can be upgraded in the field.
+# THE UPGRADE PATH. A printer on the pre-s6 payload has our old
+# `while true; ... sleep 3` respawn loop alive with its pid in this file; left
+# alone it keeps putting mjpg_streamer back on :8080 and fights this service for
+# the port, with nothing in any log saying why. The loop dies first -- killing
+# only the streamer gets it restarted three seconds later. Delete once no
+# pre-s6 install can be upgraded in the field.
 if [ -f "$MODDIR/mjpg.pid" ]; then
     echo "camera: !! a pre-s6 respawn loop is still running -- stopping it"
     kill "`cat "$MODDIR/mjpg.pid" 2>/dev/null`" 2>/dev/null
@@ -60,15 +67,16 @@ fi
 
 # ---- the 30-second wait for /dev/video0 ------------------------------------
 #
-# The wait is HERE because only here does giving up turn into retrying: the
-# script exits non-zero, s6 runs it again, and a camera plugged in ten minutes
-# after boot comes up on its own. Thirty seconds is how long a USB camera can
-# take to enumerate on this box.
+# The wait is HERE rather than in a caller because only here does giving up
+# turn into retrying: the script exits non-zero, s6 runs it again, and a camera
+# plugged in ten minutes after boot comes up on its own. Thirty seconds is how
+# long a USB camera can take to enumerate on this box.
 #
-# THE BOOT PAYS FOR IT: s6-rc waits for this service's readiness, bounded by
-# `timeout-up` (40s), so a printer with no camera spends that on every boot.
-# Nothing depends on the camera, so nothing else is held back; MOD_CAM=0 is
-# the answer. The alternative was a service that lies about being ready.
+# THE BOOT PAYS FOR IT. s6-rc waits for this service's readiness notification,
+# bounded by `timeout-up` (40s) next to this file, so a printer with no camera
+# spends that on every boot. Nothing depends on the camera, so nothing else is
+# held back; `opkg remove` is the answer for a printer that has none. The
+# alternative was a service that lies about being ready.
 waited=0
 while [ ! -e "$VIDEO" ] && [ $waited -lt 30 ]; do
     sleep 1
@@ -87,22 +95,27 @@ cd "$CAMDIR" || exit 1
 
 # ---- readiness ------------------------------------------------------------
 #
-# `notification-fd` holds "3": READY once a line is written to fd 3.
+# `notification-fd` holds "3": the service is READY once a line is written to
+# fd 3, and s6-rc waits for that before counting it up.
 #
 # READY IS "THE HTTP PORT ANSWERS", not "the process was forked" (the gap
 # between fork and usable is where a camera that enumerated but cannot do
-# 1280x720 dies) and not "/dev/video0 exists" (a precondition). The only
-# consumer is nginx's /webcam/ proxy, and what a proxy needs is a socket that
-# accepts. output_http.so is started last, so a bound port also means the
-# device opened and the format was accepted.
+# 1280x720 dies) and not "/dev/video0 exists" (a precondition -- the node
+# appears the instant the kernel enumerates the device). The only consumer is
+# nginx's /webcam/ proxy, and what a proxy needs is a socket that accepts.
+# output_http.so is started last, so a bound port also means the device opened
+# and the format was accepted.
 #
-# /proc/net/tcp because this busybox has no nc applet: field 2 is
-# LOCAL_ADDRESS:PORT in uppercase hex, field 4 the state, 0A is TCP_LISTEN.
+# /proc/net/tcp because this busybox has no nc applet (measured): field 2 is
+# LOCAL_ADDRESS:PORT with the port in uppercase hex, field 4 is the state, 0A
+# is TCP_LISTEN. The address half is not matched, so a future `-l 127.0.0.1`
+# still counts as listening.
 #
-# A subshell, because the last thing this script does is exec. The exec below
-# closes fd 3 in the STREAMER (3>&-) so the only process holding the
-# notification pipe is the one with something to say. It gives up after 60s --
-# a prober that never exits is one stray process per respawn.
+# A subshell, because the last thing this script does is exec and an exec'd
+# streamer cannot report on itself. It inherits fd 3; the exec below closes
+# fd 3 in the STREAMER (3>&-) so the only process holding the notification pipe
+# is the one with something to say. It gives up after 60s rather than looping
+# for ever -- a prober that never exits is one stray process per respawn.
 PORTHEX=`printf '%04X' "$PORT"`
 (
     n=0
@@ -118,13 +131,14 @@ PORTHEX=`printf '%04X' "$PORT"`
     done
 ) &
 
-# The exact invocation the hand-rolled loop used, argument for argument. Do
-# not "tidy" the quoting: mjpg_streamer takes a plugin and all of its options
-# as ONE argv entry and splits it itself.
+# The exact invocation the hand-rolled loop used, argument for argument. Do not
+# "tidy" the quoting: mjpg_streamer takes a plugin and all of its options as
+# ONE argv entry and splits it itself, so those quotes are load-bearing.
 #
 # `nice` execs the target in its own place, so s6 still holds the streamer's
-# pid. NICE_CAM: the streamer is pure background work and the most deserving
-# of the services that yield to klippy.
-exec nice -n "${NICE_CAM:-0}" "$CAMDIR/mjpg_streamer" \
+# own pid. The streamer is pure background work and the most deserving of the
+# services that yield to klippy, so it is the largest nice value here. 0 would
+# be normal priority.
+exec nice -n 10 "$CAMDIR/mjpg_streamer" \
     -i "$CAMDIR/input_uvc.so -d $VIDEO -r $RES -f $FPS" \
     -o "$CAMDIR/output_http.so -p $PORT -w $CAMDIR/www" 3>&-

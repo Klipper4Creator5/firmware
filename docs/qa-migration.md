@@ -2,8 +2,8 @@
 
 `qa/` is the test suite. It was built beside `test/` rather than inside it, and
 the migration is now done: every `case-*.sh` has been ported or retired, and
-what remains of `test/` is 28 host-side unit tests. The machinery that builds
-the replica has moved to `tools/replica/`, because it was never a test.
+`test/` has since been deleted outright. The machinery that builds the replica
+moved to `tools/replica/`, because it was never a test.
 
 This document says why it exists, what it proves, and what is still owed.
 
@@ -60,7 +60,7 @@ the same shape `case-services.sh` used. Two things are wrong with it:
   produced. The real installer could break and nothing here would go red.
 - It can only place what a recipe keeps in the repo, so **anything the build produces is
   missing**. The cross-compiled s6 is the obvious one: it lives in `work/.s6`
-  and `bin/patch.sh` stages it into the package, so a hand-placed payload has
+  and `bin/payload.sh` stages it into the package, so a hand-placed payload has
   no supervisor at all — which is why the tests had to carry a stand-in
   scanner, and why one of them had to ask whether it was testing the stand-in
   before it could mean anything.
@@ -70,7 +70,7 @@ lands in `/usr/data/anvil`:
 
 | hand-placed | really installed |
 |---|---|
-| `anvil-env.sh anvil-service.sh anvil.conf init.d etc/s6` | `VERSION anvil-env.sh anvil-service.sh anvil.conf backup bin config config-installed etc helixscreen init.d lib libexec moonraker nginx www` |
+| `anvil-env.sh anvil-service.sh anvil.conf init.d etc/s6` | `VERSION anvil-env.sh anvil-service.sh anvil.conf bin config etc helixscreen init.d lib libexec moonraker nginx www` |
 
 `bin`, `lib` and `libexec` are the cross-built s6 and CPython 3.13. No amount
 of copying a recipe's files produces them.
@@ -116,16 +116,18 @@ make qa-replica    # the gates that decide whether a package bricks
 
 The replica lane needs two things.
 
-**A base replica.** Quickest is the prebuilt image, which carries the firmware,
-`/usr/prog` and `/usr/data` with the stock package already installed — put it in
-`test.env` (see `test.env.example`) or pass it per-run:
+**A base replica.** The image, which carries the firmware, `/usr/prog` and
+`/usr/data` with the stock package already installed — put it in `test.env`
+(see `test.env.example`) or pass it per-run:
 
 ```sh
-PRINTER_IMAGE=monstrofil/creator5-printer:latest make qa-replica
+PRINTER_IMAGE=monstrofil/creator5-printer:1.9.7-1.2.9-20260810 make qa-replica
 ```
 
-Without it the lane builds the replica from `work/rootfs`, which needs
-`make rootfs` and the stock package.
+There is no second source. The lane used to build a replica locally from
+`work/rootfs` when `PRINTER_IMAGE` was unset, which needed `make rootfs` and
+the stock package and cost about a minute of setup per case; that path is
+gone. `make printer-image` builds the image from the same public firmware.
 
 **A built package**, in `work/out/*.tgz` — because the lane installs it for
 real. `make build` produces one; the newest by mtime is the one used, and the
@@ -197,7 +199,7 @@ it. "I could not find the tool" does not.
 
 **There are three skips, and they do not meet that bar.**
 `qa/static/test_ipk.py` reads `work/modpayload-root`, which only exists after
-`bin/patch.sh` has run, and skips when it is absent. That is "this machine is
+`bin/payload.sh` has run, and skips when it is absent. That is "this machine is
 not set up", which the rule above says must fail -- but making it fail would
 put a stock FlashForge package in the way of a lane whose whole point is that
 it needs nothing.
@@ -253,11 +255,11 @@ nothing:
   -- it runs under `env -i` -- which still goes red if a future build
   reintroduces the dependency.
 - **`case-upgrade.sh`'s headline assertion was vacuous.** It proved an update
-  removes `init.d/S60web`; `run-append.sh:150` does `rm -rf $MODDIR/init.d`
-  *unconditionally*, outside the manifest branch, so it would have passed on an
-  installer whose entire manifest logic had been deleted. The port makes that
-  claim against a path only the manifest governs, and gives the unconditional
-  removal a test of its own.
+  removes `init.d/S60web`; the installer did `rm -rf $MODDIR/init.d`
+  unconditionally, so it would have passed on an installer whose entire
+  deletion logic had been removed. The port makes that claim against a path
+  the deletion actually governs, and gives the unconditional removal a test of
+  its own.
 - **`case-boot-screen.sh` confirmed its own arithmetic.** It computed the
   expected pixel packing by calling `ffscreen._pixel` *inside* the replica, so
   a swapped R/B would have matched itself perfectly. The port computes the
@@ -336,14 +338,16 @@ it, producing a byte-identical servicedir.)
 **It is gone, and what it cost is worth stating.** It needed an
 `s6-rc-compile` that runs on the build host, and the only way to get one was a
 second NATIVE build of skalibs, execline, s6 and s6-rc -- 110 lines of
-`bin/patch.sh` whose entire hazard was that both stacks had to be
+`bin/payload.sh` whose entire hazard was that both stacks had to be
 `--prefix=$MODDIR` or the `#!` baked into the oneshot runner pointed at the
 build host's execline. The database is compiled in the replica now, by the
 `s6-rc-compile` the payload ships, so that hazard cannot exist. The price is
 that a boot-order mistake is caught by the replica lane rather than in a
 second, and that the timeout and edge assertions are not currently made
-anywhere. `bin/verify.sh` keeps the one part a host can still check: the
-oneshot runner's shebang, read straight out of the shipped database.
+anywhere. The oneshot runner's shebang was the one part a host could still
+check and `bin/verify.sh` kept it; that file is gone too (see *`bin/verify.sh`
+is retired* below), and `qa/replica/test_s6rc.py` covers the same ground by
+booting the database rather than reading it.
 
 ### The gates phase 8 killed have been retired
 
@@ -459,9 +463,9 @@ Three gates were dropped rather than ported, as a coverage decision:
 
 | dropped | was | consequence |
 |---|---|---|
-| the pytest gate | `run-tests.py` ran pytest and re-parsed its XML | none -- `make test-py` and CI run pytest directly |
-| the rootfs extraction | ran `unpack.sh` + `extract_rootfs` inline | none -- `make rootfs` does exactly this, and the replica lane already fails with that command in the message |
-| **the packaging build on a synthetic stock package** | `make-stock-fixture.sh`, then `unpack`/`patch`/`pack`/`verify.sh` | **real: `bin/unpack.sh`, `patch.sh`, `pack.sh` and `verify.sh` now have no test at all** |
+| the pytest gate | `run-tests.py` ran pytest and re-parsed its XML | none at the time -- `make test-py` and CI ran pytest directly; both went when `test/` was deleted |
+| the rootfs extraction | ran `unpack.sh` + `extract_rootfs` inline | none, and now moot -- `extract_rootfs` and `make rootfs` are both gone, and the replica image does its own extraction at build time |
+| **the packaging build on a synthetic stock package** | `make-stock-fixture.sh`, then `unpack`/`patch`/`pack`/`verify.sh` | **real: `bin/unpack.sh`, `payload.sh` and `pack.sh` now have no test at all.** `verify.sh` has since been retired outright -- see below |
 
 That last row is the one to be uneasy about, and it is recorded here rather
 than buried in a commit message. The build path is what produces the `.tgz` a
@@ -481,27 +485,88 @@ again, and should know two things it had learnt. `make_fixture` staged into
 mounts host-side, so a path under the build container's `/tmp` does not exist
 as far as the daemon is concerned. And the shape it reproduced -- the
 software component's `run.sh` ending in `tar -xf
-$WORK_DIR/klipper/chelper.tar` -- is what `bin/patch.sh` depended on while the
+$WORK_DIR/klipper/chelper.tar` -- is what `bin/payload.sh` depended on while the
 klippy tree still went out on the firmware partition; the tree lives at
 `$MODDIR/klipper` now and neither that section nor the `chelper.tar` exists. Recover both from git history rather than from a fresh reading of
 a stock package.
 
-### What survives in test/
+### `bin/verify.sh` is retired
+
+Forty checks, run on the build host against a decrypted copy of the `.tgz`.
+Four survive, in `qa/replica/test_what_ships.py`. The rest went because of
+what the word *simulate* was doing in the file's own description -- "simulate
+every check the printer performs".
+
+The replica lane does not simulate the install. `qa/replica/actions/install-package.sh`
+puts the package on a genuine FAT filesystem at `/dev/sda1` and runs the
+machine's own `/usr/prog/app_startup.sh` over it, verbatim, under qemu. So the
+decrypt, the plain-tar components, `md5sum.list`, the `MACHINE=` gate and the
+`/mnt/<Model>-*.tgz` glob are all *preconditions of the lane* now rather than
+assertions in it: break any of them and the install fails, `installed_image()`
+raises with the install log attached, and every replica test goes red at once.
+A host-side re-reading of the same rules is a second implementation, and a
+second implementation can agree with itself while disagreeing with the printer
+-- the lesson `qa/replica/conftest.py` records this repo learning twice about
+hand-placed payloads.
+
+A second block was asking what the suite already answers, and answers of an
+installed filesystem rather than of a `tar -t` listing: the klippy tree and
+`c_helper.so` (`test_install.py`, `test_abi.py`), the compiled s6-rc database
+and the oneshot runner's execline (`test_s6rc.py`), s6 and `s6-ftrigrd`
+(`test_supervisor.py`),
+libsodium's bare `.so` symlink and the chamber configs
+(`static/test_ipk.py`), and every shipped script's syntax
+(`static/test_shell_syntax.py`).
+
+The four that moved are the ones nothing else asks, and each got stronger for
+the move -- a listing cannot tell you that a shared object loads, or what a
+name resolves to on a `PATH`:
+
+- the shipped interpreter **imports** `sqlite3`, `lmdb` and `_cffi_backend`,
+  rather than a grep finding three `.so` files. This is the check that catches
+  a cross build resolving to an x86_64 manylinux wheel, which is present on
+  disk and raises on import.
+- nothing in `$MODDIR/bin` shadows FlashForge's `python3`, asked with
+  `command -v` after sourcing `anvil-env.sh` -- which is the file that
+  *prepends* `$MODDIR/bin` to `PATH` and therefore creates the hazard.
+- CPython's dev half (headers, pkgconfig, `config-3.13-*`) did not ship.
+- the ship boundary: no file on the installed printer is byte-identical to one
+  under `bin/` or `docker/`. Asked of the machine rather than of the `.tgz`,
+  so it also sees anything a maintainer script wrote as root at install time.
+
+**What genuinely left with it**, and is recorded here rather than in a commit
+message: there is no longer any check you can run on the build host, in
+seconds and without docker, against a package you are about to flash. In
+particular nothing warns you *before* you copy the file to a stick that it was
+built from the wrong model's stock package. The printer still refuses it
+("Firmware does not match machine type") and `make qa-replica` still catches
+it, but the fast host-side warning that `make verify` gave the hardware
+checklist is gone.
+
+### What survived in test/, and then did not
+
+Two things did, for a while. Both are gone now and `test/` with them:
 
 - **`test/integration/test_*.py`** -- 28 host-side unit tests in five files,
-  down from 186; see *The second cut* below.
-- **`test/test-chelper.py`** -- in neither suite. `bin/patch.sh` and
-  `bin/verify.sh` call it directly at build time.
+  down from 186; see *The second cut* below. Deleted, with nothing taking over
+  the tool-frame arithmetic, the chamber macros' per-model branching, the stamp
+  discipline in `ff-startup.py`, or the verification G-code.
+- **`test/test-chelper.py`** -- in neither suite; `pkgs/klipper/build.sh` and
+  `bin/verify.sh` called it directly at build time. Deleted with the tree, and
+  its callers with it. What keeps a stale `c_helper.so` out now is that
+  `pkgs/klipper` compiles the .so from the chelper sources of the tree it
+  ships.
 
 And two things that were under `test/` and are not tests, now at
 **`tools/replica/`**:
 
-- **`ffsim/`** -- 678 lines, down from 1,657, and no longer a test framework.
-  `extract_rootfs` is what `make rootfs` runs; `Replica` is what
-  `make boot-screen-sim` and, more to the point, **`bin/patch.sh`** use --
-  the payload is assembled by running the printer's own `opkg` inside a
-  replica, so this is build-path code that happened to live in the test tree.
-- **`printer/`** -- the `Dockerfile`, `entrypoint.sh`, `assemble.sh`,
+- **`ffsim/`** -- no longer a test framework and now smaller again, with
+  `extract_rootfs` and its two tar helpers gone along with `make rootfs`.
+  `Replica` is what `make boot-screen-sim` and, more to the point,
+  **`bin/payload.sh`** use -- the payload is assembled by running the printer's
+  own `opkg` inside a replica, so this is build-path code that happened to
+  live in the test tree.
+- **`printer/`** -- the `Dockerfile.full`, `entrypoint.sh`, `assemble.sh`,
   `binfmt.sh` and `seed-prog.sh` that BUILD the replica. `qa/lib/replica.py`
   uses them unmodified; they were never the problem. Moving them out of
   `test/` changed no content, only `qa/lib/replica.py`'s build directory and

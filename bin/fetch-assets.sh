@@ -102,9 +102,11 @@ get "https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSI
 # in the version number -- hence SQLITE_YEAR.
 get "https://www.sqlite.org/$SQLITE_YEAR/sqlite-autoconf-$SQLITE_VERSION.tar.gz" \
     "$SQLITE_TGZ" "$SQLITE_SHA256"
-# /fossils/, not the front page: zlib.net moves a release there the moment it
-# is superseded, and the front-page URL then 404s for a good pin.
-get "https://zlib.net/fossils/zlib-$ZLIB_VERSION.tar.gz" \
+# madler's own release asset, not zlib.net: that host sits behind an anti-bot
+# interstitial that answers 200 with a 12KB HTML spinner page, which curl -f
+# accepts and only the sha256 rejects -- as a mismatch that reads like
+# tampering. The GitHub asset is byte-identical to the pin below.
+get "https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz" \
     "$ZLIB_TGZ" "$ZLIB_SHA256"
 get "https://github.com/libffi/libffi/releases/download/v$LIBFFI_VERSION/libffi-$LIBFFI_VERSION.tar.gz" \
     "$LIBFFI_TGZ" "$LIBFFI_SHA256"
@@ -136,7 +138,7 @@ get "https://github.com/jedisct1/libsodium/releases/download/$SODIUM_VERSION-REL
 
 # --- opkg
 # zlib is NOT fetched here: the CPython section already pulls that same pin.
-get "https://downloads.yoctoproject.org/releases/opkgs/3rdparty/opkg-$OPKG_VERSION.tar.gz" \
+get "https://downloads.yoctoproject.org/releases/opkg/opkg-$OPKG_VERSION.tar.gz" \
     "$OPKG_TGZ" "$OPKG_SHA256"
 get "https://github.com/libarchive/libarchive/releases/download/v$LIBARCHIVE_VERSION/libarchive-$LIBARCHIVE_VERSION.tar.gz" \
     "$LIBARCHIVE_TGZ" "$LIBARCHIVE_SHA256"
@@ -165,7 +167,13 @@ fi
   fi )
 say "cached  opkg-utils $OPKG_UTILS_VERSION ($OPKG_UTILS_COMMIT)"
 
-# The toolchain, on the pkg_needs condition that decides whether patch.sh has
+# --- the clock
+# No BUILD_ flag: a printer with no RTC has the wrong time until this runs, and
+# every printer here has no RTC.
+get "https://github.com/troglobit/sntpd/releases/download/v$SNTPD_VERSION/sntpd-$SNTPD_VERSION.tar.gz" \
+    "$SNTPD_TGZ" "$SNTPD_SHA256"
+
+# The toolchain, on the pkg_needs condition that decides whether payload.sh has
 # to compile at all. Wrong here is not a slow build but a stopped one.
 if [ "$ALL" = 1 ] \
    || pkg_needs; then

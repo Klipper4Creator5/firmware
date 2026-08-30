@@ -6,8 +6,8 @@ respawn loops in `ash`, can we ship a supervisor that already solves those?
 
 Everything below was measured on the printer replica (real `rootfs.squashfs`
 under qemu-mipsel), not read off a project page. `build.sh` rebuilds both
-stacks; `test/integration/printer/case-supervisor.sh` is the gate that proves
-they work on the printer's own kernel.
+stacks; `qa/replica/test_supervisor.py`, with `test_s6rc.py` and `test_web.py`
+beside it, is what proves they work on the printer's own kernel.
 
 ## There is nothing on the printer to reuse
 
@@ -106,14 +106,13 @@ adopting s6 -- not the supervisor itself.
 then pack `bin/`, `libexec/` and `runit/` into a tarball and run the gate.
 
 That is how the COMPARISON above was measured, and it is kept here for the
-record. It is no longer how s6 is built: the answer is s6, so `bin/patch.sh`
+record. It is no longer how s6 is built: the answer is s6, so `bin/payload.sh`
 now cross-compiles skalibs and s6 from the tarballs pinned in `versions.env`,
 inside the repo's own build image, caches the result in `work/.s6` and stages
-it into the payload. Nothing builds runit or execline any more, and
-`case-supervisor.sh` accordingly expects only `bin/` and `libexec/` -- the
-two directories that cache holds:
+it into the payload. Nothing builds runit or execline any more, so only
+`bin/` and `libexec/` come out of that cache.
 
-    tar -czf work/sup.tgz -C work/.s6 bin libexec
-    PRINTER_IMAGE=monstrofil/creator5-printer:latest \
-        ./test/integration/printer-exec.py \
-        test/integration/printer/case-supervisor.sh sup.tgz=work/sup.tgz
+`case-supervisor.sh` and the `printer-exec.py` that ran it are gone. What
+asks these questions now is the replica lane, over the real installed package:
+
+    make build && make qa-replica

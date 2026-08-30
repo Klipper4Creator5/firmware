@@ -28,11 +28,11 @@ case script it is given here is qa/replica/actions/hold.sh, which touches a
 marker and then sleeps forever. Setup runs to completion exactly as it always
 has, and then the container simply does not exit.
 
-That marker is also the readiness signal, and it has to be: setup takes from
-under a second (a prebuilt PRINTER_IMAGE) to over a minute (unpacking the
-factory image and installing the stock baseline under qemu). Polling for the
-marker waits for however long this machine actually needs, rather than for a
-constant somebody guessed.
+That marker is also the readiness signal, and it has to be: setup is fast
+now that the image carries the installed baseline, but "fast" is a property
+of one machine's disk and one image's contents. Polling for the marker waits
+for however long this machine actually needs, rather than for a constant
+somebody guessed.
 
 ISOLATION
 
@@ -194,14 +194,14 @@ class Printer:
                 argv, input=script, capture_output=True, text=True,
                 # errors="replace": a command that cats one of the printer's
                 # MIPS binaries emits bytes that are not UTF-8, and a strict
-                # decode raises out of communicate(), so the harness fails and
-                # reports nothing about the test.
+                # decode raises out of communicate() -- so the harness fails
+                # and reports nothing about the test.
                 errors="replace", timeout=timeout)
         except subprocess.TimeoutExpired as expired:
             # A timeout is a Result, not an exception, because "it did not
-            # come back" is a verdict some tests are looking for -- the init
-            # sequence must return, and an S40s6 that runs the scanner inline
-            # is exactly the failure that hangs it.
+            # come back" is a verdict some tests are specifically looking for
+            # -- the init sequence must return, and an S40s6 that runs the
+            # scanner inline is exactly the failure that hangs it.
             return Timeout(argv, expired, timeout)
         return Result(argv, done.returncode, done.stdout, done.stderr)
 
@@ -352,13 +352,22 @@ def find_docker():
 
 
 def resolve_image(config, docker):
-    """The replica image, built locally if no prebuilt one is configured."""
+    """The replica image. There is one source of it: PRINTER_IMAGE.
+
+    It used to have a second -- a thin container over the rootfs.squashfs
+    `make rootfs` unpacked into work/rootfs. Every caller set PRINTER_IMAGE
+    anyway, and tools/replica/build-printer-image.sh builds the image from
+    the same public firmware without needing a stock package, so the local
+    path was a slower way to the same machine that nothing chose.
+    """
     probe = subprocess.run([docker, "info"], capture_output=True, text=True)
     if probe.returncode != 0:
         # The two causes look identical from here and need opposite fixes, so
-        # the message carries both. "permission denied" is the common one and
-        # is not a dead daemon at all -- the user is not in the docker group,
-        # which an already open shell will not notice even after usermod.
+        # the message carries both rather than guessing. "permission denied"
+        # is the common one and it is not a dead daemon at all -- the daemon
+        # is fine and the user is not in the docker group, which an already
+        # open shell will not notice even after usermod, because a process
+        # keeps the groups it started with.
         said = (probe.stderr or "").strip().splitlines()
         raise ReplicaMissing(
             "the docker daemon did not answer, so no replica can be built:\n"
@@ -368,32 +377,16 @@ def resolve_image(config, docker):
             "new login shell)."
             % (said[-1] if said else "docker info exited %d" % probe.returncode))
 
+    # The image carries the firmware already -- rootfs, /usr/prog, /usr/data,
+    # with the stock package installed, baked by build-printer-image.sh.
     image = config.get("PRINTER_IMAGE")
-    if image:
-        # A prebuilt image carries the firmware already -- rootfs, /usr/prog,
-        # /usr/data, baked by tools/replica/build-printer-image.sh.
-        return image, True
-
-    if not (ROOT / "work" / "rootfs" / "bin").is_dir():
+    if not image:
         raise ReplicaMissing(
-            "no replica to test against: PRINTER_IMAGE is unset and there is "
-            "no extracted rootfs in work/rootfs.\n"
-            "    quickest:  PRINTER_IMAGE=monstrofil/creator5-printer:latest "
-            "(or put it in test.env -- see test.env.example)\n"
-            "    from the stock package:  make rootfs")
-
-    image = "creator5-printer-sim"
-    build_dir = ROOT / "tools" / "replica" / "printer"
-    # Always rebuild: a cache hit takes about a second, and a stale image
-    # silently testing yesterday's harness is not a trade worth making.
-    built = subprocess.run(
-        [docker, "build", "-q", "-t", image, "-f",
-         str(build_dir / "Dockerfile"), str(build_dir)],
-        capture_output=True, text=True)
-    if built.returncode != 0:
-        raise ReplicaMissing("could not build %s:\n%s"
-                                 % (image, built.stderr.strip()))
-    return image, False
+            "no replica to test against: PRINTER_IMAGE is unset.\n"
+            "    put it in test.env -- test.env.example carries the "
+            "published one\n"
+            "    or build your own:  make printer-image")
+    return image
 
 
 def mod_package(config):
@@ -406,9 +399,10 @@ def mod_package(config):
     one.
     """
     # REAL_PKG names one package explicitly, which is how the release workflow
-    # asks about the EXACT file it will attach rather than about whatever the
-    # tree last built. Two models ship per release and they are not
-    # interchangeable.
+    # asks about the EXACT file it is going to attach to the release rather
+    # than about whatever the tree last built. Two models ship per release and
+    # they are not interchangeable, so "the newest" is the wrong question
+    # there.
     named = os.environ.get("REAL_PKG", "").strip()
     if named:
         chosen = pathlib.Path(named)
@@ -458,7 +452,7 @@ def installed_image(config=None, on_output=None):
     """
     config = config or Config.load()
     docker = find_docker()
-    base, _prebuilt = resolve_image(config, docker)
+    base = resolve_image(config, docker)
     pkg = mod_package(config)
 
     tag = "creator5-printer-anvil:%s" % _md5(pkg)[:12]
@@ -489,7 +483,6 @@ def installed_image(config=None, on_output=None):
         "-e", "BASE_PKG=",
         "-e", "USB_STICK=1",
         "-e", "PKGS= %s=/pkgs/%s" % (pkg.name, pkg.name),
-        "-e", "PROG_DUMP=",
         "-e", "PROG_MB=%s" % config.get("PROG_MB"),
         "-e", "DATA_MB=%s" % config.get("DATA_MB"),
         "-e", "SIM_VERBOSE=%s" % os.environ.get("SIM_VERBOSE", "0"),
@@ -532,13 +525,11 @@ def start(config=None, base_pkg=None, packages=None, setup_timeout=600,
     config = config or Config.load()
     packages = packages or {}
     docker = find_docker()
-    if image:
-        # A caller-supplied image is already a machine (installed_image()'s
-        # bake, normally), so it needs no rootfs mount and no baseline: those
-        # are baked in, exactly as they are in a prebuilt PRINTER_IMAGE.
-        prebuilt = True
-    else:
-        image, prebuilt = resolve_image(config, docker)
+    # A caller-supplied image is already a machine (installed_image()'s
+    # bake, normally); otherwise it is PRINTER_IMAGE. Either way the firmware
+    # is baked in and there is no baseline to lay down here.
+    if not image:
+        image = resolve_image(config, docker)
 
     stage = ROOT / "work" / (".qa-%d" % os.getpid())
     if stage.exists():
@@ -555,41 +546,33 @@ def start(config=None, base_pkg=None, packages=None, setup_timeout=600,
         shutil.copy(base_pkg, str(stage / "pkgs" / "base.tgz"))
 
     argv = [docker, "run", "-d", "--privileged"]
-    if not prebuilt:
-        argv += ["-v", "%s/work/rootfs:/rootfs:ro" % ROOT]
     argv += [
         "-v", "%s/pkgs:/pkgs:ro" % stage,
         "-v", "%s/case.sh:/case.sh:ro" % stage,
-        # THE PRINTER'S FILES, FROM THE RECIPES THAT OWN THEM: anvil-core's
-        # $MODDIR overlay, its anvil.conf template, and Klipper's launcher,
-        # which goes to /usr/prog. entrypoint.sh reassembles /tmp/payload out
-        # of the three.
+        # THE PRINTER'S FILES, FROM THE RECIPES THAT OWN THEM. This used to
+        # be one mount of a top-level payload/ directory. It is two now, and
+        # entrypoint.sh reassembles /tmp/payload out of them, because the
+        # files a case script reaches for are split across two roles:
+        # anvil-core's $MODDIR overlay, and Klipper's launcher, which goes to
+        # /usr/prog. A third mount of anvil-core's seed/ went with anvil.conf.
         #
-        # Reassembled rather than re-pointed on purpose: every case script
-        # copies out of /tmp/payload with `2>/dev/null`, so a path that stops
-        # resolving copies nothing and the case runs green against an empty
-        # $MODDIR.
+        # Reassembled rather than re-pointed on purpose. Every case script
+        # copies out of /tmp/payload with `2>/dev/null` -- a path that stops
+        # resolving does not fail there, it copies nothing and the case runs
+        # green against an empty $MODDIR. Keeping the assembled tree byte-for
+        # -byte what it was means none of those copies had to be touched.
         "-v", "%s/pkgs/anvil-core/payload:/payload:ro" % ROOT,
-        "-v", "%s/pkgs/anvil-core/seed:/payload-seed:ro" % ROOT,
-        # entrypoint.sh reads start.sh out of here. docker CREATES a missing
-        # bind source as a root-owned empty dir, so a stale path here did not
-        # fail -- it silently mounted nothing and grew a directory no recipe
-        # owned and no user could delete.
+        # entrypoint.sh reads start.sh out of here. It lived in
+        # pkgs/klipper/prog until the recipes were reorganised; docker
+        # CREATES a missing bind source as a root-owned empty dir, so a
+        # stale path here did not fail -- it silently mounted nothing and
+        # grew a pkgs/klipper/prog that no recipe owned and no user could
+        # delete.
         "-v", "%s/pkgs/anvil-core/payload/prog:/payload-klipper:ro" % ROOT,
         "-e", "FF_KEY=%s" % config.ff_key,
         "-e", "BASE_PKG=%s" % ("/pkgs/base.tgz" if base_pkg else ""),
         "-e", "PKGS=%s" % "".join(" %s=/pkgs/%s" % (n, n) for n in packages),
     ]
-
-    # A real /usr/prog taken off a printer. Only for a locally built replica:
-    # a prebuilt image already has one baked in, and mounting over it would
-    # replace the genuine tree with an older copy.
-    prog_dump = config.get("PROG_DUMP")
-    if not prebuilt and prog_dump and os.path.exists(prog_dump):
-        argv += ["-e", "PROG_DUMP=/progdump",
-                 "-v", "%s:/progdump:ro" % os.path.abspath(prog_dump)]
-    else:
-        argv += ["-e", "PROG_DUMP="]
 
     argv += [
         "-e", "PROG_MB=%s" % config.get("PROG_MB"),
@@ -619,10 +602,10 @@ def start(config=None, base_pkg=None, packages=None, setup_timeout=600,
 def _await_ready(printer, limit):
     """Wait for hold.sh's marker, which means entrypoint.sh finished.
 
-    Polled rather than slept, because setup is anywhere from under a second
-    (a prebuilt PRINTER_IMAGE) to over a minute (unpacking the factory image
-    and installing the stock baseline under qemu). A constant would either
-    waste the fast case or fail the slow one.
+    Polled rather than slept: setup is short now that the image carries the
+    installed baseline, but how short depends on the machine and on what the
+    image holds. A constant would either waste the fast case or fail a slow
+    one, and which is which is not ours to guess.
     """
     deadline = time.monotonic() + limit
     while time.monotonic() < deadline:
@@ -654,9 +637,11 @@ def logs(printer):
 def stop(printer):
     # DETACH THE STICK'S LOOP FIRST. assemble.sh attaches /stick.img with
     # `losetup`, which does not autoclear, and loop devices belong to the HOST
-    # kernel. These containers never take entrypoint.sh's exit path, so
-    # without this every module leaks one, and a WSL2 kernel has thirteen. The
-    # symptom is the NEXT run failing to set up a loop device.
+    # kernel rather than to the container. entrypoint.sh detaches on its way
+    # out, but these containers never take that path -- hold.sh sleeps and we
+    # `rm -f` them -- so without this every module leaks one, and a WSL2 kernel
+    # has thirteen. The symptom is the NEXT run failing to set up a loop
+    # device, which looks like a docker fault and is not.
     subprocess.run(
         [printer.docker, "exec", printer.container, "sh", "-c",
          '[ -f /stick.loop ] && losetup -d "$(cat /stick.loop)" || true'],
