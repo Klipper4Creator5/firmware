@@ -1,0 +1,14 @@
+#!/bin/sh
+# Runs after wpa_cli exits -- on every stop, and on every restart.
+#
+# The action script's DISCONNECTED branch drops the lease already, but only
+# when there is a wpa_cli alive to be told. A supplicant killed outright -- an
+# OOM, a kill -9, `s6-rc -d change wifi` -- produces no event at all, and the
+# udhcpc left behind goes on renewing an address for a network this printer is
+# no longer associated to. That is worse than having no address, because it
+# looks like success to everything that checks.
+#
+# Safe on a restart rather than a stop because `run` asks the supplicant
+# whether it is still associated and re-runs the action script if it is.
+killall udhcpc 2>/dev/null
+exit 0

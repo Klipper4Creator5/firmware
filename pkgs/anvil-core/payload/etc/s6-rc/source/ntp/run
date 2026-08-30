@@ -11,19 +11,18 @@
 #
 # A LONGRUN, NOT A ONESHOT AFTER WIFI, and the difference is the whole design:
 #
-#   * The wifi oneshot runs ONCE, at boot, and returns immediately (read its
-#     `up`: the waits are backgrounded on purpose). A time sync hung off the
-#     end of it would fire while wlan0 was still associating, fail, and never
-#     be tried again -- and would not fire at all for the printer whose owner
-#     joins a network from the HelixScreen panel an hour after boot.
+#   * A time sync hung off the end of `wifi` would fire while wlan0 was
+#     still associating, fail, and never be tried again -- and would not fire
+#     at all for the printer whose owner joins a network from the HelixScreen
+#     panel an hour after boot.
 #   * A clock is not set once. There is no RTC to hold the answer, so the
 #     correction has to be maintained for as long as the printer is up.
 #
 # sntpd does both by design: with the network down it logs "will try again
 # later" and keeps its schedule, rather than exiting, so THIS SERVICE NEEDS NO
-# WIFI DEPENDENCY -- which is just as well, because nothing may depend on the
-# wifi oneshot (see its `up`). It syncs whenever the network turns up, from
-# whichever direction.
+# WIFI DEPENDENCY -- and would gain nothing from one, because `wifi` up means
+# a supplicant is running, not that anything is routable. It syncs whenever
+# the network turns up, from whichever direction.
 MODDIR=/usr/data/anvil
 
 # anvil-env.sh is read HERE, not inherited. s6-supervise starts this script

@@ -23,8 +23,9 @@ DB = MODDIR + "/etc/s6-rc/compiled/current"
 # sets are in ok-all on a real printer.
 #
 # BOOT_SET is the longruns that need nothing but the rootfs, so s6-supervise
-# must report them up here. wifi is NOT in it despite needing no hardware: it
-# is a oneshot, so there is no supervised servicedir for s6-svstat to read.
+# must report them up here. wifi and wifi-dhcp are longruns now and do have
+# supervised servicedirs, but they are NOT in it: both want a real wlan0, and
+# on a machine without one they report the interface missing and exit.
 BOOT_SET = {"nginx", "moonraker", "ntp"}
 # HW_SET cannot come up on a replica, so it is asked of the compiled database
 # instead -- still where a missing or misnamed service shows:
@@ -36,8 +37,10 @@ BOOT_SET = {"nginx", "moonraker", "ntp"}
 #                the live list
 #   ui           needs no hardware itself, but depends on ff-startup, so the
 #                transition never reaches it
-#   wifi         the oneshot above
-HW_SET = {"camera", "klipper", "mcu-bringup", "ff-startup", "ui", "wifi"}
+#   wifi         wants /sys/class/net/wlan0 and the 8821cu behind it
+#   wifi-dhcp    wants wifi's control socket, so it follows wifi down
+HW_SET = {"camera", "klipper", "mcu-bringup", "ff-startup", "ui", "wifi",
+          "wifi-dhcp"}
 
 # EVERY s6-rc-init HERE NEEDS THIS, for the reason firmwareExe needs it: the
 # default deadline is TAIN_INFINITE_RELATIVE, which does not fit this printer's
@@ -157,8 +160,8 @@ def test_the_supervisor_is_the_one_we_shipped(box):
 
 def test_execline_shipped_too(box):
     """Every oneshot's `up` runs through s6rc-oneshot-runner, whose `run` is
-    execline. Without execlineb the wifi oneshot fails at exec and nothing
-    else does, which reads as a wifi bug."""
+    execline. Without execlineb mcu-bringup and ff-startup fail at exec while
+    every longrun starts fine, which reads as a klipper bug."""
     assert box.file(MODDIR + "/bin/execlineb").executable
 
 

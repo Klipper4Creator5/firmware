@@ -292,9 +292,9 @@ pkgs/anvil-core/            what makes the machine ours, and nothing else
   payload/  anvil-env.sh      PATH/LD_LIBRARY_PATH/FF_PYTHON -- sourced
             bin/              ff-startup.py, ff_mcu_bringup.py, ffscreen.py,
                               wifi-action.sh
-            etc/s6-rc/source/ one directory per service: wifi, nginx, moonraker,
-                              camera, klipper, ui, mcu-bringup, ff-startup,
-                              ok-all
+            etc/s6-rc/source/ one directory per service: wifi, wifi-dhcp,
+                              nginx, moonraker, camera, klipper, ui, ntp,
+                              mcu-bringup, ff-startup, ok-all
             nginx/nginx.conf
             bin/anvil-link-prog.sh  links the two below, and the configs, into
                               the absolute paths the stock scripts read

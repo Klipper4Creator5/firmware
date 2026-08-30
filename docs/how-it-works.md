@@ -54,7 +54,9 @@ compiled into a database at build time and supervised by `s6-svscan`:
 ```
 mcu-bringup  oneshot   toolhead boards out of their bootloaders
 klipper      longrun   klippy            (depends on mcu-bringup)
-wifi         oneshot   wlan0 + wpa_supplicant + udhcpc
+wifi         longrun   wpa_supplicant on wlan0
+wifi-dhcp    longrun   udhcpc, on wpa_supplicant's association
+                       events                      (depends on wifi)
 nginx        longrun   nginx (Mainsail) on :80
 moonraker    longrun   moonraker on :7125
 camera       longrun   mjpg-streamer on :8080 (nginx proxies it at /webcam/)
