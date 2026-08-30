@@ -106,7 +106,7 @@ adopting s6 -- not the supervisor itself.
 then pack `bin/`, `libexec/` and `runit/` into a tarball and run the gate.
 
 That is how the COMPARISON above was measured, and it is kept here for the
-record. It is no longer how s6 is built: the answer is s6, so `bin/patch.sh`
+record. It is no longer how s6 is built: the answer is s6, so `bin/payload.sh`
 now cross-compiles skalibs and s6 from the tarballs pinned in `versions.env`,
 inside the repo's own build image, caches the result in `work/.s6` and stages
 it into the payload. Nothing builds runit or execline any more, so only

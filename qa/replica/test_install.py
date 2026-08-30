@@ -281,7 +281,7 @@ def test_the_klipper_service_runs_the_payload_tree_on_our_python(box):
 def test_klippy_imports_resolve_on_our_python(box):
     """cffi, greenlet, pyserial and jinja2 are anvil-klipper's Depends. They
     used to arrive as anvil-moonraker's, or from a hardcoded list in
-    bin/patch.sh -- so a BUILD_MOONRAKER=0 build shipped a klippy that dies
+    bin/payload.sh -- so a BUILD_MOONRAKER=0 build shipped a klippy that dies
     the first time it opens an MCU."""
     for mod in ("cffi", "greenlet", "serial", "jinja2"):
         r = box.sh(". %s/anvil-env.sh; $FF_PYTHON -c 'import %s' 2>&1"

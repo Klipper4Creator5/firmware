@@ -17,23 +17,13 @@
 # up on whatever it had before, which is the right answer to "this package is
 # not for this machine".
 #
-# WHY OURS. FlashForge's version of this file drives four component installers
-# (control, kernel, software, library), each of which extracts a tarball into
-# /usr/prog/PROGRAM/<name>/, verifies md5sum.list, wipes every previous version
-# directory and runs the run.sh inside it. Our install used to reach the printer
-# by being spliced into the software component's run.sh -- which meant shipping
-# a 26MB component, 21MB of it FlashForge's own firmwareExe, for the sake of one
-# exec hook. We own this file instead. See docs/how-it-works.md.
+# It does two jobs. FlashForge's four components (control, kernel, software,
+# library) are installed when a package carries them -- a --full one does --
+# and then the mod payload is installed on top. A slim package carries no
+# component at all and install_component skips each in turn, which is what lets
+# a release leave /usr/prog entirely alone.
 #
-# It still installs the stock components when a package carries them, because
-# --full packages do. A slim package carries none and the loop skips them,
-# exactly as FlashForge's own `ls -1t <name>-*.tar.xz` guard did.
-#
-# WHAT WENT AND IS NOT COMING BACK: create_key() (defined, never called, and it
-# built its paths without a slash, so it would have written /usr/progprivate.pem);
-# SSID_NAME/SSID_PASS (assigned, never read); the commented-out kernel version
-# gate; and the screwflag factory bypass for the model check, which we never
-# ship a screwflag for.
+# See docs/how-it-works.md for where this sits in the boot chain.
 #
 # This runs under the printer's busybox ash. qa/static/test_shell_syntax.py
 # parses it with that in mind; keep it dialect-clean.
@@ -57,9 +47,10 @@ PID=0029
 # rewrite the replica's shadow and drop a password file on /mnt every run.
 MOD_PW_AUTO=0
 
-# Where the software component landed, once it has. Only the root password
-# block at the bottom reads it, and only when a package carries the component.
-SW_COMPONENT_DIR=""
+# Rewritten by bin/pack.sh from ROOT_PW_HASH, and empty in the checkout for the
+# same reason MOD_PW_AUTO is 0. This is how a baked-in hash reaches the
+# printer: it is applied to /usr/prog/etc/shadow on the machine, below.
+MOD_ROOT_PW_HASH=''
 
 # ---------------------------------------------------------------- the gates --
 # These print to the console rather than to the log: they run before there is
@@ -138,7 +129,6 @@ install_component() {
     done
     mv "$dest/temp" "$dest/$version"
     sync
-    [ "$name" = software ] && SW_COMPONENT_DIR="$dest/$version"
     if [ -f "$dest/$version/run.sh" ]; then
         chmod a+x "$dest/$version/run.sh"
         "$dest/$version/run.sh"
@@ -147,9 +137,11 @@ install_component() {
 }
 
 # ------------------------------------------------------ backups, taken first --
-# BEFORE any component is installed: the software component ships /usr/prog's
-# passwd and shadow and its run.sh copies them over the live ones, so a backup
-# taken afterwards would capture the package's files rather than the printer's.
+# BEFORE any component is installed. A slim package carries none and nothing
+# here would overwrite these anyway, but a --full package carries FlashForge's
+# own and their run.sh copies passwd and shadow over the live ones -- a backup
+# taken afterwards would then capture the package's files rather than the
+# printer's.
 #
 # app_startup.sh is deliberately not in this list. The mod replaces firmwareExe
 # instead, so the stock boot scripts are never modified and never need
@@ -174,18 +166,9 @@ if [ ! -d "$MODDIR/backup/stock" ]; then
     cp -a "$BACKUP" "$MODDIR/backup/stock" && echo "kept pristine copy at backup/stock"
 fi
 
-# The root password the printer has RIGHT NOW -- random from a first install,
-# or set by hand with `passwd` -- lives only in this shadow, and the software
-# component is about to replace the file. Record the hash so the block at the
-# bottom can put it back: that is what keeps the password stable across
-# updates.
+# A password hash left on disk by installs that predate this one. Nothing reads
+# it any more; do not leave a secret lying in $MODDIR.
 rm -f "$MODDIR/.prev-root-hash"
-if [ -f /usr/prog/etc/shadow ]; then
-    awk 'BEGIN{FS=":"} $1=="root"{print $2}' /usr/prog/etc/shadow \
-        > "$MODDIR/.prev-root-hash" 2>/dev/null &&
-        chmod 600 "$MODDIR/.prev-root-hash" &&
-        echo "recorded current root password hash"
-fi
 sync
 
 # FlashForge clears their own NIM logs on every flash. One line, and it leaves
@@ -258,7 +241,7 @@ if [ -n "$MODTAR" ]; then
         # the update and sits next to the one that replaced it. The installed
         # set must end up exactly the shipped set.
         #
-        # bin/patch.sh ships a manifest of every path the payload installs --
+        # bin/payload.sh ships a manifest of every path the payload installs --
         # one per line, relative to $MODDIR, files and directories both, itself
         # included. Deleting what the LAST manifest lists keeps that property
         # (a script the last payload shipped and this one does not is named in
@@ -283,7 +266,7 @@ if [ -n "$MODTAR" ]; then
                     # loop runs as root with $MODDIR pasted onto the front of
                     # whatever it says. An absolute path escapes $MODDIR
                     # outright; `..` walks out of it one component at a time.
-                    # Neither can come out of bin/patch.sh, so one appearing
+                    # Neither can come out of bin/payload.sh, so one appearing
                     # here means the file is damaged or forged, and the answer
                     # is to say so and skip rather than to find out what it
                     # would have deleted. The `..` test is deliberately blunt
@@ -541,53 +524,56 @@ find $MODDIR/klipper/klippy -name '__pycache__' -type d -exec rm -rf {} + 2>/dev
 find /usr/prog/klipper/klippy -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
 sync
 
-# ---- root password, chosen here when none was baked in ---------------------
-# The normal path is ROOT_PW_HASH at build time: patch.sh writes that hash
-# straight into the shadow file the software component ships. When it is empty
-# the package cannot carry a password -- one file is flashed by many people, so
-# any baked-in default would be the SAME password on every printer. Pick a
-# random one here instead, on the machine, and write it onto the USB stick we
-# are being flashed from. Every printer gets a different password and it is
+# ---- the root password ------------------------------------------------------
+# Two ways in, and neither writes a shadow file into a package any more: this
+# script edits /usr/prog/etc/shadow on the machine. (/etc is a bind mount of
+# /usr/prog/etc, so that IS the live file dropbear authenticates against.)
+#
+# BAKED. ROOT_PW_HASH at build time, put here by bin/pack.sh. Applied on every
+# flash, which is what the old path did too -- the hash rode in the software
+# component's shadow and the component's run.sh copied it over the live file
+# every time. Someone who bakes a hash into their own build is saying which
+# password their printers have.
+#
+# RANDOM. An empty ROOT_PW_HASH cannot ship a password at all: one file is
+# flashed by many people, so a baked-in default would be the SAME password on
+# every printer. Pick a random one here, on the machine, and write it onto the
+# USB stick being flashed from. Every printer gets a different one and it is
 # never guessable from anything printed on the case.
 #
 # ORDER MATTERS: the password goes onto the stick and is read back BEFORE the
 # printer starts accepting it. A password that was set but never landed on the
-# stick is a locked-out printer, so if the write fails we change nothing at
-# all and say so.
+# stick is a locked-out printer, so if the write fails we change nothing at all
+# and say so.
 #
-# An UPDATE must not change the password. The backup block at the top recorded
-# the hash the printer had before the software component replaced the shadow
-# file; when that hash differs from the one the package shipped, a password was
-# already set -- by a previous install, or by hand with `passwd` -- and it is
-# put back unchanged. The stick only ever sees a password once, on the first
-# install.
-PW_KEEP=""
-if [ "$MOD_PW_AUTO" = "1" ] && [ -f $MODDIR/.prev-root-hash ]; then
-    PREV_HASH=`cat $MODDIR/.prev-root-hash 2>/dev/null`
-    # Compare against the hash the PACKAGE ships, not the live file: the
-    # software component has already copied its shadow over the live one by
-    # now, and if that copy ever fails the live file still holds the old
-    # password -- which must read as "set by someone", not as "fresh".
-    SHIPPED_HASH=""
-    [ -n "$SW_COMPONENT_DIR" ] && [ -f "$SW_COMPONENT_DIR/shadow" ] &&
-        SHIPPED_HASH=`awk 'BEGIN{FS=":"} $1=="root"{print $2}' "$SW_COMPONENT_DIR/shadow" 2>/dev/null`
-    [ -n "$SHIPPED_HASH" ] ||
-        SHIPPED_HASH=`awk 'BEGIN{FS=":"} $1=="root"{print $2}' /usr/prog/etc/shadow 2>/dev/null`
-    case "$PREV_HASH" in
-    '$'*) [ "$PREV_HASH" != "$SHIPPED_HASH" ] && PW_KEEP="$PREV_HASH" ;;
-    esac
-fi
-rm -f $MODDIR/.prev-root-hash
-if [ -n "$PW_KEEP" ]; then
-    if awk -v h="$PW_KEEP" 'BEGIN{FS=OFS=":"} $1=="root"{$2=h} {print}' \
+# AN UPDATE MUST NOT REROLL IT, and the test for that is one comparison. Root
+# has a real password on a stock printer -- FlashForge ship the hash below, the
+# same one on every machine, they just never published what it unlocks -- so
+# the question is not "does root have a hash" but "is it still THEIRS". If it
+# is, nobody has set one, by us or by hand with `passwd`, and it is ours to
+# set. If it is not, someone has, and it is not ours to touch.
+#
+# Taken from the shadow in the stock software component
+# (software-1.9.7.tar.xz, Creator5Pro). If FlashForge ever change it, a printer
+# on the new firmware reads as "password already set" and never gets one --
+# bin/pack.sh compares this against the stock package it was built from and
+# fails the build rather than let that ship silently.
+FF_STOCK_PW_HASH='$1$ax/gSlz5$poL89lSQB9./7fUZwc3ej/'
+
+LIVE_HASH=`awk 'BEGIN{FS=":"} $1=="root"{print $2}' /usr/prog/etc/shadow 2>/dev/null`
+
+if [ -n "$MOD_ROOT_PW_HASH" ]; then
+    if awk -v h="$MOD_ROOT_PW_HASH" 'BEGIN{FS=OFS=":"} $1=="root"{$2=h} {print}' \
             /usr/prog/etc/shadow > /usr/prog/etc/shadow.new &&
         mv -f /usr/prog/etc/shadow.new /usr/prog/etc/shadow; then
         chmod 600 /usr/prog/etc/shadow
-        echo "root password preserved from the previous install"
+        echo "root password set (the hash baked into this build)"
     else
-        echo "!! could not restore the previous root password hash"
-        echo "!! root password is the stock one -- no ssh login"
+        echo "!! could not write the baked root password hash"
+        echo "!! root password is whatever it was -- ssh may not work"
     fi
+elif [ "$MOD_PW_AUTO" = "1" ] && [ "$LIVE_HASH" != "$FF_STOCK_PW_HASH" ]; then
+    echo "root password already set on this printer -- left alone"
 elif [ "$MOD_PW_AUTO" = "1" ]; then
     NEW_PASSWORD=`tr -dc A-Za-z0-9 < /dev/urandom 2>/dev/null | head -c 14`
     NEW_HASH=""

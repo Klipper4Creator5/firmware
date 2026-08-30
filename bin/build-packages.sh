@@ -9,7 +9,7 @@
 # headers out of anvil-zlib_*.ipk. The archives themselves are opkg-utils'
 # work; what is left here is laying out the tree it packages.
 #
-# Needs no stock FlashForge package, unlike bin/patch.sh, so packaging stays
+# Needs no stock FlashForge package, unlike bin/payload.sh, so packaging stays
 # runnable in CI on a bare checkout.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"

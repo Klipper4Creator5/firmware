@@ -60,7 +60,7 @@ the same shape `case-services.sh` used. Two things are wrong with it:
   produced. The real installer could break and nothing here would go red.
 - It can only place what a recipe keeps in the repo, so **anything the build produces is
   missing**. The cross-compiled s6 is the obvious one: it lives in `work/.s6`
-  and `bin/patch.sh` stages it into the package, so a hand-placed payload has
+  and `bin/payload.sh` stages it into the package, so a hand-placed payload has
   no supervisor at all — which is why the tests had to carry a stand-in
   scanner, and why one of them had to ask whether it was testing the stand-in
   before it could mean anything.
@@ -197,7 +197,7 @@ it. "I could not find the tool" does not.
 
 **There are three skips, and they do not meet that bar.**
 `qa/static/test_ipk.py` reads `work/modpayload-root`, which only exists after
-`bin/patch.sh` has run, and skips when it is absent. That is "this machine is
+`bin/payload.sh` has run, and skips when it is absent. That is "this machine is
 not set up", which the rule above says must fail -- but making it fail would
 put a stock FlashForge package in the way of a lane whose whole point is that
 it needs nothing.
@@ -336,7 +336,7 @@ it, producing a byte-identical servicedir.)
 **It is gone, and what it cost is worth stating.** It needed an
 `s6-rc-compile` that runs on the build host, and the only way to get one was a
 second NATIVE build of skalibs, execline, s6 and s6-rc -- 110 lines of
-`bin/patch.sh` whose entire hazard was that both stacks had to be
+`bin/payload.sh` whose entire hazard was that both stacks had to be
 `--prefix=$MODDIR` or the `#!` baked into the oneshot runner pointed at the
 build host's execline. The database is compiled in the replica now, by the
 `s6-rc-compile` the payload ships, so that hazard cannot exist. The price is
@@ -463,7 +463,7 @@ Three gates were dropped rather than ported, as a coverage decision:
 |---|---|---|
 | the pytest gate | `run-tests.py` ran pytest and re-parsed its XML | none at the time -- `make test-py` and CI ran pytest directly; both went when `test/` was deleted |
 | the rootfs extraction | ran `unpack.sh` + `extract_rootfs` inline | none -- `make rootfs` does exactly this, and the replica lane already fails with that command in the message |
-| **the packaging build on a synthetic stock package** | `make-stock-fixture.sh`, then `unpack`/`patch`/`pack`/`verify.sh` | **real: `bin/unpack.sh`, `patch.sh` and `pack.sh` now have no test at all.** `verify.sh` has since been retired outright -- see below |
+| **the packaging build on a synthetic stock package** | `make-stock-fixture.sh`, then `unpack`/`patch`/`pack`/`verify.sh` | **real: `bin/unpack.sh`, `payload.sh` and `pack.sh` now have no test at all.** `verify.sh` has since been retired outright -- see below |
 
 That last row is the one to be uneasy about, and it is recorded here rather
 than buried in a commit message. The build path is what produces the `.tgz` a
@@ -483,7 +483,7 @@ again, and should know two things it had learnt. `make_fixture` staged into
 mounts host-side, so a path under the build container's `/tmp` does not exist
 as far as the daemon is concerned. And the shape it reproduced -- the
 software component's `run.sh` ending in `tar -xf
-$WORK_DIR/klipper/chelper.tar` -- is what `bin/patch.sh` depended on while the
+$WORK_DIR/klipper/chelper.tar` -- is what `bin/payload.sh` depended on while the
 klippy tree still went out on the firmware partition; the tree lives at
 `$MODDIR/klipper` now and neither that section nor the `chelper.tar` exists. Recover both from git history rather than from a fresh reading of
 a stock package.
@@ -560,7 +560,7 @@ And two things that were under `test/` and are not tests, now at
 
 - **`ffsim/`** -- 630 lines, down from 1,657, and no longer a test framework.
   `extract_rootfs` is what `make rootfs` runs; `Replica` is what
-  `make boot-screen-sim` and, more to the point, **`bin/patch.sh`** use --
+  `make boot-screen-sim` and, more to the point, **`bin/payload.sh`** use --
   the payload is assembled by running the printer's own `opkg` inside a
   replica, so this is build-path code that happened to live in the test tree.
 - **`printer/`** -- the `Dockerfile`, `entrypoint.sh`, `assemble.sh`,

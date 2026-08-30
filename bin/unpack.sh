@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# 1/3 -- decrypt the stock package and open the software component.
+# 1/3 -- decrypt the stock package and open what a release needs from it.
 #   ./bin/unpack.sh [<file>]     default: $STOCK_TGZ from config.env
-# -> work/outer/ (the 8 top-level files), work/software/ (the tree to edit)
+# -> work/outer/    the 8 top-level files. start.img, end.img and play ship;
+#                   with FULL=1 so do kernel, control and library.
+# -> work/software/ FlashForge's software component, opened but NOT shipped.
+#                   bin/pack.sh reads two things out of it -- the printer.base.cfg
+#                   to diff ours against, and the stock root hash the installer
+#                   compares a live shadow to.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 
@@ -56,6 +61,6 @@ if [ -f "$STOCK_BASE" ] && [ -f "$OURS" ]; then
 fi
 
 echo
-echo "Unpacked. Edit work/software/ then run ./bin/pack.sh"
+echo "Unpacked. Now run ./bin/payload.sh, then ./bin/pack.sh"
 echo "  stock software version: $STOCK_SW_VER"
 echo "  files: $(find work/software -type f | wc -l)"

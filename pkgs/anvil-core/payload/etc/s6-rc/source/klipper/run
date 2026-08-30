@@ -26,7 +26,7 @@ fi
 # installs, on the CPython 3.13 anvil-python installs. There is no /usr/prog in
 # this command line any more.
 #
-# The tree used to be read from /usr/prog/klipper/klippy -- a copy bin/patch.sh
+# The tree used to be read from /usr/prog/klipper/klippy -- a copy bin/payload.sh
 # staged into the software component out of this very package, so that
 # FlashForge's run.sh would place it on the firmware partition. Two copies of
 # one tree, and the one that ran was the one a stock flash could overwrite.

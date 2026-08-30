@@ -3,7 +3,7 @@
 Ported from test/run-tests.py's check_shell_syntax and check_no_bashisms. The
 logic is theirs; what changes is the granularity. There, one gate covered ~25
 files and reported one bit, so a syntax error in S62moonraker and a syntax
-error in patch.sh were the same red line. Here each file is its own test, named
+error in payload.sh were the same red line. Here each file is its own test, named
 after itself, and `pytest -k S62moonraker` runs exactly one.
 
 The original's docstring made a deliberate choice worth preserving:

@@ -75,7 +75,7 @@ pkg_end
 | `pkg_end` | seal the cache |
 
 `pkg_buildopkg` is not a recipe verb: it builds the x86-64 opkg that
-`bin/patch.sh` assembles the payload with, cached at `work/.opkg-host`. It has
+`bin/payload.sh` assembles the payload with, cached at `work/.opkg-host`. It has
 to be configured `--prefix=$MODDIR` and `--disable-shared` — opkg bakes its
 state directory into both the binary and libopkg at compile time — and it
 checks its own output for both.
@@ -132,7 +132,7 @@ retry with different flags. See `pkgs/3rdparty/openssl/build.sh`.
    | directory | where its contents end up |
    | --- | --- |
    | `payload/` | staged into the .ipk, laid out exactly as it lands under `$MODDIR` |
-   | `prog/` | placed on `/usr/prog` by `bin/patch.sh` — not packageable, because every path in a package of ours is under the prefix |
+   | `prog/` | placed on `/usr/prog` by `bin/payload.sh` — not packageable, because every path in a package of ours is under the prefix |
    | `seed/` | templated or seeded user state, deliberately not a package member |
 
    A recipe with a `payload/` needs `PKG_STAMP_EXTRA="$(pkg_payload_hash)"`.

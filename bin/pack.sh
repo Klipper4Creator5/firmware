@@ -1,11 +1,27 @@
 #!/usr/bin/env bash
-# 3/3 -- repack work/software into an installable USB package.
-#   ./bin/pack.sh [--full|--plain]    default is slim: software component only
+# 3/3 -- build the installable USB package.
+#   ./bin/pack.sh [--full|--plain]    default is slim: our installer + payload
 #
-# Slim works because the stock installer skips any absent component -- every
-# update_<name> guards on `ls -1t <name>-*.tar.xz` -- so the kernel, rootfs and
-# MCU firmware are left untouched. start.img, end.img and play still ship:
-# runFirmwareExe.sh uses them unconditionally.
+# SLIM SHIPS NO FLASHFORGE COMPONENT AT ALL -- not the kernel, not the rootfs,
+# not the MCU firmware, and since we own the installer, not the 26MB software
+# component either. Two files do the work:
+#
+#     runFirmwareExe.sh   ours; app_startup.sh runs it, and it IS the install
+#     anvil.tar.xz        the payload, everything under $MODDIR
+#
+# plus start.img, end.img and play, which are what the owner sees and hears
+# while it runs.
+#
+# Shipping no software component is what keeps app_startup.sh's own recovery
+# working: /usr/prog/PROGRAM/software goes on holding FlashForge's version
+# directory and their firmwareExe inside it, so the five-second watchdog there
+# has a working UI to restore when an install goes wrong. Nothing in that
+# component was ever ours to ship -- their klippy tree, their wifi module and
+# their configs, going straight back to the partition they were already on.
+#
+# --full carries kernel/control/library verbatim, and the installer installs
+# any component a package does carry: absent ones are skipped, exactly as
+# FlashForge's own `ls -1t <name>-*.tar.xz` guard did.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 
@@ -19,9 +35,10 @@ for a in "$@"; do
     esac
 done
 
-[ -d work/software ] || { echo "run ./bin/unpack.sh first" >&2; exit 1; }
-STOCK_SW_VER=$(cat work/.stock_sw_ver)
-OUT_VER="${SW_VER:-$STOCK_SW_VER}"
+# work/outer, not work/software: no component is shipped, but start.img,
+# end.img, play and (with --full) the other three components still come out of
+# the stock package bin/unpack.sh opened.
+[ -d work/outer ] || { echo "run ./bin/unpack.sh first" >&2; exit 1; }
 
 rm -rf work/stage work/out
 mkdir -p work/stage work/out
@@ -35,24 +52,7 @@ else
     PW_AUTO=0
 fi
 
-# --- 1. md5sum.list -- the installer hard-gates on it. Paths must be "./rel",
-#     and the list must not contain itself.
-echo ">> regenerating md5sum.list"
-( cd work/software
-  rm -f md5sum.list
-  find . -type f ! -name md5sum.list -print0 \
-      | sort -z \
-      | xargs -0 md5sum > md5sum.list
-  echo "   $(wc -l < md5sum.list) entries" )
-
-# --- 2. software-<ver>.tar.xz, NOT actually xz. FlashForge's own components
-#     are plain tars carrying a .tar.xz name and the installer runs a bare
-#     `tar -xvf`, so a real xz file does not install.
-echo ">> building software-$OUT_VER.tar.xz (plain tar, matching stock)"
-tar -cf "work/stage/software-$OUT_VER.tar.xz" -C work/software .
-ls -lh "work/stage/software-$OUT_VER.tar.xz" | awk '{print "   "$5}'
-
-# --- 3. the rest of the outer package
+# --- 1. the outer package
 #
 # Which model this package installs on. Resolved HERE rather than at emit time
 # because two things need it now: the gate baked into our installer, and the
@@ -82,23 +82,63 @@ fi
 # this name, so owning the name is all it takes to own the install -- see the
 # header of installer/runFirmwareExe.sh for the contract and the exit codes.
 #
-# Three lines are rewritten rather than being config the script reads: it runs
+# Four lines are rewritten rather than being config the script reads: it runs
 # on a printer with nothing beside it but the package it came in, so the gate
 # and the password mode have to be IN it. The `^NAME=` shape is what
 # bin/unpack.sh and tools/replica/printer/entrypoint.sh read back.
 echo ">> generating runFirmwareExe.sh ($OUT_MACHINE/$OUT_PID, pw-auto=$PW_AUTO)"
+# SINGLE-QUOTED in the generated file, and that is not style. A crypt hash is
+# `$6$salt$...`, and an unquoted assignment would have the printer's shell
+# expand $6 as a positional parameter and ship a truncated hash -- a printer
+# nobody can log into. Crypt output is [./A-Za-z0-9$] so it can never contain
+# the quote that would close it early.
+#
+# `|` as the sed delimiter for the same reason: a hash is full of `/`. & and \
+# are escaped in case ROOT_PW_HASH is ever something stranger than a hash.
+_pw_esc=$(printf '%s' "${ROOT_PW_HASH:-}" | sed -e 's/[\\&|]/\\&/g')
 sed -e "s/^MACHINE=.*/MACHINE=$OUT_MACHINE/" \
     -e "s/^PID=.*/PID=$OUT_PID/" \
     -e "s/^MOD_PW_AUTO=.*/MOD_PW_AUTO=$PW_AUTO/" \
+    -e "s|^MOD_ROOT_PW_HASH=.*|MOD_ROOT_PW_HASH='$_pw_esc'|" \
     installer/runFirmwareExe.sh > work/stage/runFirmwareExe.sh
 chmod +x work/stage/runFirmwareExe.sh
 # The substitutions are not optional: a package whose gate still says
-# Creator5Pro because a sed missed would install on the wrong machine.
-for _want in "MACHINE=$OUT_MACHINE" "PID=$OUT_PID" "MOD_PW_AUTO=$PW_AUTO"; do
-    grep -qx "$_want" work/stage/runFirmwareExe.sh || {
-        echo "runFirmwareExe.sh has no '$_want' line -- the sed above missed" >&2
+# Creator5Pro because a sed missed would install on the wrong machine, and one
+# whose password line did not take would ship an unreachable printer.
+for _want in "MACHINE=$OUT_MACHINE" "PID=$OUT_PID" "MOD_PW_AUTO=$PW_AUTO" \
+             "MOD_ROOT_PW_HASH='${ROOT_PW_HASH:-}'"; do
+    grep -qxF "$_want" work/stage/runFirmwareExe.sh || {
+        echo "runFirmwareExe.sh has no '${_want%%=*}=' line as expected -- the sed above missed" >&2
         exit 1; }
 done
+# It must also still PARSE after the substitutions: a hash with a stray
+# character in it would otherwise reach a printer as a syntax error, and the
+# only symptom would be a package that installs nothing.
+sh -n work/stage/runFirmwareExe.sh || {
+    echo "the generated runFirmwareExe.sh does not parse" >&2; exit 1; }
+
+# FF_STOCK_PW_HASH is how the installer tells "nobody has set a root password
+# on this printer" from "someone has". It is hardcoded there, and this is the
+# one moment a build can check it: work/software is the stock component this
+# package was built from, and its shadow is where the constant came from.
+#
+# Getting it wrong is silent and total -- every printer reads as "already set",
+# none is ever given a password, and nobody can ssh in -- so a mismatch fails
+# the build rather than shipping.
+if [ -f work/software/shadow ]; then
+    _ff_live=$(awk 'BEGIN{FS=":"} $1=="root"{print $2}' work/software/shadow)
+    _ff_baked=$(sed -n "s/^FF_STOCK_PW_HASH='\(.*\)'$/\1/p" installer/runFirmwareExe.sh)
+    if [ "$_ff_live" != "$_ff_baked" ]; then
+        echo "FF_STOCK_PW_HASH is stale: installer/runFirmwareExe.sh has" >&2
+        echo "    $_ff_baked" >&2
+        echo "  but this stock package's shadow has" >&2
+        echo "    $_ff_live" >&2
+        echo "  Update the constant. Until you do, no printer on this firmware" >&2
+        echo "  would ever be given a root password -- every one would read as" >&2
+        echo "  'password already set' and ssh would stay shut." >&2
+        exit 1
+    fi
+fi
 for f in start.img end.img play; do
     [ -f "work/outer/$f" ] && cp -f "work/outer/$f" work/stage/
 done
@@ -109,12 +149,12 @@ if [ "$SLIM" = "0" ]; then
         [ -f "$f" ] && cp -f "$f" work/stage/
     done
 else
-    echo ">> slim: software component only -- kernel, rootfs and MCU untouched"
+    echo ">> slim: installer + payload only -- no FlashForge component is reflashed"
 fi
 echo ">> outer payload:"
 ls -la work/stage | sed 's/^/   /'
 
-# --- 4. emit
+# --- 2. emit
 BASE="${MOD_NAME:-anvil}-${MOD_VER:?}"
 
 if [ "$PLAIN" = "1" ]; then

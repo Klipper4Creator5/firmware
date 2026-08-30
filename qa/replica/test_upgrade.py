@@ -11,7 +11,7 @@ answer is about the printer.
 WHY IT MATTERS. Deleting whole directories at the start of an update is right
 only while every file under them is ours, and $MODDIR/bin holds the supervisor
 and the interpreter and is the obvious place for someone to leave a script of
-their own. So bin/patch.sh ships a manifest of the paths the payload installs
+their own. So bin/payload.sh ships a manifest of the paths the payload installs
 and runFirmwareExe.sh deletes what the PREVIOUS list named, nothing else. Two
 claims that pull against each other: either alone is trivially satisfiable
 (delete everything, or delete nothing) and only holding both at once means
@@ -83,12 +83,12 @@ INSTALL_T = 300
 def _pack(box, src, with_manifest):
     """Stage `src` as the payload runFirmwareExe.sh will find on the disk.
 
-    The manifest is generated the way bin/patch.sh generates it -- find over
+    The manifest is generated the way bin/payload.sh generates it -- find over
     the staged tree, plus the manifest's own name, LC_ALL=C sort -u -- rather
     than written out by hand here, because a hand-written fixture list would
     be a list of what we HOPED was in the tree.
 
-    One deviation, and it is not a difference in the result: patch.sh drops
+    One deviation, and it is not a difference in the result: payload.sh drops
     the tree's own root with `find -mindepth 1`, which is a GNU extension the
     printer's busybox find need not have. This runs on the printer, so the
     root is dropped with the grep the case script used instead.

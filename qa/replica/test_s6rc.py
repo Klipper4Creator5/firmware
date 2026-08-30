@@ -104,7 +104,7 @@ def test_the_boot_set_is_up(booted):
 
 
 def test_the_scandir_was_populated_by_s6_rc_init(booted):
-    """It ships EMPTY -- bin/patch.sh stopped copying servicedirs in when the
+    """It ships EMPTY -- bin/payload.sh stopped copying servicedirs in when the
     database took over -- so anything here arrived at boot."""
     names = booted.sh("ls -1 %s" % SCANDIR).out.split()
     assert "nginx" in names, "s6-rc-init laid nothing down: %s" % names

@@ -62,8 +62,9 @@ your copy, landing the new version beside it as `.mod-new`.
 
 Everything the mod installs is under `/usr/data/anvil` on the data partition,
 the klippy tree and its extras included, so an OTA cannot delete them. What it
-does rewrite is the software component the mod boots from — so re-flash the mod
-after a firmware update. The `#*#` block in `printer.cfg` survives either way.
+does rewrite is `/usr/prog`, and with it the `firmwareExe` the mod boots
+from — so re-flash the mod after a firmware update. The `#*#` block in
+`printer.cfg` survives either way.
 
 ---
 

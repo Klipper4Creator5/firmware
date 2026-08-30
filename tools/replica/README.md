@@ -10,7 +10,7 @@ different things drive it, and only one of them is a suite:
 
 | driver | what it does with it |
 |---|---|
-| `bin/patch.sh` -> `bin/build-payload.py` | **the build path.** The payload is assembled by running the PRINTER'S OWN `opkg` against `/`, inside here. Nothing on the host can do that |
+| `bin/payload.sh` -> `bin/build-payload.py` | **the build path.** The payload is assembled by running the PRINTER'S OWN `opkg` against `/`, inside here. Nothing on the host can do that |
 | `qa/lib/replica.py` | the `replica` lane's `printer` fixture -- holds one container open and probes it |
 | `make rootfs`, `make boot-screen-sim` | unpacking the real userland; rendering the boot frames on the cross-built CPython |
 

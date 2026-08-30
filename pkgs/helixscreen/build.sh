@@ -37,7 +37,7 @@ pkg_stage "$_src" "helixscreen"
 # An optional platform hook rides the same way: no hooks-creator5.sh is in the
 # repo, so a stock checkout ships nothing extra, and dropping one at
 # payload/helixscreen/assets/config/platform/ has it shipped with no edit
-# here. Carried over from bin/patch.sh section 5 unchanged.
+# here. Carried over from bin/payload.sh section 5 unchanged.
 cp -a "$PKG_DIR/payload/." "$PKG_WORK/stage$MODDIR/"
 
 pkg_ship "helixscreen"

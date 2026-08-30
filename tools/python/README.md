@@ -215,7 +215,7 @@ build rather than quietly adding a name to PATH.
 
 **Cold build: 142 seconds** (`tools/python/build.sh`, 16 cores), of which about
 90 is the x86-64 build-python. In the build lane it is ~100s and it happens
-**once**: `bin/patch.sh` caches the cross-built tree in `work/.py313` under a
+**once**: `bin/payload.sh` caches the cross-built tree in `work/.py313` under a
 stamp of all eight versions, so every later build copies rather than compiles.
 The stamp is all eight and not just CPython's, because a bumped OpenSSL under
 an unchanged `PY_VERSION` has to rebuild.
@@ -285,7 +285,7 @@ record and for trying a version bump before it becomes a pin. It is not how
 the shipped interpreter is built: `pkg/python` compiles it inside the repo's
 own build image, from the sha256-pinned tarballs, against the seven static
 libraries the feed builds as their own `-dev` packages, and caches it in
-`work/pkg/python`. `bin/patch.sh` section 5c runs that recipe and stages what
+`work/pkg/python`. `bin/payload.sh` section 5c runs that recipe and stages what
 it produced; it no longer contains a compiler invocation of its own.
 
 The gate, against the tree the build actually produced:

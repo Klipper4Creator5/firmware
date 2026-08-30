@@ -39,7 +39,7 @@ fi
 S6BIN=$MODDIR/bin
 # The s6 scandir: one live servicedir per service, laid down by s6-rc-init.
 SCANDIR=$MODDIR/etc/s6
-# The compiled database. `current` is a symlink bin/patch.sh points at the
+# The compiled database. `current` is a symlink bin/payload.sh points at the
 # stamped directory it built, so this path never changes when the database does.
 S6DB=$MODDIR/etc/s6-rc/compiled/current
 # The scanner outlives the redirection above, so it gets a file of its own. A

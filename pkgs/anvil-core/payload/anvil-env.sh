@@ -112,7 +112,7 @@ export LD_LIBRARY_PATH
 #
 # Note what is NOT on PATH below: $MODDIR/bin is prepended (s6 needs it), and
 # the interpreter is in there, but it is called python3.13 and only that.
-# bin/patch.sh deliberately drops the `python3` symlink CPython installs, so
+# bin/payload.sh deliberately drops the `python3` symlink CPython installs, so
 # that adding our bin/ to PATH cannot quietly change what `python3` means for
 # every process that sources this file.
 FF_PYTHON=$MODDIR/bin/python3.13

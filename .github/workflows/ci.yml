@@ -105,9 +105,9 @@ jobs:
           # and the Klipper fork need, none of which has a BUILD_ flag of its
           # own any more -- BUILD_KLIPPER is gone and the fork is the only
           # Klipper, so its 27MB tarball comes down here with the rest. This
-          # config.env never reaches patch.sh, only fetch-assets.sh.
+          # config.env never reaches payload.sh, only fetch-assets.sh.
           # The actual cross-build of s6 and CPython happens inside the suite,
-          # in bin/patch.sh sections 5b/5c, the first time it runs against a
+          # in bin/payload.sh sections 5b/5c, the first time it runs against a
           # vendor/ that now has what those sections need.
           cat > config.env <<'CFG'
           BUILD_MAINSAIL=0
@@ -237,7 +237,6 @@ jobs:
           cat > config.env <<CFG
           MOD_NAME=anvil
           MOD_VER=ci
-          SW_VER=""
           TARGET_MACHINE=Creator5Pro
           STOCK_TGZ_CREATOR5PRO="$PWD/stock/Creator5Pro-stock.tgz"
           STOCK_TGZ_CREATOR5="$PWD/stock/Creator5-stock.tgz"
@@ -250,8 +249,8 @@ jobs:
           FF_KEY='FFP0331&*%root'
           CFG
 
-      # The replica gates run ./bin/patch.sh, which needs the real Mainsail
-      # zip and HelixScreen tarball in vendor/ -- patch.sh does not fetch them
+      # The replica gates run ./bin/payload.sh, which needs the real Mainsail
+      # zip and HelixScreen tarball in vendor/ -- payload.sh does not fetch them
       # itself, bin/build.sh does, and the gates do not go through build.sh.
       # Nothing here noticed until this job ran for the first time, because
       # every local run already had a populated vendor/. All are public,
@@ -292,7 +291,7 @@ jobs:
             -v "$PWD":"$PWD" -w "$PWD" \
             -v /var/run/docker.sock:/var/run/docker.sock \
             creator5-fw-build \
-            sh -c './bin/unpack.sh && ./bin/patch.sh && ./bin/pack.sh'
+            sh -c './bin/unpack.sh && ./bin/payload.sh && ./bin/pack.sh'
 
       # The brick-safety gate. No ALLOW_SKIP and no REQUIRE_PRINTER_SIM: qa has
       # no skip mode at all, so a missing docker, daemon, image or package

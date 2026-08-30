@@ -20,7 +20,7 @@
 #
 # Installing for real also means the payload under test is the built package:
 # the cross-compiled s6, the CPython 3.13, the Klipper extras, staged by
-# bin/patch.sh exactly as they ship. Nothing has to be stood in for.
+# bin/payload.sh exactly as they ship. Nothing has to be stood in for.
 #
 # On the printer a successful install ends in `sleep 100000`, waiting for the
 # user to power-cycle. That is the signal this waits for.
