@@ -12,11 +12,10 @@ There is one flash: the firmware package for your model.
 before you flash anything.** Flashing it back is the uninstall, and it is the
 only recovery step that needs nothing but a USB port — no ssh, no screen.
 
-It used to be proven by `make test-recovery`, which installed the mod into the
-replica and flashed the stock package over it. **That gate has been retired
-and nothing has replaced it yet** — see
-[qa-migration.md](qa-migration.md). It passed on its last run, but treat the
-rollback as unverified against the current build.
+**Nothing currently tests that rollback** — no gate installs the mod into the
+replica and flashes the stock package back over it (see
+[qa-migration.md](qa-migration.md)). It worked when it was last checked, but
+treat it as unverified against the current build.
 
 ---
 

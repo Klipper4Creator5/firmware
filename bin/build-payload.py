@@ -94,7 +94,7 @@ def run():
     payload_dir.mkdir(parents=True)
     # --strip-components=1 drops the leading anvil/ the case tarred with.
     # No -p and no --same-owner: the archive carries the printer's root, this
-    # runs as the build user, and run-append.sh extracts as root on the
+    # runs as the build user, and runFirmwareExe.sh extracts as root on the
     # machine -- ownership in the payload means nothing.
     subprocess.run(["tar", "-xf", str(tar), "-C", str(payload_dir),
                     "--strip-components=1"], check=True)
