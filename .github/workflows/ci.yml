@@ -195,7 +195,7 @@ jobs:
 
       - name: Write config.env
         run: |
-          cat > config.env <<CFG
+          cat > config.env <<'CFG'
           MOD_NAME=anvil
           MOD_VER=ci
           TARGET_MACHINE=Creator5Pro
@@ -207,7 +207,7 @@ jobs:
           # commit pinned in versions.env and nothing else. The variable that
           # used to live here, KLIPPER_FORK, is what let v20260824 ship the
           # stock klippy tree by being set to "" in this very file.
-          ROOT_PW_HASH='\$6\$ci\$abcdefghijklmnopqrstuvwxyz'
+          ROOT_PW_HASH='$6$ci$abcdefghijklmnopqrstuvwxyz'
           FF_KEY='FFP0331&*%root'
           CFG
 
