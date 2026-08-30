@@ -138,7 +138,7 @@ get "https://github.com/jedisct1/libsodium/releases/download/$SODIUM_VERSION-REL
 
 # --- opkg
 # zlib is NOT fetched here: the CPython section already pulls that same pin.
-get "https://downloads.yoctoproject.org/releases/opkgs/3rdparty/opkg-$OPKG_VERSION.tar.gz" \
+get "https://downloads.yoctoproject.org/releases/opkg/opkg-$OPKG_VERSION.tar.gz" \
     "$OPKG_TGZ" "$OPKG_SHA256"
 get "https://github.com/libarchive/libarchive/releases/download/v$LIBARCHIVE_VERSION/libarchive-$LIBARCHIVE_VERSION.tar.gz" \
     "$LIBARCHIVE_TGZ" "$LIBARCHIVE_SHA256"
