@@ -170,26 +170,78 @@ changes the timing the closed scorer was tuned against.
 
 ## 5. What the eBoard actually does
 
-Not recovered, and not cheaply recoverable: the scoring is in `work/stock/mcu/eBoard.bin`, 43 KB
-of Cortex-M3 for an `stm32f103xe` at 144 MHz.
+Recovered, contrary to what this section used to say. `work/stock/mcu/eBoard.bin` is 43 KB of
+Cortex-M3 for an `stm32f103xe` at 144 MHz, and it is a stock Klipper MCU build, so the handlers
+are reachable without symbols:
 
-What the data dictionary does tell us is what the board can sample: `config_adxl345`,
-`config_lis2dw` (accelerometer -- this is also the input-shaper board), `config_spi_angle`,
-`config_analog_in`, `config_tmcuart`, plus the eddy coil (`[ff_eddy eboard]`,
-`set_trigger_threshold`). The toolhead accelerometer is the obvious candidate -- the extruder
-motor sits on the same carriage, and a PA error shows up as an abrupt torque step at each of the
-two flow transitions -- but that is inference, not a finding. Do not write it down as fact.
+- `eBoard.hex`'s only extended-linear-address record is `:020000040801F1`, so the image loads at
+  **0x08010000**.
+- `struct command_parser` is `{uint16 encoded_msgid; uint8 num_args, flags, num_params; const
+  uint8_t *param_types; void (*func)(uint32_t*);}` -- 16 bytes, and `command_index[cmdid]` is
+  indexed by the id straight out of `eBoard.dict.json`. The table is at **0x0801a288** and all 77
+  ids line up. `pa_action` is id 5 -> **0x080115ec**; `get_emcu_pa_value` is id 6 ->
+  **0x080115d0**.
 
-Two arguments the host passes and we do not understand:
+### The measurement is a serial sample stream, not an on-board sensor
 
-- `ACTION=11`. `pa_adjust.py`'s comment says `0:PA_close 1:PA_start`; the app sends 11 to start
-  and 0 to stop. The comment is from an older release (the older `firmwareExe` we have,
-  `ca6f1bf1`, has no `paTestMgr` at all). 11 is presumably start-plus-mode.
-- `PC=666`. The Chinese comment on the parameter is 材料, "material". The app hardcodes 666 in
-  every call, so we can too.
+`pa_action(action, pc)` @0x080115ec stores `action` at 0x20000098 and `pc` at 0x20000094, then:
 
-The verdict is a small unsigned integer and **only 9 means pass** (`bne $v1, 9` @0x792878). What
-the other values mean is unknown; the app does not distinguish them.
+| `action` | what it does |
+|---|---|
+| `11` (the only start value) | capture flag 0x2000009c = 1; result 0x200000a0 = 0; write index 0x2000213c = 0; `memset(0x200001fc, 0, 8000)`; enable TIM4, TIM1, TIM8 and DMA1 channel 5 |
+| anything else (the app sends 0) | disable those four, tail-call 0x08016214(2, 1) |
+
+The buffer is filled by the **USART3** (0x40004800) idle-line handler @0x08016734, draining DMA1
+channel 3. It validates a fixed 11-byte frame byte for byte -- `b[0]==5, b[2]==0x41, b[3]==0xCF,
+b[4]==5, b[5]==0xFF, b[6]==0x41`, and `b[1]|b[7]|b[8]` must be zero -- then takes the
+**big-endian `uint16` at `b[9]`** (`rev16`), stores it as a 32-bit word at `0x200001fc[idx++]`,
+and saturates `idx` at 0x7c6 = **1990 samples**. That store happens **only while the capture flag
+is set** (@0x8016758), which is what makes this buffer the PA trace and not general traffic.
+
+So the thing being measured arrives on the eBoard's *second* UART as a stream of 16-bit samples
+from a separate module. It is not the accelerometer, not the eddy coil, and not an ADC channel --
+those were the earlier guess and it was wrong. **Which transducer sits on that UART is still not
+identified**; the frame shape is all we have.
+
+### The verdict
+
+A background task @0x08016c60 closes the loop:
+
+```c
+if (capture_flag != 1) return;
+if (action == 11) return;          // still capturing
+analyse(0x200001fc, 2000);         // -> 0x08016848, writes the result to 0x200000a0
+capture_flag = 0;
+```
+
+`analyse` is double-precision and walks the trace looking for events. What is legible without
+fully reversing it: a span test of **81..149 samples** (`sub #0x51; cmp #0x44` @0x8016a2c),
+amplitude ratio tests against **1.2** (`0x3FF3333333333333` @0x8016a38) and **1.5**
+(`0x3FF8000000000000` @0x8016c3c), a qualifying-event counter **saturated at 10** and required to
+be **> 2** (@0x8016a04, @0x8016a5a), and a rising-run scan over the sample array. The value
+stored to 0x200000a0 is what `get_emcu_pa_value` @0x080115d0 sends back verbatim.
+
+That the counter saturates at 10 while the host accepts only **9** (`bne $v1, 9` @0x792878) fits
+a graded score rather than a boolean, but the app does not distinguish the other values, and we
+have not pinned what each means.
+
+### Still unknown
+
+- The transducer on USART3.
+- `ACTION=11`. `pa_adjust.py`'s comment says `0:PA_close 1:PA_start`; the firmware tests only
+  `== 11` for start and treats everything else as stop. The comment is from an older release (the
+  older `firmwareExe` we have, `ca6f1bf1`, has no `paTestMgr` at all).
+- `PC=666`. The Chinese comment on the parameter is 材料, "material". `pa_action` stores it at
+  0x20000094 and the capture path never reads it back, so on this firmware it is inert -- the app
+  hardcodes 666 and so can we.
+
+### Why this matters for the port
+
+The lines on the bed are a **byproduct**, not the measurement. Nothing -- no camera, no probe, no
+later pass -- ever looks at them. They exist because you cannot produce a real pressure transient
+without really extruding. The scoring happens live, during the move, from a signal the toolhead
+is already streaming. That is why the port can reproduce this at all: we keep the eBoard firmware
+and the sensor, so we get the same verdicts for free.
 
 ## 6. `SET_PA_ADVANCE` is not in any Klipper we have
 
@@ -291,3 +343,18 @@ Until step 2 has real numbers the PA tower stays the documented method.
 | 0x791de8 | outer bound, `slti 5` |
 | 0x792878 | the verdict test, `bne $v1, 9` |
 | 0xdb6a80 | `3.0f`, the divisor |
+
+### eBoard (`work/stock/mcu/eBoard.bin`, loads at 0x08010000)
+
+| address | what |
+|---|---|
+| 0x0801a288 | `command_index[]`, 16-byte entries, indexed by the dictionary's command id |
+| 0x080115ec | `pa_action` (id 5) |
+| 0x080115d0 | `get_emcu_pa_value` (id 6) |
+| 0x08016734 | USART3 idle-line handler — frame check and sample store |
+| 0x08016c60 | background task: on stop, run `analyse` and clear the flag |
+| 0x08016848 | `analyse(buffer, 2000)` |
+| 0x200001fc | 1990-sample capture buffer (memset 8000 bytes) |
+| 0x200000a0 | the verdict `get_emcu_pa_value` returns |
+| 0x2000009c | capture-armed flag |
+| 0x20000098 / 0x20000094 | last `action` / `pc` |
