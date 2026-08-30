@@ -132,6 +132,18 @@ if [ "$ALL" = 1 ] || [ "${BUILD_MOONRAKER:-0}" = "1" ]; then
         "$MOONRAKER_TGZ" "$MOONRAKER_SHA256"
 fi
 
+# moonraker-timelapse. No BUILD_ flag: the recipe is ungated (pkgs/timelapse/
+# pkg.conf says why), so a conditional fetch would leave it nothing to unpack.
+get "https://github.com/mainsail-crew/moonraker-timelapse/archive/$TIMELAPSE_VERSION.tar.gz" \
+    "$TIMELAPSE_TGZ" "$TIMELAPSE_SHA256"
+
+# The encoder for it. download.videolan.org, not code.videolan.org: the latter
+# is behind bot protection that answers a download with an HTML page.
+get "https://download.videolan.org/pub/videolan/x264/snapshots/x264-$X264_VERSION.tar.bz2" \
+    "$X264_TGZ" "$X264_SHA256"
+get "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz" \
+    "$FFMPEG_TGZ" "$FFMPEG_SHA256"
+
 # The supervision stack. No BUILD_ flag: every package ships it.
 get "https://skarnet.org/software/skalibs/skalibs-$SKALIBS_VERSION.tar.gz" \
     "$SKALIBS_TGZ" "$SKALIBS_SHA256"

@@ -43,6 +43,9 @@ export MODDIR PY_HOST PY_TOOLCHAIN_DIR IPK_ARCH
 MAINSAIL_ZIP="${MAINSAIL_ZIP:-$ROOT/vendor/mainsail-${MAINSAIL_VERSION:-unpinned}.zip}"
 HELIX_TGZ="${HELIX_TGZ:-$ROOT/vendor/${HELIX_FILE:-helixscreen.tar.gz}}"
 MOONRAKER_TGZ="${MOONRAKER_TGZ:-$ROOT/vendor/moonraker-${MOONRAKER_VERSION:-unpinned}.tar.gz}"
+TIMELAPSE_TGZ="${TIMELAPSE_TGZ:-$ROOT/vendor/moonraker-timelapse-${TIMELAPSE_VERSION:-unpinned}.tar.gz}"
+X264_TGZ="${X264_TGZ:-$ROOT/vendor/x264-${X264_VERSION:-unpinned}.tar.bz2}"
+FFMPEG_TGZ="${FFMPEG_TGZ:-$ROOT/vendor/ffmpeg-${FFMPEG_VERSION:-unpinned}.tar.xz}"
 KLIPPER_TGZ="${KLIPPER_TGZ:-$ROOT/vendor/klipper-${KLIPPER_VERSION:-unpinned}.tar.gz}"
 MIPS_TOOLCHAIN_TGZ="${MIPS_TOOLCHAIN_TGZ:-$ROOT/vendor/${MIPS_TOOLCHAIN_FILE:-mips-toolchain.tar.gz}}"
 SKALIBS_TGZ="${SKALIBS_TGZ:-$ROOT/vendor/skalibs-${SKALIBS_VERSION:-unpinned}.tar.gz}"
@@ -52,6 +55,7 @@ S6RC_TGZ="${S6RC_TGZ:-$ROOT/vendor/s6-rc-${S6RC_VERSION:-unpinned}.tar.gz}"
 
 export MAINSAIL_ZIP HELIX_TGZ MOONRAKER_TGZ KLIPPER_TGZ MIPS_TOOLCHAIN_TGZ
 export SKALIBS_TGZ S6_TGZ EXECLINE_TGZ S6RC_TGZ
+export TIMELAPSE_TGZ X264_TGZ FFMPEG_TGZ
 
 # Built with the GLIBC toolchain above: a musl-linked interpreter cannot dlopen
 # a glibc c_helper.so, and dlopen is how klippy loads it.
