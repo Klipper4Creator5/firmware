@@ -144,7 +144,7 @@ fi
 # rendered once with ffscreen.py and committed, the same tool that draws every
 # later boot frame. To regenerate:
 #   python3 pkgs/anvil-core/payload/bin/ffscreen.py --fb installer/start.img \
-#       --size 480x800@32 --title "Reforge" --status "Installing..."
+#       --size 480x800@32 --title "Reforge" --status "Installing..." --note "DO NOT POWER OFF"
 # (the file must already exist -- ffscreen.py refuses to write a device/path
 # that isn't there yet -- so `touch installer/start.img` first if recreating.)
 cp -f installer/start.img work/stage/start.img
