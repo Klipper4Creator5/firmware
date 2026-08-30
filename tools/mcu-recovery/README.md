@@ -213,7 +213,7 @@ What makes it interesting is that it is not global:
 Twenty-odd flags have been swept without beating the baseline, including
 every register-allocator knob (`-fira-algorithm`, `-fira-region`,
 `-fno-ira-share-*`, `-fsched-pressure`, `-fno-ipa-ra`, `-fno-caller-saves`)
-and the obvious codegen ones. `permute.py` in the scratch tree drives the
+and the obvious codegen ones. `permute.py` drives the
 next step: search semantically equivalent source formulations for the one
 that reproduces stock, which is how matching decompilation projects close
 this kind of gap.
@@ -245,6 +245,7 @@ generated dictionary still matches; a fix is a one-line change to use
 | `cmpfuncs.py` | count command handlers that are instruction-identical to stock |
 | `shutdownmap2.py` | recover the shutdown error code of every instrumented site |
 | `timertags.py` | recover the call-site tag passed to every sched_add_timer |
+| `permute.py` | try source variants of one function against stock's instructions |
 
 `eddy-sensor.md` is the full recovered description of the inductive sensor:
 every claim cites the flash address of the instruction that justifies it.
