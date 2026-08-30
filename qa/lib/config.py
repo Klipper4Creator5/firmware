@@ -31,6 +31,11 @@ from .paths import ROOT
 WANTED = (
     "FF_KEY",
     "STOCK_TGZ", "STOCK_TGZ_CREATOR5PRO", "STOCK_TGZ_CREATOR5",
+    # Not config at all -- the pinned filenames out of versions.env, so that
+    # stock_for can look where fetch-assets.sh actually put the download. The
+    # alternative was spelling "vendor/<pinned name>" a second time here, and a
+    # default that exists twice is a default that drifts.
+    "STOCK_FILE_CREATOR5PRO", "STOCK_FILE_CREATOR5",
     "PRINTER_IMAGE", "PROG_MB", "DATA_MB",
 )
 
@@ -43,8 +48,9 @@ OVERRIDABLE = ("PRINTER_IMAGE", "PROG_MB", "DATA_MB", "FF_KEY")
 # Each source is checked, and its own exit code says which file.
 _DUMP = r'''
 set -a
-if [ -f "$1" ]; then . "$1" || exit 91; fi
-if [ -f "$2" ]; then . "$2" || exit 92; fi
+if [ -f "$1" ]; then . "$1" || exit 90; fi
+if [ -f "$2" ]; then . "$2" || exit 91; fi
+if [ -f "$3" ]; then . "$3" || exit 92; fi
 set +a
 for key in %s; do
     eval "value=\${$key-}"
@@ -77,14 +83,20 @@ class Config:
         config_env = os.environ.get("CONFIG_ENV") or str(ROOT / "config.env")
         test_env = os.environ.get("TEST_ENV") or str(ROOT / "test.env")
 
+        versions_env = str(ROOT / "versions.env")
+
+        # versions.env FIRST, so config.env still wins on anything both name.
+        # It is read for the pinned stock filenames alone -- see WANTED.
         dumped = subprocess.run(
-            ["bash", "-c", _DUMP, "qa", config_env, test_env],
+            ["bash", "-c", _DUMP, "qa", versions_env, config_env, test_env],
             cwd=str(ROOT), capture_output=True, text=True)
         if dumped.returncode != 0:
-            which = {91: config_env, 92: test_env}.get(dumped.returncode)
+            which = {90: versions_env, 91: config_env,
+                     92: test_env}.get(dumped.returncode)
             raise ConfigError(
                 "could not read %s:\n%s"
-                % (which or ("%s / %s" % (config_env, test_env)),
+                % (which or ("%s / %s / %s"
+                             % (versions_env, config_env, test_env)),
                    dumped.stderr.strip()))
 
         values = {}
@@ -108,6 +120,21 @@ class Config:
     def ff_key(self):
         return self.get("FF_KEY", "FFP0331&*%root")
 
+    def _vendored_stock(self, key):
+        """Where bin/fetch-assets.sh puts the stock package for that key.
+
+        The common case now, and on a fresh checkout the only case: config.env
+        carries no path at all and `make vendor` has downloaded the pin. An
+        explicit STOCK_TGZ_* in config.env still comes first -- that is what it
+        is for -- so this is a fallback, not an override.
+        """
+        # Only the per-model keys have a pin. Bare STOCK_TGZ is a path someone
+        # typed to force one package, and has no vendored counterpart.
+        if not key.startswith("STOCK_TGZ_"):
+            return ""
+        name = self.get(key.replace("STOCK_TGZ_", "STOCK_FILE_", 1))
+        return str(self.root / "vendor" / name) if name else ""
+
     def stock_for(self, package_name=None):
         """The stock package that is the authentic baseline for this build.
 
@@ -126,7 +153,7 @@ class Config:
             keys = ("STOCK_TGZ_CREATOR5PRO", "STOCK_TGZ")
 
         for k in keys:
-            path = self.get(k)
-            if path and os.path.isfile(path):
-                return path
+            for path in (self.get(k), self._vendored_stock(k)):
+                if path and os.path.isfile(path):
+                    return path
         return ""

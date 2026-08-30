@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Download the pinned third-party payload pieces into vendor/.
-#   ./bin/fetch-assets.sh [--all]    --all ignores the BUILD_* flags
+#   ./bin/fetch-assets.sh [--all] [--stock]
+#     --all    ignore the BUILD_* flags -- every payload piece, every model
+#     --stock  the stock FlashForge package too (both models under --all, else
+#              the one TARGET_MACHINE names)
+#
+# The two are orthogonal on purpose. The stock firmware is ~93MB per model and
+# the packaging lane wants none of it, so `--all` alone still means "everything
+# a feed needs" -- `make vendor` asks for both.
 # Pins live in versions.env; a cached file with the right sha256 is not refetched.
 set -euo pipefail
 # shellcheck disable=SC1091
@@ -12,7 +19,14 @@ set -euo pipefail
 say() { printf '>> %s\n' "$*"; }
 
 ALL=0
-[ "${1:-}" = "--all" ] && ALL=1
+STOCK=0
+for arg in "$@"; do
+    case "$arg" in
+        --all)   ALL=1 ;;
+        --stock) STOCK=1 ;;
+        *) echo "unknown option: $arg" >&2; exit 1 ;;
+    esac
+done
 
 mkdir -p vendor
 
@@ -49,6 +63,42 @@ get() {
     fi
     mv "$dest.part" "$dest"
 }
+
+# The stock FlashForge package. Not a payload piece -- nothing out of it ships
+# (docs/how-it-works.md: a release carries no FlashForge component at all) --
+# but bin/unpack.sh reads the printer.base.cfg and the stock root hash out of
+# it, so the BUILD lane cannot start without one and the PACKAGING lane never
+# wants one. Hence its own flag rather than a BUILD_* gate: `make packages` and
+# the CI job behind it stay runnable on a bare checkout, which is most of the
+# point of that lane.
+#
+# --all takes BOTH models because `make release` builds both; --stock takes
+# only the one being built, so a single `make build` does not pull 186MB to
+# use 93 of it.
+#
+# THE ONE DOWNLOAD THAT WILL NOT OVERWRITE AN OVERRIDE, unlike HELIX_TGZ and
+# friends. Those name a public release anyone can re-fetch in a minute; this
+# names 93MB of proprietary firmware a person went and downloaded, and
+# clobbering it on a hash mismatch would destroy the only copy on the machine
+# to replace it with one they did not ask for. An override is left alone and
+# skipped; the sha256 still gates everything this script actually fetches.
+stock_get() {   # <file> <sha256> <configured path>
+    if [ "$3" != "$ROOT/vendor/$1" ]; then
+        say "override $(basename "$3")  (not fetched, not checksummed)"
+        return 0
+    fi
+    get "$STOCK_URL_BASE/$1" "$ROOT/vendor/$1" "$2"
+}
+if [ "$STOCK" = 1 ]; then
+    if [ "$ALL" = 1 ] || [ "$TARGET_MACHINE" = Creator5Pro ]; then
+        stock_get "$STOCK_FILE_CREATOR5PRO" "$STOCK_SHA256_CREATOR5PRO" \
+                  "$STOCK_TGZ_CREATOR5PRO"
+    fi
+    if [ "$ALL" = 1 ] || [ "$TARGET_MACHINE" = Creator5 ]; then
+        stock_get "$STOCK_FILE_CREATOR5" "$STOCK_SHA256_CREATOR5" \
+                  "$STOCK_TGZ_CREATOR5"
+    fi
+fi
 
 if [ "$ALL" = 1 ] || [ "${BUILD_MAINSAIL:-0}" = "1" ]; then
     get "https://github.com/mainsail-crew/mainsail/releases/download/$MAINSAIL_VERSION/mainsail.zip" \

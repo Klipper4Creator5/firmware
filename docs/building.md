@@ -1,13 +1,17 @@
 # Building your own packages
 
-You need a stock FlashForge update package for your model — this builds *from*
-it, it does not replace it. Everything else is Docker.
+This builds *from* the stock FlashForge update package for your model — it
+does not replace it — but you no longer have to go and find one. It is pinned
+in `versions.env` and downloaded into `vendor/` with everything else. Docker is
+the only requirement.
 
 ```sh
 cp config.env.example config.env     # what to build, and what ships
-$EDITOR config.env                   # point it at your stock package
 make build                           # the firmware
 ```
+
+There is nothing to edit in `config.env` for a default build; open it to
+change the model, the root password hash, or to leave a component out.
 
 The package lands in `work/out/`. `make release` builds both models into
 `dist/`.
@@ -28,7 +32,8 @@ the daemon too. Only the feed, the unpack and the pack run without it.
 ## The pipeline
 
 ```
-fetch-assets.sh  download Mainsail + HelixScreen + Moonraker into vendor/
+fetch-assets.sh  download the pinned sources into vendor/ -- Mainsail,
+            HelixScreen, Moonraker, and the stock FlashForge package
 unpack.sh   decrypt the stock .tgz for the boot images and the two facts
             pack.sh reads out of FlashForge's software component
 payload.sh  install the .ipk feed into work/modpayload-root/ to make the
@@ -182,6 +187,38 @@ If the build asks for Mainsail, HelixScreen or Moonraker and the file is not
 there, it fails. It used to skip silently, which shipped a package with an empty
 web root and no way to notice.
 
+### The stock package is one of them
+
+The stock FlashForge `.tgz` is pinned the same way, one per model:
+
+```sh
+STOCK_VERSION="1.9.7-1.2.9-20260810"
+STOCK_FILE_CREATOR5PRO="Creator5Pro-$STOCK_VERSION.tgz"
+STOCK_FILE_CREATOR5="Creator5-$STOCK_VERSION.tgz"
+```
+
+Nothing out of it ships — a release carries no FlashForge component at all —
+but `unpack.sh` reads two things out of it: the `printer.base.cfg` ours is
+diffed against, and the stock root hash the installer compares a live shadow
+to. So the build lane needs one and the packaging lane does not, which is why
+it has its own flag rather than a `BUILD_*` one: `make packages` still runs on
+a bare checkout with no firmware anywhere.
+
+`make build` fetches the package for the model it is building; `make vendor`
+fetches both, about 186MB. They come from
+[ghzserg/FF](https://github.com/ghzserg/FF/releases), the public archive
+[Support](support.md) already sends you to for the undo button — nothing
+proprietary is redistributed from this repo, and the sha256 is what makes
+building from somebody else's mirror safe.
+
+Two differences from the pieces above. The release tag is a rolling `R` holding
+every FlashForge model at once, so the pin is the *filename* plus the sha256 —
+there is no per-release tag to move to, and a withdrawn asset breaks the fetch
+loudly rather than quietly. And `STOCK_TGZ_CREATOR5PRO` (or `_CREATOR5`) in
+`config.env` is the one override that is **never overwritten**: it names 93MB
+of firmware you downloaded by hand, so a hash mismatch skips it instead of
+replacing it. That also means nothing checks it — it is your file.
+
 ## The root password
 
 `ROOT_PW_HASH` in `config.env` is written straight into the shipped shadow
@@ -211,7 +248,7 @@ own `mkpasswd`.
 
 | | |
 |---|---|
-| `config.env` | The **build** config: where your stock package and source trees are, which model, the root password hash. Some of it ships. |
+| `config.env` | The **build** config: which model, the root password hash, which components to leave out. Some of it ships. Carries no paths — every source is pinned in `versions.env`. |
 | `test.env` | The **replica** config: the factory image, the partition sizes, an optional prebuilt printer image. None of it ships, ever. |
 
 Both are gitignored; copy the `.example` of each. `CONFIG_ENV=<path>` and
@@ -293,11 +330,12 @@ bin/            fetch-assets -> unpack -> patch -> pack.
                 build-packages.sh is the packaging lane below, and the four
                 steps need it to have run: payload.sh checks for the feed and
                 refuses without one
-versions.env    pinned Mainsail / HelixScreen / Moonraker versions + sha256
+versions.env    every third-party source, pinned by version and sha256 --
+                including the stock FlashForge package, one per model
 vendor/         where fetch-assets.sh caches them (gitignored), plus the
                 opkg-utils checkout -- the one entry pinned by git commit
                 rather than sha256, because it has no release tarball
-config.env      your paths, the root password hash, the model
+config.env      the root password hash, the model, the BUILD_* flags
 docker/         Dockerfile.build -- the container every target runs in
 pkgs/           package recipes: one directory per component, each a
                 build.sh producing a $MODDIR-relative tree and a pkg.conf
