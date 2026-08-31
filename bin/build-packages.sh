@@ -242,6 +242,21 @@ for r in "${RECIPES[@]}"; do
                 done
             fi
 
+            # THE VERSION, CHECKED HERE, because mkpkg's own refusal names
+            # neither the package nor the value: it says "info field 'version'
+            # has invalid value" and stops. MOD_VER=ci in a workflow reached
+            # this and cost a CI round trip to identify. pkg_version_ok is the
+            # same grammar qa/static/test_apk.py holds every recipe to; this
+            # catches the versions that come from config.env instead, which no
+            # test of the recipes can see.
+            pkg_version_ok "$_fullver" || {
+                echo "!! $_nm's version '$_fullver' is not one apk can parse." >&2
+                echo "   The grammar is number{.number}{letter}{_suffix}{~hash}{-r#}:" >&2
+                echo "   it has to start with a digit. If that value came from" >&2
+                echo "   MOD_VER or another config.env setting, fix it there." >&2
+                exit 1
+            }
+
             _out="$PKG_FEED/${_nm}-${_fullver}.apk"
             # $APK_SIGN is empty when no key is configured, and an unsigned
             # package is a valid one -- apk simply writes no signature block.

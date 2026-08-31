@@ -419,10 +419,8 @@ def _recipes_built(key=None):
     """The recipes a build would actually make, asked with a given key.
 
     Not the pkg.conf glob: pkg_recipes drops anything whose PKG_WHEN is false,
-    and pkgs/3rdparty/busybox is false on every build that has no stock
-    firmware to take a busybox out of. Those are never sourced by
-    bin/build-packages.sh's own loop, so they are not what these tests are
-    about.
+    such as pkgs/3rdparty/busybox on any build with no stock firmware to take
+    a busybox out of. That set is what the stability check below is about.
     """
     env = dict(os.environ)
     env.pop("APK_SIGN_KEY", None)
@@ -435,7 +433,7 @@ def _recipes_built(key=None):
     return sorted(out.stdout.split())
 
 
-@pytest.mark.parametrize("recipe", _recipes_built())
+@pytest.mark.parametrize("recipe", [p.parent.name for p in _recipes()])
 @pytest.mark.parametrize("key", ["", "/nonexistent/anvil.rsa"])
 def test_a_recipe_reads_with_no_signing_key(recipe, key):
     """A bare checkout has no signing key, and that is the CI case.
@@ -453,6 +451,13 @@ def test_a_recipe_reads_with_no_signing_key(recipe, key):
     Both spellings of "no key" are covered: unset, and set to a path that is
     not there. The flags are the point -- _conf above runs without them and
     would have gone green throughout.
+
+    EVERY recipe, not just the ones a build would make. A recipe PKG_WHEN
+    switches off is still SOURCED to find that out, and pkg_recipes does it in
+    a subshell that discards the result -- so one that cannot be read is
+    dropped silently rather than reported. busybox did exactly that, printing
+    "BUSYBOX_BIN: unbound variable" into every CI log directly above the first
+    real failure.
     """
     env = dict(os.environ)
     env.pop("APK_SIGN_KEY", None)
@@ -539,3 +544,68 @@ def test_no_key_mounts_nothing():
     assert '":ro' not in out.stdout, (
         "an unsigned build mounts something read-only that it should not:\n%s"
         % out.stdout[-2000:])
+
+
+def _workflow_mod_vers():
+    """Every MOD_VER a workflow writes into config.env, with its source."""
+    found = []
+    for wf in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        for n, line in enumerate(wf.read_text().splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("MOD_VER="):
+                found.append((wf.name, n, stripped.split("=", 1)[1].strip()))
+    return found
+
+
+def test_every_workflow_version_is_one_apk_can_parse():
+    """anvil-core's version is MOD_VER, and CI sets it.
+
+    test_every_version_is_one_apk_can_parse asks the RECIPES, and anvil-core
+    answers with whatever config.env happens to say on the machine running the
+    test -- a date, locally, which is always valid. It cannot see that ci.yml
+    writes `MOD_VER=ci`, which apk rejects: a version has to start with a
+    digit. So `make packages` was green on every developer machine and red on
+    every CI run, and mkpkg's message named neither the package nor the field's
+    value.
+
+    A value that is empty or a shell expansion is skipped: bin/common.sh
+    stamps today's UTC date for the first, and the second is release.yml
+    deriving the version from the tag, which has its own gate in the tag
+    format.
+    """
+    bad = []
+    for wf, line, raw in _workflow_mod_vers():
+        value = raw.strip('"').strip("'")
+        if not value or "$" in value:
+            continue
+        full = subprocess.run(
+            ["bash", "-c",
+             '. ./bin/common.sh >/dev/null 2>&1; . ./pkgs/lib.sh; '
+             'pkg_fullversion "%s" 1' % value],
+            capture_output=True, text=True, cwd=str(ROOT)).stdout.strip()
+        ok = subprocess.run(
+            ["bash", "-c",
+             '. ./bin/common.sh >/dev/null 2>&1; . ./pkgs/lib.sh; '
+             'pkg_version_ok "%s"' % full],
+            cwd=str(ROOT), capture_output=True)
+        if ok.returncode != 0:
+            bad.append("%s:%s sets MOD_VER=%s -> %s" % (wf, line, raw, full))
+
+    assert not bad, (
+        "a workflow pins a MOD_VER apk cannot parse, so `make packages` fails "
+        "there and nowhere else. A version must start with a digit:\n  %s"
+        % "\n  ".join(bad))
+
+
+def test_a_workflow_actually_pins_a_version():
+    """The test above passes trivially if nothing sets MOD_VER at all.
+
+    CI pins it so two runs of one tree produce the same bytes; if that line is
+    ever dropped, the date default makes the reproducibility gate depend on
+    what day it is, and the check above would go quiet rather than red.
+    """
+    pinned = [f for f in _workflow_mod_vers()
+              if f[2] and "$" not in f[2]]
+    assert pinned, (
+        "no workflow pins MOD_VER any more, so the version check above is "
+        "asserting nothing and CI builds are dated rather than reproducible")

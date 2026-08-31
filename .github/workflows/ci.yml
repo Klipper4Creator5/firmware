@@ -198,7 +198,13 @@ jobs:
         run: |
           cat > config.env <<'CFG'
           MOD_NAME=anvil
-          MOD_VER=ci
+          # 0, NOT "ci": MOD_VER is anvil-core's PKG_VERSION, and apk's version
+          # grammar wants a number first -- `ci` is rejected by mkpkg with
+          # "package version is invalid" and no clue which package or field.
+          # It is pinned rather than left to default so two runs of one tree
+          # produce the same bytes; 0 says "not a release" as plainly as the
+          # word did, and orders below every real one.
+          MOD_VER=0
           TARGET_MACHINE=Creator5Pro
           # No stock paths: bin/common.sh defaults them into vendor/, where
           # `make vendor` puts the pinned download. Setting them here would be
