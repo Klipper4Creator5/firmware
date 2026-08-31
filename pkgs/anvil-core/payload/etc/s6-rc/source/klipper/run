@@ -1,59 +1,45 @@
 #!/bin/sh
 # Klippy, as s6 supervises it. Exec'd by s6-supervise, never by hand.
 #
-# This is FlashForge's klipperDaemon command line without the -b: without it
-# busybox start-stop-daemon execs the program in place, so the process
-# s6-supervise holds IS klippy rather than a shell that started one. The
-# pidfile goes with it -- s6-supervise knows the pid.
+# The process this script becomes IS the service, so it ends in one `exec` and
+# everything above that is preparation. s6-supervise is the parent: it knows the
+# pid, runs one copy of this servicedir at a time, and restarts what dies. So no
+# forking, no pidfile, and no "is one already running?" test.
 #
 # THE MCU BRING-UP DOES NOT HAPPEN HERE. It is the `mcu-bringup` oneshot, which
-# klipper depends on, so s6-rc runs it before this service starts. Doing it
-# here as well would hand the same serial ports to two processes at once.
+# klipper depends on, so s6-rc runs it first. Doing it here as well would hand
+# the same serial ports to two processes at once.
 MODDIR=/usr/data/anvil
 
-# anvil-env.sh names the interpreter ($FF_PYTHON) and puts the mod's four
-# library directories on LD_LIBRARY_PATH. s6-supervise hands this script the
-# scanner's environment, which is already correct on the boot path -- but a
-# service must not work only because the shell that started the tree happened
-# to be set up right.
+# READ, NOT INHERITED: s6-supervise hands this script the SCANNER's environment,
+# which is firmwareExe's at boot but whatever an ssh session had on a restart by
+# hand. anvil-env.sh names $FF_PYTHON and sets LD_LIBRARY_PATH.
 if [ -f $MODDIR/anvil-env.sh ]; then
     . $MODDIR/anvil-env.sh
 else
     echo "klipper/run: !! no $MODDIR/anvil-env.sh -- klippy will not find its libraries"
 fi
 
-# BOTH HALVES ARE OURS AND BOTH ARE UNDER $MODDIR: the klippy tree anvil-klipper
-# installs, on the CPython 3.13 anvil-python installs. There is no /usr/prog in
-# this command line any more.
-#
-# The tree used to be read from /usr/prog/klipper/klippy -- a copy bin/payload.sh
-# staged into the software component out of this very package, so that
-# FlashForge's run.sh would place it on the firmware partition. Two copies of
-# one tree, and the one that ran was the one a stock flash could overwrite.
-# anvil-klipper is the only source now, which is also what lets this package
-# declare the interpreter it actually needs: see pkgs/klipper/pkg.conf.
-#
-# THE INTERPRETER IS NOT FLASHFORGE'S 3.8.2 and has not been since $FF_PYTHON
-# moved to 3.13. klippy reaches c_helper.so through _cffi_backend, which is why
-# pkgs/3rdparty/python is a glibc build and not a musl one.
+# Both halves are ours and both are under $MODDIR -- nothing is read from
+# /usr/prog, the partition a stock flash overwrites. klippy reaches c_helper.so
+# through _cffi_backend, which is why pkgs/3rdparty/python is glibc, not musl.
 KLIPPY=$MODDIR/klipper/klippy/klippy.py
 PRINTER_CFG=/usr/data/config/printer.cfg
 PRINTER_LOG=/usr/data/logs/printer.log
 UDS=/tmp/uds
 
-# klippy does not unlink its socket on exit, and everything on this printer
-# reads that socket as "klipper is running". Swept here rather than in a stop()
-# because s6 restarts this service without going near one.
+# klippy does not unlink its socket on exit, and everything here reads that
+# socket as "klipper is running". Swept on the way in because s6 restarts this
+# service without going near a stop().
 rm -f "$UDS"
 
-# A klippy killed with SIGKILL -- an OOM -- leaves a process still holding
-# /dev/ttyS4 while s6 starts a second one that cannot open the port and reports
-# an MCU error for ever. s6-supervise runs one copy of this service at a time,
-# so anything running klippy.py now is a leftover.
+# THE ONE DUPLICATE s6 CANNOT HANDLE: a klippy that outlived its supervisor. An
+# OOM kill leaves it holding /dev/ttyS4 while s6 starts a second one that cannot
+# open the port and reports an MCU error for ever.
 #
-# /proc rather than `ps | grep`: busybox ps truncates to the terminal width, so
-# the command line arrives cut off and the grep matches nothing. Our own pid is
-# skipped.
+# Matched on klippy.py -- the interpreter would match moonraker, which runs
+# $FF_PYTHON too. /proc rather than `ps | grep`, whose output busybox truncates
+# to the terminal width.
 for _kl_proc in /proc/[0-9]*; do
     [ -r "$_kl_proc/cmdline" ] || continue
     [ "${_kl_proc#/proc/}" = "$$" ] && continue
@@ -63,9 +49,8 @@ for _kl_proc in /proc/[0-9]*; do
 done
 unset _kl_proc
 
-# klipper_pri.sh puts klippy's main thread on SCHED_FIFO 50. It cannot run
-# before the exec below -- there would be no klippy to find -- and this script
-# has no "after", so it waits for the socket that says klippy is serving.
+# klipper_pri.sh puts klippy's main thread on SCHED_FIFO 50, so it has to run
+# after the exec below; this waits for the socket that says klippy is serving.
 # Bounded, and nothing reads the result: a missing chrt is a slower printer.
 if [ -x /usr/prog/klipper/klipper_pri.sh ]; then
     (   _kp=0
@@ -77,16 +62,5 @@ if [ -x /usr/prog/klipper/klipper_pri.sh ]; then
     ) >/dev/null 2>&1 &
 fi
 
-# NO NICE VALUE: klippy runs at normal priority, which is what FlashForge
-# shipped. The number was briefly a NICE_KLIPPER knob in anvil.conf, and before
-# that the installer grepped KLIPPER_NICENESS out of the stock klipperDaemon --
-# which is what made that shim machine-specific and kept it from being a symlink
-# like the other two files in prog/. Neither is true now.
-#
-# Renicing klippy is nearly always the wrong lever anyway: klipper_pri.sh puts
-# its main thread on SCHED_FIFO 50, which outranks every nice value there is,
-# and its serial reader thread calls os.nice(-20) itself. The two services that
-# DO carry a nice value are the ones that yield to klippy -- moonraker/run and
-# camera/run, each stating its own.
-exec start-stop-daemon -S --exec "$FF_PYTHON" -- \
-    "$KLIPPY" "$PRINTER_CFG" -l "$PRINTER_LOG" -a "$UDS"
+# No nice value: SCHED_FIFO 50 above outranks every nice value there is.
+exec "$FF_PYTHON" "$KLIPPY" "$PRINTER_CFG" -l "$PRINTER_LOG" -a "$UDS"
