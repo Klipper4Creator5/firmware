@@ -143,8 +143,10 @@ Things worth noticing:
   slow-fast-slow-slow-fast-slow across X40..X200, so each line contains two accel/decel pairs at
   a 10x flow step -- the only place pressure advance can show up.
 - **The candidate order is scrambled** (0.010, 0.020, 0.015, 0.035, 0.025, 0.030, 0.040) while
-  the Y positions are sequential. Adjacent lines on the bed are therefore never adjacent in PA,
-  which keeps a slow drift (nozzle temperature, bed tilt) from biasing a contiguous band.
+  the Y positions are sequential. This *looks* like a guard against a slow drift biasing a
+  contiguous band of the bed, and an earlier revision of this note said so. It cannot be: as
+  [section 3a](#3a-the-carriage-does-not-move) shows, the carriage never moves and there is no
+  band. The scramble is kept because it is the app's, not because it buys anything here.
 - **`good[0]`, not the median.** Within one pass, several candidates can score 9; the app takes
   the *smallest* passing value. It then repeats the whole 7-line sweep until three passes have
   produced a winner, and averages exactly those three. Worst case 5 sweeps = 35 lines; fewer
@@ -152,8 +154,54 @@ Things worth noticing:
 - **Nothing restores pressure advance.** After the sweep the active extruder is still at the last
   candidate tried (0.0400). Only the caller's `SET_PA_ADVANCE` is meant to install the result --
   see the caveat in [section 6](#6-set_pa_advance-is-not-in-any-klipper-we-have).
-- No heating, no homing, no Z move inside `paTestMgr`. The caller has already parked the tool at
-  the wipe spot and set the temperature.
+- No heating, no homing, no Z move inside `paTestMgr`. The caller has already parked the tool and
+  set the temperature -- see below, because *where* it parked turns out to be the whole story.
+
+## 3a. The carriage does not move
+
+`SET_PIN PIN=enable_pin_tmc_x VALUE=1.00` **disables the X driver**, and `..._y` the Y driver.
+They are not Klipper's stepper enables -- `[stepper_x] enable_pin: !PJ6`, `[stepper_y]
+enable_pin: !PJ2` -- but a second, independent latch on `PH2`/`PH3` that Klipper knows nothing
+about. So for the whole sweep every `G1 X40 ... X200` is planned, step-generated and clocked out
+against dead drivers. **The toolhead does not move, no lines are drawn, and the whole ~1 g of
+filament falls straight down from wherever the caller parked it.**
+
+The proof is the argument the caller hands `resetTmcPa`. Disassembling `clearNozzleEddy` just
+before its `jal 0x791640`:
+
+```
+0078f030  lui   $v0, 0xdb
+0078f034  lwc1  $f0, 0x6b24($v0)        ; -8.0    <- tool_dy[3]
+0078f04c  lwc1  $f1, 0x30($fp)
+0078f054  lwc1  $f0, 0x6b28($v0)        ; 254.0   <- purge_y
+0078f058  add.s $f0, $f1, $f0           ; Y = 254 + tool_dy
+0078f068  lwc1  $f0, 0x6b2c($v0)        ; 275.0   <- purge_x
+0078f06c  add.s $f0, $f1, $f0           ; X = 275 + tool_dx
+0078f080  ldc1  $f0, 0x6a90($v0)        ; 2.8
+0078f084  add.d $f0, $f1, $f0           ; Z = <probe Z> + 2.8
+0078f0b8  addiu $a1, $v0, 0x35b0        ; "SET_KINEMATIC_POSITION X="
+0078f0d4  addiu $a2, $v0, 0x3240        ; " Y="
+0078f13c  addiu $a2, $v0, 0x3b28        ; " Z="
+0078f244  jal   0x791640                ; paTestMgr(pa, ok, restore_gcode)
+```
+
+275.0 @0xdb6b2c and 254.0 @0xdb6b28 are the **purge chute**, the same pair
+[`ff-filament.cfg`](../../pkgs/klipper-config/payload/config/ff-filament.cfg) carries as
+`purge_x`/`purge_y`; the -8.0 @0xdb6b24 is literally our `tool_dy[3]`. The app parks over the
+chute, kills X and Y, dumps the gram down the chute, and then tells Klipper the carriage is
+**still at the chute** -- which is only a sane thing to say because it never left. Had the
+ladder been real motion, forcing the position back to X275 Y246 would drive the next move into
+the far right limit.
+
+`resetTmcPa` @0x79350c, disassembled in full, is exactly:
+
+```
+SET_PIN PIN=enable_pin_tmc_x VALUE=0.00
+SET_PIN PIN=enable_pin_tmc_y VALUE=0.00
+M400
+SET_KINEMATIC_POSITION X=<275+dx> Y=<254+dy> Z=<probeZ+2.8>
+M400
+```
 
 ## 4. Timing: the app does not synchronise, and neither should we
 
@@ -256,8 +304,9 @@ have not pinned what each means.
 
 ### Why this matters for the port
 
-The lines on the bed are a **byproduct**, not the measurement. Nothing -- no camera, no probe, no
-later pass -- ever looks at them. They exist because you cannot produce a real pressure transient
+The extrudate is a **byproduct**, not the measurement -- and since the carriage is latched still
+([section 3a](#3a-the-carriage-does-not-move)) it is not even lines, just a gram of filament in
+the chute. Nothing -- no camera, no probe, no later pass -- ever looks at it. They exist because you cannot produce a real pressure transient
 without really extruding. The scoring happens live, during the move, from a signal the toolhead
 is already streaming. That is why the port can reproduce this at all: we keep the eBoard firmware
 and the sensor, so we get the same verdicts for free.
@@ -331,9 +380,19 @@ state, and the last run's table.
   procedure can structurally never report below its smallest candidate.
 - **Cold extruder, empty tool, out-of-range geometry are refused before anything moves**, rather
   than failing mid-line with the eBoard armed and the drivers latched.
-- **`SET_KINEMATIC_POSITION` is not replayed.** The app needs it because its caller force-drove
-  the axes; our sweep is plain `G1` under Klipper's own kinematics, so replaying it would only
-  lie to Klipper about where the carriage is.
+- **The park is ours, the latch is the app's.** `[ff_pa] park` (default on) drives the nozzle to
+  the chute in `_FF_FILAMENT_PREP`'s own three moves *before* the drivers are latched -- the app
+  relies on its caller having already gone there, and `FF_PA_CALIBRATE` has no such caller. With
+  `park: False` the gram lands wherever the nozzle happens to be, and the command says so before
+  it starts.
+- **`SET_KINEMATIC_POSITION` *is* replayed**, to the parked coordinates. It has to be: after the
+  sweep Klipper believes the carriage is at the end of the ladder and it is over the chute, and
+  the axes are still flagged homed. An earlier revision of this port deliberately skipped it on
+  the reasoning that "our sweep is plain G1 under Klipper's own kinematics" -- that reasoning
+  was wrong, because the latch means our G1s move nothing either.
+- **Failing to unlatch is reported, not swallowed.** Both `SET_PIN`s go back to their snapshot
+  value, and if that fails (a shutdown mid-run makes `run_script_from_command` raise) the command
+  prints the recovery line rather than leaving a printer that silently cannot move.
 - **`SAVE_GCODE_STATE`/`RESTORE_GCODE_STATE`** wrap the run; the app leaks its modal state.
 - **`min()` on floats**, not the app's lexicographic sort of fixed-width strings. Identical for
   its own seven values, correct for an override with mixed decimal widths.
@@ -379,6 +438,10 @@ and the replica's include-wiring check are the whole automated story.
 | 0x9f50b0 | `paTestMgr` call in `BuildPage::clearNozzlePrint` |
 | 0x9f60fc | `SET_PA_ADVANCE T0=..` there |
 | 0x7a30c4 | `SET_PA_ADVANCE .. ENABLE=0` in `CommMgr::serialPrint` |
+| 0x78f030 | the chute coordinates and `SET_KINEMATIC_POSITION` restore string, in `clearNozzleEddy` |
+| 0xdb6b2c / 0xdb6b28 | `275.0` / `254.0` -- the purge chute, `purge_x` / `purge_y` |
+| 0xdb6b24 | `-8.0` -- the tool dy applied to it, our `tool_dy[3]` |
+| 0xdb6a90 | `2.8` (double) -- the Z added to the probe Z for the restore |
 | 0x791de8 | outer bound, `slti 5` |
 | 0x792878 | the verdict test, `bne $v1, 9` |
 | 0xdb6a80 | `3.0f`, the divisor |
