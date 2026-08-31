@@ -78,6 +78,10 @@ get_git() {
         git clone -q "$url" "$dir"
     fi
     ( cd "$dir"
+      # The url every time, not just on the first clone: a checkout made
+      # before this file named a different host would keep fetching from it,
+      # and that failure would only appear on the next pin bump.
+      git remote set-url origin "$url"
       # Only if the pinned commit is missing, so the common case is offline.
       git cat-file -e "$want^{commit}" 2>/dev/null || git fetch -q origin
       git checkout -q "$want"
@@ -236,9 +240,16 @@ get "https://github.com/jedisct1/libsodium/releases/download/$SODIUM_VERSION-REL
 # (tools/apk-host, unpatched), so the tool that writes a package and the tool
 # that reads it are one version by construction.
 #
-# A GIT CLONE, and the reason get_git exists: GitLab regenerates tag archives,
-# so their sha256 is not a pin. The commit sha is.
-get_git https://gitlab.alpinelinux.org/alpine/apk-tools.git \
+# A GIT CLONE, and the reason get_git exists: the upstream forge regenerates
+# tag archives, so their sha256 is not a pin. The commit sha is.
+#
+# THE GITHUB MIRROR, NOT upstream's own gitlab.alpinelinux.org: that host
+# answers datacenter addresses with HTTP 418 or nothing at all, so the clone
+# succeeds from a developer's machine and fails in CI -- measured, on both CI
+# jobs at once. Which host serves it does not affect what is fetched: the pin
+# is a commit sha, and git names a commit by the hash of its content, so a
+# mirror that answers with this sha is serving this tree or is not answering.
+get_git https://github.com/alpinelinux/apk-tools.git \
     "$APK_TOOLS_DIR" "$APK_TOOLS_COMMIT" "apk-tools $APK_TOOLS_VERSION"
 
 # --- the clock

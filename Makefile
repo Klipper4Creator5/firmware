@@ -44,10 +44,29 @@ ASSET_ROOT ?= $(firstword $(wildcard /mnt/c /Users /home))
 #             the two it borrows from.
 #
 # Test-only variables never enter a build, which is the point of the split.
+#
+# THE SIGNING KEY HAS TO BE MOUNTED, and this is the only place that can do
+# it. config.env names the key and is read INSIDE the container, so make never
+# sees the path unless it reads it here -- and the key deliberately lives
+# outside the checkout (it must never be committable), which means the only
+# mount that would have covered it is the one for this repo. Without this,
+# `make packages` with a key at the documented ~/.anvil/anvil.rsa reports that
+# the file does not exist, on a machine where it plainly does.
+#
+# Read from the config file only when the environment does not already say,
+# so `APK_SIGN_KEY=... make packages` still works for a one-off -- and from
+# $(CONFIG_ENV), the same file bin/common.sh reads, so pointing that at a
+# second config does not leave the mount looking at the first one's key.
+APK_SIGN_KEY ?= $(shell sed -n 's/^[[:space:]]*APK_SIGN_KEY=["'"'"']\{0,1\}\([^"'"'"']*\).*/\1/p' $(if $(CONFIG_ENV),$(CONFIG_ENV),config.env) 2>/dev/null | tail -n1)
+# Its DIRECTORY, because the public half beside it is mounted by the same
+# line, and read-only because a build has no business writing to either.
+APK_SIGN_MOUNT = $(if $(wildcard $(APK_SIGN_KEY)),-v "$(patsubst %/,%,$(dir $(APK_SIGN_KEY)))":"$(patsubst %/,%,$(dir $(APK_SIGN_KEY)))":ro,)
+
 DOCKER_BASE = $(DOCKER) run --rm -i \
           -v "$(CURDIR)":"$(CURDIR)" -w "$(CURDIR)" \
           $(if $(ASSET_ROOT),-v "$(ASSET_ROOT)":"$(ASSET_ROOT)",) \
-          -e MODEL -e TARGET_MACHINE -e CONFIG_ENV -e PKG_FORMAT -e APK_SIGN_KEY
+          $(APK_SIGN_MOUNT) \
+          -e MODEL -e TARGET_MACHINE -e CONFIG_ENV -e APK_SIGN_KEY
 
 # THE BUILD LANE RUNS AS YOU, NOT AS root. Without this every `make build` and
 # `make packages` fills work/ with root-owned files that the user who started

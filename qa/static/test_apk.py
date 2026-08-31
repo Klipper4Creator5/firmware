@@ -412,3 +412,130 @@ def test_without_the_id_map_the_owner_is_not_root(tmp_path):
         "mkpkg recorded root without the id map, so the --root argument "
         "bin/build-packages.sh passes is no longer buying anything. Check "
         "whether upstream changed the ownership rules before deleting it.")
+
+
+
+def _recipes_built(key=None):
+    """The recipes a build would actually make, asked with a given key.
+
+    Not the pkg.conf glob: pkg_recipes drops anything whose PKG_WHEN is false,
+    and pkgs/3rdparty/busybox is false on every build that has no stock
+    firmware to take a busybox out of. Those are never sourced by
+    bin/build-packages.sh's own loop, so they are not what these tests are
+    about.
+    """
+    env = dict(os.environ)
+    env.pop("APK_SIGN_KEY", None)
+    if key:
+        env["APK_SIGN_KEY"] = key
+    out = subprocess.run(
+        ["bash", "-c",
+         '. ./bin/common.sh >/dev/null 2>&1; . ./pkgs/lib.sh; pkg_recipes'],
+        capture_output=True, text=True, cwd=str(ROOT), env=env)
+    return sorted(out.stdout.split())
+
+
+@pytest.mark.parametrize("recipe", _recipes_built())
+@pytest.mark.parametrize("key", ["", "/nonexistent/anvil.rsa"])
+def test_a_recipe_reads_with_no_signing_key(recipe, key):
+    """A bare checkout has no signing key, and that is the CI case.
+
+    bin/build-packages.sh runs under `set -euo pipefail` and sources every
+    pkg.conf inside it, so a substitution that FAILS in a recipe kills the
+    whole run -- before a single package is emitted, and with nothing on
+    stderr if the recipe redirected it. That is what
+    `sha256sum "${APK_SIGN_KEY:-/dev/null}.pub" | cut` did in anvil-core: the
+    missing file made sha256sum non-zero, pipefail made the pipeline
+    non-zero, and `make packages` exited 1 having said only that it had
+    sealed a cache entry. Every signed build passed, which is why it reached
+    CI to be found.
+
+    Both spellings of "no key" are covered: unset, and set to a path that is
+    not there. The flags are the point -- _conf above runs without them and
+    would have gone green throughout.
+    """
+    env = dict(os.environ)
+    env.pop("APK_SIGN_KEY", None)
+    if key:
+        env["APK_SIGN_KEY"] = key
+
+    out = subprocess.run(
+        ["bash", "-c",
+         'set -euo pipefail; . ./bin/common.sh >/dev/null 2>&1; '
+         '. ./pkgs/lib.sh; pkg_conf "%s"' % recipe],
+        capture_output=True, text=True, cwd=str(ROOT), env=env)
+    assert out.returncode == 0, (
+        "%s cannot be read with APK_SIGN_KEY=%r -- `make packages` on a "
+        "checkout with no key dies here, and the failure is silent.\n%s"
+        % (recipe, key, out.stderr))
+
+
+def test_the_signing_key_does_not_change_which_recipes_exist():
+    """A recipe that cannot be read DISAPPEARS instead of failing.
+
+    pkg_recipes evaluates PKG_WHEN in a subshell and drops the recipe when it
+    returns non-zero (pkgs/lib.sh) -- which it also does when sourcing the
+    pkg.conf failed. So a recipe broken only in the unsigned case would not
+    make CI red; it would quietly leave the feed, and the printer would get a
+    payload missing a package nobody noticed was gone.
+
+    The feed is signed on a release and unsigned in CI, so the two have to
+    describe the same set of packages.
+    """
+    unsigned = _recipes_built()
+    signed = _recipes_built("/nonexistent/anvil.rsa")
+    assert unsigned == signed, (
+        "the recipe list changes with APK_SIGN_KEY: %r appear only unsigned, "
+        "%r only signed"
+        % (sorted(set(unsigned) - set(signed)),
+           sorted(set(signed) - set(unsigned))))
+
+
+def test_the_build_container_can_see_a_key_outside_the_checkout(tmp_path):
+    """The documented place for the key is OUTSIDE this repo, and the build
+    runs in a container that mounts only the repo.
+
+    config.env is read inside the container, so make never learns the path
+    unless the Makefile reads it too -- and without that the mount is absent
+    and `apk mkpkg --sign-key` fails on a file the developer can see in their
+    own shell. Missed by everything until now because the key used while the
+    migration was written happened to sit under work/, which is inside the one
+    directory that was already mounted.
+
+    Asked of `make -n`, which needs no docker: the question is only what the
+    command line would be.
+    """
+    key = tmp_path / "keys" / "anvil.rsa"
+    key.parent.mkdir()
+    key.write_text("not a key, only a path that exists")
+
+    cfg = tmp_path / "config.env"
+    cfg.write_text('MOD_NAME=anvil\nAPK_SIGN_KEY="%s"\n' % key)
+
+    env = dict(os.environ)
+    env.pop("APK_SIGN_KEY", None)
+    env["CONFIG_ENV"] = str(cfg)
+    out = subprocess.run(["make", "-n", "packages"],
+                         capture_output=True, text=True, cwd=str(ROOT), env=env)
+    mount = '-v "%s":"%s":ro' % (key.parent, key.parent)
+    assert mount in out.stdout, (
+        "`make packages` would run docker without mounting %s, so the signing "
+        "key named by config.env is not visible to apk inside the container.\n"
+        "%s" % (key.parent, out.stdout[-2000:]))
+
+
+def test_no_key_mounts_nothing():
+    """The inverse: an unsigned build must not mount a stray directory.
+
+    `$(dir )` of an empty path is `./`, so a careless spelling of the rule
+    above would bind-mount something read-only into every unsigned build and
+    the failure would surface as an unrelated permission error.
+    """
+    env = dict(os.environ)
+    env.pop("APK_SIGN_KEY", None)
+    env["CONFIG_ENV"] = str(ROOT / "config.env.example")
+    out = subprocess.run(["make", "-n", "packages"],
+                         capture_output=True, text=True, cwd=str(ROOT), env=env)
+    assert '":ro' not in out.stdout, (
+        "an unsigned build mounts something read-only that it should not:\n%s"
+        % out.stdout[-2000:])

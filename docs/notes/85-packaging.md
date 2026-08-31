@@ -338,6 +338,25 @@ packages` has to run on a bare checkout or the packaging lane stops being a CI
 gate. **RSA or Ed25519 only** — ECDSA signatures are randomised and two builds
 of one tree would stop being byte-identical.
 
+**Where the key lives, on each of the two machines that build.** On a
+developer's, outside the checkout — `./bin/apk-keygen.sh ~/.anvil/anvil.rsa`,
+and `APK_SIGN_KEY` in the gitignored `config.env` — so neither half is
+something the repository can commit. The build runs in a container that mounts
+only the checkout, so the Makefile reads that path out of `config.env` and
+bind-mounts the key's *directory* read-only; without that the key is visible in
+the developer's shell and invisible to `apk`, which is a confusing enough
+failure to have its own test.
+
+In CI it is the `APK_SIGN_KEY` repository secret, holding the **private key
+PEM** itself rather than a path. `release.yml` writes it to `$RUNNER_TEMP`
+(outside the checkout, so no later step can archive it into a release), derives
+the public half with `openssl pkey -pubout` rather than storing it as a second
+secret that could drift out of step with the first, and names the file in
+`config.env`. With the secret unset the release is built **unsigned with a
+warning** rather than failing: a fork has no such secret, and a firmware that
+cannot be built by someone else is worse than one whose feed is untrusted on a
+stick the printer was already handed by hand.
+
 **Two gates retired rather than moved.** apk's installed database is plain text
 (`F:` sets a directory, `R:` names a file in it), so the ownership check reads
 one file where it used to glob `info/*.list`. And it carries **no clock at

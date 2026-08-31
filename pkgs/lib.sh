@@ -50,6 +50,24 @@ pkg_payload_hash() {
         | sha256sum | cut -c1-16
 }
 
+# pkg_signkey_hash -> a cache key for the feed's public key, or `unsigned`.
+#
+# anvil-core ships that key, and it lives OUTSIDE the repo, so
+# pkg_payload_hash cannot see it: without this, changing the signing key
+# leaves a warm cache and ships a package that still trusts the old one.
+#
+# THE MISSING-KEY CASE IS THE WHOLE REASON THIS IS A FUNCTION. Spelled inline
+# as `sha256sum "${APK_SIGN_KEY:-/dev/null}.pub" | cut`, an unsigned build
+# fails the pipeline under `set -o pipefail` -- while pkg.conf is being
+# SOURCED, so build-packages.sh died before emitting anything and the
+# 2>/dev/null ate the reason. That is every CI run, which builds with no key.
+pkg_signkey_hash() {
+    [ -n "${APK_SIGN_KEY:-}" ] && [ -f "$APK_SIGN_KEY.pub" ] || {
+        echo unsigned; return 0
+    }
+    sha256sum "$APK_SIGN_KEY.pub" | cut -c1-16
+}
+
 # pkg_dir <recipe-id> -> the directory holding its pkg.conf. Recipes live at
 # two depths and this is the only function that knows it:
 #     pkgs/<name>/            carries files of this repo -- a payload/, prog/
