@@ -29,10 +29,13 @@
 # that links them there: payload/bin/anvil-link-prog.sh.
 #
 # THE s6-rc SERVICE SOURCE IS HERE and is not compiled by this recipe.
-# payload/etc/s6-rc/source/ is text; the replica runs s6-rc-compile over it
-# once the payload is assembled, so this package stays buildable on a checkout
-# that has never run a cross-compiler. Giving it PKG_BUILD_DEPENDS="s6-rc"
-# would take that away.
+# payload/etc/s6-rc/source/ is text, and payload/bin/anvil-s6-rc-compile.sh is
+# what turns it into a database: the replica calls that script once the payload
+# is assembled, and this package's postinst calls it again on a printer, so an
+# `opkg upgrade` of these definitions changes what the next boot runs. The
+# recipe itself compiles nothing, which is what keeps it buildable on a
+# checkout that has never run a cross-compiler. Giving it
+# PKG_BUILD_DEPENDS="s6-rc" would take that away.
 set -euo pipefail
 . ./bin/common.sh
 . pkgs/lib.sh

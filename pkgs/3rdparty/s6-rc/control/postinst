@@ -1,0 +1,19 @@
+#!/bin/sh
+# Recompile the boot database after this package changes on a printer.
+#
+# s6-rc-compile writes the compiler's own execline shebang and oneshot runner
+# into every database it produces, so a database left behind by the previous
+# s6-rc is not one this s6-rc should be asked to run. anvil-core's postinst
+# covers the other half -- a change to the definitions themselves.
+#
+# A no-op until anvil-core is installed: the script lives in that package, and
+# opkg may land this one first.
+set -e
+
+MODDIR=/usr/data/anvil
+
+if [ -x "$MODDIR/bin/anvil-s6-rc-compile.sh" ]; then
+    "$MODDIR/bin/anvil-s6-rc-compile.sh"
+fi
+
+exit 0
