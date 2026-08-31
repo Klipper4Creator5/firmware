@@ -198,6 +198,18 @@ PYEOF
         "not one extra imported, so the interpreter or the tree is wrong "
         "rather than any single module being broken.\nexit=%s\n%s\n%s"
         % (res.code, res.out[-2000:], res.err[-2000:]))
+
+    # NOT VACUOUS: a section whose module does not exist is SKIPped above,
+    # exactly as klippy's load_object returns None for it -- which means this
+    # test would also pass on a machine where the klippy tree had lost the one
+    # module the whole gate is about. Name it, so "green" cannot mean "never
+    # looked".
+    assert "OK stepper_resonance_tester" in lines, (
+        "stepper_resonance_tester was not imported -- it was skipped or "
+        "absent, so this test passed without asking the question it exists "
+        "for. Either klippy's tree no longer carries the module, or the "
+        "config graph no longer names it.\n  %s" % "\n  ".join(lines))
+
     assert not failed, (
         "%d klippy extra(s) named by the shipped config do not import on %s. "
         "klippy.py:103 does not catch ImportError and klippy.py:122 loads "

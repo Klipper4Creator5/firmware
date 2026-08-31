@@ -299,6 +299,20 @@ claim.
 - `qa/replica/test_abi.py` needed no change: it sweeps every ELF object on the
   filesystem, so numpy's 19 extensions are covered the moment they ship.
 
+The import gate was checked in both directions before it was trusted. On the baked
+replica, with the real shipped tree under qemu: `extras.stepper_resonance_tester`
+imports with numpy present, and with `site-packages/numpy` moved aside it raises
+
+```
+ModuleNotFoundError: No module named 'numpy'   (line 1, import numpy as np)
+```
+
+— an `ImportError`, which is what `load_object` does not catch. That is the original
+diagnosis reproduced on the machine rather than argued from source, and it is why the
+test asserts `stepper_resonance_tester` specifically imported rather than only that
+nothing failed: a section whose module is absent is *skipped*, so without that
+assertion the gate could go green having never asked.
+
 ## Address-verified symbols
 
 | Symbol | Address | Size |
