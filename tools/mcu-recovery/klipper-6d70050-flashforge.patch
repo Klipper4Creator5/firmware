@@ -1953,6 +1953,26 @@ index 9d2ce0bbf..5dd62502c 100644
  // Code called for any undefined interrupts
  void
  DefaultHandler(void)
+diff --git a/src/generic/armcm_link.lds.S b/src/generic/armcm_link.lds.S
+index 94dd2100d..8a32abcad 100644
+--- a/src/generic/armcm_link.lds.S
++++ b/src/generic/armcm_link.lds.S
+@@ -22,9 +22,14 @@ SECTIONS
+         _text_vectortable_start = .;
+         KEEP(*(.vector_table))
+         _text_vectortable_end = .;
++        /* Stock starts code at 0x08004120, twelve bytes past the end of its
++           69-word vector table, and puts libgcc first: __udivmoddi4 sits at
++           0x0800418C, ahead of the first command handler at 0x08004540. */
++        . = ALIGN(16);
++        *libgcc.a:(.text .text.*)
+         *(.text .text.*)
+         *(.rodata .rodata*)
+-    } > rom
++    } > rom =0xffffffff
+ 
+     . = ALIGN(4);
+     _data_flash = .;
 diff --git a/src/generic/armcm_timer.c b/src/generic/armcm_timer.c
 index ef38680a9..fd53d7b8c 100644
 --- a/src/generic/armcm_timer.c
@@ -2257,7 +2277,7 @@ index 037e37bbe..d66601268 100644
          bool "128KiB bootloader" if MACH_STM32H743 || MACH_STM32H723 || MACH_STM32F7
  
 diff --git a/src/stm32/Makefile b/src/stm32/Makefile
-index 5f4d3af5c..5e9005029 100644
+index 5f4d3af5c..0869f6328 100644
 --- a/src/stm32/Makefile
 +++ b/src/stm32/Makefile
 @@ -47,6 +47,7 @@ src-$(CONFIG_MACH_STM32F103) += ../lib/stm32f1/system_stm32f1xx.c
@@ -2268,6 +2288,15 @@ index 5f4d3af5c..5e9005029 100644
  src-$(CONFIG_MACH_STM32F1) += stm32/stm32f1.c generic/armcm_timer.c stm32/i2c.c
  src-$(CONFIG_MACH_STM32F2) += ../lib/stm32f2/system_stm32f2xx.c
  src-$(CONFIG_MACH_STM32F2) += stm32/stm32f4.c generic/armcm_timer.c
+@@ -99,7 +100,7 @@ target-y += $(OUT)klipper.bin
+ 
+ $(OUT)klipper.bin: $(OUT)klipper.elf
+ 	@echo "  Creating hex file $@"
+-	$(Q)$(OBJCOPY) -O binary $< $@
++	$(Q)$(OBJCOPY) -O binary --gap-fill 0xff $< $@
+ 
+ # Flash rules
+ lib/hidflash/hid-flash:
 diff --git a/src/stm32/gpio.c b/src/stm32/gpio.c
 index d19437cbe..35b897a72 100644
 --- a/src/stm32/gpio.c
