@@ -100,7 +100,6 @@ nozzle descends. A failed run leaves the previous calibration intact.
 
 | Message | What happened |
 |---|---|
-| `home all axes first (homed: '')` | Only with `HOME=0`: both commands home themselves otherwise. Run `G28`, or drop `HOME=0`. |
 | `G28 left the axes unhomed (homed: '<axes>')` | Homing was auto-started and did not finish — an endstop or the toolchanger refused. Fix that first; nothing was measured. |
 | `no tool is mounted. SELECT_TOOL T=<0..3> first` | You ran the tool pass with an empty carriage. It would have measured the bare carriage and saved it as a nozzle — ~3.2 mm out, in the direction that crashes. `TOOL_LOCATE_SENSOR` is the one that wants an empty carriage. |
 | `carriage is not verifiably empty (<reason>) -- the station pass must run with no tool mounted` | `TOOL_LOCATE_SENSOR` with a tool still on, or the dock and grab sensors disagree. `<reason>` names which. |

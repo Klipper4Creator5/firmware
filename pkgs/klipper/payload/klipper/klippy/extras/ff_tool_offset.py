@@ -317,14 +317,10 @@ class FFToolOffset:
         axis is not a warning, it is a crash. Homing it here is what the
         operator would type next anyway: G28 is the fork's wrapper, which
         docks a mounted tool before it homes Z, and the callers put the
-        tool back on the carriage afterwards. HOME=0 keeps the old
-        refusal for anyone driving the axes by hand."""
+        tool back on the carriage afterwards."""
         homed = self._homed_axes()
         if all(axis in homed for axis in 'xyz'):
             return
-        if not gcmd.get_int('HOME', 1, minval=0, maxval=1):
-            raise gcmd.error("%s: home all axes first (homed: '%s')"
-                             % (self.name, homed))
         gcmd.respond_info("%s: homing first (homed: '%s')"
                           % (self.name, homed))
         self._run('G28')
@@ -689,7 +685,7 @@ class FFToolOffset:
 
     cmd_TOOL_CALIBRATE_TOOL_OFFSET_help = (
         "Measure the MOUNTED tool's nozzle position against the station "
-        "([SAVE=1] [HOME=1] [PLATE_CHECK=1] [SAMPLES=] [SAMPLES_TOLERANCE=]"
+        "([SAVE=1] [PLATE_CHECK=1] [SAMPLES=] [SAMPLES_TOLERANCE=]"
         " [SAMPLES_TOLERANCE_RETRIES=] [SAMPLES_RESULT=]"
         " [SAMPLE_RETRACT_DIST=] [PROBE_SPEED=])")
 
@@ -789,8 +785,7 @@ class FFToolOffset:
 
     cmd_TOOL_LOCATE_SENSOR_help = (
         "Locate the station with an EMPTY carriage (station_x/y/z) "
-        "([PARK=1] [SAVE=1] [HOME=1] [PLATE_CHECK=1] [SAMPLES=]"
-        " [SAMPLES_TOLERANCE=]"
+        "([PARK=1] [SAVE=1] [PLATE_CHECK=1] [SAMPLES=] [SAMPLES_TOLERANCE=]"
         " [SAMPLES_TOLERANCE_RETRIES=] [SAMPLES_RESULT=]"
         " [SAMPLE_RETRACT_DIST=] [PROBE_SPEED=])")
 
