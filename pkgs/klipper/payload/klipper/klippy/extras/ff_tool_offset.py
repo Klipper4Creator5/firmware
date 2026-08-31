@@ -306,11 +306,32 @@ class FFToolOffset:
             y = CYLINDER_Y_DEFAULT
         return x, y
 
-    def _check_homed(self, gcmd):
+    def _homed_axes(self):
         toolhead = self.printer.lookup_object('toolhead')
-        homed = toolhead.get_status(self.reactor.monotonic())['homed_axes']
-        if not all(axis in homed for axis in 'xyz'):
+        return toolhead.get_status(self.reactor.monotonic())['homed_axes']
+
+    def _check_homed(self, gcmd):
+        """Home what is not homed, then insist on it.
+
+        Every move below is absolute machine coordinates, so an unhomed
+        axis is not a warning, it is a crash. Homing it here is what the
+        operator would type next anyway: G28 is the fork's wrapper, which
+        docks a mounted tool before it homes Z, and the callers put the
+        tool back on the carriage afterwards. HOME=0 keeps the old
+        refusal for anyone driving the axes by hand."""
+        homed = self._homed_axes()
+        if all(axis in homed for axis in 'xyz'):
+            return
+        if not gcmd.get_int('HOME', 1, minval=0, maxval=1):
             raise gcmd.error("%s: home all axes first (homed: '%s')"
+                             % (self.name, homed))
+        gcmd.respond_info("%s: homing first (homed: '%s')"
+                          % (self.name, homed))
+        self._run('G28')
+        self._wait_moves()
+        homed = self._homed_axes()
+        if not all(axis in homed for axis in 'xyz'):
+            raise gcmd.error("%s: G28 left the axes unhomed (homed: '%s')"
                              % (self.name, homed))
 
     def _current_accel(self):
@@ -548,8 +569,8 @@ class FFToolOffset:
         """Park whatever is mounted, then _plate_check. Shared prologue of
         both calibration commands; PLATE_CHECK=0 on the command skips it.
 
-        Returns True when the check ran -- the carriage is then empty, and
-        TOOL_CALIBRATE_TOOL_OFFSET has to pick its tool back up."""
+        Returns True when the check ran -- the carriage is then empty, so
+        TOOL_CALIBRATE_TOOL_OFFSET picks its tool back up afterwards."""
         if not gcmd.get_int('PLATE_CHECK', 1 if self.plate_check else 0,
                             minval=0, maxval=1):
             return False
@@ -668,7 +689,7 @@ class FFToolOffset:
 
     cmd_TOOL_CALIBRATE_TOOL_OFFSET_help = (
         "Measure the MOUNTED tool's nozzle position against the station "
-        "([SAVE=1] [PLATE_CHECK=1] [SAMPLES=] [SAMPLES_TOLERANCE=]"
+        "([SAVE=1] [HOME=1] [PLATE_CHECK=1] [SAMPLES=] [SAMPLES_TOLERANCE=]"
         " [SAMPLES_TOLERANCE_RETRIES=] [SAMPLES_RESULT=]"
         " [SAMPLE_RETRACT_DIST=] [PROBE_SPEED=])")
 
@@ -692,11 +713,23 @@ class FFToolOffset:
         save = gcmd.get_int('SAVE', 1, minval=0, maxval=1)
         try:
             self._check_homed(gcmd)
-            # The plate check has to measure an EMPTY carriage, so it parks the
-            # tool we were asked about. Pick it straight back up.
-            if self._run_plate_check(gcmd):
+            self._run_plate_check(gcmd)
+            # Both the plate check (it has to measure an EMPTY carriage) and
+            # homing (Z homes on the carriage's eddy sensor, so G28 docks
+            # first) leave the tool we were asked about in its dock. Pick it
+            # straight back up -- measuring a bare carriage would save a
+            # nozzle position ~3.2 mm out in the crash direction.
+            carriage = self.toolchange.get_status(self.reactor.monotonic())
+            if carriage.get('current_tool', -1) != tool:
                 self._run('T%d' % tool)
                 self._wait_moves()
+                carriage = self.toolchange.get_status(self.reactor.monotonic())
+                if carriage.get('current_tool', -1) != tool \
+                   or not carriage.get('state_ok'):
+                    raise gcmd.error(
+                        "%s: T%d is not back on the carriage (%s)"
+                        " -- nothing measured"
+                        % (self.name, tool, carriage.get('state_reason')))
             cylinder_x, cylinder_y = self._cylinder()
             x0, y0 = cylinder_x - self.nozzle_x_shift, cylinder_y
             gcmd.respond_info("T%d: offset calibration, start %.3f, %.3f"
@@ -756,7 +789,8 @@ class FFToolOffset:
 
     cmd_TOOL_LOCATE_SENSOR_help = (
         "Locate the station with an EMPTY carriage (station_x/y/z) "
-        "([PARK=1] [SAVE=1] [PLATE_CHECK=1] [SAMPLES=] [SAMPLES_TOLERANCE=]"
+        "([PARK=1] [SAVE=1] [HOME=1] [PLATE_CHECK=1] [SAMPLES=]"
+        " [SAMPLES_TOLERANCE=]"
         " [SAMPLES_TOLERANCE_RETRIES=] [SAMPLES_RESULT=]"
         " [SAMPLE_RETRACT_DIST=] [PROBE_SPEED=])")
 
