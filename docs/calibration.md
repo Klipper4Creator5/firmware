@@ -26,8 +26,7 @@ and how those numbers reach a first layer, is
 ## The sequence
 
 ```gcode
-G28                      ; all three axes
-CALIBRATE_TOOL_OFFSETS   ; the whole thing
+CALIBRATE_TOOL_OFFSETS   ; the whole thing -- homes first if it has to
 SAVE_CONFIG              ; persists it, restarts Klipper
 ```
 
@@ -45,7 +44,6 @@ TOOL_LOCATE_SENSOR                ; the reference, empty carriage
 Run those by hand instead when you only want one tool:
 
 ```gcode
-G28
 TOOL_LOCATE_SENSOR       ; only if the station or bed was disturbed
 SELECT_TOOL T=2
 TOOL_CALIBRATE_TOOL_OFFSET
@@ -102,7 +100,7 @@ nozzle descends. A failed run leaves the previous calibration intact.
 
 | Message | What happened |
 |---|---|
-| `home all axes first (homed: '')` | Run `G28`. |
+| `G28 left the axes unhomed (homed: '<axes>')` | Homing was auto-started and did not finish — an endstop or the toolchanger refused. Fix that first; nothing was measured. |
 | `no tool is mounted. SELECT_TOOL T=<0..3> first` | You ran the tool pass with an empty carriage. It would have measured the bare carriage and saved it as a nozzle — ~3.2 mm out, in the direction that crashes. `TOOL_LOCATE_SENSOR` is the one that wants an empty carriage. |
 | `carriage is not verifiably empty (<reason>) -- the station pass must run with no tool mounted` | `TOOL_LOCATE_SENSOR` with a tool still on, or the dock and grab sensors disagree. `<reason>` names which. |
 | `[ff_toolchange] not loaded` | Config problem, not an operator one: `ff-toolchange.cfg` is not included. |

@@ -86,9 +86,9 @@ difference between a first layer that sticks and one that does not.
 
 #### `TOOL_LOCATE_SENSOR` — the reference
 
-`[PARK=1] [SAVE=1]`
+`[SAVE=1]`
 
-1. Parks the mounted tool (`PARK=0` if you docked it by hand) and verifies
+1. Homes if any axis is unhomed, parks the mounted tool, and verifies
    the carriage really is empty, from the dock and grab sensors.
 2. Plate check: probes station Z with the bare carriage, then sideways for
    the bore edge.
@@ -107,8 +107,9 @@ carriage** — select the tool first.
 
 `[SAVE=1]`
 
-1. Plate check. It needs an empty carriage, so it parks your tool and picks
-   it straight back up — that is expected, not a fault.
+1. Homes if any axis is unhomed, then the plate check. Both need an empty
+   carriage, so your tool is parked and picked straight back up — that is
+   expected, not a fault.
 2. Zeroes the G-code offset and works in raw machine coordinates.
 3. Same two passes as above, from `cylinder_x − 12.5` (16.0 stock), with the
    nozzle doing the touching.
