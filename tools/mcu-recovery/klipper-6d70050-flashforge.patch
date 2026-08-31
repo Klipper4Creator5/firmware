@@ -293,10 +293,10 @@ index 000000000..fbf6e5b35
 +#endif // n32g45x.h
 diff --git a/lib/n32g45x/n32g45x_periph.c b/lib/n32g45x/n32g45x_periph.c
 new file mode 100644
-index 000000000..255a1e873
+index 000000000..7c9bfc4e5
 --- /dev/null
 +++ b/lib/n32g45x/n32g45x_periph.c
-@@ -0,0 +1,476 @@
+@@ -0,0 +1,503 @@
 +// Nations N32G45x standard peripheral library - subset used by the
 +// FlashForge levelBoard firmware.  Reconstructed from the stock image.
 +
@@ -717,61 +717,88 @@ index 000000000..255a1e873
 +
 +#define HSI_VALUE 8000000
 +#define HSE_VALUE 8000000
++#define CFG_PLLMULFCT_MASK      ((uint32_t)0x083C0000)
++#define CFG_PLLSRC_MASK         ((uint32_t)0x00010000)
++#define CFG_PLLHSEPRES_MASK     ((uint32_t)0x00020000)
++#define CFG_SCLKSTS_MASK        ((uint32_t)0x0000000C)
++#define CFG_AHBPRES_SET_MASK    ((uint32_t)0x000000F0)
++#define CFG_APB1PRES_SET_MASK   ((uint32_t)0x00000700)
++#define CFG_APB2PRES_SET_MASK   ((uint32_t)0x00003800)
++#define CFG2_ADCPLLPRES_SET_MASK ((uint32_t)0x000001F0)
++#define CFG2_ADCHPRES_SET_MASK  ((uint32_t)0x0000000F)
++#define RCC_CFG_PLLMULFCT_4     ((uint32_t)0x08000000)
 +#define RCC_PLLHSIPRE (*(__IO uint32_t *)(RCC_BASE + 0x40))
 +#define RCC_CFG2      (*(__IO uint32_t *)(RCC_BASE + 0x2c))
 +
 +void
 +RCC_GetClocksFreqValue(RCC_ClocksType *RCC_Clocks)
 +{
-+    uint32_t tmp, pllmull, pllsource, presc, pllclk;
++    uint32_t tmp = 0, pllclk = 0, pllmull = 0, pllsource = 0, presc = 0;
 +
-+    // Get PLL clock source and multiplication factor
-+    pllmull = (RCC_CFG & (uint32_t)0x083c0000) >> 18;
-+    pllsource = RCC_CFG & (uint32_t)0x00010000;
-+    if (pllmull & 0x200)
-+        pllmull = (pllmull & 0x0f) + 17;
++    // PLL clock source and multiplication factor
++    pllmull = RCC_CFG & CFG_PLLMULFCT_MASK;
++    pllsource = RCC_CFG & CFG_PLLSRC_MASK;
++
++    if ((pllmull & RCC_CFG_PLLMULFCT_4) == 0)
++        pllmull = (pllmull >> 18) + 2;          // PLLMUL[4]=0
 +    else
-+        pllmull = pllmull + 2;
++        pllmull = ((pllmull >> 18) - 496) + 1;  // PLLMUL[4]=1
 +
 +    if (pllsource == 0x00) {
-+        if (RCC_PLLHSIPRE & 0x01)
++        // Stock halves HSI only when RCC+0x40 bit 0 is set. The published
++        // SDK halves it unconditionally; this conditional is the single
++        // difference between FlashForge's driver and every public copy.
++        if ((RCC_PLLHSIPRE & 0x00000001) != 0)
 +            pllclk = (HSI_VALUE >> 1) * pllmull;
 +        else
 +            pllclk = HSI_VALUE * pllmull;
 +    } else {
-+        if (RCC_CFG & (uint32_t)0x00020000)
++        if ((RCC_CFG & CFG_PLLHSEPRES_MASK) != 0)
 +            pllclk = (HSE_VALUE >> 1) * pllmull;
 +        else
 +            pllclk = HSE_VALUE * pllmull;
 +    }
 +
-+    // SYSCLK
-+    tmp = RCC_CFG & (uint32_t)0x0c;
-+    if (tmp == 0x08)
-+        RCC_Clocks->SysclkFreq = pllclk;
-+    else
++    // SYSCLK source
++    tmp = RCC_CFG & CFG_SCLKSTS_MASK;
++    switch (tmp) {
++    case 0x00:
 +        RCC_Clocks->SysclkFreq = HSI_VALUE;
++        break;
++    case 0x04:
++        RCC_Clocks->SysclkFreq = HSE_VALUE;
++        break;
++    case 0x08:
++        RCC_Clocks->SysclkFreq = pllclk;
++        break;
++    default:
++        RCC_Clocks->SysclkFreq = HSI_VALUE;
++        break;
++    }
 +
-+    // HCLK
-+    tmp = (RCC_CFG >> 4) & 0x0f;
++    tmp = RCC_CFG & CFG_AHBPRES_SET_MASK;
++    tmp = tmp >> 4;
 +    presc = APBAHBPresTable[tmp];
 +    RCC_Clocks->HclkFreq = RCC_Clocks->SysclkFreq >> presc;
 +
-+    // PCLK1
-+    tmp = (RCC_CFG >> 8) & 0x07;
++    tmp = RCC_CFG & CFG_APB1PRES_SET_MASK;
++    tmp = tmp >> 8;
 +    presc = APBAHBPresTable[tmp];
 +    RCC_Clocks->Pclk1Freq = RCC_Clocks->HclkFreq >> presc;
 +
-+    // PCLK2
-+    tmp = (RCC_CFG >> 11) & 0x07;
++    tmp = RCC_CFG & CFG_APB2PRES_SET_MASK;
++    tmp = tmp >> 11;
 +    presc = APBAHBPresTable[tmp];
 +    RCC_Clocks->Pclk2Freq = RCC_Clocks->HclkFreq >> presc;
 +
-+    // ADC clocks
-+    tmp = RCC_CFG2 & 0x0f;
-+    RCC_Clocks->AdcHclkFreq = RCC_Clocks->HclkFreq / ADCHCLKPresTable[tmp];
-+    tmp = (RCC_CFG2 >> 4) & 0x0f;
-+    RCC_Clocks->AdcPllClkFreq = pllclk / ADCPLLCLKPresTable[tmp];
++    tmp = RCC_CFG2 & CFG2_ADCHPRES_SET_MASK;
++    presc = ADCHCLKPresTable[tmp];
++    RCC_Clocks->AdcHclkFreq = RCC_Clocks->HclkFreq / presc;
++
++    tmp = RCC_CFG2 & CFG2_ADCPLLPRES_SET_MASK;
++    tmp = tmp >> 4;
++    presc = ADCPLLCLKPresTable[(tmp & 0xF)];    // ignore BIT5
++    RCC_Clocks->AdcPllClkFreq = pllclk / presc;
 +}
 diff --git a/scripts/buildcommands.py b/scripts/buildcommands.py
 index b35873840..ab1566c0d 100644
