@@ -923,9 +923,19 @@ class FFPA:
             raise gcmd.error("%s: PA='%s' is not a number"
                              % (self.name, pa_text))
         y = gcmd.get_float('Y', self.y_start)
+        # PARK= is a per-invocation override of a persistent default, so it
+        # must be undone on EVERY exit -- including a refusal from the checks
+        # below, which run before _guarded gets a finally in place. Leaking it
+        # would flip what the next FF_PA_CALIBRATE does with its gram.
         saved_park = self.park
-        self.park = bool(gcmd.get_int('PARK', int(self.park),
-                                      minval=0, maxval=1))
+        try:
+            self.park = bool(gcmd.get_int('PARK', int(self.park),
+                                          minval=0, maxval=1))
+            self._probe_inner(gcmd, y, pa_text)
+        finally:
+            self.park = saved_park
+
+    def _probe_inner(self, gcmd, y, pa_text):
         tool = self._resolve_tool(gcmd)
         self._check_homed(gcmd)
         self._check_filament(gcmd, tool)
@@ -951,7 +961,6 @@ class FFPA:
                 raise gcmd.error("%s: %s" % (self.name, err))
             finally:
                 self.y_start = saved_y
-                self.park = saved_park
         if self.dry_run:
             return
         extra = ''
