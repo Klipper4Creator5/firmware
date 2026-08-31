@@ -1,14 +1,29 @@
 #!/bin/sh
-# Re-point the stock boot path after `opkg upgrade anvil-core` on a printer.
-# Without it the upgrade writes a new $MODDIR/prog/firmwareExe and the printer
-# goes on running the copy /usr/prog already had.
+# Put the printer on what this package just installed.
 #
-# The same script runs from installer/runFirmwareExe.sh on the .tgz path. Its own
-# /usr/prog/app_startup.sh guard is what makes this a no-op when the build
-# installs this package rather than a printer.
+# Two things an unpacked package is not enough for, both because what the
+# printer reads is generated or symlinked rather than shipped:
+#
+#   the boot path      $MODDIR/prog/firmwareExe is a new file, and /usr/prog
+#                      goes on running the copy it already had
+#   the boot database  etc/s6-rc/source/ is text, and the database the last
+#                      boot used was compiled from the PREVIOUS definitions --
+#                      so a changed or added service would not reach the
+#                      printer at all
+#
+# The same two scripts run from installer/runFirmwareExe.sh on the .tgz path.
+# Their own guards are what make this a no-op when the build installs this
+# package rather than a printer.
 set -e
 
 MODDIR=/usr/data/anvil
-[ -x "$MODDIR/bin/anvil-link-prog.sh" ] || exit 0
-"$MODDIR/bin/anvil-link-prog.sh"
+
+if [ -x "$MODDIR/bin/anvil-link-prog.sh" ]; then
+    "$MODDIR/bin/anvil-link-prog.sh"
+fi
+
+if [ -x "$MODDIR/bin/anvil-s6-rc-compile.sh" ]; then
+    "$MODDIR/bin/anvil-s6-rc-compile.sh"
+fi
+
 exit 0
