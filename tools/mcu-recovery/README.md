@@ -94,43 +94,79 @@ pinned and the gap is measured rather than guessed.
 - The memory map: load address `0x08004000` behind a 16 KiB bootloader,
   initial SP `0x20004000`.
 
-**Measured progress on code.** Over the stock image's 20,484-byte code
-region, across 194 discovered functions:
+**Measured progress on code.**
 
-| | functions | bytes | share |
-|---|---:|---:|---:|
-| instruction-identical or near (EXACT+CLOSE) | 104 | 9,248 | **45.1 %** |
-| adding partial matches | 127 | 11,604 | 56.7 % |
-| no counterpart of any kind | — | **2,244** | 11.0 % |
+| | count | note |
+|---|---:|---|
+| command handlers instruction-identical | **49 of 54** | was 7, then 34 |
+| all functions instruction-exact somewhere in stock | **179 of 233** | 63.8 % of instructions |
+| vector-table slots disagreeing with stock | **0 of 69** | was 31 |
+| handler ordering: inverted pairs | **9 of 1431** | was 344 |
 
-34 of the 54 command handlers are instruction-identical, up from 7. The
-image is 25,624 bytes against the stock 26,704.
+The five handlers still differing are `endstop_home`, `endstop_query_state`,
+`neopixel_send`, `get_basic_param` and `remove_peel`.
 
-The 1,164-byte code gap is accounted for rather than estimated: 514 bytes
-spread thinly across already-matched functions, and 738 bytes of net
-imbalance from what is missing outright. The missing part is FlashForge's
-peripheral plumbing -- the vendor library at 0x08008924 (1,824 B), the
-dead DMA interrupt handlers (268 B) and the eddy task wrapper (80 B) --
-offset by the ADC code we still carry and stock does not.
+**The toolchain is settled, and it was settled by libgcc.** `__udivmoddi4`
+is prebuilt: no source edit and no `-f` flag can change it, so if it does
+not match stock, the toolchain is wrong -- and that can be tested without
+building the firmware at all, by scoring each libgcc multilib in the
+toolchain against the stock image:
 
-**The library block is vendor code, not FlashForge logic.** It spans
-0x08008924-0x08009043 (1,824 B) and covers RCC, GPIO, USART, NVIC, DMA and
-TIM -- `USART_Init` with the textbook `x25/(4*baud)/100` BRR helper,
-`RCC_GetClocksFreqValue`, `DMA_Init` and friends. Klipper vendors only
-`n32g45x_adc.c` of that library, so FlashForge added the rest from the
-Nations SDK.
+| multilib | `__udivmoddi4` vs stock |
+|---|---|
+| `thumb/v7e-m+fp/softfp` | 196/250 (78 %) |
+| `thumb/v7e-m/nofp` | 39/248 (16 %) |
+| `thumb/v7-m/nofp` | 29/251 (12 %) |
 
-An earlier revision of this note put the block at 0x08008ACC, called it
-1,344 bytes, and claimed a DMA1 channel-base table at 0x08008F40. All
-three were wrong: 0x08008ACC is a 4-byte `GPIO_SetBits` (`str r1,[r0,#24]`
-/ `bx lr`) and 0x08008F40 is `DMA_DeInit`'s literal pool.
+Stock links the FPU multilib. **The N32G45x is a Cortex-M4F and we had been
+building it as a Cortex-M3** -- the tree reconstructs the part from
+Klipper's STM32F103 headers, which pull in CMSIS `core_cm3.h`, and that
+header refuses to compile the moment VFP instructions appear. With
+`-mfpu=fpv4-sp-d16 -mfloat-abi=softfp` and `core_cm4.h`, handlers went from
+41 to 49 and `__udivmoddi4` became **250 of 250 exact**. GCC 10.3-2021.10 is
+confirmed correct; no version hunt is needed.
 
-Reproducing the block is *not* simply a matter of compiling the published
-SDK. FlashForge's entry points take one argument where the published SDK
-takes two, and their USART register file is 16-bit wide -- which is what
-produces the `strh r2,[r3,#12]` at 0x080083AA. That is consistent with the
-published sources never matching better than a 4-instruction prefix, and
-means this block has to be reconstructed like any other, not downloaded.
+**Layout.** Byte-identity needs every function at stock's address, not just
+matching instructions. Three layout facts have been recovered:
+
+- the objects are linked in **sorted** order, not `src-y` order -- top-level
+  `src/*.c` alphabetically, then the subdirectory files;
+- `.text` starts at 0x08004120, aligned to 16, with gaps filled `0xff`;
+- stock links **GCC's startup files**: `__do_global_dtors_aux` at 0x08004120
+  and `frame_dummy` at 0x08004144, ahead of libgcc. Klipper links
+  `-nostdlib`, so we had neither.
+
+That last one produced the first code in this image to land byte-correct at
+stock's own address: 0x08004120-0x08004160 agrees in 58 of 64 bytes, the six
+exceptions being literal-pool entries that hold data addresses.
+
+**The vendor library is not downloadable.** It spans 0x08008924-0x08009043
+(1,824 B) and covers RCC, GPIO, USART, NVIC, DMA and TIM. Klipper vendors
+only `n32g45x_adc.c`, so FlashForge added the rest -- but not from any
+published tree. `RCC_GetClocksFreqValue` is now **byte-exact (71/71)**, and
+getting there required one change no published revision has: stock tests a
+register at RCC+0x40 bit 0 to decide whether to halve HSI before multiplying
+by PLLMUL, where every revision from 2.0.0 to 2.6.0 halves it
+unconditionally. Six distinct SDK trees were compiled and compared before
+that became clear; the fix had to be derived from the image, not found.
+
+An earlier revision of this note put the block at 0x08008ACC and called it
+1,344 bytes, with a DMA1 channel-base table at 0x08008F40. All three were
+wrong: 0x08008ACC is a 4-byte `GPIO_SetBits` and 0x08008F40 is
+`DMA_DeInit`'s literal pool.
+
+**What byte-identity still needs.** No handler yet sits at stock's exact
+address. The drifts cluster by file (+1108 for twelve of them, -188 for
+eleven, +1448 for five), which is the signature of each object being
+slightly the wrong size rather than in the wrong place -- the ordering is
+right, the sizes are not. Whole-image byte agreement stays near 4 % and will
+remain there until those sizes match, because one extra byte early shifts
+everything after it. Handler address drift, not byte percentage, is the
+metric that tracks progress from here.
+
+One concrete lead: stock's 48-byte routine at 0x08004160 is the *unsigned*
+64-bit division helper, where we link the 160-byte signed `__aeabi_ldivmod`.
+Somewhere our source divides signed where FlashForge's divides unsigned.
 
 ### What had to be pinned first
 
@@ -183,73 +219,50 @@ StdPeriph-style driver library that upstream Klipper does not use.
 
 ### Next, in order of tractability
 
-1. **The vector table**, now fully specified. Stock's table is exactly
-   69 words -- external IRQs 0..52 -- followed by three `0xffffffff` fill
-   words to 0x120, so the image is gap-filled with 0xff rather than zeros.
-   Only four slots hold a real handler:
+Everything on the previous version of this list is done: the vector table,
+the vendor library, the serial path and the register-allocation puzzle. What
+follows is what is actually left.
 
-   | slot | line | what |
-   |---|---|---|
-   | irq11 | DMA1_Channel1 | the eddy sensor's TIM1 latch |
-   | irq14 | DMA1_Channel4 | dead -- see below |
-   | irq15 | DMA1_Channel5 | dead -- see below |
-   | irq36 | SPI2 | the USART1 handler |
+1. **Make each object the right size.** This is the whole remaining problem.
+   The link order is right and the handlers are in stock's order, but no
+   handler is yet at stock's address because the objects ahead of it are the
+   wrong size. Since the drift is per-file, it can be attacked file by file:
+   fix every function in `adccmds.c`, and that file's handlers snap to their
+   stock addresses and stay there.
+2. **The signed/unsigned 64-bit division.** Stock's 48-byte routine at
+   0x08004160 is the unsigned helper; we link the 160-byte signed
+   `__aeabi_ldivmod`. Finding where our source divides signed and stock's
+   divides unsigned removes 112 bytes and shifts everything after it.
+3. **The five remaining handlers** -- `endstop_home`, `endstop_query_state`,
+   `neopixel_send`, `get_basic_param` and `remove_peel`. `get_basic_param`
+   is closest: identical instruction counts, differing only in how the
+   absolute value is written (stock if-converts a comparison; we get GCC's
+   branchless `eor`/`sub` idiom).
+4. **The 54 functions not yet matched anywhere**, led by
+   `ff_eddy_timer_event` (277 instructions), `gpio_peripheral` (231) and
+   `command_encode_and_frame` (133).
+5. **`.bss` and `.rodata` layout.** Even byte-identical code carries literal
+   pools holding data addresses, so the first matching region still differs
+   in six bytes purely because our `completed.0` is at 0x20000038 where
+   stock's is at 0x20000044.
 
-   Everything else is `DefaultHandler`. Declaring the handler on 36 is
-   done and irq11/irq36 now agree; irq14/irq15 and the run out to slot 52
-   remain. Nothing in the image explains the length: IRQ 52 is UART4 and
-   the UART4 base address 0x40004C00 appears nowhere in the image, so the
-   tail is padding whose mechanism is unknown.
-2. **The vendor peripheral library** at 0x08008ACC (1,344 B, plus 328 B of
-   helpers) -- a matter of finding the right published source, not writing
-   new code. Klipper vendors only `n32g45x_adc.c`, but the rest is public:
-   the N32G45x SDK ships `n32g45x_usart.c`, `n32g45x_rcc.c` and
-   `n32g45x_dma.c`, exactly the three drivers that block accounts for.
+### What the vector table turned out to be
 
-   Confirmed by compiling them: the SDK's `RCC_GetClocksFreqValue` at -O2
-   reproduces stock's first four instructions exactly and the next two are
-   the same pair swapped, and `USART_Init`/`DMA_Init` touch the same
-   registers and fields in the same order. ST's own StdPeriph
-   `RCC_GetClocksFreq` does markedly worse (a 1-instruction prefix over 54
-   instructions, against 4 over 70), so it is the Nations driver rather
-   than the ST original.
+Stock's table is exactly 69 words -- external IRQs 0..52 -- followed by
+three `0xffffffff` fill words to 0x120. Only four slots hold a real handler:
 
-   The family is right; the revision is not. Two published mirrors compile
-   to the same code for that function, and nine flag combinations leave -O2
-   the best fit, so what is needed is the particular SDK version FlashForge
-   built against.
-3. **The DMA serial path** (268 B of interrupt handlers plus its setup),
-   which sits on top of that library.
-4. **The remaining register-allocation differences** -- see below.
+| slot | line | what |
+|---|---|---|
+| irq11 | DMA1_Channel1 | the eddy sensor's TIM1 latch |
+| irq14 | DMA1_Channel4 | dead -- an abandoned DMA serial design |
+| irq15 | DMA1_Channel5 | dead, likewise |
+| irq36 | SPI2 | the USART1 handler -- see below |
 
-### The open puzzle
-
-The 20 handlers that still differ are close: most have identical instruction
-counts and diverge only in where a value is kept across a call. Stock
-consistently uses one fewer callee-saved register than we do and spills to
-the stack instead -- which is the *more* expensive choice, so it is not a
-size or speed preference.
-
-What makes it interesting is that it is not global:
-
-- `command_get_clock` matches instruction for instruction, and it *does*
-  keep a value in a callee-saved register across a call. So the allocator
-  is not behaving differently in general.
-- `command_debug_ping` does not match, and it is untouched upstream code in
-  `debugcmds.c`. Same compiler, same flags, same source should give the same
-  instructions -- so one of those three is not actually the same, and the
-  source is the one we have least reason to trust.
-
-Twenty-odd flags have been swept without beating the baseline, including
-every register-allocator knob (`-fira-algorithm`, `-fira-region`,
-`-fno-ira-share-*`, `-fsched-pressure`, `-fno-ipa-ra`, `-fno-caller-saves`)
-and the obvious codegen ones. `permute.py` drives the
-next step: search semantically equivalent source formulations for the one
-that reproduces stock, which is how matching decompilation projects close
-this kind of gap.
-
-Do not flash any of this. It is a reconstruction for study, not a
-drop-in image.
+Everything else is `DefaultHandler`, and all 69 words now agree with stock.
+One thing about it is still unexplained: nothing in the image accounts for
+the table running out to slot 52. IRQ 52 is UART4 and the UART4 base address
+0x40004C00 appears nowhere in the image, so the tail is padding whose
+mechanism is inferred from its length alone.
 
 ## Two things worth knowing about
 
@@ -311,6 +324,20 @@ generated dictionary still matches; a fix is a one-line change to use
 | `shutdownmap2.py` | recover the shutdown error code of every instrumented site |
 | `timertags.py` | recover the call-site tag passed to every sched_add_timer |
 | `permute.py` | try source variants of one function against stock's instructions |
+| `coverage.py` | how many of our functions appear instruction-exact anywhere in stock |
+| `vtcmp.py` | gate the vector table: slot by slot, and its length |
+| `addrdelta.py` | how far each handler is from stock's address, and the drift pattern |
+| `linkorder.py` | derive stock's link order from the handler addresses |
+| `classify2.py` | bucket the differing handlers by cause (allocation vs source) |
+| `objalign.py` | score a symbol from any `.o` against the stock image |
+| `fncmp.py` | compare one of our functions against a stock address |
+| `sbs2.py` | side-by-side disassembly of one handler, ours against stock |
+| `imgdiff.py` | whole-image positional byte comparison |
+
+`objalign.py` is the toolchain oracle: pointed at `__udivmoddi4` from a
+candidate `libgcc.a`, it settles which toolchain and multilib built the
+stock image without compiling the firmware at all. That is how the FPU was
+found.
 
 `eddy-sensor.md` is the full recovered description of the inductive sensor:
 every claim cites the flash address of the instruction that justifies it.
