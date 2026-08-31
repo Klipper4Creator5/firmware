@@ -10,11 +10,17 @@
 # refuses to run over a live directory that already exists. Whether /run is
 # tmpfs on this printer is the one thing here not checked on hardware.
 #
-# WHAT SHIPS is the runtime, not the whole toolbox. s6-rc-compile is a BUILD
-# tool -- it runs where the database is compiled, not on the printer.
-# s6-rc-update swaps a live database without a reboot, which on this machine
-# an update is anyway. What is left is the three programs that bring services
-# up and down and the two the generated databases exec by absolute path.
+# WHAT SHIPS is the runtime plus the two tools a printer needs to change its
+# own database, which it now does: anvil-core's postinst compiles a new one on
+# every upgrade of the service definitions.
+#
+# s6-rc-update is what makes that safe. s6-rc-init records the live state as
+# one byte per service in the database it booted, and /run/s6-rc/compiled is a
+# symlink to compiled/current -- so moving `current` under a running system
+# leaves a state file whose size no longer matches, and every `s6-rc` command
+# fails with "unable to read valid state" until the next boot. s6-rc-update
+# reconciles the live state with the new database instead, leaving unchanged
+# services alone. Measured on a printer, 2026-08-31.
 set -euo pipefail
 . ./bin/common.sh
 . pkgs/lib.sh
@@ -43,7 +49,7 @@ PKG_STRIP_ARGS=""
 # s6-rc-compile ships even though it is a build tool, and that is a judgement
 # rather than an oversight: it is 78KB, and it is the only way to recover a
 # printer whose database is wrong without rebuilding a package on a laptop.
-S6RC_BINS="s6-rc s6-rc-init s6-rc-db s6-rc-compile"
+S6RC_BINS="s6-rc s6-rc-init s6-rc-db s6-rc-compile s6-rc-update"
 S6RC_LIBEXEC="s6-rc-oneshot-run s6-rc-fdholder-filler"
 
 # shellcheck disable=SC2086
