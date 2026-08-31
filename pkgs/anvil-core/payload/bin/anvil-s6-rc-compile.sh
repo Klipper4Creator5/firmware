@@ -23,21 +23,9 @@
 # that was current is kept, so a printer that will not boot the new one still
 # has the old one on disk to point `current` back at.
 #
-# THE LIVE STATE HAS TO BE RECONCILED, not left alone. s6-rc-init writes
-# /run/s6-rc/state as one byte per service in the database it booted, and
-# /run/s6-rc/compiled is a symlink to compiled/current -- so moving `current`
-# under a running system leaves a state file whose size no longer matches the
-# database, and every `s6-rc` command fails with "unable to read valid state"
-# until the next boot. Supervision itself survives (s6-svscan and s6-supervise
-# are a separate mechanism, and s6-svstat/s6-svc keep working), which is what
-# makes the breakage quiet enough to ship without noticing. It shipped once,
-# 2026-08-31.
-#
-# s6-rc-update is the supported answer: it migrates the live state onto the new
-# database, leaving services whose definitions did not change running. Ones
-# that DID change are restarted, which is the honest cost of applying an
-# upgrade to a running machine -- and is why an upgrade is not a thing to do
-# mid-print.
+# A NEW DATABASE REACHES THE PRINTER AT THE NEXT BOOT, not when this runs.
+# Nothing running is stopped or started; the cost is that `s6-rc` itself is
+# unusable in between, which the tail of this script explains.
 set -e
 
 MODDIR=${MODDIR:-/usr/data/anvil}
@@ -75,30 +63,33 @@ rm -rf "$COMPILED/$DB"
 "$COMPILE" "$COMPILED/$DB" "$SRC"
 echo "s6-rc-compile: $DB -- $(ls "$SRC" | wc -l) definitions"
 
-# Reconcile a running system BEFORE `current` moves. s6-rc-update reads the
-# database the live directory is on to know what it is migrating FROM, and
-# /run/s6-rc/compiled is a symlink to compiled/current -- so flipping first
-# leaves it comparing the new database against itself. Ask the migration to
-# happen while the old database is still the current one.
-#
-# LIVE's absence is the ordinary case: the payload build, and a printer that
-# has not booted this far. A failure is reported and not fatal -- the database
-# on disk is right either way, and a reboot applies it.
-LIVE=/run/s6-rc
-UPDATE=$MODDIR/bin/s6-rc-update
-if [ -d "$LIVE" ] && [ -x "$UPDATE" ]; then
-    if "$UPDATE" -l "$LIVE" "$COMPILED/$DB"; then
-        echo "s6-rc-compile: live state migrated to $DB"
-    else
-        echo "s6-rc-compile: !! could not migrate the live state to $DB" >&2
-        echo "s6-rc-compile:    reboot to come up on it" >&2
-    fi
-elif [ -d "$LIVE" ]; then
-    echo "s6-rc-compile: no $UPDATE -- reboot to come up on $DB"
-fi
-
-# Now the next boot's database, whatever the migration did.
 ln -sfn "$DB" "$COMPILED/current"
+
+# THE LIVE STATE IS NOT MIGRATED, AND THIS IS NOT AN OVERSIGHT. Moving
+# `current` under a running system leaves /run/s6-rc/state -- one byte per
+# service in the database that booted -- the wrong size for the database
+# /run/s6-rc/compiled now resolves to, so `s6-rc` reports "unable to read
+# valid state" until the next boot. Supervision is a separate mechanism and
+# keeps every service running, so the printer is fine; only s6-rc itself is
+# unusable in the window.
+#
+# s6-rc-update exists to close that window and IS SHIPPED, for a hand at a
+# prompt. It is not called from here because on this machine it does not work:
+# from a state that had just booted cleanly it failed with
+#
+#     s6-rc-update: fatal: unable to manage new service directories
+#                   in /run/s6-rc: Value too large for defined data type
+#
+# having ALREADY emptied the scandir -- every symlink under $MODDIR/etc/s6
+# gone, while the supervisors it had started were still running. The next
+# s6-svscan rescan would have taken down klipper, the UI and wifi together.
+# An upgrade that can do that is worse than an s6-rc you cannot drive until
+# you reboot. (Measured 2026-08-31; EOVERFLOW despite -D_FILE_OFFSET_BITS=64
+# through skalibs, s6, execline and s6-rc, so the cause is not the obvious
+# one and wants finding before this is wired up again.)
+if [ -d /run/s6-rc ]; then
+    echo "s6-rc-compile: reboot to come up on $DB"
+fi
 
 # Prune. `continue` is written as a full if rather than `[ x ] && continue`,
 # which under set -e exits the script the first time the test is false.
