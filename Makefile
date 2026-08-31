@@ -44,10 +44,29 @@ ASSET_ROOT ?= $(firstword $(wildcard /mnt/c /Users /home))
 #             the two it borrows from.
 #
 # Test-only variables never enter a build, which is the point of the split.
+#
+# THE SIGNING KEY HAS TO BE MOUNTED, and this is the only place that can do
+# it. config.env names the key and is read INSIDE the container, so make never
+# sees the path unless it reads it here -- and the key deliberately lives
+# outside the checkout (it must never be committable), which means the only
+# mount that would have covered it is the one for this repo. Without this,
+# `make packages` with a key at the documented ~/.anvil/anvil.rsa reports that
+# the file does not exist, on a machine where it plainly does.
+#
+# Read from the config file only when the environment does not already say,
+# so `APK_SIGN_KEY=... make packages` still works for a one-off -- and from
+# $(CONFIG_ENV), the same file bin/common.sh reads, so pointing that at a
+# second config does not leave the mount looking at the first one's key.
+APK_SIGN_KEY ?= $(shell sed -n 's/^[[:space:]]*APK_SIGN_KEY=["'"'"']\{0,1\}\([^"'"'"']*\).*/\1/p' $(if $(CONFIG_ENV),$(CONFIG_ENV),config.env) 2>/dev/null | tail -n1)
+# Its DIRECTORY, because the public half beside it is mounted by the same
+# line, and read-only because a build has no business writing to either.
+APK_SIGN_MOUNT = $(if $(wildcard $(APK_SIGN_KEY)),-v "$(patsubst %/,%,$(dir $(APK_SIGN_KEY)))":"$(patsubst %/,%,$(dir $(APK_SIGN_KEY)))":ro,)
+
 DOCKER_BASE = $(DOCKER) run --rm -i \
           -v "$(CURDIR)":"$(CURDIR)" -w "$(CURDIR)" \
           $(if $(ASSET_ROOT),-v "$(ASSET_ROOT)":"$(ASSET_ROOT)",) \
-          -e MODEL -e TARGET_MACHINE -e CONFIG_ENV
+          $(APK_SIGN_MOUNT) \
+          -e MODEL -e TARGET_MACHINE -e CONFIG_ENV -e APK_SIGN_KEY
 
 # THE BUILD LANE RUNS AS YOU, NOT AS root. Without this every `make build` and
 # `make packages` fills work/ with root-owned files that the user who started
@@ -96,7 +115,7 @@ help:
 	@echo '  make build        the firmware  Klipper fork, toolchanger, Mainsail,'
 	@echo '                                  ssh and HelixScreen'
 	@echo '  make release      build BOTH models into dist/'
-	@echo '  make packages     .ipk packages + feed index into work/packages/'
+	@echo '  make packages     .apk packages + feed index into work/packages/'
 	@echo '                    (make build INSTALLS these to make the payload,'
 	@echo '                     so run this first; needs no stock package.'
 	@echo '                     PKG=<name> builds that recipe and the ones'
@@ -193,11 +212,11 @@ build: image config.env
 	@$(RUNBUILD) ./bin/build.sh $(PACKARGS)
 
 # The package feed (docs/notes/85-packaging.md). Builds every
-# recipe under pkgs/ into work/packages/ as .ipk files plus the feed index that
-# makes that directory an opkg repository.
+# recipe under pkgs/ into work/packages/ as .apk files plus the feed index that
+# makes that directory an apk repository.
 #
 # THE RELEASE PATH IS BUILT ON THIS. pkgs/3rdparty/python declares seven build
-# dependencies, pkg_deps resolves them by unpacking their .ipk out of
+# dependencies, pkg_deps resolves them by unpacking their .apk out of
 # work/packages, and bin/payload.sh builds none of the seven. `make build` on a
 # cold checkout does not work without this target.
 # bin/payload.sh now checks for the feed up front and names this command.

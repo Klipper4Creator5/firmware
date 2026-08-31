@@ -78,6 +78,39 @@ jobs:
           echo "PRINTER_IMAGE=\"$PRINTER_IMAGE\"" > test.env
           cat test.env
 
+      # BEFORE config.env, which has to name the file this writes.
+      #
+      # OUTSIDE THE CHECKOUT, in the runner's scratch directory: the private
+      # half must not be somewhere a later step can archive into a release,
+      # and $RUNNER_TEMP is wiped with the runner. Mode 0600 because openssl
+      # will read a world-readable key without complaint and that is the sort
+      # of thing that stays wrong for a year.
+      #
+      # NOT REQUIRED. A fork building its own firmware has no such secret, and
+      # an unsigned feed still installs -- the printer is handed the packages
+      # on a stick it already trusts, and bin/build-payload.sh passes
+      # --allow-untrusted when nothing signed them. It is a warning rather
+      # than a failure for that reason, and a loud one because a release that
+      # quietly stopped being signed is the thing worth noticing.
+      - name: Unlock the feed signing key
+        env:
+          APK_SIGN_KEY_PEM: ${{ secrets.APK_SIGN_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APK_SIGN_KEY_PEM:-}" ]; then
+            echo "::warning title=Unsigned feed::secrets.APK_SIGN_KEY is not set, so this release's packages carry no signature. See docs/notes/85-packaging.md."
+            exit 0
+          fi
+          install -m 0600 /dev/null "$RUNNER_TEMP/anvil.rsa"
+          printf '%s\n' "$APK_SIGN_KEY_PEM" > "$RUNNER_TEMP/anvil.rsa"
+          # The public half is DERIVED, never stored as a second secret: two
+          # secrets can disagree, and then the printer ships a key that does
+          # not verify the packages beside it.
+          openssl pkey -in "$RUNNER_TEMP/anvil.rsa" -pubout \
+                  -out "$RUNNER_TEMP/anvil.rsa.pub"
+          echo "APK_SIGN_KEY=$RUNNER_TEMP/anvil.rsa" >> "$GITHUB_ENV"
+          echo "the feed will be signed with $(openssl pkey -in "$RUNNER_TEMP/anvil.rsa" -pubout -outform DER | sha256sum | cut -c1-16)"
+
       - name: Write config.env
         run: |
           cat > config.env <<CFG
@@ -110,6 +143,9 @@ jobs:
           # stays so a fork can bake one in deliberately.
           ROOT_PW_HASH='${{ secrets.ROOT_PW_HASH }}'
           FF_KEY='FFP0331&*%root'
+          # Empty unless the step above unlocked a key, and empty means an
+          # unsigned feed rather than a failure -- see there.
+          APK_SIGN_KEY='${APK_SIGN_KEY:-}'
           CFG
 
       # Before the suite, not after: the replica gates run ./bin/payload.sh
@@ -214,7 +250,7 @@ jobs:
           Mainsail run from their own services, before and independently of
           the UI, so reach it at `http://<printer-ip>/` or ssh in and read
           `/usr/data/logs/helixscreen.log`. There is no automatic fallback --
-          `opkg remove anvil-helixscreen` to boot headless on
+          `apk del anvil-helixscreen` to boot headless on
           purpose. **To go back to stock**, put FlashForge's own package on a
           USB stick and power on -- that path is tested on every release too.
 

@@ -22,12 +22,12 @@
 # failed" when it is absent -- with nothing to say that a small utility is
 # what is missing. lmdb is Moonraker's database at the pinned commit.
 #
-# libarchive-dev IS DEBIAN'S, DELIBERATELY, AND IS THE ONE EXCEPTION TO
-# versions.env. pkg_buildopkg builds an x86-64 opkg to assemble the payload,
-# and opkg requires libarchive. That opkg is a BUILD TOOL that never leaves
-# this container; the pin-and-hash rule governs what reaches the printer, and
-# the printer's opkg is cross-compiled against the libarchive OUR feed built.
-# Same call already made for gcc.
+# libssl-dev IS DEBIAN'S, DELIBERATELY, AND IS THE ONE EXCEPTION TO
+# versions.env. tools/apk-host/build.sh builds a NATIVE apk to write the feed,
+# and apk's crypto backend is OpenSSL. That binary is a BUILD TOOL that never
+# leaves this container; the pin-and-hash rule governs what reaches the
+# printer, and the printer's apk is cross-compiled against the openssl OUR
+# feed built. Same call already made for gcc.
 #
 # ninja-build IS DEBIAN'S ON THE SAME TERMS, and MESON IS NOT -- the split is
 # the point. numpy builds with meson-python, so both are needed; but meson is
@@ -51,7 +51,7 @@ RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
       binutils file findutils grep sed gawk make git diffutils patch procps \
       squashfs-tools qemu-user-static docker.io shellcheck \
       gcc g++ libc6-dev zlib1g-dev pkg-config perl \
-      libarchive-dev ninja-build \
+      libssl-dev ninja-build \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

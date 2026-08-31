@@ -55,7 +55,7 @@ does not APPLY to this configuration, as opposed to one this machine happens to
 be unequipped to ask. A test that only means something on a Creator5Pro is the
 shape that earns it. "I could not find the tool" is not.
 
-Three skips do not meet that bar: test_ipk.py's payload questions read
+Three skips do not meet that bar: test_packages.py's payload questions read
 work/modpayload-root, which only bin/payload.sh produces. Noted rather than
 hidden -- and note that `make test` DELETES that directory when it clears up
 after its fixture build, so running the old suite quietly costs the static

@@ -2,7 +2,7 @@
 # zlib -- the compression library, built once for everybody.
 #
 # ONE BUILD, TWO CONSUMERS: CPython's zlib module and OpenSSL's compression on
-# one side, libarchive and so opkg on the other. It used to be cross-built
+# one side and apk on the other. It used to be cross-built
 # twice, once inside each.
 #
 # NOT AUTOTOOLS: zlib's configure is hand-written and has never accepted

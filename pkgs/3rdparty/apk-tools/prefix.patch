@@ -1,0 +1,102 @@
+diff --git a/src/context.c b/src/context.c
+index e04b4ed..260db4f 100644
+--- a/src/context.c
++++ b/src/context.c
+@@ -13,6 +13,17 @@
+ #include "apk_context.h"
+ #include "apk_fs.h"
+ 
++/* Reforge: the database root when no --root is given, set by the build with
++ * -DAPK_DEFAULT_DB_ROOT. Undefined it is "/" and every change below folds
++ * away, so an unconfigured build is upstream's -- the patch is inert until
++ * the Makefile asks for it, and the prefix is spelled in the recipe rather
++ * than here.
++ */
++#ifndef APK_DEFAULT_DB_ROOT
++#define APK_DEFAULT_DB_ROOT "/"
++#endif
++#define APK_DB_ROOT_IS_DEFAULT_ROOT (APK_DEFAULT_DB_ROOT[0] == '/' && APK_DEFAULT_DB_ROOT[1] == 0)
++
+ void apk_ctx_init(struct apk_ctx *ac)
+ {
+ 	memset(ac, 0, sizeof *ac);
+@@ -51,6 +62,11 @@ void apk_ctx_free(struct apk_ctx *ac)
+ 	apk_string_array_free(&ac->repository_list);
+ 	apk_string_array_free(&ac->arch_list);
+ 	apk_string_array_free(&ac->script_environment);
++	/* Reforge: dest_fd usually ALIASES root_fd, so closing it unconditionally
++	 * would be a double close. It is its own descriptor only when the two
++	 * roots differ.
++	 */
++	if (ac->dest_fd >= 0 && ac->dest_fd != ac->root_fd) close(ac->dest_fd);
+ 	if (ac->root_fd >= 0) close(ac->root_fd);
+ 	if (ac->out.log) fclose(ac->out.log);
+ 	apk_balloc_destroy(&ac->ba);
+@@ -58,6 +74,8 @@ void apk_ctx_free(struct apk_ctx *ac)
+ 
+ int apk_ctx_prepare(struct apk_ctx *ac)
+ {
++	int db_root_defaulted = 0;
++
+ 	apk_out_configure_progress(&ac->out, ac->on_tty);
+ 	if (ac->interactive == APK_AUTO) ac->interactive = ac->on_tty;
+ 	if (ac->pretty_print == APK_AUTO) ac->pretty_print = ac->on_tty;
+@@ -69,7 +87,22 @@ int apk_ctx_prepare(struct apk_ctx *ac)
+ 	if (ac->flags & APK_ALLOW_UNTRUSTED) ac->trust.allow_untrusted = 1;
+ 	if (!ac->cache_dir) ac->cache_dir = "etc/apk/cache";
+ 	else ac->cache_dir_set = 1;
+-	if (!ac->root) ac->root = "/";
++	/* Reforge: the database root defaults to $MODDIR, not to /.
++	 *
++	 * apk resolves lib/apk/db, etc/apk/world, etc/apk/arch and the lock
++	 * relative to root_fd. On this printer / is a read-only squashfs, so
++	 * neither /lib/apk nor /etc/apk can be created -- measured, see
++	 * docs/notes/85-packaging.md. /usr/data is a writable ext4 partition.
++	 *
++	 * Files still extract at /, because dest_fd is opened separately below;
++	 * packages carry their own ./usr/data/anvil/... paths exactly as they do
++	 * under opkg's `dest root /`. This pair is what opkg gets from a
++	 * compile-time VARDIR plus a destination, in apk's spelling.
++	 */
++	if (!ac->root) {
++		ac->root = APK_DEFAULT_DB_ROOT;
++		db_root_defaulted = !APK_DB_ROOT_IS_DEFAULT_ROOT;
++	}
+ 	if (ac->cache_predownload) ac->cache_packages = 1;
+ 
+ 	if (!strcmp(ac->root, "/")) {
+@@ -81,6 +114,13 @@ int apk_ctx_prepare(struct apk_ctx *ac)
+ 	} else {
+ 		ac->root_set = 1;
+ 		if (!ac->uvol) ac->uvol = ERR_PTR(-APKE_UVOL_ROOT);
++		/* Reforge: the default db root is not an alternate filesystem.
++		 * Package files land at /, so a maintainer script chrooted into
++		 * $MODDIR would look for /usr/prog inside it and silently do
++		 * nothing -- anvil-core's postinst relinks exactly those paths.
++		 * An explicit --root still chroots, as upstream intends.
++		 */
++		if (db_root_defaulted) ac->flags |= APK_NO_CHROOT;
+ 	}
+ 	if (!IS_ERR(ac->uvol) && (ac->uvol[0] != '/' || access(ac->uvol, X_OK) != 0))
+ 		ac->uvol = ERR_PTR(-APKE_UVOL_NOT_AVAILABLE);
+@@ -94,7 +134,19 @@ int apk_ctx_prepare(struct apk_ctx *ac)
+ 		apk_err(&ac->out, "Unable to open root: %s", apk_error_str(errno));
+ 		return -errno;
+ 	}
+-	ac->dest_fd = ac->root_fd;
++	/* Reforge: where package FILES go, as distinct from where the database
++	 * lives. Upstream aliases the two and only `apk extract` splits them
++	 * (app_extract.c); the split itself is upstream's, this just uses it.
++	 */
++	if (db_root_defaulted) {
++		ac->dest_fd = openat(AT_FDCWD, "/", O_DIRECTORY | O_RDONLY | O_CLOEXEC);
++		if (ac->dest_fd < 0) {
++			apk_err(&ac->out, "Unable to open destination /: %s", apk_error_str(errno));
++			return -errno;
++		}
++	} else {
++		ac->dest_fd = ac->root_fd;
++	}
+ 
+ 	if (ac->open_flags & APK_OPENF_CREATE) {
+ 		uid_t uid = getuid();

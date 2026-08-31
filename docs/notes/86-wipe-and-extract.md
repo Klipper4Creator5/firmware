@@ -169,7 +169,7 @@ beside one that also has to go.
 | `qa/replica/test_upgrade.py` | rewritten | see the gate below |
 | `qa/replica/test_install.py` | the `backup/stock` assertion | the thing it asserted is gone |
 
-Also: the `.install-manifest` allowlist entry in `qa/static/test_ipk.py`, the
+Also: the `.install-manifest` allowlist entry in `qa/static/test_packages.py`, the
 `moonraker.conf` header that described the compare, the two `firmwareExe`
 comments about the scandir sweep, and the rows in `docs/testing.md`,
 `docs/upgrading.md` and `docs/qa-migration.md` that described any of it.
@@ -177,17 +177,17 @@ comments about the scandir sweep, and the rows in `docs/testing.md`,
 ## What this cancelled
 
 `85-packaging.md:506` scopes phase 2's on-printer half as replacing
-`.install-manifest` with opkg's own `.list` files, "a separate change with a
+`.install-manifest` with the package manager's own file database, "a separate change with a
 different risk profile". **That phase is cancelled, not deferred.** There is
 nothing to replace: the printer never deletes selectively again, so it needs no
-file database of ours *or* of opkg's for that purpose. The `.list` files still
+file database of ours *or* of the package manager's for that purpose. It still
 ship and still describe the payload; nothing on the printer reads them at
 upgrade time.
 
-`85-packaging.md:620` records a known gap — a printer that runs `opkg install`
+`85-packaging.md` records a known gap — a printer that runs `apk add`
 for something extra and then flashes a `.tgz` keeps that package's files but
 loses its stanza. Under a wipe the gap closes in the other direction: the files
-go too, and the printer's opkg database once again describes the filesystem
+go too, and the printer's apk database once again describes the filesystem
 exactly. That is a better answer than the one that phase was going to give.
 
 Both notes point here: phase 1 in `80-s6-migration.md` shipped and is now
@@ -253,12 +253,13 @@ It asserts:
   protects them, and this is the assertion that nothing needs to
 * no `.install-manifest` is written, and the log says the wipe ran
 
-`test_every_payload_file_is_owned_by_a_package` in `qa/static/test_ipk.py`
-loses `.install-manifest` from its allowlist, leaving four —
-`config/moonraker-custom.conf` and opkg's own `var`, `var/lib`, `var/run`. Its
-docstring says that list "should shrink and must not grow by accident". This
-shrinks it, and what remains is one user file plus scaffolding opkg makes for
-itself.
+`test_every_payload_file_is_owned_by_a_package` (now in
+`qa/static/test_apk.py`) loses `.install-manifest` from its allowlist, and the
+move to apk took the rest: the list is `config/moonraker-custom.conf` and
+nothing else, because apk keeps its whole database under `lib/apk` instead of
+scattering `var/`, `var/lib` and `var/run` across the payload. Its docstring
+says that list "should shrink and must not grow by accident". It has shrunk to
+one user file.
 
 **Not run here.** The replica lane needs a built package in `work/out`, which
 needs `config.env` with `FF_KEY` and `STOCK_TGZ`; the static lane (112 tests,

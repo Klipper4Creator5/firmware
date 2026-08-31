@@ -76,7 +76,7 @@ pkg_ship "klipper"
 #
 # THE ABI -- o32/nan2008/mips32r2, which the kernel answers with ENOEXEC -- is
 # asked once now, of the installed filesystem, in qa/replica/test_abi.py. That
-# covers both vehicles this tree travels on (the .ipk and the SOFTWARE component
+# covers both vehicles this tree travels on (the package and the SOFTWARE component
 # bin/payload.sh stages) rather than only the one a build.sh can see.
 #
 # THE SYMBOLS -- every function klippy cdefs, against the .so's dynamic symbol

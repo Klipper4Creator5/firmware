@@ -7,11 +7,12 @@
 # /usr/prog/PROGRAM/software/firmwareExe, klipperDaemon is started from
 # /usr/prog/klipper/start.sh, and printer.cfg includes its siblings out of
 # /usr/data/config. This is the seam -- one symlink per file, so $MODDIR stays
-# the only place anything is installed and `opkg upgrade` is enough to change
+# the only place anything is installed and `apk upgrade` is enough to change
 # what the printer runs.
 #
 # ORDERING. This runs straight after the installer extracts the payload, and
-# again from anvil-core's postinst on an `opkg upgrade`. It cannot run earlier
+# again from anvil-core's post-upgrade script on an `apk upgrade`. It cannot
+# run earlier
 # and the links cannot be shipped as files: on a first install they would
 # dangle, and on an upgrade they would resolve to the payload being replaced.
 #
@@ -26,9 +27,10 @@ set -e
 MODDIR=${MODDIR:-/usr/data/anvil}
 
 # Only on a machine that has the paths below. The build installs this package
-# with opkg too, and opkg runs maintainer scripts with IPKG_INSTROOT empty --
-# absolute paths are taken as written, not rebased -- so without this the
-# postinst would act on whatever ran the build.
+# with apk too, and the paths below are absolute -- taken as written, not
+# rebased -- so without this the script would act on whatever ran the build.
+# (prefix.patch sets APK_NO_CHROOT for the default database root, so a
+# maintainer script sees the REAL /usr/prog rather than one inside $MODDIR.)
 if [ ! -f /usr/prog/app_startup.sh ]; then
     echo "link-prog: not a printer (no /usr/prog/app_startup.sh) -- nothing to do"
     exit 0

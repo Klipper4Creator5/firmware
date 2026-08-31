@@ -139,7 +139,7 @@ never invoked — the moonraker service starts the server itself.
 in `anvil-env.sh` names a CPython 3.13 of our own, cross-built for mipsel by
 `pkgs/3rdparty/python`, with every third-party C extension Moonraker needs beside it in
 `$MODDIR/lib/python3.13/site-packages` — nineteen packages, one `pkgs/3rdparty/python-*`
-recipe and one `.ipk` each — and libsodium in `$MODDIR/lib`; none of it
+recipe and one `.apk` each — and libsodium in `$MODDIR/lib`; none of it
 borrowed from `/usr/prog`. Measured through the
 real boot path (the scandir, the moonraker service, readiness gating on `:7125`
 actually listening, a `kill -9` respawn, a stop that stays stopped). klippy is on it

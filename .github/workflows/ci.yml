@@ -114,6 +114,7 @@ jobs:
             vendor
             work/pkg
             work/packages
+            work/host
           key: fixture-py-${{ hashFiles('versions.env') }}
 
       - name: Fetch the s6 + CPython 3.13 build inputs
@@ -141,7 +142,7 @@ jobs:
           ./bin/fetch-assets.sh
 
       # BEFORE the static lane, because a good part of what that lane asks is
-      # about .ipk files, and those questions do not fail on a checkout with
+      # about .apk files, and those questions do not fail on a checkout with
       # no feed -- they return, quietly, and the lane reports a pass having
       # never opened a package. Building the feed here is what makes that
       # answer mean something, and it needs no stock firmware to do it.
@@ -149,7 +150,7 @@ jobs:
         run: ./bin/build-packages.sh
 
       # The qa suite's static lane: parses, bashisms, names, recipe layout,
-      # and -- now that the feed above exists -- what is inside the .ipk files.
+      # and -- now that the feed above exists -- what is inside the .apk files.
       #
       # No strictness flag: a missing shellcheck or pyflakes fails on its own,
       # because there is no configuration in which running this lane without
@@ -197,7 +198,13 @@ jobs:
         run: |
           cat > config.env <<'CFG'
           MOD_NAME=anvil
-          MOD_VER=ci
+          # 0, NOT "ci": MOD_VER is anvil-core's PKG_VERSION, and apk's version
+          # grammar wants a number first -- `ci` is rejected by mkpkg with
+          # "package version is invalid" and no clue which package or field.
+          # It is pinned rather than left to default so two runs of one tree
+          # produce the same bytes; 0 says "not a release" as plainly as the
+          # word did, and orders below every real one.
+          MOD_VER=0
           TARGET_MACHINE=Creator5Pro
           # No stock paths: bin/common.sh defaults them into vendor/, where
           # `make vendor` puts the pinned download. Setting them here would be

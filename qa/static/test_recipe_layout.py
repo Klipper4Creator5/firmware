@@ -13,7 +13,7 @@ and a first-party one carries some, that installer/ holds exactly two named
 files. Every one of them compared the tree against a description of the tree.
 None could go red for a reason a printer would notice -- a stray file in a
 recipe directory is not read by anything, and a recipe filed at the wrong depth
-still builds the same .ipk -- while all seven went red the moment the layout
+still builds the same package -- while all seven went red the moment the layout
 legitimately changed, which is the opposite of what a test is for.
 
 What is left is the two that bite:
@@ -60,7 +60,7 @@ def test_nothing_under_a_payload_escapes_the_prefix():
     there would survive exactly until the next factory update and take
     whatever it overwrote with it.
 
-    qa/static/test_ipk.py asks the same question of every BUILT .ipk, which is
+    qa/static/test_packages.py asks the same question of every BUILT package, which is
     the stronger form. This one is kept beside it because it runs on a bare
     checkout with no feed, and names the recipe rather than the artefact.
     """
@@ -75,7 +75,7 @@ def test_nothing_under_a_payload_escapes_the_prefix():
 
 
 def test_recipe_names_are_unique_across_the_two_levels():
-    """pkg_out, pkg_stamp and the .ipk filename are all keyed by the bare name.
+    """pkg_out, pkg_stamp and the package filename are all keyed by the bare name.
 
     A name at both levels would resolve to whichever pkgs/lib.sh's pkg_dir
     searches first and quietly build the other one's package. Nothing
@@ -113,7 +113,7 @@ def test_klipper_still_depends_on_numpy():
     text = open(conf, encoding="utf-8").read()
 
     # The recipe it must name has to be a recipe, or the Depends resolves to
-    # nothing at install time and opkg refuses the package.
+    # nothing at install time and apk refuses the package.
     assert any(n == "python-numpy" for n, _ in recipes()), \
         "no python-numpy recipe, so anvil-klipper's Depends names a package " \
         "no feed of ours builds"

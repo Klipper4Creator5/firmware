@@ -36,13 +36,13 @@ fetch-assets.sh  download the pinned sources into vendor/ -- Mainsail,
             HelixScreen, Moonraker, and the stock FlashForge package
 unpack.sh   decrypt the stock .tgz for the boot images and the two facts
             pack.sh reads out of FlashForge's software component
-payload.sh  install the .ipk feed into work/modpayload-root/ to make the
+payload.sh  install the .apk feed into work/modpayload-root/ to make the
             payload
 pack.sh     generate runFirmwareExe.sh, tar, encrypt
             → work/out/<Model>-anvil-<date>.tgz
 ```
 
-`make build` runs all four. It needs the .ipk feed to exist first --
+`make build` runs all four. It needs the .apk feed to exist first --
 `payload.sh` assembles the payload by installing it -- so `make packages`
 comes before a cold `make build`; payload.sh says so if it is missing. Each is
 idempotent and safe to re-run.
@@ -143,7 +143,7 @@ worth keeping — the startup timeout, the camera's resolution, the nice values
 a rebuild, not a file on the printer.
 
 **To leave a piece out, leave it out** — that is what the `BUILD_*` flags are
-for — or `opkg remove` it on the printer.
+for — or `apk del` it on the printer.
 
 Upgrading a printer that has an `anvil.conf` needs nothing: the installer
 deletes it, edits and all, because nothing reads it any more and a file that
@@ -266,7 +266,7 @@ directory inside that recipe says how they get there. Three names, no fourth
 (`qa/static/test_recipe_layout.py` holds this):
 
 ```
-pkgs/<recipe>/payload/   staged into the .ipk, laid out as it lands under
+pkgs/<recipe>/payload/   staged into the .apk, laid out as it lands under
                         $MODDIR: payload/etc/s6-rc/source/nginx installs as
                         $MODDIR/etc/s6-rc/source/nginx and no recipe says so
 pkgs/<recipe>/payload/prog/
@@ -276,8 +276,9 @@ pkgs/<recipe>/payload/prog/
                         scripts open
 pkgs/<recipe>/seed/      templated or seeded user state: not a package member,
                         because a member is overwritten on every upgrade
-pkgs/<recipe>/control/   maintainer scripts, copied verbatim into the .ipk's
-                        CONTROL/ -- metadata, not content
+pkgs/<recipe>/control/   maintainer scripts, read INTO the .apk by name --
+                        `postinst` becomes both post-install and post-upgrade,
+                        because apk splits what opkg ran once
 
 installer/              runFirmwareExe.sh -- THE installer. app_startup.sh
                         runs whatever it finds under this name in the package
@@ -333,15 +334,15 @@ bin/            fetch-assets -> unpack -> patch -> pack.
 versions.env    every third-party source, pinned by version and sha256 --
                 including the stock FlashForge package, one per model
 vendor/         where fetch-assets.sh caches them (gitignored), plus the
-                opkg-utils checkout -- the one entry pinned by git commit
-                rather than sha256, because it has no release tarball
+                apk-tools checkout -- pinned by git commit rather than
+                sha256, because GitLab regenerates tag archives
 config.env      the root password hash, the model, the BUILD_* flags
 docker/         Dockerfile.build -- the container every target runs in
 pkgs/           package recipes: one directory per component, each a
                 build.sh producing a $MODDIR-relative tree and a pkg.conf
                 naming it, plus whatever files of ours that component ships.
-                `make packages` builds them into .ipk files in work/packages/
-                with a feed index, using upstream's opkg-build. The release
+                `make packages` builds them into .apk files in work/packages/
+                with a feed index, using apk's own mkpkg and mkndx. The release
                 path depends on this: recipes resolve their build
                 dependencies out of the feed, so `make packages` comes first.
                 See docs/notes/85-packaging.md.
@@ -357,12 +358,13 @@ pkgs/           package recipes: one directory per component, each a
                   toolchains, the compiler wrappers and their ABI self-test,
                   configure/make/install, the build cache. A recipe that
                   needs something this cannot express should grow it --
-                  qa/static/test_ipk.py fails a recipe that goes around it.
+                  qa/static/test_apk.py fails a recipe that goes around it.
   libsodium/      bin/payload.sh section 5d's build, moved. payload.sh runs it,
                   so the payload's copy and the packaged copy are one build.
-  opkg/           the package manager itself: static musl, with zlib and
-                  libarchive as build-only dependencies linked into it. This
-                  is what installs packages on the printer.
+  apk-tools/      the package manager itself, with zlib and openssl linked
+                  in and one carried patch: apk resolves its database from
+                  --root and / here is read-only, so the patch defaults that
+                  database to $MODDIR while files still extract at /.
 ```
 
 **Tests it** — never ships, and never touched by a build:

@@ -64,6 +64,42 @@ get() {
     mv "$dest.part" "$dest"
 }
 
+# get_git <url> <dir> <commit> <label> -- a checkout pinned by commit sha,
+# for upstreams that publish no release tarball. The sha covers the whole
+# tree, which is the same guarantee the sha256s above give in git's spelling.
+#
+# A TAG WOULD NOT DO: tags move, and GitLab regenerates tag archives, so
+# neither the ref nor a .tar.gz of it is stable enough to pin against.
+get_git() {
+    url="$1"; dir="$2"; want="$3"; label="$4"
+    if [ ! -d "$dir/.git" ]; then
+        say "clone   $label"
+        rm -rf "$dir"
+        git clone -q "$url" "$dir"
+    fi
+    ( cd "$dir"
+      # The url every time, not just on the first clone: a checkout made
+      # before this file named a different host would keep fetching from it,
+      # and that failure would only appear on the next pin bump.
+      git remote set-url origin "$url"
+      # Only if the pinned commit is missing, so the common case is offline.
+      git cat-file -e "$want^{commit}" 2>/dev/null || git fetch -q origin
+      git checkout -q "$want"
+      have=$(git rev-parse HEAD)
+      if [ "$have" != "$want" ]; then
+          echo "   !! $label is at $have, not the pinned $want" >&2
+          exit 1
+      fi
+      # The sha covers what git tracks and nothing about what was edited in
+      # place, so a dirty checkout is refused rather than silently trusted.
+      if [ -n "$(git status --porcelain)" ]; then
+          echo "   !! $dir has local modifications -- the pinned commit" >&2
+          echo "      no longer describes what is in it. Delete it and re-run." >&2
+          exit 1
+      fi )
+    say "cached  $label ($want)"
+}
+
 # The stock FlashForge package. Not a payload piece -- nothing out of it ships
 # (docs/how-it-works.md: a release carries no FlashForge component at all) --
 # but bin/unpack.sh reads the printer.base.cfg and the stock root hash out of
@@ -198,36 +234,23 @@ done
 get "https://github.com/jedisct1/libsodium/releases/download/$SODIUM_VERSION-RELEASE/libsodium-$SODIUM_VERSION.tar.gz" \
     "$SODIUM_TGZ" "$SODIUM_SHA256"
 
-# --- opkg
-# zlib is NOT fetched here: the CPython section already pulls that same pin.
-get "https://downloads.yoctoproject.org/releases/opkg/opkg-$OPKG_VERSION.tar.gz" \
-    "$OPKG_TGZ" "$OPKG_SHA256"
-get "https://github.com/libarchive/libarchive/releases/download/v$LIBARCHIVE_VERSION/libarchive-$LIBARCHIVE_VERSION.tar.gz" \
-    "$LIBARCHIVE_TGZ" "$LIBARCHIVE_SHA256"
-
-# A GIT CLONE, uniquely here, because opkg-utils publishes no release tarball.
-# Verified against the commit sha below: a tag can be moved, the sha cannot.
-if [ ! -d "$OPKG_UTILS_DIR/.git" ]; then
-    say "clone   opkg-utils $OPKG_UTILS_VERSION"
-    rm -rf "$OPKG_UTILS_DIR"
-    git clone -q https://git.yoctoproject.org/opkg-utils "$OPKG_UTILS_DIR"
-fi
-( cd "$OPKG_UTILS_DIR"
-  # Only if the pinned commit is missing, so the common case is offline.
-  git cat-file -e "$OPKG_UTILS_COMMIT^{commit}" 2>/dev/null || git fetch -q origin
-  git checkout -q "$OPKG_UTILS_COMMIT"
-  have=$(git rev-parse HEAD)
-  if [ "$have" != "$OPKG_UTILS_COMMIT" ]; then
-      echo "   !! opkg-utils is at $have, not the pinned $OPKG_UTILS_COMMIT" >&2
-      exit 1
-  fi
-  # The sha covers what git tracks and nothing about what was edited in place.
-  if [ -n "$(git status --porcelain)" ]; then
-      echo "   !! $OPKG_UTILS_DIR has local modifications -- the pinned commit" >&2
-      echo "      no longer describes what is in it. Delete it and re-run." >&2
-      exit 1
-  fi )
-say "cached  opkg-utils $OPKG_UTILS_VERSION ($OPKG_UTILS_COMMIT)"
+# --- apk-tools
+# The package manager, and the packager: the same checkout builds the printer's
+# apk (pkgs/3rdparty/apk-tools, patched) and the build machine's
+# (tools/apk-host, unpatched), so the tool that writes a package and the tool
+# that reads it are one version by construction.
+#
+# A GIT CLONE, and the reason get_git exists: the upstream forge regenerates
+# tag archives, so their sha256 is not a pin. The commit sha is.
+#
+# THE GITHUB MIRROR, NOT upstream's own gitlab.alpinelinux.org: that host
+# answers datacenter addresses with HTTP 418 or nothing at all, so the clone
+# succeeds from a developer's machine and fails in CI -- measured, on both CI
+# jobs at once. Which host serves it does not affect what is fetched: the pin
+# is a commit sha, and git names a commit by the hash of its content, so a
+# mirror that answers with this sha is serving this tree or is not answering.
+get_git https://github.com/alpinelinux/apk-tools.git \
+    "$APK_TOOLS_DIR" "$APK_TOOLS_COMMIT" "apk-tools $APK_TOOLS_VERSION"
 
 # --- the clock
 # No BUILD_ flag: a printer with no RTC has the wrong time until this runs, and

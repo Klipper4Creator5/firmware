@@ -5,7 +5,7 @@
 
 Writes the installed tree to $PAYLOAD_DIR, replacing whatever was there.
 
-The printer's OWN opkg installs onto the printer's own filesystem, under
+The printer's OWN apk installs onto the printer's own filesystem, under
 qemu-mipsel, and the tree is tarred back out -- so maintainer scripts run
 where they will run on a machine, and the install that ships is the install
 that was tested.
@@ -55,18 +55,44 @@ def run():
     if not payload_dir.is_absolute() and not str(payload_dir).startswith(str(ROOT)):
         payload_dir = ROOT / payload_dir
 
-    ipks = sorted(feed.glob("*.ipk"))
-    if not ipks:
+    # Asked of common.sh rather than spelled here -- the same rule the rest of
+    # this file follows for PKG_FEED and IPK_ARCH.
+    ext = _sh("PKG_EXT", "apk")
+    pkgs = sorted(feed.glob("*." + ext))
+    if not pkgs:
         raise SystemExit("no feed at %s -- run ./bin/build-packages.sh" % feed)
-    index = feed / "Packages"
+    index = feed / _sh("PKG_INDEX_NAME", "anvil.adb")
     if not index.is_file():
-        raise SystemExit("no Packages index at %s" % index)
+        raise SystemExit("no %s index at %s" % (index.name, feed))
 
-    # Everything the printer's opkg needs, on the simulated stick at /mnt: the
-    # archives and the index that names them. `packages` is the replica's own
-    # mechanism for this and copies each to /mnt/<name>.
-    packages = {p.name: str(p) for p in ipks}
+    # Everything the printer's package manager needs, on the simulated stick at
+    # /mnt: the archives and the index that names them. `packages` is the
+    # replica's own mechanism for this and copies each to /mnt/<name>.
+    packages = {p.name: str(p) for p in pkgs}
     packages[index.name] = str(index)
+
+    # THE BOOTSTRAP BINARY. The package manager is one of the packages, and a
+    # v3 .apk is an ADB stream rather than a tar -- `tar` refuses it -- so
+    # there is no way to open the first package without an apk already
+    # present. The cross-built binary rides along at /mnt/apk.
+    #
+    # It is the same build anvil-apk-tools contains, and that package installs
+    # normally, so the tree that ships carries the packaged copy with a
+    # database row to match. This one is scaffolding and never lands.
+    boot = ROOT / "work" / "pkg" / "apk-tools" / "bin" / "apk"
+    if not boot.is_file():
+        raise SystemExit(
+            "no bootstrap apk at %s -- run `make packages PKG=apk-tools`" % boot)
+    packages["apk"] = str(boot)
+
+    # THE PUBLIC KEY HAS TO ARRIVE BEFORE THE PACKAGES IT VERIFIES. It ships
+    # in anvil-core so a printer keeps it, but anvil-core is one of the
+    # packages being installed -- so at bootstrap there is nowhere for apk to
+    # have read it from yet. It rides on the stick and the case copies it into
+    # the trust directory before the first `apk add`.
+    signkey = _sh("APK_SIGN_KEY")
+    if signkey and Path(signkey + ".pub").is_file():
+        packages["anvil.pub"] = signkey + ".pub"
 
     config = Config.load()
     replica = Replica.start(config)
