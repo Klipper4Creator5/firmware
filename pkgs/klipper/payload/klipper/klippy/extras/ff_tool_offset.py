@@ -188,8 +188,10 @@ class FFToolOffset:
         # Residual guard, which the app has none of -- any four numbers are
         # accepted. With four symmetric points one bad point of error e shows
         # up as a residual of only ~e/4 while moving the centre by e/2, so
-        # 0.05 catches centre errors of ~0.1 mm. 0 disables.
-        self.max_residual = config.getfloat('max_residual', 0.05, minval=0.)
+        # 0.5 catches centre errors of ~1 mm: it is a mis-trigger guard, not a
+        # precision check, and leaves room for the ESTOP's own scatter on a
+        # healthy machine. 0 disables.
+        self.max_residual = config.getfloat('max_residual', 0.5, minval=0.)
         # Sanity window for the fitted bore radius (0 disables).
         self.min_radius = config.getfloat('min_radius', 0.0, minval=0.)
         self.max_radius = config.getfloat('max_radius', 0.0, minval=0.)

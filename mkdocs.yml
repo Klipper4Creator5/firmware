@@ -115,6 +115,7 @@ nav:
           - Nozzle clean, recovered: notes/50a-nozzle-clean-recovered.md
           - Nozzle clean, the port: notes/50b-nozzle-clean-port.md
           - Automatic pressure advance: notes/51-pa-calibration-recovered.md
+          - Cancelling an object stalls the host: notes/52-exclude-object-stall.md
           - Filament, calibration, persistent state: notes/60-background.md
           - Migrating to s6: notes/80-s6-migration.md
           - Packaging with apk: notes/85-packaging.md
