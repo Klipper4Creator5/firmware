@@ -1,21 +1,34 @@
 diff --git a/Makefile b/Makefile
-index 735d18633..a3f418d97 100644
+index 735d18633..8518c1243 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -33,7 +33,12 @@ CFLAGS := -iquote $(OUT) -iquote src -iquote $(OUT)board-generic/ \
+@@ -33,9 +33,23 @@ CFLAGS := -iquote $(OUT) -iquote src -iquote $(OUT)board-generic/ \
  		-std=gnu11 -O2 -MD -Wall \
  		-Wold-style-definition $(call cc-option,$(CC),-Wtype-limits,) \
      -ffunction-sections -fdata-sections -fno-delete-null-pointer-checks
 -CFLAGS += -flto=auto -fwhole-program -fno-use-linker-plugin -ggdb3
+-
+-OBJS_klipper.elf = $(patsubst %.c, $(OUT)src/%.o,$(src-y))
 +# -fno-shrink-wrap and ira-max-loops-num=2 are not style choices: they were
 +# established by measuring instruction-identical handlers against the stock
 +# image (34 -> 40 with no regressions). Stock places its prologue as if
 +# shrink-wrapping were off, and the loop-count cap reproduces its allocation
 +# in the remaining cases.
 +CFLAGS += -ggdb3 -fno-shrink-wrap --param ira-max-loops-num=2
- 
- OBJS_klipper.elf = $(patsubst %.c, $(OUT)src/%.o,$(src-y))
++
++# FlashForge link the objects in sorted order, not in src-y order: stock's
++# command handlers run adccmds, basecmd, buttons, debugcmds, endstop,
++# gpiocmds, neopixel, pulse_counter, pwmcmds, stepper, tmcuart, trsync --
++# alphabetical, where src-y is not. Only the LINK order is sorted; the .ctr
++# concatenation below must keep src-y order, because that is what assigns
++# message ids, and those already match stock byte for byte.
++src-top-y = $(foreach f,$(src-y),$(if $(findstring /,$f),,$f))
++src-sub-y = $(foreach f,$(src-y),$(if $(findstring /,$f),$f))
++OBJS_klipper.elf = $(sort $(patsubst %.c, $(OUT)src/%.o,$(src-top-y))) \
++                   $(sort $(patsubst %.c, $(OUT)src/%.o,$(src-sub-y)))
  OBJS_klipper.elf += $(OUT)compile_time_request.o
+ CFLAGS_klipper.elf = $(CFLAGS) -Wl,--gc-sections
+ 
 diff --git a/lib/n32g45x/include/n32g45x.h b/lib/n32g45x/include/n32g45x.h
 new file mode 100644
 index 000000000..fbf6e5b35
