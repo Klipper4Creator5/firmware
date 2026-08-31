@@ -48,9 +48,18 @@ echo "$SRC"          > work/.source_pkg
 STOCK_BASE=work/software/klipper/config/printer.base.cfg
 OURS=pkgs/klipper-config/prog/config/printer.base.cfg
 if [ -f "$STOCK_BASE" ] && [ -f "$OURS" ]; then
-    # Section/option lines only: comments differ by design, and the chamber
-    # and ff-*.cfg includes are ours.
-    strip() { grep -vE '^\s*(#|$)' "$1" | grep -vE '^\[(heater_generic|verify_heater) chamber_heater\]|^\[include printer\.chamber\.cfg\]|^\[include ff-[a-z-]+\.cfg\]'; }
+    # Section/option lines only: comments differ by design, and the includes we
+    # add are ours. The sections we MOVED to printer.chamber.cfg have to go as
+    # whole blocks -- dropping just their headers left their option lines in
+    # the stock side and nothing to match them, so this always reported drift.
+    strip() {
+        grep -vE '^\s*(#|$)' "$1" \
+        | awk '
+            /^\[/ { drop = ($0 ~ /^\[(heater_generic|verify_heater) chamber_heater\]|^\[fan_generic chamber_heat_fan\]/) }
+            !drop
+          ' \
+        | grep -vE '^\[include (printer\.chamber|timelapse|ff-[a-z-]+)\.cfg\]'
+    }
     if strip "$STOCK_BASE" | diff -q - <(strip "$OURS") >/dev/null 2>&1; then
         echo ">> printer.base.cfg matches the stock file"
     else
