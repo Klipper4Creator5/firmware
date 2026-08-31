@@ -168,7 +168,7 @@ fi
 # THE BOOT SET is the ok-all bundle, whole. Every service in it is brought up
 # because every component is installed -- there is no per-service switch to
 # read, and nothing to read one from. A printer that should not run a component
-# does not have it: `opkg remove`, or a stock FlashForge package.
+# does not have it: `apk del`, or a stock FlashForge package.
 #
 # mcu-bringup is deliberately not in the bundle -- it arrives as klipper's
 # dependency, which is the point of having one.

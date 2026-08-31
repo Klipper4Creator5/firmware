@@ -21,8 +21,9 @@ BUILD_HELIX="${BUILD_HELIX:-1}"
 # s6 and CPython are configured with this path, so moving it rebuilds them.
 MODDIR="${MODDIR:-/usr/data/anvil}"
 
-# Two names because opkg unpacks a package's ./usr/data/anvil/... paths relative
-# to the root it is given: the payload sits $MODDIR deep inside PAYLOAD_ROOT.
+# Two names because a package's ./usr/data/anvil/... paths are unpacked relative
+# to the root the installer is given: the payload sits $MODDIR deep inside
+# PAYLOAD_ROOT.
 PAYLOAD_ROOT="${PAYLOAD_ROOT:-$ROOT/work/modpayload-root}"
 PAYLOAD_DIR="${PAYLOAD_DIR:-$PAYLOAD_ROOT$MODDIR}"
 export PAYLOAD_ROOT PAYLOAD_DIR
@@ -30,9 +31,10 @@ export PAYLOAD_ROOT PAYLOAD_DIR
 PY_HOST="${PY_HOST:-mips-linux-gnu}"
 PY_TOOLCHAIN_DIR="${PY_TOOLCHAIN_DIR:-work/.mips-toolchain/mips-gcc720-glibc229}"
 
-# Deliberately not an OpenWrt name: mipsel_24kc is musl, so such an .ipk would
-# satisfy a dependency here, install cleanly and fail against glibc 2.29. An
-# unknown name gets it refused on architecture instead.
+# Deliberately not an OpenWrt or Alpine name: mipsel_24kc and mipsel are musl,
+# so such a package would satisfy a dependency here, install cleanly and fail
+# against glibc 2.29. An unknown name gets it refused on architecture instead
+# -- apk checks it against etc/apk/arch, which --initdb writes once.
 IPK_ARCH="${IPK_ARCH:-mipsel_xburst2}"
 export MODDIR PY_HOST PY_TOOLCHAIN_DIR IPK_ARCH
 
@@ -96,27 +98,42 @@ pypkg_version() {
 }
 # ZLIB_TGZ is pinned above for CPython; pkgs/3rdparty/zlib builds it once for all.
 SODIUM_TGZ="${SODIUM_TGZ:-$ROOT/vendor/libsodium-${SODIUM_VERSION:-unpinned}.tar.gz}"
-OPKG_TGZ="${OPKG_TGZ:-$ROOT/vendor/opkg-${OPKG_VERSION:-unpinned}.tar.gz}"
-LIBARCHIVE_TGZ="${LIBARCHIVE_TGZ:-$ROOT/vendor/libarchive-${LIBARCHIVE_VERSION:-unpinned}.tar.gz}"
 SNTPD_TGZ="${SNTPD_TGZ:-$ROOT/vendor/sntpd-${SNTPD_VERSION:-unpinned}.tar.gz}"
-export SODIUM_TGZ OPKG_TGZ LIBARCHIVE_TGZ SNTPD_TGZ
+export SODIUM_TGZ SNTPD_TGZ
 
 # Output paths are derived by pkgs/lib.sh's pkg_out; these three aliases remain
 # only because payload.sh and fetch-assets.sh name them. Add nothing here.
 SODIUM_BUILD="${SODIUM_BUILD:-$ROOT/work/pkg/libsodium}"
-OPKG_BUILD="${OPKG_BUILD:-$ROOT/work/pkg/opkg}"
 ZLIB_BUILD="${ZLIB_BUILD:-$ROOT/work/pkg/zlib}"
-export SODIUM_BUILD OPKG_BUILD ZLIB_BUILD
+export SODIUM_BUILD ZLIB_BUILD
 
 PKG_FEED="${PKG_FEED:-$ROOT/work/packages}"
 
-# A git checkout, not a tarball: opkg-utils publishes no release archive, so its
-# integrity is a commit sha rather than a sha256.
-OPKG_UTILS_DIR="${OPKG_UTILS_DIR:-$ROOT/vendor/opkg-utils}"
-OPKG_BUILD_BIN="${OPKG_BUILD_BIN:-$OPKG_UTILS_DIR/opkg-build}"
-OPKG_INDEX_BIN="${OPKG_INDEX_BIN:-$OPKG_UTILS_DIR/opkg-make-index}"
-OPKG_UNBUILD_BIN="${OPKG_UNBUILD_BIN:-$OPKG_UTILS_DIR/opkg-unbuild}"
-export PKG_FEED OPKG_UTILS_DIR OPKG_BUILD_BIN OPKG_INDEX_BIN OPKG_UNBUILD_BIN
+# The feed's file extension and index name. Constants rather than a switch:
+# there is one format. They stay named because four things spell them --
+# bin/payload.sh, bin/build-payload.py, the prune and the index step -- and a
+# literal in four places is how the last format change went wrong.
+#
+# THE INDEX NAME ENDS .adb ON PURPOSE. apk decides how to read a repository
+# from how the entry is spelled: a path ending .adb is a v3 index read in
+# place, with the packages as its siblings. A bare directory would send it
+# looking for <dir>/<arch>/Packages.adb and an arch subdirectory instead.
+PKG_EXT=apk
+PKG_INDEX_NAME=anvil.adb
+export PKG_FEED PKG_EXT PKG_INDEX_NAME
+
+# apk-tools: pinned by COMMIT and cloned rather than downloaded, because GitLab
+# regenerates tag archives so their sha256 is not a pin.
+APK_TOOLS_DIR="${APK_TOOLS_DIR:-$ROOT/vendor/apk-tools}"
+APK_TOOLS_BUILD="${APK_TOOLS_BUILD:-$ROOT/work/pkg/apk-tools}"
+
+# The NATIVE apk, built by tools/apk-host/build.sh from that same checkout. It
+# is the packager -- `apk mkpkg` and `apk mkndx` run here, on x86-64 -- and it
+# is deliberately not the printer's binary: that one carries prefix.patch and
+# defaults its database to $MODDIR, which is wrong for a build machine.
+APK_HOST_DIR="${APK_HOST_DIR:-$ROOT/work/host}"
+APK_BIN="${APK_BIN:-$APK_HOST_DIR/bin/apk}"
+export APK_TOOLS_DIR APK_TOOLS_BUILD APK_HOST_DIR APK_BIN
 
 TEST_ENV="${TEST_ENV:-$ROOT/test.env}"
 # shellcheck disable=SC1090

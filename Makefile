@@ -47,7 +47,7 @@ ASSET_ROOT ?= $(firstword $(wildcard /mnt/c /Users /home))
 DOCKER_BASE = $(DOCKER) run --rm -i \
           -v "$(CURDIR)":"$(CURDIR)" -w "$(CURDIR)" \
           $(if $(ASSET_ROOT),-v "$(ASSET_ROOT)":"$(ASSET_ROOT)",) \
-          -e MODEL -e TARGET_MACHINE -e CONFIG_ENV
+          -e MODEL -e TARGET_MACHINE -e CONFIG_ENV -e PKG_FORMAT -e APK_SIGN_KEY
 
 # THE BUILD LANE RUNS AS YOU, NOT AS root. Without this every `make build` and
 # `make packages` fills work/ with root-owned files that the user who started
@@ -96,7 +96,7 @@ help:
 	@echo '  make build        the firmware  Klipper fork, toolchanger, Mainsail,'
 	@echo '                                  ssh and HelixScreen'
 	@echo '  make release      build BOTH models into dist/'
-	@echo '  make packages     .ipk packages + feed index into work/packages/'
+	@echo '  make packages     .apk packages + feed index into work/packages/'
 	@echo '                    (make build INSTALLS these to make the payload,'
 	@echo '                     so run this first; needs no stock package.'
 	@echo '                     PKG=<name> builds that recipe and the ones'
@@ -193,11 +193,11 @@ build: image config.env
 	@$(RUNBUILD) ./bin/build.sh $(PACKARGS)
 
 # The package feed (docs/notes/85-packaging.md). Builds every
-# recipe under pkgs/ into work/packages/ as .ipk files plus the feed index that
-# makes that directory an opkg repository.
+# recipe under pkgs/ into work/packages/ as .apk files plus the feed index that
+# makes that directory an apk repository.
 #
 # THE RELEASE PATH IS BUILT ON THIS. pkgs/3rdparty/python declares seven build
-# dependencies, pkg_deps resolves them by unpacking their .ipk out of
+# dependencies, pkg_deps resolves them by unpacking their .apk out of
 # work/packages, and bin/payload.sh builds none of the seven. `make build` on a
 # cold checkout does not work without this target.
 # bin/payload.sh now checks for the feed up front and names this command.

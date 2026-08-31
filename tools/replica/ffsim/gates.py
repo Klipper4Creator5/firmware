@@ -50,7 +50,7 @@ def _python_tarball(config):
     THE DEV HALF RIDES ALONG and is deliberately not filtered out. work/pkg/python
     holds the whole build -- headers, lib/pkgconfig and config-3.13-* included --
     because the split into anvil-python and anvil-python-dev happens where the
-    .ipk files are made. Which paths those are is pkgs/3rdparty/python/pkg.conf's business,
+    packages are made. Which paths those are is pkgs/3rdparty/python/pkg.conf's business,
     and repeating the list here would be a second spelling that goes stale
     silently. This is a test fixture unpacked into a simulator, not something a
     printer installs: 3MB of headers it will never open costs nothing, and the

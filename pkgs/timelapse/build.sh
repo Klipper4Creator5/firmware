@@ -28,7 +28,7 @@ _src="$PKG_WORK/src/moonraker-timelapse-$TIMELAPSE_VERSION"
 
 # Inside anvil-moonraker's directory, because Moonraker resolves a component
 # with import_module(".components.<name>", "moonraker") and looks nowhere else.
-# Two packages, different files, one directory -- opkg is content, and
+# Two packages, different files, one directory -- apk is content, and
 # anvil-moonraker's Depends orders the install.
 pkg_stage "$_src/component/timelapse.py" "moonraker/components/timelapse.py"
 

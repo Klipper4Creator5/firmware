@@ -10,7 +10,7 @@
 #
 # NO pkg_toolchain: upstream ships the binaries built. That is also why this
 # recipe compiles nothing and still declares an architecture -- what is in the
-# tarball is mipsel ELF, gated on the way into the .ipk.
+# tarball is mipsel ELF, gated on the way into the package.
 set -euo pipefail
 . ./bin/common.sh
 . pkgs/lib.sh

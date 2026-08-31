@@ -148,7 +148,7 @@ def test_the_stock_paths_are_symlinks_into_the_payload(box):
 
     anvil-core installs all three at $MODDIR/prog/ and anvil-link-prog.sh points
     the stock paths at them -- from runFirmwareExe.sh on a flash and from the
-    postinst on `opkg upgrade anvil-core`. A REGULAR FILE at any of these means
+    post-install/post-upgrade script on `apk upgrade`. A REGULAR FILE at any of these means
     the link step did not run, and the printer would go on executing whatever
     the last install happened to leave there while an upgrade quietly rewrote
     $MODDIR.
@@ -164,7 +164,7 @@ def test_the_stock_paths_are_symlinks_into_the_payload(box):
         target = box.sh("readlink %s 2>/dev/null" % path).out.strip()
         assert target, (
             "%s is not a symlink -- anvil-link-prog.sh did not run, so an "
-            "`opkg upgrade anvil-core` would not change what this printer "
+            "`apk upgrade anvil-core` would not change what this printer "
             "executes" % path)
         assert target.startswith(MODDIR + "/prog/"), (
             "%s -> %r, which is not under %s/prog -- anvil-core is not what "

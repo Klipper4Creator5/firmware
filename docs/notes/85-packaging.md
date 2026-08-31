@@ -1,16 +1,18 @@
-# Packaging: apk vs opkg, and the .ipk proof of concept
+# Packaging: apk vs opkg, and the migration between them
 
 Whether to stop hand-building Python, Moonraker, s6 and libsodium into one
-tarball and start building *packages* instead. Written 2026-08-28. The
-comparison below is settled; the migration after it is a proposal, and only
-phase 0 is implemented.
+tarball and start building *packages* instead. Written 2026-08-28, and the
+answer was opkg; revisited 2026-08-31 and reversed, because two lines of the
+comparison turned out to be wrong. **The feed is apk now.** The comparison is
+kept as written, because a decision is only reviewable next to what it was
+made on -- read the Decision section under it before leaning on the table.
 
 Same rules as `80-s6-migration.md`: each phase is independently shippable and
 names the gate that proves it.
 
 ## Why, in one paragraph
 
-`bin/patch.sh` is 1,900 lines and eleven cross-builds deep, and its output is a
+`bin/patch.sh` was 1,900 lines and eleven cross-builds deep, and its output was a
 single 53MB `anvil.tar.xz` that the printer's installer unpacks whole. Changing
 one line of `anvil.conf` ships all 53MB. There is no way to install just a new
 Moonraker onto a printer you are debugging, no record on the machine of what
@@ -83,12 +85,266 @@ anyway.
 
 ## Decision
 
-**opkg, and the `.ipk` format**, with **`opkg-utils` as the packager** — we
-drive upstream's `opkg-build` and `opkg-make-index` rather than assembling
-archives ourselves. An earlier revision of this work did hand-roll the
-ar-and-two-tarballs step; it worked, and it was still this repo re-deriving a
-format somebody else maintains, including the parts whose failure mode is a
-package that inspects fine and installs nowhere.
+**apk, and the `.apk` format** — apk-tools 3, cross-built here and carrying one
+local patch, with `apk mkpkg` and `apk mkndx` as the packager.
+
+**This reverses the original decision, and the table above is what it was made
+on.** That decision was opkg and `.ipk`, driving upstream's `opkg-build`, and it
+turned on one argument: every package is produced here on every build, so the
+winner is whichever format is cheapest to *produce*, and `.ipk` had an upstream
+tool where `.apk` meant `abuild`, a keypair and an Alpine host. **Two lines of
+the comparison were wrong**, which the proof of concept below found out:
+
+* `apk mkpkg` is an applet of apk itself — `-I key:value` metadata, `-F`
+  directory, no keypair required, no `abuild`, no Alpine host. The "making a
+  package" row described apk-tools 2.
+* The client was counted a wash. It is better than a wash: openssl and zlib were
+  already cross-built for CPython, and **libarchive existed in this tree only for
+  opkg**. Adopting apk *removes* a cross-build.
+
+What made it possible at all is that apk resolves its database relative to
+`--root` and uses the same root as the file destination, while `/` here is a
+read-only squashfs. `pkgs/3rdparty/apk-tools/prefix.patch` splits the two —
+upstream already carries `root_fd` and `dest_fd` separately and merely aliases
+them — so the database lands under `$MODDIR` and files still extract at `/`.
+That is opkg's compile-time `VARDIR` plus `dest root /`, in apk's spelling.
+
+**What it cost is a carried patch**, against an internal with one consumer, on a
+branch mid v2→v3 transition, on an architecture with no upstream apk port to
+share the rebasing. That is the standing risk and it does not go away. Set
+against it: the feed is now **signed and verified on the printer**, which the
+opkg feed never was.
+
+The migration itself is recorded below under "The migration, as it happened".
+
+## The apk proof of concept  *(built and measured; it is now the feed)*
+
+Run it with `make packages PKG=apk-tools && ./tools/replica/run-apk-poc.py`.
+The recipe is `pkgs/3rdparty/apk-tools/`, the case is
+`tools/replica/printer/case-apk-poc.sh`, and everything below happened on the
+printer's real rootfs under qemu-mipsel rather than in an argument.
+
+**What was under test** is not "is apk nicer" — it is the one thing the
+comparison could not settle by reading: apk resolves its database, `world`,
+`arch` and lock file relative to `--root`, and takes the *same* root as the
+destination for package files. This printer's `/` is a read-only squashfs.
+
+**Measured first, because it decides the shape of everything else: `/lib/apk`
+and `/etc/apk` cannot be created.** `mkdir` and `ln -s` both return
+`Read-only file system`, with a control write under `/usr/data` succeeding in
+the same run. The mount table (`docs/printer-replica.md`) says why — `/` is
+`overlay (ro)`, `/usr/prog` and `/usr/data` are `rw` — and it is the same fact
+that put the s6-rc compiled database under `$MODDIR/etc` rather than `/etc`
+(`docs/notes/80-s6-migration.md`). So the symlink-into-`$MODDIR` idea is not
+available: there is nowhere to put the symlink.
+
+**`pkgs/3rdparty/apk-tools/prefix.patch`, 102 lines, all in `src/context.c`.**
+Upstream already separates the two roots — `apk_ctx` carries `root_fd` *and*
+`dest_fd`, `database.c` uses the first for the db and `fs_fsys.c` uses the
+second for package files, and `app_extract.c` already overrides `dest_fd` by
+itself. `context.c` merely aliases them (`ac->dest_fd = ac->root_fd`). The
+patch defaults the database root to `$MODDIR`, opens `dest_fd` on `/`, and
+sets `APK_NO_CHROOT` for that case so a maintainer script still sees the real
+`/usr/prog`. That is opkg's compile-time `VARDIR` plus `dest root /`, in apk's
+spelling.
+
+It is **inert unless the build asks for it**: undefined,
+`APK_DEFAULT_DB_ROOT` is `"/"` and every branch folds away to upstream's
+behaviour. The prefix is passed in from the recipe rather than written into
+the patch, so `$MODDIR` stays spelled once, in `bin/common.sh` — the trap
+opkg's `VARDIR`, s6's `libexecdir` and execline's `shebangdir` all sprang.
+
+**The whole loop closed on mipsel**, in one run of the case:
+
+* `apk --version` → `apk-tools 3.0.7, compiled for mipsel`, in a bare
+  environment.
+* `--initdb` with **no `--root`** wrote `$MODDIR/lib/apk/db/{installed,
+  scripts.tar.gz,triggers}` and `$MODDIR/etc/apk/{arch,world}`, and `/lib/apk`
+  and `/etc/apk` still did not exist afterwards.
+* `apk mkpkg` built a package **on the printer**, `apk add` installed it, the
+  file landed at its `$MODDIR`-absolute path, `apk info -L` listed it, and
+  `apk del` removed it leaving nothing.
+
+### The two comparison lines this corrects
+
+* **"Making a package: three concatenated gzip streams with an RSA signature"
+  and "realistically `abuild` + a keypair, and `abuild` assumes an Alpine
+  host".** Wrong for v3. `apk mkpkg` is an applet of the same binary, takes
+  `-I key:value` metadata and a `-F` directory, needs no keypair, and produced
+  a working package here — cross-built, running under qemu, on the printer.
+  The argument that `.ipk` is cheaper to *produce* was the deciding one, and
+  this is the half of it that does not hold.
+* **"On-device client: apk-tools + zlib + openssl", counted as a wash.** It is
+  better than a wash. openssl and zlib were already cross-built for CPython, so
+  `PKG_BUILD_DEPENDS` is two packages we already had — and **libarchive exists
+  in this tree only for opkg**. Adopting apk deletes a cross-build rather than
+  adding one.
+
+### Certificates: not for packages, only for `https://`
+
+Worth separating, because "apk needs openssl" invites the wrong conclusion on
+a printer that has no trust store.
+
+**The printer has none — measured, in the same run.** `/etc/ssl/certs`,
+`/usr/lib/ssl/certs`, `/usr/share/ca-certificates` and `$MODDIR/ssl/certs` all
+hold **zero entries**, and neither `cert.pem` exists. That is exactly what
+`tools/python/README.md` already says under "The gap: there are no CA
+certificates" — our openssl is configured `--openssldir=$MODDIR/ssl` and
+nothing ships a bundle into it.
+
+**Package verification does not care.** apk reads signing keys with
+`PEM_read_bio_PUBKEY` (`src/crypto_openssl.c`) — raw public keys, not X.509,
+so there is no chain to build and no CA store to consult. Measured end to end
+on the printer, with every directory above empty:
+
+* a package built with `apk mkpkg --sign-key` and its public half dropped in
+  `$MODDIR/etc/apk/keys/` installed **without `--allow-untrusted`**;
+* the same package with the key removed was refused —
+  `ERROR: UNTRUSTED signature`, exit 99. The check is real, not vacuous.
+
+So a signed feed on a stick, or over plain `http://`, needs no certificates at
+all. This is also strictly better than what the feed has today: opkg signs the
+*index* and our `bin/build-packages.sh` signs nothing, so nothing is verified
+on the printer now.
+
+**`https://` is the one thing that needs a bundle.** libfetch defaults to
+`SSL_VERIFY_PEER`; with no `CA_CERT_FILE` compiled in it falls back to
+`SSL_CTX_set_default_verify_paths()`, which resolves to `$MODDIR/ssl` — empty
+— so every verified connection fails. `apk --no-check-certificate` sets
+`SSL_VERIFY_NONE` and turns that off. (Read from `libfetch/common.c`, not
+measured: the replica has no network.)
+
+That makes the certificate question a **pre-existing gap this does not
+change** — the same ~200KB `ca-certificates` bundle Moonraker and CPython
+already want — and not an apk problem. It only becomes one the day a feed is
+served over https, and until then `--no-check-certificate` or `http://` is the
+same trade the interpreter already lives with.
+
+### What it cost, which is the honest other half
+
+* **The legacy Makefile assumes Alpine.** `portability/` — `strlcpy` and
+  friends — is wired into the *meson* build only. Against glibc 2.29 the link
+  fails on `strlcpy` alone; the recipe compiles upstream's own shim as one
+  object. Add `-lpthread -ldl` (separate libraries until glibc 2.34) and
+  `-latomic` (mips32 has no 64-bit atomics, so `__atomic_load_8` is a library
+  call, and nothing in the error message says "mips").
+* **`-l:libapk.a` and `--start-group`.** `src/Makefile` says `LIBS_apk :=
+  -lapk` with both `libapk.so` and `libapk.a` present, so the binary comes out
+  needing `$MODDIR/lib` on the loader path — measured: bare, it dies with
+  `libapk.so.3.0.0: cannot open shared object file`. Linking the archive in
+  instead means the ordering `cmd_ld` imposes ($(LIBS) *before* $(LIBS_apk))
+  starts to matter, which the shared build had hidden. The result is one 4.2MB
+  binary whose every `NEEDED` is a rootfs library — the same shape as
+  `anvil-opkg`, and all four confirmed present on the machine.
+* **`--arch mipsel_xburst2` at `initdb`.** The compiled-in arch is bare
+  `mipsel`, so a package built for this feed's architecture name is refused as
+  `uninstallable`. Written into the database once, it is apk's answer to
+  opkg's `arch mipsel_xburst2 10` config line.
+* **A carried patch, forever.** This is the cost that does not go away.
+  `dest_fd` has exactly one consumer in the tree; it is an internal, not an
+  API, and upstream can collapse it back into `root_fd` without anyone
+  calling that a breaking change. v3.0.7 is the tip of an actively developed
+  branch mid v2→v3 transition, on an architecture with no upstream apk port to
+  share the rebasing with. This repo bumped opkg 0.6.3→0.7.0 *specifically to
+  avoid* carrying a patch.
+
+**Nothing installs `anvil-apk-tools`.** The feed is still `.ipk`,
+`bin/payload.sh` still installs it with opkg, and this recipe exists so the
+next revision of the decision is made against measurements rather than against
+the table above.
+
+## The migration, as it happened
+
+Sequenced so that the producer and the payload assembler were never broken at
+the same time. A `PKG_FORMAT` switch in `bin/common.sh` made each step land
+alone — one build produced one format, there was never a dual feed — and it was
+deleted with the opkg path.
+
+**A native apk had to exist first.** `apk mkpkg` and `apk mkndx` run on the
+build machine, so `tools/apk-host/build.sh` builds one from the same pinned
+checkout, *unpatched*, into `work/host/bin/apk`. `libssl-dev` replaced
+`libarchive-dev` as the one documented exception to `versions.env`, for the
+same reason: a build tool that never leaves the container.
+
+**It is built ON DEMAND, and there is no target for it.** `bin/build-packages.sh`
+runs `tools/apk-host/build.sh` and that script caches on the pin, so the second
+call is a stamp comparison. There was a `make apk-host` for a while, and it was
+an anomaly: the cross toolchain is unpacked by `pkg_toolchain` and the
+build-python compiled by `pkg_buildpython`, both on demand and both stamped.
+The one tool that writes every package had no business being the one thing a
+person had to remember to build first.
+
+**Then the metadata was made apk-legal while still under opkg**, which is the
+step that de-risked everything after it:
+
+* `Version:` became `1.2.3-r1`. apk's `apk_version_validate` rejects a bare
+  `-1`; opkg reads the same string as upstream `1.2.3` revision `r1` and is
+  unbothered. **Four recipes carried versions apk cannot parse at all** —
+  `klipper` and `timelapse` spelled a commit `+git<sha>` where the grammar's
+  hash slot is `~`, `x264` carried a snapshot name whose `-2245` reads as a
+  malformed release, and `helixscreen` had `0.99.115.creator5.3`, where apk
+  allows one trailing letter and then only a suffix from a closed set of nine
+  words. All four were valid opkg versions, which is why nothing had noticed.
+  `pkg_version_ok` now gates every recipe.
+* `PKG_ARCH=all` emits `noarch`. apk interns that literal and compares against
+  it, so `all` reads as an unknown architecture.
+* The filename moved behind one function, `pkg_pkgfile`. It had been spelled in
+  four places, which was safe only because the `.ipk` name separates name from
+  version with `_`; the `.apk` name uses `-`, so `anvil-python-*` matches
+  `anvil-python-pillow-11.0.0-r1.apk` and a package that was never built looks
+  present.
+
+**Two bugs this shook out, both silent, both found by a gate rather than by
+reading:**
+
+* **The prune deleted seventeen packages it had just built.** The `all` →
+  `noarch` mapping went into the emitter and not into `pkg_pkgfile`, so the
+  prune's expected set named `_all.ipk`, did not find it, and removed the real
+  files. `make packages` exited 0.
+* **Whitespace-separated `Depends` dropped nineteen packages.** apk's list is
+  whitespace-separated and opkg's is comma-separated, and stripping the commas
+  for both formats looked harmless. `pkg_parse.c` splits that field on `,` and
+  **nothing else**, so the whole list became one dependency whose name
+  contained spaces, resolved to nothing, and opkg neither warned nor failed.
+  `make build` shipped a payload with no Tornado in it. The commas now come off
+  inside `emit_apk` alone, and
+  `test_the_payload_is_dependency_closed` is what would catch it next time —
+  nothing else asked, because the roots were right and a test that walks the
+  payload cannot notice a file that is absent.
+
+**The bootstrap changed shape.** A v3 `.apk` begins with `ADBd` magic and is not
+a tar stream, so there is no apk equivalent of the `ar -p | gunzip | tar` that
+unpacked `anvil-opkg` by hand — you cannot open a package without a package
+manager. `bin/build-payload.py` puts the cross-built binary on the stick at
+`/mnt/apk` instead. It is the same build `anvil-apk-tools` contains, that
+package installs normally, and the bootstrap copy never lands.
+
+**Ownership needed a synthetic root.** apk records owners by NAME against
+`<--root>/etc/passwd`, and the build lane runs `--user` with no passwd entry —
+so every file in every package was recorded `nobody`, silently, and would have
+installed as uid 65534. `bin/build-packages.sh` writes a two-line passwd/group
+naming the build user `root` and points `--root` at it.
+`test_a_package_is_owned_by_root_whoever_built_it` and its inverse hold that
+shut. `--rootnode` is *not* the flag for this; it is a deprecated alias for
+`--compat`.
+
+**The feed is signed now, which it never was.** opkg signs the index and
+`bin/build-packages.sh` signed nothing, so nothing was verified on a printer.
+`./bin/apk-keygen.sh` makes an RSA pair, `APK_SIGN_KEY` in `config.env` points
+at the private half, and the public half both seeds the stick (so the first
+install can verify) and ships in `anvil-core` (so the printer keeps trusting).
+An empty `APK_SIGN_KEY` still builds an unsigned feed, deliberately: `make
+packages` has to run on a bare checkout or the packaging lane stops being a CI
+gate. **RSA or Ed25519 only** — ECDSA signatures are randomised and two builds
+of one tree would stop being byte-identical.
+
+**Two gates retired rather than moved.** apk's installed database is plain text
+(`F:` sets a directory, `R:` names a file in it), so the ownership check reads
+one file where it used to glob `info/*.list`. And it carries **no clock at
+all** — apk records no install time and `mkpkg` sets no build-time — so the
+`Installed-Time` normalisation `case-build-payload.sh` had to do on every build
+is gone, and the test now asserts the *absence* of a `t:` line. Clock-free by
+construction rather than by repair.
 
 ## Facts established by measurement, not by reading
 
@@ -186,6 +442,21 @@ Each of these was run, not assumed. They constrain the phases below.
   now lives in `bin/common.sh`, the recipes compute theirs in `pkg_stamp`, and
   `test_no_cache_stamp_is_spelled_in_two_places` keeps it that way.
 
+## The phases, as they were built  *(historical, and opkg-era)*
+
+Everything from here to "What this does not fix" describes how the feed was
+BUILT UP, and it was built up on opkg. The structure it produced — a recipe per
+cross-build, one recipe one source, the feed as the interface between recipes,
+the payload assembled by installing that feed inside the replica — is all still
+exactly true and is the part worth reading. The tool names in it are not: read
+`opkg-build` as `apk mkpkg`, `opkg-make-index` as `apk mkndx`, `CONTROL/control`
+as `-I key:value`, and `.ipk` as `.apk`. The migration section above lists what
+actually changed.
+
+Kept rather than rewritten because these sections are the record of *why* the
+layout is the shape it is, and a reason survives the tool it was first written
+about.
+
 ## Phase 0 — the proof of concept  *(implemented)*
 
 Four packages, end to end, beside the existing build and changing nothing that
@@ -211,7 +482,7 @@ proprietary firmware is and stops being a gate.
 | `pkgs/3rdparty/opkg/` | opkg itself; builds against both of the above |
 | `pkgs/3rdparty/libsodium/` | `build.sh` + `pkg.conf`. **`bin/patch.sh` section 5d's build, moved.** |
 | `bin/build-packages.sh` | orders the recipes, lays out each tree, drives `opkg-build`, indexes the feed |
-| `qa/static/test_ipk.py` | 112 tests, no toolchain needed |
+| `qa/static/test_packages.py` | 112 tests, no toolchain needed |
 
 ### One recipe builds one package
 
@@ -275,7 +546,7 @@ the zlib it needs.
   is for: a library that ships to the printer ships its `.so`, and a library
   that exists to be built against ships headers, `.a` and `.pc`.
 
-`qa/static/test_ipk.py` gates this directly: a recipe that does not source
+`qa/static/test_packages.py` gates this directly: a recipe that does not source
 `pkgs/lib.sh`, spells its own `-mnan=2008`, unpacks its own toolchain, calls
 `./configure` itself, or unpacks more than one source tarball fails the suite.
 The one named exception is zlib, whose configure has never accepted `--host`.
@@ -683,23 +954,27 @@ payload's contents is what surfaced it.
 it was removed outright -- the test says so where the entry used to be, so it
 cannot come back under an exemption.
 
-## Phase 3 — a feed  *(~2–3 days)*
+## Phase 3 — a feed over the network  *(the remaining work)*
 
-`bin/build-packages.sh` already writes `Packages` and `Packages.gz` with
-`opkg-make-index`, carrying both MD5 and **sha256** per package (sha256 is not
-the default and has to be asked for). Serving that directory over HTTP from CI,
-teaching the printer an `opkg.conf` that points at it, and signing the index
-with `usign` makes partial over-the-network updates real: `opkg upgrade
-moonraker` instead of a 53MB tarball and a reboot.
+`bin/build-packages.sh` writes `anvil.adb` with `apk mkndx`, and **signs both
+it and every package** when `APK_SIGN_KEY` is set. Serving that directory over
+HTTP from CI and pointing a printer's `etc/apk/repositories` at the URL instead
+of `/mnt/anvil.adb` is what makes partial over-the-network updates real: `apk
+upgrade anvil-moonraker` instead of a 65MB tarball and a reboot.
 
-Signing the **index** is what makes this safe, and it is one signature for the
-whole feed rather than one per package — the index carries each package's
-sha256, so a trusted index makes untrusted packages verifiable. Same argument
-`versions.env` makes about vendored tarballs.
+**Most of what this phase used to need is already done.** Signing landed with
+the migration: each package carries its own signature, so there is no
+index-signs-the-feed indirection to arrange, and the printer already refuses a
+package it cannot verify. apk's libfetch is linked in, so HTTPS needs no extra
+binary.
 
-Note that `--disable-curl` and `--disable-gpg` in `pkgs/3rdparty/opkg/build.sh` are what
-this phase turns back on; they are off now so that a static binary does not
-carry libcurl and OpenSSL for a capability nothing uses yet.
+**The one open piece is certificates.** libfetch defaults to `SSL_VERIFY_PEER`
+and falls back to `SSL_CTX_set_default_verify_paths()`, which resolves to
+`$MODDIR/ssl` — empty. That is the same gap `tools/python/README.md` records
+for CPython, and the same ~200KB `ca-certificates` bundle closes both. Until
+one ships, an `http://` feed works and is not much weaker than it sounds: every
+package is signed, and a signature is what actually decides whether a printer
+installs it.
 
 ## What this does not fix, and is not meant to
 

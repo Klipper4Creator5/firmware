@@ -16,7 +16,7 @@ Selection is pytest's: `-k nginx`, `-m static`, or a single test id.
 
 | Lane | Needs | What it asks |
 |---|---|---|
-| `static` | the checkout; the feed for part of it | every shipped script parses and is free of bashisms, every name resolves, the recipe layout holds, and -- when `work/packages` exists -- the `.ipk`s are what we mean to ship |
+| `static` | the checkout; the feed for part of it | every shipped script parses and is free of bashisms, every name resolves, the recipe layout holds, and -- when `work/packages` exists -- the `.apk`s are what we mean to ship |
 | `replica` | docker + qemu + the firmware | what the printer *does* -- on a machine the real `app_startup.sh` installed the real package onto |
 
 The replica lane needs a built package in `work/out/*.tgz` (`make build`) and
@@ -27,7 +27,7 @@ an image once per package, keyed on the package's md5, so rebuilding gets you
 a fresh bake and not yesterday's.
 
 **The static lane is worth running twice**, and CI does. A good part of it
-asks what is inside the `.ipk` files, and those questions do not fail on a
+asks what is inside the `.apk` files, and those questions do not fail on a
 checkout that has no feed — they return quietly, and the lane reports a pass
 having never opened a package. Run it once for the fast parse-and-name
 feedback, then again after `make packages`, when the rest of it can bite.
@@ -70,7 +70,7 @@ tests over our own Python, and they have no replacement.
 
 `tools/replica/` builds the machine both suites run against, and the build
 uses it too -- `bin/payload.sh` assembles the payload by running the printer's
-own `opkg` inside it. It is not under `test/` because nothing in it is a test:
+own `apk` inside it. It is not under `test/` because nothing in it is a test:
 
 ```
 tools/replica/

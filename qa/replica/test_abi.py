@@ -13,7 +13,7 @@ build-packages.sh. It never saw:
     whatever a future one adds. pkgs/helixscreen/pkg.conf carried a note
     saying exactly that, for a package with a 24MB binary in it.
   * what the INSTALL produced, as opposed to what the build staged. Those are
-    different files whenever opkg, a maintainer script or app_startup.sh puts
+    different files whenever apk, a maintainer script or app_startup.sh puts
     something somewhere the recipe did not.
   * the stock tree it lands beside.
 

@@ -9,7 +9,7 @@
 # WHY IT IS A PACKAGE AT ALL. It used to be a `cp` in bin/payload.sh, and it was
 # the ONE file in the payload that no package owned -- which cost an allowance
 # in the "every file is owned" test, an ABI gate of its own because the
-# payload-wide one ran before the copy, and a file no `opkg remove` could
+# payload-wide one ran before the copy, and a file no `apk del` could
 # take away.
 set -euo pipefail
 . ./bin/common.sh

@@ -3,8 +3,8 @@
 # alone. Recipes run as their own process, so no cross CC leaks onward.
 #
 # ONE RECIPE BUILDS ONE SOURCE: exactly one source verb per recipe, counted by
-# qa/static/test_ipk.py. One build may still produce two archives, <name> and
-# <name>-dev (PKG_DEV_FILES).
+# qa/static/test_packages.py. One build may still produce two packages,
+# <name> and <name>-dev (PKG_DEV_FILES).
 #
 #     . ./bin/common.sh
 #     . pkgs/lib.sh
@@ -26,10 +26,11 @@ pkg_die()  { printf '   !! %s\n' "$*" >&2; exit 1; }
 # pkg_conf <recipe-id> -- read pkg/<id>/pkg.conf into the PKG_* metadata.
 # Sets no build state, so pkg_stamp can read another recipe's in a subshell.
 #   PKG_BUILD_DEPENDS  recipe ids; build order and pkg_deps only. PKG_DEPENDS
-#                      is what opkg reads. Keeping them apart stops a runtime
+#                      is what the printer's apk reads. Keeping them apart
+#                      stops a runtime
 #                      dependency on a merely-linked library.
 #   PKG_STAMP_EXTRA    content hash for inputs no version number describes.
-#   PKG_DEV_FILES      files that move into <name>-dev, section libdevel.
+#   PKG_DEV_FILES      files that move into a separate <name>-dev package.
 #   PKG_WHEN           whether the recipe exists at all; empty means always.
 #                      A false condition is absence, not failure.
 
@@ -37,7 +38,8 @@ pkg_die()  { printf '   !! %s\n' "$*" >&2; exit 1; }
 # and control/, for the half of a package that comes out of this checkout
 # rather than a tarball; without it the stamp reports "already current" and
 # hands back the previous build. control/ counts, because an edited postinst
-# changes what the .ipk does; seed/ ships in nothing. $PKG_DIR is already set.
+# changes what the package does; seed/ ships in nothing. $PKG_DIR is already
+# set.
 #
 # TWO find CALLS AND AN `|| true`: `find a b` with b missing exits non-zero,
 # which under the recipes' `set -euo pipefail` kills the build silently.
@@ -54,8 +56,8 @@ pkg_payload_hash() {
 #                             or seed/. Four of them.
 #     pkgs/3rdparty/<name>/   builds a pinned tarball, stages nothing from the
 #                             checkout. Thirty-four.
-# Names are unique ACROSS both levels, since pkg_out, pkg_stamp and the .ipk
-# filename are keyed by the bare name; qa/static/test_recipe_layout.py holds
+# Names are unique ACROSS both levels, since pkg_out, pkg_stamp and the
+# package filename are keyed by the bare name; test_recipe_layout.py holds
 # that and the split, which is mechanical rather than editorial.
 pkg_dir() {
     for _c in "$ROOT/pkgs/$1" "$ROOT/pkgs/3rdparty/$1"; do
@@ -65,7 +67,7 @@ pkg_dir() {
 }
 
 pkg_conf() {
-    PKG_NAME=''; PKG_VERSION=''; PKG_RELEASE=1; PKG_SECTION=libs
+    PKG_NAME=''; PKG_VERSION=''; PKG_RELEASE=1
     PKG_ROOT=''; PKG_EXCLUDE=''; PKG_DEPENDS=''; PKG_BUILD_DEPENDS=''
     PKG_PROVIDES=''; PKG_CONFLICTS=''
     PKG_DESCRIPTION=''; PKG_ARCH="$IPK_ARCH"
@@ -85,18 +87,90 @@ pkg_conf() {
 # package is one directory under pkg/ and no edit to bin/common.sh.
 pkg_out() { printf '%s/work/pkg/%s' "$ROOT" "$1"; }
 
-# The .ipk bin/build-packages.sh will write for a recipe, spelled the way
-# opkg-build spells it: name_version-release_arch.ipk.
-pkg_ipk() {
+# A package's full version, upstream and packaging revision together, spelled
+# the way apk spells it: `1.2.3-r1`, not `1.2.3-1`.
+#
+# THE `r` IS NOT DECORATION. apk's grammar is
+# number{.number}{letter}{_suffix}{~hash}{-r#} and apk_version_validate
+# rejects anything else, so a bare `-1` is not a version it will parse. opkg
+# reads the same string as upstream `1.2.3` revision `r1` and is unbothered,
+# which is why this can land before the format changes.
+pkg_fullversion() { printf '%s-r%s' "$1" "$2"; }
+
+# The architecture as it goes INTO a package, which is not always what the
+# recipe says. `all` is opkg's spelling of arch-independent; apk interns the
+# literal `noarch` (src/database.c) and compares against it, so `all` would
+# read as an unknown architecture and every such package would be refused.
+#
+# ONE MAPPING, ONE PLACE. It first lived in the emitter alone, and the prune
+# step -- which builds its expected set from pkg_pkgfile -- then went looking
+# for a name nothing wrote, and deleted seventeen packages it had just
+# built. Anything that spells a package's filename has to agree with whatever
+# wrote it.
+pkg_arch() {
+    case "$1" in
+        all) printf 'noarch' ;;
+        *)   printf '%s' "$1" ;;
+    esac
+}
+
+# Is this a version apk can parse? Called by the recipe gate rather than at
+# build time, so a bad pin is caught by `make qa-static` on a bare checkout
+# instead of half an hour into a cross-compile.
+#
+# The `+` traps: `1.2.3+git<hash>` is the natural spelling and is NOT in the
+# grammar -- the hash slot is `~`. Two recipes here used `+git` and both were
+# valid opkg versions, which is exactly why nothing caught them.
+# The suffix set is CLOSED, and copied from src/version.c's DECLARE_SUFFIXES
+# rather than guessed: apk knows these nine words and treats anything else as
+# an invalid version, so a `_creator5` would be as rejected as a `+`.
+PKG_VERSION_SUFFIXES='alpha|beta|pre|rc|cvs|svn|git|hg|p'
+
+pkg_version_ok() {
+    case "$1" in
+        # Rejected before the shape test so the message can be specific.
+        *+*)      return 1 ;;
+        *' '*|'') return 1 ;;
+    esac
+    printf '%s' "$1" | grep -Eq \
+        "^[0-9]+(\.[0-9]+)*[a-z]?(_($PKG_VERSION_SUFFIXES)[0-9]*)*(~[0-9a-f]+)?(-r[0-9]+)?\$"
+}
+
+# The package file bin/build-packages.sh will write for a recipe.
+#
+# ONE FUNCTION, because the name is the interface between the producer and
+# everything that reads the feed -- bin/payload.sh, bin/build-payload.py and
+# the prune step all used to spell it themselves, and a format change has to
+# be able to move it in one place.
+#
+# THE NAME PUTS `-` BETWEEN NAME AND VERSION and carries no architecture,
+# which is why callers must match it EXACTLY and never by prefix glob --
+# `anvil-python-*` matches `anvil-python-pillow-11.0.0-r1.apk`.
+pkg_pkgfile() {
     ( pkg_conf "$1"
-      printf '%s/%s%s_%s-%s_%s.ipk' \
-          "$PKG_FEED" "$PKG_NAME" "${2:+-$2}" \
-          "$PKG_VERSION" "$PKG_RELEASE" "$PKG_ARCH" )
+      printf '%s/%s%s-%s.apk' "$PKG_FEED" "$PKG_NAME" "${2:+-$2}" \
+          "$(pkg_fullversion "$PKG_VERSION" "$PKG_RELEASE")" )
+}
+
+# pkg_name_map -- `<package-name> <file>` for every recipe, one per line.
+#
+# MOD_ROOTS names PACKAGES and pkg_pkgfile takes a RECIPE, and the two differ
+# whenever a recipe lives under 3rdparty/ (recipe `apk-tools`, package
+# `anvil-apk-tools`). bin/payload.sh used to bridge that with a prefix glob,
+# which was safe only while the name put `_` between the name and the
+# version. The .apk name uses `-`, so `anvil-python-*` would match
+# `anvil-python-pillow-11.0.0-r1.apk` and a missing package would look
+# present. One pass over the recipes, so the answer is exact.
+pkg_name_map() {
+    for _r in $(pkg_recipes); do
+        ( pkg_conf "$_r"
+          printf '%s %s\n' "$PKG_NAME" "$(pkg_pkgfile "$_r")" )
+    done
 }
 
 # The cache key for a recipe: its version, the toolchain that determines its
 # ABI, and recursively the stamp of all it builds against, so a zlib bump
-# rebuilds libarchive and opkg. From pkg.conf alone, so bin/fetch-assets.sh
+# rebuilds everything built against it. From pkg.conf alone, so fetch-assets.sh
 # can ask whether a build needs a compiler before one exists.
 pkg_stamp() {
     (
@@ -146,7 +220,7 @@ pkg_needs() {
 
 # pkg_order <recipe-id>... -- the given recipes and all they build against,
 # dependency first. Depth-first, so one recipe gets its whole closure:
-# `PKG=opkg make packages` builds zlib and libarchive first, where
+# `PKG=apk-tools make packages` builds zlib and openssl first, where
 # alphabetical order would invert those two.
 pkg_order() {
     _order=''; _seen=' '; _path=' '
@@ -188,7 +262,7 @@ pkg_begin() {
     rm -rf "$PKG_WORK" "$PKG_OUT"
     # src/  unpacked sources        stage/   DESTDIR of the install
     # xw/   compiler wrappers       sysroot/ build dependencies, unpacked
-    # dep/  where opkg-unbuild drops them before they are merged into sysroot/
+    # dep/  where apk extract drops them before they merge into sysroot/
     mkdir -p "$PKG_WORK/src" "$PKG_WORK/stage" "$PKG_WORK/xw/bin" \
              "$PKG_WORK/sysroot" "$PKG_WORK/dep"
     PKG_SYSROOT="$PWD/$PKG_WORK/sysroot"
@@ -297,7 +371,7 @@ pkg_buildpython() {
     # It also puts this python on PATH as python3, which is why it is done HERE
     # and not in bin/common.sh: build-packages.sh runs each recipe as a child
     # process, so an export in a recipe cannot reach the one bare `python3` in
-    # the build lane (build-packages.sh's opkg-index call) and cannot change
+    # the build lane (build-packages.sh's mkndx call) and cannot change
     # what that resolves to.
     case ":$PATH:" in
         *":$PKG_HOSTPY_ROOT/bin:"*) ;;
@@ -373,7 +447,7 @@ pkg_buildpython() {
 }
 
 # Fill the recipe's sysroot from the feed: everything in PKG_BUILD_DEPENDS is
-# unpacked out of its own .ipk by opkg-unbuild and merged in, then the
+# unpacked out of its own package by `apk extract` and merged in, then the
 # cross-build variables point at the result. Building against the package
 # rather than the build tree is the point -- one that forgot to ship a header
 # fails the next recipe's configure. The sysroot mirrors the printer, deps
@@ -387,17 +461,20 @@ pkg_deps() {
         # an error.
         _found=0
         for _v in '' dev; do
-            _ipk=$(pkg_ipk "$_d" "$_v")
-            [ -f "$_ipk" ] || continue
+            _pf=$(pkg_pkgfile "$_d" "$_v")
+            [ -f "$_pf" ] || continue
             _found=1
             _un="$PKG_WORK/dep/$_d${_v:+-$_v}"
             rm -rf "$_un"; mkdir -p "$_un"
-            ( cd "$_un" && "$OPKG_UNBUILD_BIN" "$_ipk" ) \
-                > "$PKG_LOG/$_d${_v:+-$_v}-unbuild.log" 2>&1 \
-                || pkg_die "$PKG_ID: could not unpack $_ipk -- see $PKG_WORK/$_d${_v:+-$_v}-unbuild.log"
-            # opkg-unbuild names the directory after the file it came from, and
-            # drops CONTROL/ beside the payload. Only the payload is a sysroot.
-            _payload="$_un/$(basename "$_ipk" .ipk)$MODDIR"
+            _log="$PKG_LOG/$_d${_v:+-$_v}-unpack.log"
+            # apk's own inverse of mkpkg. A v3 package is ADB, not a tarball --
+            # `tar` cannot open one, which is why this is the host apk and not
+            # two lines of shell. It writes the tree at its own absolute paths,
+            # so what lands is already <dest>$MODDIR.
+            "$APK_BIN" extract --allow-untrusted --destination "$_un" "$_pf" \
+                > "$_log" 2>&1 \
+                || pkg_die "$PKG_ID: could not unpack $_pf -- see $_log"
+            _payload="$_un$MODDIR"
             [ -d "$_payload" ] || pkg_die \
                 "$PKG_ID: $_d unpacked nothing under $MODDIR -- is it built for this prefix?"
             mkdir -p "$PKG_SYSROOT$MODDIR"
@@ -405,7 +482,7 @@ pkg_deps() {
             pkg_say "$PKG_ID: sysroot += $_d${_v:+-$_v}"
         done
         [ "$_found" = 1 ] || pkg_die \
-            "$PKG_ID builds against '$_d' and neither $(pkg_ipk "$_d") nor $(pkg_ipk "$_d" dev) exists -- build it first (./bin/build-packages.sh $_d)"
+            "$PKG_ID builds against '$_d' and neither $(pkg_pkgfile "$_d") nor $(pkg_pkgfile "$_d" dev) exists -- build it first (./bin/build-packages.sh $_d)"
     done
 
     _inc="$PKG_SYSROOT$MODDIR/include"
@@ -418,7 +495,7 @@ pkg_deps() {
 }
 
 # SOURCE VERBS. A recipe names where its inputs come from exactly once, with
-# one of the verbs below; qa/static/test_ipk.py counts these calls.
+# one of the verbs below; qa/static/test_packages.py counts these calls.
 #
 # pkg_unpack <archive> -- extract this recipe's one pinned source archive into
 # $PKG_WORK/src. Zip as well as tar, dispatched on the name, because Mainsail
@@ -435,6 +512,28 @@ pkg_unpack() {
             tar -xf "$1" -C "$PKG_WORK/src" \
                 || pkg_die "$PKG_ID: could not untar $1" ;;
     esac
+}
+
+# pkg_checkout <dir> <name> -- this recipe's source is a VENDORED GIT CHECKOUT
+# pinned by commit, copied to $PKG_WORK/src/<name> so the build tree is
+# scratch and vendor/ stays exactly at the sha bin/fetch-assets.sh verified.
+#
+# For upstreams that publish no release tarball, where a sha256 pin is not
+# available and a tag archive is not stable enough to be one. The integrity
+# guarantee is the commit sha, checked at fetch time; copying rather than
+# building in place is what keeps that true across a build.
+pkg_checkout() {
+    [ -d "${1:-}/.git" ] || pkg_die \
+        "no checkout at '${1:-}' -- run ./bin/fetch-assets.sh"
+    [ -n "${2:-}" ] || pkg_die "$PKG_ID: pkg_checkout needs a destination name"
+    rm -rf "${PKG_WORK:?}/src/$2"
+    mkdir -p "$PKG_WORK/src"
+    # No .git: it is 3MB of history the build never reads, and leaving it out
+    # means nothing in the build tree can quietly become a second source.
+    cp -a "$1" "$PKG_WORK/src/$2" \
+        || pkg_die "$PKG_ID: could not copy $1 into the build tree"
+    rm -rf "$PKG_WORK/src/$2/.git"
+    pkg_say "$PKG_ID: source is the pinned checkout at $1"
 }
 
 # pkg_intree -- this recipe's sources are the checked-out repository, not a
@@ -795,7 +894,7 @@ pkg_pynative() {
 
 # pkg_ship <relative-glob> [...] -- copy what the package contains out of the
 # staged install into $PKG_OUT, the tree bin/build-packages.sh turns into the
-# .ipk. Globs are relative to the prefix inside the DESTDIR, and what a
+# package. Globs are relative to the prefix inside the DESTDIR, and what a
 # package contains depends on what it is for, so each recipe says which files
 # rather than taking a default.
 #
@@ -837,8 +936,8 @@ pkg_ship() {
 
     # STATIC ARCHIVES ARE NOT REPRODUCIBLE UNTIL MADE SO. An ar archive stores
     # a per-member mtime and the uid/gid of whoever compiled, and the symbol
-    # index carries a timestamp of its own; SOURCE_DATE_EPOCH and opkg-build's
-    # `-o 0 -g 0` clamp the tarballs above and reach nothing inside a .a.
+    # index carries a timestamp of its own -- and SOURCE_DATE_EPOCH reaches
+    # the archive mkpkg writes, not the inside of a .a it merely contains.
     #   objcopy -D   zeroes uid, gid and mtime in the MEMBER headers.
     #   ranlib  -D   rewrites the symbol INDEX with a zeroed header.
     # The cross binutils is 2.27 and its ranlib writes the current timestamp

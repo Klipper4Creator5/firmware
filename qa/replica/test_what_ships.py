@@ -36,8 +36,8 @@ and answers of an installed filesystem rather than of a tar listing:
     oneshot runner's execline, s6 and
     s6-ftrigrd                          -> test_s6rc.py, test_supervisor.py
   * the klipper service, printer.base
-    and the chamber configs             -> test_install.py, static/test_ipk.py
-  * libsodium's bare .so symlink        -> static/test_ipk.py
+    and the chamber configs             -> test_install.py, static/test_packages.py
+  * libsodium's bare .so symlink        -> static/test_packages.py
   * every shipped script's syntax       -> static/test_shell_syntax.py
 
 WHAT IS LEFT, AND WHY IT IS THESE FOUR

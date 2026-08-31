@@ -1,12 +1,12 @@
 ---
 name: packages
-description: Build the .ipk feed, or add a new package recipe under pkgs/. Use when asked to package something, add a library or component to the feed, bump a pinned version, or debug a recipe or the build environment.
+description: Build the .apk feed, or add a new package recipe under pkgs/. Use when asked to package something, add a library or component to the feed, bump a pinned version, or debug a recipe or the build environment.
 ---
 
 # Packages
 
 `pkgs/<id>/` is one recipe. It builds one source and produces one or two
-`.ipk` files into `work/packages/`, which is a local opkg feed.
+`.apk` files into `work/packages/`, which is a local apk feed.
 
 ## Building
 
@@ -17,12 +17,12 @@ make packages PKG=<id>     # that recipe and what it builds against
 ```
 
 `make vendor` first on a cold checkout: `build-packages.sh` does not fetch,
-and dies naming `./bin/fetch-assets.sh` when opkg-utils or a pinned tarball
+and dies naming `./bin/fetch-assets.sh` when apk-tools or a pinned tarball
 is missing.
 
 **The feed is a prerequisite of `make build`, not a side quest.** `bin/payload.sh`
-builds the payload by *installing* the feed with the printer's own opkg, and
-refuses to start when `work/packages` holds no `.ipk`. Recipes with
+builds the payload by *installing* the feed with the printer's own apk, and
+refuses to start when `work/packages` holds no `.apk`. Recipes with
 `PKG_BUILD_DEPENDS` also resolve them out of that directory. Order is
 `make vendor` -> `make packages` -> `make build`.
 
@@ -46,9 +46,8 @@ Two files. No other file in the repo needs editing.
 PKG_NAME=anvil-<id>
 PKG_VERSION="$FOO_VERSION"      # from versions.env
 PKG_RELEASE=1
-PKG_SECTION=libs
 PKG_EXCLUDE=".version"
-PKG_DEPENDS=""                  # opkg install-time deps, by package name
+PKG_DEPENDS=""                  # apk install-time deps, by package name
 PKG_BUILD_DEPENDS=""            # other recipe ids, by directory name
 PKG_DESCRIPTION="One sentence."
 ```
@@ -139,7 +138,7 @@ retry with different flags. See `pkgs/3rdparty/openssl/build.sh`.
 
    | directory | where its contents end up |
    | --- | --- |
-   | `payload/` | staged into the .ipk, laid out exactly as it lands under `$MODDIR` |
+   | `payload/` | staged into the .apk, laid out exactly as it lands under `$MODDIR` |
    | `prog/` | placed on `/usr/prog` by `bin/payload.sh` — not packageable, because every path in a package of ours is under the prefix |
    | `seed/` | templated or seeded user state, deliberately not a package member |
 
@@ -182,7 +181,7 @@ make packages && python3 -m pytest qa/static -q
 ```
 
 In that order, and it matters. Every recipe is checked for shape with nothing
-but the checkout, but the questions about what is *inside* an `.ipk` — the
+but the checkout, but the questions about what is *inside* an `.apk` — the
 dev-split partition, `Architecture: all` carrying no ELF, the feed comparison
 — return quietly when `work/packages` does not exist. Run the static lane on
 a bare tree and it reports a pass having never opened a package.
@@ -196,6 +195,6 @@ the largest binary we ship. `qa/static` now only asserts that a seventh does
 not grow back (`test_there_is_exactly_one_abi_gate_and_it_is_the_replica_one`),
 which is why `nan2008` is a forbidden word in the build scripts.
 
-Two cold builds must produce byte-identical `.ipk` files. If one does not, the
+Two cold builds must produce byte-identical `.apk` files. If one does not, the
 cause is usually an embedded timestamp or a mode that came from the builder's
 umask.

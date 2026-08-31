@@ -1,7 +1,7 @@
 """The packages we build, and the recipes and payload they come out of.
 
-WHAT IS AND IS NOT UNDER TEST HERE. The .ipk archives are built by opkg-build,
-which is upstream's tool and upstream's problem -- these tests do not re-derive
+WHAT IS AND IS NOT UNDER TEST HERE. The .apk archives are built by `apk
+mkpkg`, which is upstream's tool and upstream's problem -- these tests do not re-derive
 the format, they check the things that are OURS and that upstream cannot know
 about: that the layout we hand it puts every path under $MODDIR, that the
 architecture string is one no public feed can satisfy, that a package is
@@ -17,16 +17,15 @@ Every test builds its own package out of a synthetic tree -- three files and
 two symlinks, no compiler, no firmware image -- so the lane stays fast and
 cannot be skipped into looking green.
 
-IT DOES NEED vendor/opkg-utils, which bin/fetch-assets.sh clones. That is a
+IT DOES NEED work/host/bin/apk, which `make packages` builds. That is a
 change to what qa/static costs, and it is deliberate: the alternative was to
-keep hand-rolling the archive format in this repo so that the tests needed
-nothing, which is the trade the packager was rewritten to stop making. A
-missing opkg-utils FAILS rather than skips, for the reason qa/conftest.py
-gives about shellcheck.
+hand-roll the archive format in this repo so that the tests needed nothing,
+which is the trade the packager exists to stop making. A missing apk FAILS
+rather than skips, for the reason qa/conftest.py gives about shellcheck.
 
-The format itself was verified against real opkg 0.7.0 -- our own cross-built
-mipsel binary, under qemu, installing these packages and removing them again.
-docs/notes/85-packaging.md records that run.
+The format itself was verified against real apk-tools 3.0.7 -- our own
+cross-built mipsel binary, under qemu, building, installing, verifying and
+removing packages on the printer. docs/notes/85-packaging.md records that run.
 """
 import gzip
 import hashlib
@@ -44,8 +43,7 @@ from lib.paths import ROOT
 
 pytestmark = pytest.mark.static
 
-OPKG_UTILS = ROOT / "vendor" / "opkg-utils"
-OPKG_BUILD = OPKG_UTILS / "opkg-build"
+APK_BIN = ROOT / "work" / "host" / "bin" / "apk"
 
 # The prefix every package this repo builds installs into. Spelled out rather
 # than read out of common.sh because a test that derives its expectation from
@@ -55,13 +53,13 @@ ARCH = "mipsel_xburst2"
 
 
 @pytest.fixture(scope="session", autouse=True)
-def opkg_utils_present():
+def apk_present():
     """A failure, not a skip -- see the module docstring and qa/conftest.py."""
-    if not OPKG_BUILD.is_file():
+    if not APK_BIN.is_file():
         pytest.fail(
-            "vendor/opkg-utils is missing, so nothing checked the packages we "
-            "build. It is pinned by commit in versions.env and cloned by "
-            "`./bin/fetch-assets.sh`; `make vendor` does it in the build image.")
+            "work/host/bin/apk is missing, so nothing checked the packages we "
+            "build. `make packages` builds it from the commit pinned in "
+            "versions.env, on the way to building the feed.")
 
 
 # ------------------------------------------------------------------ fixtures
@@ -83,99 +81,109 @@ def _tree(tmp_path):
     return root
 
 
-def _build(tree, outdir, name="libtest", version="1.2.3-1", arch=ARCH,
+def _idmap(base):
+    """The synthetic root that makes mkpkg record the build user as root.
+
+    The same thing bin/build-packages.sh writes, and for the same reason: apk
+    resolves an owner to a NAME against <--root>/etc/passwd, and this lane has
+    no passwd entry, so left alone every file would be recorded `nobody`.
+    """
+    etc = base / "idmap" / "etc"
+    if not etc.is_dir():
+        etc.mkdir(parents=True)
+        (etc / "passwd").write_text("root:x:%d:%d:::\n" % (os.getuid(), os.getgid()))
+        (etc / "group").write_text("root:x:%d:\n" % os.getgid())
+    return base / "idmap"
+
+
+def _build(tree, outdir, name="libtest", version="1.2.3-r1", arch=ARCH,
            prefix=MODDIR, description="a test package"):
-    """Lay out what opkg-build wants and run it -- the same two steps
+    """Lay out what mkpkg wants and run it -- the same two steps
     bin/build-packages.sh takes, at the same boundary."""
     layout = outdir.parent / ("layout-" + name + arch)
     shutil.rmtree(layout, ignore_errors=True)
     (layout / prefix.lstrip("/")).mkdir(parents=True)
-    (layout / "CONTROL").mkdir(parents=True)
     subprocess.run(["cp", "-a", str(tree) + "/.",
                     str(layout / prefix.lstrip("/"))], check=True)
-    (layout / "CONTROL" / "control").write_text(
-        "Package: %s\nVersion: %s\nArchitecture: %s\n"
-        "Maintainer: anvil <none@example.invalid>\nSection: libs\n"
-        "Priority: optional\nDescription: %s\n"
-        % (name, version, arch, description))
     outdir.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, SOURCE_DATE_EPOCH="0")
-    done = subprocess.run([str(OPKG_BUILD), "-o", "0", "-g", "0",
-                           str(layout), str(outdir)],
-                          capture_output=True, text=True, env=env)
+    out = outdir / ("%s-%s.apk" % (name, version))
+    env = dict(os.environ, SOURCE_DATE_EPOCH="1")
+    done = subprocess.run(
+        [str(APK_BIN), "--root", str(_idmap(outdir.parent)), "mkpkg",
+         "--no-xattrs",
+         "-I", "name:" + name, "-I", "version:" + version,
+         "-I", "arch:" + arch, "-I", "description:" + description,
+         "-F", str(layout), "-o", str(out)],
+        capture_output=True, text=True, env=env)
     assert done.returncode == 0, done.stdout + done.stderr
-    return outdir / ("%s_%s_%s.ipk" % (name, version, arch))
-
-
-@pytest.fixture
-def ipk(tmp_path):
-    return _build(_tree(tmp_path), tmp_path / "packages")
-
-
-# --------------------------------------------------------- ar member handling
-
-def _ar_members(path):
-    """(name, bytes) per member, walking the 60-byte ASCII headers.
-
-    Written out here rather than shelled out to `ar t` so the test reads the
-    member boundaries itself, the way opkg does when it streams the archive.
-    """
-    raw = open(path, "rb").read()
-    assert raw[:8] == b"!<arch>\n", "not an ar archive"
-    off, out = 8, []
-    while off + 60 <= len(raw):
-        hdr = raw[off:off + 60]
-        name = hdr[0:16].decode().strip().rstrip("/")
-        size = int(hdr[48:58].decode().strip())
-        out.append((name, raw[off + 60:off + 60 + size]))
-        off += 60 + size + (size % 2)
     return out
 
 
-def test_member_order_is_the_format(ipk):
-    """debian-binary, control.tar.gz, data.tar.gz -- in that order.
-
-    Not a convention. opkg reads the archive as a stream and gives up on a
-    package whose control follows its data. This is upstream's job to get
-    right; the test is here because the day somebody "simplifies" the packager
-    back into this repo, this is the property that breaks silently.
-    """
-    assert [n for n, _ in _ar_members(ipk)] == \
-        ["debian-binary", "control.tar.gz", "data.tar.gz"]
+@pytest.fixture
+def apk(tmp_path):
+    return _build(_tree(tmp_path), tmp_path / "packages")
 
 
-def test_debian_binary_declares_2_0(ipk):
-    assert dict(_ar_members(ipk))["debian-binary"] == b"2.0\n"
+# ------------------------------------------------------------- reading it back
+# With apk's own tools rather than a second implementation of the container.
+# The opkg version of this file walked ar headers by hand, because that was the
+# only way to see inside without shelling out; adbdump and manifest are the
+# supported readers and there is nothing left to re-derive.
+
+def _dump(path):
+    return subprocess.run([str(APK_BIN), "adbdump", str(path)],
+                          capture_output=True, text=True, check=True).stdout
 
 
-# ----------------------------------------------------------------- the control
-
-def _control(path):
-    members = dict(_ar_members(path))
-    with tarfile.open(fileobj=io.BytesIO(
-            gzip.decompress(members["control.tar.gz"]))) as t:
-        return t.extractfile("./control").read().decode()
-
-
-def _fields(text):
+def _fields(path):
+    """The pkginfo block as a dict -- one level, which is all we ask about."""
     out = {}
-    for line in text.splitlines():
-        if line and not line[0].isspace() and ": " in line:
-            k, v = line.split(": ", 1)
+    for line in _dump(path).splitlines():
+        if line.startswith("  ") and not line.startswith("   ") and ": " in line:
+            k, v = line.strip().split(": ", 1)
             out[k] = v
     return out
 
 
-def test_control_carries_what_opkg_reads(ipk):
-    f = _fields(_control(ipk))
-    assert f["Package"] == "libtest"
-    # Version is upstream-release: the release half is what lets a repackage
-    # ship without lying about which upstream is inside.
-    assert f["Version"] == "1.2.3-1"
-    assert f["Architecture"] == ARCH
+def _walk(path):
+    """(full path, target-or-None) for every FILE the package carries.
+
+    Read out of adbdump rather than `apk manifest`, which is a runtime command
+    and wants a database. The shape is two levels: a `paths:` list whose
+    entries are DIRECTORIES named from the install root, each with an optional
+    `files:` list under it. So a full path is the directory plus the file name,
+    and nothing here has to know what the prefix is.
+    """
+    out, cwd, name, indent = [], None, None, 0
+    for line in _dump(path).splitlines():
+        stripped = line.strip()
+        pad = len(line) - len(line.lstrip())
+        if stripped.startswith("- name: "):
+            if pad <= 2:                       # a directory in paths:
+                cwd, name = stripped[len("- name: "):], None
+            else:                              # a file inside one
+                name = stripped[len("- name: "):]
+                out.append([cwd + "/" + name if cwd else name, None])
+        elif stripped.startswith("target: ") and out:
+            # THE TARGET IS A HEX BLOB, not text: adbdump prints the raw ADB
+            # value, which carries a two-byte type-and-length prefix. Decoding
+            # it here is what makes a symlink comparable to the name it was
+            # created with.
+            out[-1][1] = bytes.fromhex(stripped[len("target: "):])[2:].decode()
+    return out
 
 
-def test_architecture_is_not_an_openwrt_name(ipk):
+def _paths(path):
+    """Every file path the package carries, from the install root."""
+    return [n for n, _ in _walk(path)]
+
+
+def _symlinks(path):
+    """basename -> target, for every symlink the package stores as one."""
+    return {os.path.basename(n): tgt for n, tgt in _walk(path) if tgt}
+
+
+def test_architecture_is_not_an_openwrt_name(apk):
     """The one field that is a safety property rather than metadata.
 
     OpenWrt's mipsel_24kc is the same ISA and the same o32 ABI as this printer
@@ -184,18 +192,11 @@ def test_architecture_is_not_an_openwrt_name(ipk):
     against glibc 2.29. Naming our architecture something no public feed uses
     is what makes that mistake loud instead of quiet.
     """
-    assert _fields(_control(ipk))["Architecture"] not in (
-        "mipsel_24kc", "mips_24kc", "mipsel", "mips", "all")
+    assert _fields(apk)["arch"] not in (
+        "mipsel_24kc", "mips_24kc", "mipsel", "mips", "all", "noarch")
 
 
-# -------------------------------------------------------------------- the data
-
-def _data(path):
-    members = dict(_ar_members(path))
-    return tarfile.open(fileobj=io.BytesIO(gzip.decompress(members["data.tar.gz"])))
-
-
-def test_every_path_lands_under_the_prefix(ipk):
+def test_every_path_lands_under_the_prefix(apk):
     """Nothing this repo packages may own a path outside $MODDIR.
 
     The whole reason the mod lives on /usr/data is that the firmware partition
@@ -203,27 +204,21 @@ def test_every_path_lands_under_the_prefix(ipk):
     or /etc would survive exactly until the next factory update, and would take
     whatever it overwrote with it.
     """
-    with _data(ipk) as t:
-        names = [m.name for m in t.getmembers() if m.name not in (".", "./")]
-    strays = [n for n in names
-              if not (n.lstrip(".").startswith(MODDIR)
-                      or MODDIR.startswith(n.lstrip(".").rstrip("/")))]
+    strays = [n for n in _paths(apk)
+              if not ("/" + n.lstrip("/")).startswith(MODDIR)]
     assert not strays, "paths outside %s: %s" % (MODDIR, strays)
 
 
-def test_symlinks_stay_symlinks(ipk):
-    with _data(ipk) as t:
-        links = {os.path.basename(m.name): m.linkname
-                 for m in t.getmembers() if m.issym()}
-    assert links == {"libtest.so": "libtest.so.1.2.3",
-                     "libtest.so.1": "libtest.so.1.2.3"}
+def test_symlinks_stay_symlinks(apk):
+    assert _symlinks(apk) == {"libtest.so": "libtest.so.1.2.3",
+                              "libtest.so.1": "libtest.so.1.2.3"}
 
 
 def test_two_builds_of_one_tree_are_byte_identical(tmp_path):
     """Reproducibility, which is what makes a pin bump reviewable.
 
     Without it there is no cheap way to prove that a bump changed what it said
-    it changed: every rebuild differs, so every diff is noise. opkg-build gets
+    it changed: every rebuild differs, so every diff is noise. mkpkg gets
     this right when SOURCE_DATE_EPOCH is set and bin/build-packages.sh always
     sets it -- the test is what says nobody has stopped.
     """
@@ -271,7 +266,7 @@ def _mod_roots():
 def test_the_payload_roots_name_real_packages():
     """A typo in MOD_ROOTS is silent, so it gets a test instead.
 
-    payload.sh skips a root with no .ipk in the feed, because that is how a
+    payload.sh skips a root with no package in the feed, because that is how a
     PKG_WHEN-gated recipe -- BUILD_HELIX=0, BUILD_TOOLCHANGE=0 -- drops out
     without the flags being restated here. The cost is that a misspelled root
     drops out the same way: no error, one package quietly missing from the
@@ -287,10 +282,10 @@ def test_the_payload_roots_name_real_packages():
 
 
 def test_the_payload_roots_stay_a_short_list():
-    """The release is named; the closure is opkg's to work out.
+    """The release is named; the closure is the solver's to work out.
 
     The point of installing from an indexed feed is that Depends decides what
-    comes along -- which is also what an `opkg install anvil-moonraker` on a
+    comes along -- which is also what an `apk add anvil-moonraker` on a
     printer will do, so the metadata gets exercised on every build instead of
     only when somebody tries it. A MOD_ROOTS that has grown to the size of the
     feed means somebody answered a missing dependency by naming the package
@@ -314,94 +309,13 @@ def test_the_payload_roots_stay_a_short_list():
 
 def _payload():
     p = ROOT / "work" / "modpayload-root" / "usr" / "data" / "anvil"
-    if not (p / "var" / "lib" / "opkg" / "status").is_file():
+    if not (p / "lib" / "apk" / "db" / "installed").is_file():
         pytest.skip("no assembled payload -- run bin/payload.sh")
     return p
 
 
-def test_every_payload_file_is_owned_by_a_package():
-    """Everything in the payload came from a package, or is on this list.
-
-    Checked against opkg's own record of what it installed. The interesting
-    output is not the pass but the allowlist below: the files that are in the
-    payload and in no package, which is phase 2's remaining to-do list. It
-    should shrink and must not grow by accident.
-    """
-    payload = _payload()
-
-    owned = set()
-    for f in (payload / "var" / "lib" / "opkg" / "info").glob("*.list"):
-        for line in f.read_text().splitlines():
-            path = line.split("\t")[0].strip()
-            if path:
-                owned.add(path)
-    assert owned, "the opkg database lists no files at all"
-
-    allowed = {
-        # User state: created once and never overwritten. A package member is
-        # overwritten on every upgrade by definition, which is exactly what
-        # this must not be. $MODDIR/anvil.conf was the other entry here until
-        # it was removed outright -- it is not merely unshipped, so it must
-        # not reappear under any exemption.
-        MODDIR + "/config/moonraker-custom.conf",
-        # opkg's own scaffolding, made by opkg as it installs.
-        MODDIR + "/var",
-        MODDIR + "/var/lib",
-        MODDIR + "/var/run",
-    }
-
-    extra = []
-    for dirpath, dirnames, filenames in os.walk(payload):
-        for name in list(dirnames) + list(filenames):
-            p = pathlib.Path(dirpath, name)
-            rel = MODDIR + "/" + str(p.relative_to(payload))
-            if rel in owned or rel in allowed:
-                continue
-            # The database itself: written by opkg while installing, so it can
-            # never appear in a list it is still being written into.
-            if rel.startswith(MODDIR + "/var/lib/opkg"):
-                continue
-            # The compiled s6-rc database. case-build-payload.sh runs
-            # s6-rc-compile over the source tree anvil-core ships, AFTER the
-            # payload is installed, so it describes the payload and cannot be
-            # finished before the payload is. The SOURCE it is compiled from
-            # is package-owned and checked like everything else.
-            if rel.startswith(MODDIR + "/etc/s6-rc/compiled"):
-                continue
-            extra.append(rel)
-
-    assert not extra, (
-        "%d path(s) in the payload belong to no package and are not on the "
-        "allowlist in this test:\n  %s\n"
-        "Either the file should come from a package, or it is new user state "
-        "and belongs on the list with a reason."
-        % (len(extra), "\n  ".join(sorted(extra)[:20])))
-
-
-def test_the_payload_database_has_no_clock_in_it():
-    """Two builds of one commit produce one payload, byte for byte.
-
-    opkg stamps Installed-Time from time() and honours SOURCE_DATE_EPOCH only
-    for a man-page date, so its database differs between two builds a second
-    apart. payload.sh normalises the field: this is an image being baked, not a
-    machine being installed.
-
-    Asked of the database rather than of anvil.tar.xz, which is not
-    reproducible yet for unrelated reasons (pack.sh's tar neither sorts nor
-    clamps).
-    """
-    status = (_payload() / "var" / "lib" / "opkg" / "status").read_text()
-    stamps = re.findall(r"^Installed-Time:\s*(\S+)$", status, re.M)
-    assert stamps, "the opkg status file records no Installed-Time at all"
-    assert len(set(stamps)) == 1, (
-        "the payload's database carries %d different Installed-Time values "
-        "(%s...). bin/payload.sh is meant to normalise them, so two builds of "
-        "one commit differ by one line per package"
-        % (len(set(stamps)), sorted(set(stamps))[:3]))
-
-
 def test_the_payload_keeps_libsodium_as_a_symlink():
-    """opkg restores a symlink as a symlink, checked where it has to hold.
+    """apk restores a symlink as a symlink, checked where it has to hold.
 
     libnacl reaches libsodium through ctypes.cdll.LoadLibrary -- dlopen -- and
     the name its fallback constructs is
@@ -412,15 +326,15 @@ def test_the_payload_keeps_libsodium_as_a_symlink():
     loading, which is three layers from anything that mentions libsodium.
 
     pkgs/3rdparty/libsodium/build.sh already asserts this about its own build
-    tree, and test_symlinks_stay_symlinks asserts opkg-build puts a symlink in
-    an archive. Neither covers the step between them -- opkg unpacking the
+    tree, and test_symlinks_stay_symlinks asserts mkpkg puts a symlink in
+    an archive. Neither covers the step between them -- apk unpacking the
     archive into the payload -- and that is the step bin/payload.sh used to
     check by hand.
     """
     lib = _payload() / "lib" / "libsodium.so"
     assert lib.is_symlink(), (
         "%s is not a symlink. libnacl's dlopen fallback asks for that exact "
-        "name and gets whatever opkg left there" % lib)
+        "name and gets whatever apk left there" % lib)
     assert lib.resolve().is_file(), (
         "%s is a symlink to nothing -- %s is missing from the payload"
         % (lib, os.readlink(lib)))
@@ -495,7 +409,7 @@ def test_an_arch_all_package_has_no_native_code():
 
     Three packages claim it -- anvil-mainsail, anvil-moonraker and anvil-core
     -- on the grounds that they are JavaScript, Python and shell. The claim
-    matters because opkg accepts `all` on any printer without consulting the
+    matters because apk accepts `noarch` on any printer without consulting the
     ABI, so an ELF object that slipped into one of them would install on a
     printer that cannot run it. qa/replica/test_abi.py would refuse the
     object once it were on a machine; this refuses the CLAIM, here, without
@@ -528,7 +442,7 @@ def test_a_dev_split_partitions_the_build():
     """PKG_DEV_FILES moves files; it never copies them.
 
     A path in both the runtime and the dev package is a path two packages
-    own. opkg resolves that by letting whichever installed last win, and
+    own. apk resolves that by letting whichever installed last win, and
     removing either one deletes a file the other still lists -- so the damage
     shows up as a missing file long after the install that caused it. The split is a partition, and this is what says so.
 
@@ -544,17 +458,16 @@ def test_a_dev_split_partitions_the_build():
         name = _conf(recipe, "PKG_NAME")
         pair = []
         for suffix in ("", "-dev"):
-            hits = sorted(feed.glob("%s%s_*.ipk" % (name, suffix)))
+            hits = sorted(feed.glob("%s%s-*.apk" % (name, suffix)))
             if hits:
                 pair.append(hits[0])
         if len(pair) != 2:
             continue
         # Directories are legitimately shared -- both packages live under
-        # $MODDIR and opkg is content for two packages to own a directory.
+        # $MODDIR and apk is content for two packages to own a directory.
         # Files are not: a regular file or symlink in both archives is the
         # bug this test is about.
-        runtime, dev = ({m.name for m in _data(pair[0]) if not m.isdir()},
-                        {m.name for m in _data(pair[1]) if not m.isdir()})
+        runtime, dev = (set(_paths(pair[0])), set(_paths(pair[1])))
         shared = runtime & dev
         assert not shared, (
             "%s and %s-dev both contain %s -- PKG_DEV_FILES must move files "
@@ -576,11 +489,11 @@ def test_a_dev_package_installs_nothing_a_printer_runs():
         if not _conf(recipe, "PKG_DEV_FILES"):
             continue
         name = _conf(recipe, "PKG_NAME")
-        hits = sorted(feed.glob("%s_*.ipk" % name))
+        hits = sorted(feed.glob("%s-*.apk" % name))
         if not hits:
             continue
-        stragglers = [m.name for m in _data(hits[0])
-                      if m.name.endswith((".a", ".h", ".pc"))]
+        stragglers = [m for m in _paths(hits[0])
+                      if m.endswith((".a", ".h", ".pc"))]
         assert not stragglers, (
             "%s declares a dev split and still ships %s"
             % (name, ", ".join(sorted(stragglers)[:5])))
@@ -601,7 +514,7 @@ def test_build_order_is_topological():
     """pkg_order puts a dependency before the recipe that needs it.
 
     Alphabetical order -- what iterating pkgs/*/ gives you, and what this used
-    to do -- is wrong the moment there are two recipes: libarchive sorts before
+    to do -- is wrong the moment there are two recipes: openssl sorts before
     the zlib it builds against. The failure is not subtle (configure cannot
     find zlib.h) but it is a build that worked yesterday failing today because
     somebody added a package whose name sorts early.
@@ -617,7 +530,7 @@ def test_build_order_is_topological():
 
 
 def test_asking_for_one_recipe_builds_its_dependencies():
-    """`PKG=opkg make packages` must not fail on an empty sysroot.
+    """`PKG=apk-tools make packages` must not fail on an empty sysroot.
 
     A recipe consumes its dependencies out of the feed, so asking for one
     package has to mean asking for its closure -- otherwise the first build on
@@ -642,10 +555,9 @@ def test_a_dev_package_ships_what_its_dependents_need():
     zlib = (ROOT / "pkgs" / "3rdparty" / "zlib" / "build.sh").read_text()
     for want in ("include/zlib.h", "lib/libz.a", "lib/pkgconfig/zlib.pc"):
         assert want in zlib, "pkgs/3rdparty/zlib does not ship %s" % want
-    arch = (ROOT / "pkgs" / "3rdparty" / "libarchive" / "build.sh").read_text()
-    for want in ("include/archive.h", "lib/libarchive.a",
-                 "lib/pkgconfig/libarchive.pc"):
-        assert want in arch, "pkgs/3rdparty/libarchive does not ship %s" % want
+    ssl = (ROOT / "pkgs" / "3rdparty" / "openssl" / "build.sh").read_text()
+    for want in ("include/openssl", "lib/libssl.a", "lib/libcrypto.a"):
+        assert want in ssl, "pkgs/3rdparty/openssl does not ship %s" % want
 
     # skalibs is the interesting one, and the reason this test is not just
     # "headers and an archive". lib/skalibs is a directory of CROSS-COMPILE
@@ -692,7 +604,7 @@ def test_a_python_package_does_not_pin_its_version_twice():
     Every sdist is <name>-<version>.tar.gz and versions.env pins the FILE, so
     the version is already there. A PKG_VERSION written out by hand in the
     pkg.conf would be a second copy of a string nobody would think to update
-    together with the first -- and the result is a .ipk that claims a version
+    together with the first -- and the result is a package that claims a version
     it does not contain, which nothing downstream can detect.
     """
     for conf in sorted((ROOT / "pkgs" / "3rdparty").glob("python-*/pkg.conf")):
@@ -720,11 +632,11 @@ def test_a_python_package_does_not_pin_its_version_twice():
 def test_every_declared_dependency_is_a_package_this_feed_builds():
     """A Depends the feed cannot satisfy is an install that refuses itself.
 
-    opkg resolves Depends before it unpacks anything, so a package naming one
+    apk resolves depends before it unpacks anything, so a package naming one
     that does not exist does not install PARTIALLY -- it does not install at
     all, and the error names the missing dependency rather than the recipe that
     asked for it. Nothing in a build catches this: bin/build-packages.sh writes
-    whatever PKG_DEPENDS says into the control file, opkg-make-index copies it
+    whatever PKG_DEPENDS says into the package, mkndx copies it
     into the index, and the first thing to notice is a printer.
 
     Checked from the pkg.conf files rather than from a built feed, so it runs
@@ -733,7 +645,7 @@ def test_every_declared_dependency_is_a_package_this_feed_builds():
 
     Dependencies on the STOCK ROOTFS are a different thing and are deliberately
     absent everywhere: anvil-python needs libatomic.so.1 and does not say so,
-    because opkg has no idea what FlashForge installed and would refuse a
+    because apk has no idea what FlashForge installed and would refuse a
     package for want of a library that is already there.
     """
     provided = set()
@@ -755,6 +667,6 @@ def test_every_declared_dependency_is_a_package_this_feed_builds():
         for dep in [d.strip().split()[0] for d in depends.split(",") if d.strip()]:
             assert dep in provided, (
                 "recipe %s depends on '%s' and no recipe under pkgs/ produces it. "
-                "opkg refuses the whole install rather than part of it, so "
+                "apk refuses the whole install rather than part of it, so "
                 "this is a package that cannot be installed at all."
                 % (recipe, dep))

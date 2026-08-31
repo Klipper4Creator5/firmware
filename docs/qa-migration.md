@@ -198,7 +198,7 @@ unequipped to ask. A test that only means something on a Creator5Pro would earn
 it. "I could not find the tool" does not.
 
 **There are three skips, and they do not meet that bar.**
-`qa/static/test_ipk.py` reads `work/modpayload-root`, which only exists after
+`qa/static/test_packages.py` reads `work/modpayload-root`, which only exists after
 `bin/payload.sh` has run, and skips when it is absent. That is "this machine is
 not set up", which the rule above says must fail -- but making it fail would
 put a stock FlashForge package in the way of a lane whose whole point is that
@@ -219,7 +219,7 @@ case.
 | Lane | File | Tests | From |
 |---|---|---|---|
 | static | `test_shell_syntax.py` | 7, parametrised over every script | `run-tests.py`'s `check_shell_syntax`, `check_no_bashisms`, `check_undefined_names` -- now deleted |
-| static | `test_ipk.py` | 32 | new -- the packages, the layout and the ABI string |
+| static | `test_packages.py` | 32 | new -- the packages, the layout and the ABI string |
 | static | `test_recipe_layout.py` | 9 | new -- a recipe's fixed shape |
 | static | `test_probes.py` | 17 | new -- the harness's own parsers |
 | replica | `test_install.py` | 22 | `case-install.sh`, 579 lines and 1 bit |
@@ -470,7 +470,7 @@ Three gates were dropped rather than ported, as a coverage decision:
 That last row is the one to be uneasy about, and it is recorded here rather
 than buried in a commit message. The build path is what produces the `.tgz` a
 user flashes, and nothing exercises it end to end any more.
-`qa/static/test_ipk.py` covers package *building* -- the `.ipk` layout, the ABI
+`qa/static/test_packages.py` covers package *building* -- the `.apk` layout, the ABI
 string, reproducibility -- but nothing runs the outer build. The CI job with no
 firmware has lost most of its content as a result.
 
@@ -515,7 +515,7 @@ installed filesystem rather than of a `tar -t` listing: the klippy tree and
 and the oneshot runner's execline (`test_s6rc.py`), s6 and `s6-ftrigrd`
 (`test_supervisor.py`),
 libsodium's bare `.so` symlink and the chamber configs
-(`static/test_ipk.py`), and every shipped script's syntax
+(`static/test_packages.py`), and every shipped script's syntax
 (`static/test_shell_syntax.py`).
 
 The four that moved are the ones nothing else asks, and each got stronger for
@@ -564,7 +564,7 @@ And two things that were under `test/` and are not tests, now at
   `extract_rootfs` and its two tar helpers gone along with `make rootfs`.
   `Replica` is what `make boot-screen-sim` and, more to the point,
   **`bin/payload.sh`** use -- the payload is assembled by running the printer's
-  own `opkg` inside a replica, so this is build-path code that happened to
+  own `apk` inside a replica, so this is build-path code that happened to
   live in the test tree.
 - **`printer/`** -- the `Dockerfile.full`, `entrypoint.sh`, `assemble.sh`,
   `binfmt.sh` and `seed-prog.sh` that BUILD the replica. `qa/lib/replica.py`

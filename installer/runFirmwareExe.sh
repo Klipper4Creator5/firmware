@@ -357,7 +357,7 @@ if [ -d $MODDIR/config ]; then
         ff-*.cfg|printer.base.cfg|printer.chamber.cfg|chamber)
             # Ours, and NOT COPIED: anvil-link-prog.sh symlinks these into
             # /usr/data/config after this loop, so the file the printer reads
-            # is the one the package owns and an `opkg upgrade` changes it
+            # is the one the package owns and an `apk upgrade` changes it
             # without a .tgz. A copy here would only put a real file in the
             # way of the link about to replace it.
             #
