@@ -1,0 +1,23 @@
+#!/bin/sh
+# Link the configs this package ships into /usr/data/config, where Klipper
+# reads them.
+#
+# WHY THIS PACKAGE NEEDS ITS OWN. What printer.cfg includes are the ff-*.cfg
+# beside it, and anvil-link-prog.sh makes one symlink per file it finds in
+# $MODDIR/config. anvil-core's postinst calls that script too -- but anvil-core
+# does not own these files, and opkg installs it first: on an upgrade that ADDS
+# an ff-*.cfg, the link pass ran before the new file existed, so Klipper
+# refused to start on an include that had nothing behind it. That is not
+# hypothetical; ff-pa.cfg did exactly this on a printer, 2026-08-31.
+#
+# Re-running the script is cheap and quiet: link_one leaves a link that is
+# already right alone.
+set -e
+
+MODDIR=/usr/data/anvil
+
+if [ -x "$MODDIR/bin/anvil-link-prog.sh" ]; then
+    "$MODDIR/bin/anvil-link-prog.sh"
+fi
+
+exit 0

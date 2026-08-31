@@ -70,15 +70,20 @@ echo "payload: $($APK info | wc -l) packages installed"
 # compiled/<stamp> with `current` a symlink, so the boot command never changes
 # when the database does. Not s6-rc-init's default /etc/s6-rc/, which is
 # inside the read-only squashfs.
+#
+# THROUGH THE SCRIPT anvil-core SHIPS, which the postinsts of anvil-core and
+# anvil-s6-rc also call, so an `opkg upgrade` on a printer compiles the
+# database the same way this does. Naming the database here is what keeps the
+# payload reproducible: given a name the script removes every other database,
+# so the timestamped ones those postinsts just wrote do not ship.
 S6RC_SRC=$PREFIX/etc/s6-rc/source
 S6RC_DB=db-${MOD_VER:-0}
+S6RC_COMPILE=$PREFIX/bin/anvil-s6-rc-compile.sh
 [ -d "$S6RC_SRC" ] || { echo "payload: no s6-rc source at $S6RC_SRC -- anvil-core did not install" >&2; exit 1; }
 [ -x $PREFIX/bin/s6-rc-compile ] || { echo "payload: no $PREFIX/bin/s6-rc-compile -- anvil-s6-rc did not install" >&2; exit 1; }
-rm -rf $PREFIX/etc/s6-rc/compiled
-mkdir -p $PREFIX/etc/s6-rc/compiled
-$PREFIX/bin/s6-rc-compile $PREFIX/etc/s6-rc/compiled/$S6RC_DB "$S6RC_SRC" \
+[ -x "$S6RC_COMPILE" ] || { echo "payload: no $S6RC_COMPILE -- anvil-core did not install" >&2; exit 1; }
+"$S6RC_COMPILE" "$S6RC_DB" \
     || { echo "payload: s6-rc-compile refused $S6RC_SRC" >&2; exit 1; }
-ln -sfn $S6RC_DB $PREFIX/etc/s6-rc/compiled/current
 echo "payload: s6-rc database $S6RC_DB compiled -- `ls "$S6RC_SRC" | wc -l` definitions"
 
 # --- make it shippable -----------------------------------------------------

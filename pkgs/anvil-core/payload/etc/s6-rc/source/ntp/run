@@ -18,11 +18,24 @@
 #   * A clock is not set once. There is no RTC to hold the answer, so the
 #     correction has to be maintained for as long as the printer is up.
 #
-# sntpd does both by design: with the network down it logs "will try again
-# later" and keeps its schedule, rather than exiting, so THIS SERVICE NEEDS NO
-# WIFI DEPENDENCY -- and would gain nothing from one, because `wifi` up means
-# a supplicant is running, not that anything is routable. It syncs whenever
-# the network turns up, from whichever direction.
+# The binary does both by design: with the network down it logs "will try
+# again later" and keeps its schedule, rather than exiting, so THIS SERVICE
+# NEEDS NO WIFI DEPENDENCY -- and would gain nothing from one, because `wifi`
+# up means a supplicant is running, not that anything is routable. It syncs
+# whenever the network turns up, from whichever direction.
+#
+# IT IS EXEC'D AS ntpclient, WHICH IS THE ONLY NAME THAT SETS THE CLOCK. Both
+# names are the same binary and it chooses its argument parser from argv[0].
+# The step lives behind `if (!dry && ntpc->set_clock)` at sntpd.c:485, and
+# set_clock is raised in one place only: `case 's'` in the ntpclient parser,
+# sntpd.c:1459. Under the sntpd name that field is initialised to zero with no
+# option to raise it -- its -s means "log to syslog" -- and the daemon
+# disciplines the clock FREQUENCY through adjtimex instead. That is the right
+# behaviour for a machine whose clock is roughly right and drifting. It is
+# useless here: there is no RTC, every boot starts in 1970, and a correction
+# in parts per million never closes fifty-six years. Run as sntpd this service
+# resolved, connected, took valid stratum-1 readings and left the clock in
+# 1970 for as long as the printer was up (measured 2026-08-31).
 MODDIR=/usr/data/anvil
 
 # anvil-env.sh is read HERE, not inherited. s6-supervise starts this script
@@ -30,7 +43,9 @@ MODDIR=/usr/data/anvil
 # an ssh session had when the service is restarted by hand.
 [ -f $MODDIR/anvil-env.sh ] && . $MODDIR/anvil-env.sh
 
-SNTPD=$MODDIR/sbin/sntpd
+# The ntpclient name of the anvil-sntpd binary. Both names are one file; this
+# is the one whose argument parser can set the clock.
+NTPCLIENT=$MODDIR/sbin/ntpclient
 LOG=/usr/data/logs/anvil-ntp.log
 
 # ---- the whole policy, which is an argument list -------------------------
@@ -65,21 +80,31 @@ exec >>"$LOG" 2>&1
 # unattended, rather than failing an exec once a second. The sleep is a minute
 # rather than the five seconds the other services use because a removed
 # package is a permanent condition, not a race.
-if [ ! -x "$SNTPD" ]; then
-    echo "ntp: !! no $SNTPD -- anvil-sntpd is not installed, the clock stays wrong"
+if [ ! -x "$NTPCLIENT" ]; then
+    echo "ntp: !! no $NTPCLIENT -- anvil-sntpd is not installed, the clock stays wrong"
     sleep 60
     exit 1
 fi
 
-# -n  Do not fork: the process this script turns into IS the service. Without
-#     it s6-supervise would hold a process that exited immediately, call the
-#     service dead, and respawn it forever beside a real sntpd supervised by
-#     nobody. It also puts the log on stdout, which is the redirection above.
+# THE OPTIONS BELOW ARE THE ntpclient SET, NOT sntpd's, and the two disagree
+# about the same letters. Read them against sntpd.c:1416, not against
+# `sntpd -h`:
 #
-# -p 0  NO SERVER MODE. sntpd answers NTP queries on UDP 123 by default. A
-#     3D printer on somebody's home LAN has no business being a time source --
-#     least of all this one, whose own clock is whatever it last read.
+# -s  Set the clock. The whole reason this name is exec'd; see above.
 #
-# And `exec`, so the SIGTERM behind `s6-rc -d change ntp` reaches sntpd rather
-# than a shell that ignores it.
-exec "$SNTPD" -n -p 0 -i "$INTERVAL" $SERVERS
+# -l  Live: keep polling and keep disciplining the frequency between steps,
+#     rather than exiting after the first reading. With -g and -c both unset
+#     the "stop setting the clock once it is good" branch at sntpd.c:1229
+#     never fires, so a printer that drifts is corrected again, for ever.
+#
+# -h  The server. Repeatable; one pool entry is enough, for the reason above.
+#
+# NO -n AND NO -p HERE. This parser has no -n at all -- an unknown option is a
+# usage error and a service that exits at once -- and it does not need one:
+# ntpclient mode does not fork and logs to stdout, which is the redirection
+# above. Its -p is the LOCAL port to send from, not sntpd's server-mode port;
+# server mode is already off, because only the sntpd parser turns it on.
+#
+# And `exec`, so the SIGTERM behind `s6-rc -d change ntp` reaches the daemon
+# rather than a shell that ignores it.
+exec "$NTPCLIENT" -s -l -i "$INTERVAL" -h "$SERVERS"
