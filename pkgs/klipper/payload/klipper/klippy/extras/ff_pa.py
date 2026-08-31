@@ -97,6 +97,10 @@ PARK_X_FEED = 6000
 PARK_Y_FEED = 24000
 PARK_APPROACH_FEED = 6000
 TMC_PINS = ('enable_pin_tmc_x', 'enable_pin_tmc_y')
+# The latch, and the value that is NOT the latch. The app writes 1.00 to arm
+# and hardcodes 0.00 to release; printer.base.cfg ships these pins at 0.
+TMC_LATCH_VALUE = 1.0
+TMC_RELEASED_VALUE = 0.0
 FILAMENT_AREA_175 = 2.405  # mm^2, for the cross-section warning
 
 
@@ -178,6 +182,10 @@ class FFPA:
         self.tmc_pin_names = [n.strip() for n
                               in config.getlist('tmc_pins', list(TMC_PINS))
                               if n.strip()]
+        self.tmc_latch_value = config.getfloat('tmc_latch_value',
+                                               TMC_LATCH_VALUE)
+        self.tmc_released_value = config.getfloat('tmc_released_value',
+                                                  TMC_RELEASED_VALUE)
         self.action_start = config.getint('action_start', ACTION_START)
         self.action_stop = config.getint('action_stop', ACTION_STOP)
         self.action_pc = config.getint('action_pc', ACTION_PC)
@@ -516,7 +524,8 @@ class FFPA:
             self.parked_at = (parked[0], parked[1], z_target)
         # The latch goes on last, and comes off first in _restore.
         for pin_name, _pin in self.tmc_pins:
-            self._run('SET_PIN PIN=%s VALUE=1.00' % pin_name)
+            self._run('SET_PIN PIN=%s VALUE=%.2f'
+                      % (pin_name, self.tmc_latch_value))
         self._wait_moves()
 
     def _one_line(self, index, pa_text, extruder_name, verbose):
@@ -610,6 +619,22 @@ class FFPA:
 
     # ---------------- state ----------------
 
+    def _pin_restore_value(self, pin, now):
+        """What this driver pin should read when the run is over.
+
+        Normally whatever it read on entry -- we put back what we found. The
+        exception is finding it ALREADY LATCHED, which is not a state worth
+        preserving: it means an earlier run died without releasing it, and
+        faithfully restoring it would relatch the drivers on every run and
+        make the condition permanent. A latch we did not set is still a latch
+        we can clear, so clear it."""
+        if pin is None:
+            return self.tmc_released_value
+        value = pin.get_status(now)['value']
+        if abs(value - self.tmc_latch_value) < 1e-6:
+            return self.tmc_released_value
+        return value
+
     @contextlib.contextmanager
     def _guarded(self, extruder):
         """Snapshot on entry, restore unconditionally on exit, every step
@@ -625,7 +650,7 @@ class FFPA:
             'pa': ext.get('pressure_advance', 0.),
             'smooth': ext.get('smooth_time', 0.),
             'name': extruder.get_name(),
-            'pins': [(n, (p.get_status(now)['value'] if p is not None else 0.))
+            'pins': [(n, self._pin_restore_value(p, now))
                      for n, p in self.tmc_pins],
         }
         try:
@@ -643,13 +668,18 @@ class FFPA:
                 action_cmd.send([self.action_stop, self.action_pc])
             except (FFPAError, self.printer.command_error):
                 pass
-        # 2. Driver pins back to what they were, not to the app's hardcoded
-        #    0.00. THIS is the step that gives X and Y back: while the latch
-        #    is on the carriage is dead, and nothing later in a print will
-        #    lift it -- Klipper's own stepper enable is a different pin and
-        #    knows nothing about this one. So a failure here is shouted
-        #    about, not swallowed: it is the difference between a run that
-        #    went wrong and a printer that cannot move until klippy restarts.
+        # 2. Driver pins back to what they were (see _pin_restore_value),
+        #    not to the app's hardcoded 0.00. THIS is the step that gives X
+        #    and Y back: while the latch is on the carriage is dead, and
+        #    nothing later in a print will lift it -- Klipper's own stepper
+        #    enable is a different pin and knows nothing about this one.
+        #
+        #    A klippy or MCU shutdown is the one case that heals itself:
+        #    [output_pin] hands shutdown_value (default 0) to
+        #    setup_start_value, so the MCU drives these pins low on its own
+        #    without needing us. Everything else -- a command_error, a
+        #    cancel, an exception out of the sweep -- comes back through
+        #    here, which is why a failure is reported rather than swallowed.
         stuck = []
         for pin_name, value in snapshot['pins']:
             try:
@@ -659,12 +689,15 @@ class FFPA:
         if stuck:
             try:
                 self.gcode.respond_info(
-                    "%s: !! COULD NOT UNLATCH %s. The X/Y drivers are still"
-                    " disabled and will stay that way -- the carriage will"
-                    " not move and homing will not work. Recover with"
-                    " %s, or restart klippy."
+                    "%s: !! COULD NOT UNLATCH %s. The X/Y drivers are"
+                    " disabled and nothing else will lift them -- the"
+                    " carriage will not move and homing will not work."
+                    " Recover with %s. (A klippy or MCU shutdown would"
+                    " clear them by itself via shutdown_value; this was"
+                    " not one.)"
                     % (self.name, ", ".join(stuck),
-                       "  ".join("SET_PIN PIN=%s VALUE=0.00" % n
+                       "  ".join("SET_PIN PIN=%s VALUE=%.2f"
+                                 % (n, self.tmc_released_value)
                                  for n in stuck)))
             except Exception:
                 pass

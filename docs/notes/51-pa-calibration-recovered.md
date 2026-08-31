@@ -390,9 +390,17 @@ state, and the last run's table.
   the axes are still flagged homed. An earlier revision of this port deliberately skipped it on
   the reasoning that "our sweep is plain G1 under Klipper's own kinematics" -- that reasoning
   was wrong, because the latch means our G1s move nothing either.
-- **Failing to unlatch is reported, not swallowed.** Both `SET_PIN`s go back to their snapshot
-  value, and if that fails (a shutdown mid-run makes `run_script_from_command` raise) the command
-  prints the recovery line rather than leaving a printer that silently cannot move.
+- **The latch is always released, and never faithfully reinstated.** Both `SET_PIN`s go back to
+  the value read on entry, with one exception: a pin found *already latched* is released instead.
+  Restoring that state truthfully is what would turn one aborted run into a printer that relatches
+  its own drivers on every subsequent run. A failure to release is printed with the recovery
+  command rather than left silent.
+
+  Worth being exact about the shutdown case, because it is easy to overstate: `[output_pin]`
+  passes `shutdown_value` (which defaults to `0.`) to `setup_start_value`, so on a klippy or MCU
+  shutdown the MCU drives `PH2`/`PH3` low itself and the drivers come back without any help from
+  us. The guard matters for the ordinary failures -- a `command_error`, a cancel, an exception out
+  of the sweep -- which unwind through `_restore` with the machine still running.
 - **`SAVE_GCODE_STATE`/`RESTORE_GCODE_STATE`** wrap the run; the app leaks its modal state.
 - **`min()` on floats**, not the app's lexicographic sort of fixed-width strings. Identical for
   its own seven values, correct for an override with mixed decimal widths.
