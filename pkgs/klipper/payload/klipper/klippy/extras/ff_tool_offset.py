@@ -785,20 +785,18 @@ class FFToolOffset:
 
     cmd_TOOL_LOCATE_SENSOR_help = (
         "Locate the station with an EMPTY carriage (station_x/y/z) "
-        "([PARK=1] [SAVE=1] [PLATE_CHECK=1] [SAMPLES=] [SAMPLES_TOLERANCE=]"
+        "([SAVE=1] [PLATE_CHECK=1] [SAMPLES=] [SAMPLES_TOLERANCE=]"
         " [SAMPLES_TOLERANCE_RETRIES=] [SAMPLES_RESULT=]"
         " [SAMPLE_RETRACT_DIST=] [PROBE_SPEED=])")
 
     def cmd_TOOL_LOCATE_SENSOR(self, gcmd):
-        park = gcmd.get_int('PARK', 1, minval=0, maxval=1)
         save = gcmd.get_int('SAVE', 1, minval=0, maxval=1)
         try:
             self._check_homed(gcmd)
             if self.toolchange is not None:
-                if park:
-                    # releaseFourExtruder: the carriage must be empty for TS.
-                    self._run('TOOLCHANGE_PARK')
-                    self._wait_moves()
+                # releaseFourExtruder: the carriage must be empty for TS.
+                self._run('TOOLCHANGE_PARK')
+                self._wait_moves()
                 carriage = self.toolchange.get_status(self.reactor.monotonic())
                 if carriage.get('current_tool', -1) != -1 \
                    or not carriage.get('state_ok'):
@@ -806,10 +804,10 @@ class FFToolOffset:
                         "%s: carriage is not verifiably empty (%s) -- the"
                         " station pass must run with no tool mounted"
                         % (self.name, carriage.get('state_reason')))
-            elif park:
-                raise gcmd.error("%s: [ff_toolchange] not loaded -- park"
-                                 " the tool by hand and pass PARK=0."
-                                 % self.name)
+            # With no [ff_toolchange] there is no TOOLCHANGE_PARK to call and
+            # no sensor that can confirm the carriage is empty. Emptying it is
+            # the operator's job then, as it is on any printer without a
+            # toolchanger.
             self._run_plate_check(gcmd)
             cylinder_x, cylinder_y = self._cylinder()
             gcmd.respond_info("station calibration, start %.3f, %.3f"
