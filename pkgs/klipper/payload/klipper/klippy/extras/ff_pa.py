@@ -15,10 +15,28 @@
 #     firmware unchanged, so we get the same verdicts the touchscreen does.
 #     [pa_adjust] is the 40-line forwarder that carries the two commands.
 #
-#   * THE LINES ARE EXTRUDED IN FREE AIR, ~8 mm above the bed, and nothing
-#     ever looks at them. They exist only to make a pressure transient at the
-#     two 10x flow steps. There is no first layer here and no adhesion to
-#     get right -- just about a gram of loose filament on the plate.
+#   * THE CARRIAGE DOES NOT MOVE, AND THAT IS THE WHOLE DESIGN. The prologue
+#     latches enable_pin_tmc_x/y, which hard-disables the X and Y drivers, so
+#     every `G1 X` in the sweep is planned by Klipper and executed by nobody.
+#     The toolhead stays exactly where the prologue parked it and the ~1 g of
+#     filament falls straight down from there. The app parks over the PURGE
+#     CHUTE first -- clearNozzleEddy @0x78f030 builds the restore string from
+#     X = 275 + tool_dx, Y = 254 + tool_dy, the same two constants
+#     ff-filament.cfg carries as purge_x/purge_y -- so the extrudate goes down
+#     the chute and never touches the plate. We now do the same.
+#
+#     The X/Y ladder is therefore a TIMING GENERATOR and nothing else. It
+#     exists only to stretch each candidate over the two 10x flow steps where
+#     pressure advance can show up. Nothing draws lines, nothing looks at
+#     them, and the scrambled candidate order buys no spatial separation
+#     because there is no space -- it is kept because it is the app's.
+#
+#   * SO SET_KINEMATIC_POSITION IS MANDATORY ON EXIT. After the sweep Klipper
+#     believes the carriage walked to the end of the ladder while it never
+#     left the chute. The app replays the parked coordinates (resetTmcPa
+#     @0x79350c takes them as its argument) and so must we -- without it the
+#     next move is planned from a position that is a lie, and it is homed
+#     state that makes it dangerous rather than merely wrong.
 #
 #   * THE MISSING M400 IS DELIBERATE. pa_action is an immediate MCU command,
 #     so ACTION=0 fires while motion is still queued; what bounds it is
@@ -69,7 +87,20 @@ ACTION_STOP = 0            # ... and treats everything else as stop
 ACTION_PC = 666            # the app's "material" code; inert on this eBoard
 LINE_Z = 8.0               # RAW eddy frame, == _FF_FILAMENT's purge_z
 LINE_Z_FEED = 3000
+# The purge chute, and the staging X the app approaches it from. Defaults
+# only: when [gcode_macro _FF_FILAMENT] is present its purge_x/purge_y and
+# per-tool dx/dy win, so the chute has ONE definition in the tree.
+PARK_X = 275.0             # @0xdb6b2c, == _FF_FILAMENT's purge_x
+PARK_Y = 254.0             # @0xdb6b28, == _FF_FILAMENT's purge_y
+PARK_APPROACH_DX = 25.0    # the app's "G1 X250" staging move
+PARK_X_FEED = 6000
+PARK_Y_FEED = 24000
+PARK_APPROACH_FEED = 6000
 TMC_PINS = ('enable_pin_tmc_x', 'enable_pin_tmc_y')
+# The latch, and the value that is NOT the latch. The app writes 1.00 to arm
+# and hardcodes 0.00 to release; printer.base.cfg ships these pins at 0.
+TMC_LATCH_VALUE = 1.0
+TMC_RELEASED_VALUE = 0.0
 FILAMENT_AREA_175 = 2.405  # mm^2, for the cross-section warning
 
 
@@ -140,9 +171,21 @@ class FFPA:
         # definition of "8 mm above the plate" in the tree.
         self.line_z = config.getfloat('line_z', None)
         self.line_z_feed = config.getint('line_z_feed', LINE_Z_FEED, minval=1)
+        # Park over the purge chute before the drivers are latched. The whole
+        # ~1 g lands wherever this leaves the nozzle, so 'False' means "I have
+        # put something under the nozzle myself" -- not "park somewhere else".
+        self.park = config.getboolean('park', True)
+        self.park_x = config.getfloat('park_x', None)
+        self.park_y = config.getfloat('park_y', None)
+        self.park_approach_dx = config.getfloat('park_approach_dx',
+                                                PARK_APPROACH_DX)
         self.tmc_pin_names = [n.strip() for n
                               in config.getlist('tmc_pins', list(TMC_PINS))
                               if n.strip()]
+        self.tmc_latch_value = config.getfloat('tmc_latch_value',
+                                               TMC_LATCH_VALUE)
+        self.tmc_released_value = config.getfloat('tmc_released_value',
+                                                  TMC_RELEASED_VALUE)
         self.action_start = config.getint('action_start', ACTION_START)
         self.action_stop = config.getint('action_stop', ACTION_STOP)
         self.action_pc = config.getint('action_pc', ACTION_PC)
@@ -159,6 +202,9 @@ class FFPA:
         self.dry_run = False
         self.running = False
         self.last = None
+        # Where the prologue left the nozzle, in G-code coordinates. What
+        # _restore feeds SET_KINEMATIC_POSITION; None until a run parks.
+        self.parked_at = None
 
         self.gcode.register_command('FF_PA_CALIBRATE',
                                     self.cmd_FF_PA_CALIBRATE,
@@ -316,7 +362,7 @@ class FFPA:
                 " require_filament_sensor: False if the switch is wrong."
                 % (self.name, tool))
 
-    def _check_bounds(self, gcmd):
+    def _check_bounds(self, gcmd, tool):
         """The ladder must fit the machine. The defaults sit well inside a
         Creator 5's envelope; an overridden ladder need not."""
         _toolhead, status = self._toolhead_status()
@@ -326,6 +372,13 @@ class FFPA:
         xs = [self.x_start] + [seg[0] for seg in self.segments]
         ys = [self.y_start + self.y_step * i
               for i in range(len(self.candidates))]
+        # The ladder is phantom motion, but Klipper still plans it and still
+        # range-checks it. The park is the one move that is real, so it has
+        # to fit for a different and more literal reason.
+        if self.park:
+            px, py, _xf, _yf, _af = self._chute(tool)
+            xs += [px, px - self.park_approach_dx]
+            ys.append(py)
         for axis, values, lo, hi in (('X', xs, low.x, high.x),
                                      ('Y', ys, low.y, high.y)):
             if min(values) < lo or max(values) > hi:
@@ -334,6 +387,20 @@ class FFPA:
                     " machine's %.1f..%.1f. Adjust x_start/segments or"
                     " y_start/y_step."
                     % (self.name, axis, min(values), max(values), lo, hi))
+
+    def _where_note(self, tool, raw_z, z_target):
+        """Say plainly where the gram of filament is going to end up."""
+        if not self.park:
+            return ("  ! PARK=0: the drivers are latched where the nozzle"
+                    " already stands, so the whole ~1 g lands THERE, at Z"
+                    " %.3f raw / %.3f gcode. Nothing will move it aside."
+                    % (raw_z, z_target))
+        x, y, _xf, _yf, _af = self._chute(tool)
+        return ("  the carriage parks over the purge chute at X%.1f Y%.1f,"
+                " Z %.3f raw / %.3f gcode, and STAYS THERE: the X/Y drivers"
+                " are latched off for the sweep, so the ladder is timing"
+                " only and the ~1 g goes down the chute."
+                % (x, y, raw_z, z_target))
 
     def _cross_section_note(self, extruder):
         """Klipper caps extrude cross-section at 4*nozzle^2. The sweep's
@@ -385,9 +452,60 @@ class FFPA:
 
     # ---------------- the sweep ----------------
 
-    def _prologue(self, z_target):
+    def _chute(self, tool):
+        """The purge chute in G-code coordinates for TOOL.
+
+        Follows [gcode_macro _FF_FILAMENT] when it is loaded so the chute has
+        one definition in the tree, and falls back to the app's own constants
+        when it is not. park_x/park_y in [ff_pa] override both."""
+        ff = self.printer.lookup_object('gcode_macro _FF_FILAMENT', None)
+        x, y = PARK_X, PARK_Y
+        x_feed, y_feed = PARK_X_FEED, PARK_Y_FEED
+        approach_feed = PARK_APPROACH_FEED
+        if ff is not None:
+            status = ff.get_status(self.reactor.monotonic())
+            x = status.get('purge_x', x)
+            y = status.get('purge_y', y)
+            x_feed = status.get('travel_x_feed', x_feed)
+            y_feed = status.get('travel_y_feed', y_feed)
+            approach_feed = status.get('approach_feed', approach_feed)
+            dx = status.get('tool_dx') or []
+            dy = status.get('tool_dy') or []
+            if tool < len(dx):
+                x += dx[tool]
+            if tool < len(dy):
+                y += dy[tool]
+        if self.park_x is not None:
+            x = self.park_x
+        if self.park_y is not None:
+            y = self.park_y
+        return x, y, int(x_feed), int(y_feed), int(approach_feed)
+
+    def _park(self, tool):
+        """Put the nozzle over the chute, in the app's own three moves.
+
+        This is the ONLY real XY motion in the whole procedure, and it has to
+        happen while the drivers still answer -- the latch that follows is
+        what makes the sweep itself go nowhere. Returns the parked position
+        for SET_KINEMATIC_POSITION to replay, or None when parking is off."""
+        if not self.park:
+            return None
+        x, y, x_feed, y_feed, approach_feed = self._chute(tool)
+        # Same order as _FF_FILAMENT_PREP: stage clear of the chute on X,
+        # square up on Y, then come in on X at the slow approach feed.
+        self._run('G1 X%.3f F%d' % (x - self.park_approach_dx, x_feed))
+        self._run('G1 Y%.3f F%d' % (y, y_feed))
+        self._run('G1 X%.3f F%d' % (x, approach_feed))
+        self._wait_moves()
+        return x, y
+
+    def _prologue(self, tool, z_target):
         """The app's prologue, plus SAVE_GCODE_STATE and an explicit G90 --
-        it leaks its modal state and we do not."""
+        it leaks its modal state and we do not.
+
+        ORDER MATTERS. Every real move -- the Z raise and the travel to the
+        chute -- happens BEFORE the driver latch. Once the latch is on,
+        nothing the toolhead is told to do reaches the machine."""
         self._run('SAVE_GCODE_STATE NAME=_ff_pa')
         self._run('G90')
         self._run('G92 E0')
@@ -395,15 +513,20 @@ class FFPA:
         self._run('SET_VELOCITY_LIMIT ACCEL=%.0f' % self.sweep_accel)
         self._run('SET_VELOCITY_LIMIT SQUARE_CORNER_VELOCITY=%.3f'
                   % self.sweep_scv)
-        for pin_name, _pin in self.tmc_pins:
-            self._run('SET_PIN PIN=%s VALUE=1.00' % pin_name)
-        self._wait_moves()
         # Raise before travelling, never lower -- same rule as the purge in
-        # ff-filament.cfg. The XY travel is the first line's own G1.
+        # ff-filament.cfg.
         _toolhead, status = self._toolhead_status()
         if self.dry_run or status['position'].z < z_target:
             self._run('G1 Z%.3f F%d' % (z_target, self.line_z_feed))
             self._wait_moves()
+        parked = self._park(tool)
+        if parked is not None:
+            self.parked_at = (parked[0], parked[1], z_target)
+        # The latch goes on last, and comes off first in _restore.
+        for pin_name, _pin in self.tmc_pins:
+            self._run('SET_PIN PIN=%s VALUE=%.2f'
+                      % (pin_name, self.tmc_latch_value))
+        self._wait_moves()
 
     def _one_line(self, index, pa_text, extruder_name, verbose):
         """One candidate: arm, set PA, draw the line, disarm, read a verdict.
@@ -496,6 +619,22 @@ class FFPA:
 
     # ---------------- state ----------------
 
+    def _pin_restore_value(self, pin, now):
+        """What this driver pin should read when the run is over.
+
+        Normally whatever it read on entry -- we put back what we found. The
+        exception is finding it ALREADY LATCHED, which is not a state worth
+        preserving: it means an earlier run died without releasing it, and
+        faithfully restoring it would relatch the drivers on every run and
+        make the condition permanent. A latch we did not set is still a latch
+        we can clear, so clear it."""
+        if pin is None:
+            return self.tmc_released_value
+        value = pin.get_status(now)['value']
+        if abs(value - self.tmc_latch_value) < 1e-6:
+            return self.tmc_released_value
+        return value
+
     @contextlib.contextmanager
     def _guarded(self, extruder):
         """Snapshot on entry, restore unconditionally on exit, every step
@@ -511,7 +650,7 @@ class FFPA:
             'pa': ext.get('pressure_advance', 0.),
             'smooth': ext.get('smooth_time', 0.),
             'name': extruder.get_name(),
-            'pins': [(n, (p.get_status(now)['value'] if p is not None else 0.))
+            'pins': [(n, self._pin_restore_value(p, now))
                      for n, p in self.tmc_pins],
         }
         try:
@@ -529,12 +668,38 @@ class FFPA:
                 action_cmd.send([self.action_stop, self.action_pc])
             except (FFPAError, self.printer.command_error):
                 pass
-        # 2. Driver pins back to what they were, not to the app's hardcoded
-        #    0.00. Left latched, whatever they gate stays energised.
+        # 2. Driver pins back to what they were (see _pin_restore_value),
+        #    not to the app's hardcoded 0.00. THIS is the step that gives X
+        #    and Y back: while the latch is on the carriage is dead, and
+        #    nothing later in a print will lift it -- Klipper's own stepper
+        #    enable is a different pin and knows nothing about this one.
+        #
+        #    A klippy or MCU shutdown is the one case that heals itself:
+        #    [output_pin] hands shutdown_value (default 0) to
+        #    setup_start_value, so the MCU drives these pins low on its own
+        #    without needing us. Everything else -- a command_error, a
+        #    cancel, an exception out of the sweep -- comes back through
+        #    here, which is why a failure is reported rather than swallowed.
+        stuck = []
         for pin_name, value in snapshot['pins']:
             try:
                 self._run('SET_PIN PIN=%s VALUE=%.2f' % (pin_name, value))
             except self.printer.command_error:
+                stuck.append(pin_name)
+        if stuck:
+            try:
+                self.gcode.respond_info(
+                    "%s: !! COULD NOT UNLATCH %s. The X/Y drivers are"
+                    " disabled and nothing else will lift them -- the"
+                    " carriage will not move and homing will not work."
+                    " Recover with %s. (A klippy or MCU shutdown would"
+                    " clear them by itself via shutdown_value; this was"
+                    " not one.)"
+                    % (self.name, ", ".join(stuck),
+                       "  ".join("SET_PIN PIN=%s VALUE=%.2f"
+                                 % (n, self.tmc_released_value)
+                                 for n in stuck)))
+            except Exception:
                 pass
         # 3. Motion limits. The shipped values are 30000/9, so the sweep's
         #    5000 is a real reduction that must not leak into the next print.
@@ -559,11 +724,26 @@ class FFPA:
             self._run('RESTORE_GCODE_STATE NAME=_ff_pa')
         except self.printer.command_error:
             pass
-        # The app's resetTmcPa also replays SET_KINEMATIC_POSITION. That is
-        # NOT ported and must not be: it needs it because its caller
-        # force-drove the axes, while our sweep is plain G1 under Klipper's
-        # own kinematics. Replaying it here would only lie to Klipper about
-        # where the carriage is.
+        # 5. LAST, and only now: tell Klipper where the carriage really is.
+        #    It planned the whole ladder against dead drivers, so its idea of
+        #    X and Y is the end of the ladder while the machine never left the
+        #    chute -- and the axes are still flagged homed, which is what
+        #    makes that dangerous rather than merely untidy. The app passes
+        #    exactly this string into resetTmcPa (@0x79350c).
+        #
+        #    After RESTORE_GCODE_STATE, not before. SET_KINEMATIC_POSITION
+        #    fires toolhead:set_position, which has gcode_move recompute its
+        #    last_position from base_position/homing_position -- so it has to
+        #    see the RESTORED offsets, not the sweep's.
+        if self.parked_at is not None and not self.dry_run:
+            try:
+                self._wait_moves()
+                self._run('SET_KINEMATIC_POSITION X=%.3f Y=%.3f Z=%.3f'
+                          % self.parked_at)
+                self._wait_moves()
+            except self.printer.command_error:
+                pass
+        self.parked_at = None
 
     def _heat(self, gcmd, tool, extruder):
         temp = gcmd.get_float('TEMP', None)
@@ -578,17 +758,18 @@ class FFPA:
 
     cmd_FF_PA_CALIBRATE_help = (
         "Measure pressure advance on the MOUNTED tool by sweeping candidates"
-        " through the eBoard's scorer. Extrudes ~1 g in free air onto the"
-        " plate and REPORTS a number -- it saves nothing and applies nothing"
-        " ([TOOL=] [TEMP=] [SWEEPS=] [WINNERS=] [CANDIDATES=] [PASS_VALUE=]"
-        " [Y_START=] [Y_STEP=] [Z=] [VERBOSE=1] [DRY_RUN=1])")
+        " through the eBoard's scorer. Parks over the purge chute, extrudes"
+        " ~1 g into it and REPORTS a number -- it saves nothing and applies"
+        " nothing ([TOOL=] [TEMP=] [SWEEPS=] [WINNERS=] [CANDIDATES=]"
+        " [PASS_VALUE=] [Y_START=] [Y_STEP=] [Z=] [PARK=0] [VERBOSE=1]"
+        " [DRY_RUN=1])")
 
     def cmd_FF_PA_CALIBRATE(self, gcmd):
         if self.running:
             raise gcmd.error("%s: a calibration is already running"
                              % self.name)
         saved = (self.candidates, self.sweeps, self.winners,
-                 self.pass_value, self.y_start, self.y_step)
+                 self.pass_value, self.y_start, self.y_step, self.park)
         self.dry_run = bool(gcmd.get_int('DRY_RUN', 0, minval=0, maxval=1))
         verbose = bool(gcmd.get_int('VERBOSE', 0, minval=0, maxval=1))
         try:
@@ -599,7 +780,7 @@ class FFPA:
             self.running = False
             self.dry_run = False
             (self.candidates, self.sweeps, self.winners, self.pass_value,
-             self.y_start, self.y_step) = saved
+             self.y_start, self.y_step, self.park) = saved
 
     def _apply_overrides(self, gcmd):
         raw = gcmd.get('CANDIDATES', None)
@@ -621,6 +802,8 @@ class FFPA:
         self.pass_value = gcmd.get_int('PASS_VALUE', self.pass_value)
         self.y_start = gcmd.get_float('Y_START', self.y_start)
         self.y_step = gcmd.get_float('Y_STEP', self.y_step)
+        self.park = bool(gcmd.get_int('PARK', int(self.park),
+                                      minval=0, maxval=1))
         if self.dry_run:
             # A dry run never collects a winner, so it would otherwise print
             # every sweep. One is what anyone wants to read.
@@ -630,7 +813,7 @@ class FFPA:
         tool = self._resolve_tool(gcmd)
         self._check_homed(gcmd)
         self._check_filament(gcmd, tool)
-        self._check_bounds(gcmd)
+        self._check_bounds(gcmd, tool)
         self._ensure_extruder(tool)
         extruder = self._extruder()
         self._heat(gcmd, tool, extruder)
@@ -642,10 +825,7 @@ class FFPA:
         lines = ["%s: T%d (%s), %d candidates x up to %d sweeps"
                  % (self.name, tool, extruder.get_name(),
                     len(self.candidates), self.sweeps),
-                 "  lines are extruded in FREE AIR at Z %.3f raw / Z %.3f"
-                 " gcode. Nothing prints them and nothing inspects them --"
-                 " expect ~1 g of loose filament on the plate."
-                 % (raw_z, z_target)]
+                 self._where_note(tool, raw_z, z_target)]
         note = self._cross_section_note(extruder)
         if note:
             lines.append(note)
@@ -654,7 +834,7 @@ class FFPA:
         extruder_name = extruder.get_name()
         with self._guarded(extruder):
             try:
-                self._prologue(z_target)
+                self._prologue(tool, z_target)
                 best, census, rows = self._sweep(gcmd, extruder_name, verbose)
             except FFPAError as err:
                 raise gcmd.error("%s: %s" % (self.name, err))
@@ -721,7 +901,7 @@ class FFPA:
         "Draw ONE calibration line and print its eBoard verdict. The"
         " bring-up tool: run it across the candidates by hand and confirm"
         " you get more than one distinct answer before trusting an averaged"
-        " number ([PA=] [Y=] [TOOL=] [TEMP=] [Z=] [DRY_RUN=1])")
+        " number ([PA=] [Y=] [TOOL=] [TEMP=] [Z=] [PARK=0] [DRY_RUN=1])")
 
     def cmd_FF_PA_PROBE(self, gcmd):
         if self.running:
@@ -743,24 +923,38 @@ class FFPA:
             raise gcmd.error("%s: PA='%s' is not a number"
                              % (self.name, pa_text))
         y = gcmd.get_float('Y', self.y_start)
+        # PARK= is a per-invocation override of a persistent default, so it
+        # must be undone on EVERY exit -- including a refusal from the checks
+        # below, which run before _guarded gets a finally in place. Leaking it
+        # would flip what the next FF_PA_CALIBRATE does with its gram.
+        saved_park = self.park
+        try:
+            self.park = bool(gcmd.get_int('PARK', int(self.park),
+                                          minval=0, maxval=1))
+            self._probe_inner(gcmd, y, pa_text)
+        finally:
+            self.park = saved_park
+
+    def _probe_inner(self, gcmd, y, pa_text):
         tool = self._resolve_tool(gcmd)
         self._check_homed(gcmd)
         self._check_filament(gcmd, tool)
-        self._check_bounds(gcmd)
+        self._check_bounds(gcmd, tool)
         self._ensure_extruder(tool)
         extruder = self._extruder()
         self._heat(gcmd, tool, extruder)
         extruder = self._extruder()
         if not self.dry_run:
             self._check_can_extrude(gcmd, extruder)
-        _raw_z, z_target = self._line_z(gcmd, tool)
+        raw_z, z_target = self._line_z(gcmd, tool)
         extruder_name = extruder.get_name()
+        gcmd.respond_info(self._where_note(tool, raw_z, z_target))
         # One line at the requested Y: index 0 with the ladder rebased.
         saved_y = self.y_start
         with self._guarded(extruder):
             try:
                 self.y_start = y
-                self._prologue(z_target)
+                self._prologue(tool, z_target)
                 verdict, unflushed = self._one_line(0, pa_text, extruder_name,
                                                     True)
             except FFPAError as err:
@@ -781,6 +975,18 @@ class FFPA:
         "Show the PA calibration config in force, whether the eBoard"
         " commands are bound, and the last run's table")
 
+    def _park_note(self):
+        """One line for FF_PA_STATUS. Deliberately not _where_note: that one
+        needs a tool and a Z, and STATUS must answer with neither."""
+        if not self.park:
+            return "OFF -- the gram lands wherever the nozzle stands"
+        ff = self.printer.lookup_object('gcode_macro _FF_FILAMENT', None)
+        source = ("_FF_FILAMENT purge_x/purge_y + tool dx/dy"
+                  if ff is not None else "built-in defaults")
+        if self.park_x is not None or self.park_y is not None:
+            source = "park_x/park_y override"
+        return "the purge chute, from %s" % source
+
     def cmd_FF_PA_STATUS(self, gcmd):
         action = query = None
         bound = "no ([pa_adjust] not loaded)"
@@ -799,6 +1005,7 @@ class FFPA:
                  "  ladder: X%.1f..%.1f, Y%.1f step %.1f"
                  % (self.x_start, self.segments[-1][0], self.y_start,
                     self.y_step),
+                 "  park: %s" % self._park_note(),
                  "  eBoard commands bound: %s" % bound,
                  "  toolchanger: %s"
                  % ("loaded" if self.toolchange is not None else "MISSING"),
