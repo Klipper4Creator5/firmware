@@ -39,15 +39,16 @@ ff_pa: T0 pressure_advance = 0.023300   (mean of 3 sweep winners: 0.0200, 0.0250
       pressure_advance: 0.023300
 ```
 
-**It only reports — it does not save or apply anything.** To keep the
-result, add it to that tool's extruder section (`[extruder]` for T0,
-`[extruder1]` for T1, and so on) and run `SAVE_CONFIG`:
+**It only reports — it does not save or apply anything**, and printer.cfg
+is the wrong place for it anyway: pressure advance is a property of the
+*filament*, not the printer, so a PLA value baked into printer.cfg is wrong
+the moment you load PETG. Put the number in your slicer instead, as that
+filament's own **Pressure Advance** setting (OrcaSlicer, PrusaSlicer and
+SuperSlicer all have one, under the filament's Advanced settings) — it
+travels with the material profile and applies automatically on every print,
+correct nozzle and all.
 
-```gcode
-SAVE_CONFIG
-```
-
-Or try it just for the current session, without saving:
+You can also try a number for one session without touching any profile:
 
 ```gcode
 SET_PRESSURE_ADVANCE EXTRUDER=extruder ADVANCE=0.0233
