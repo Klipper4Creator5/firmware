@@ -6,9 +6,11 @@ corner shows it — a blob where pressure had built up, or a gap where it
 never did. It is a property of the whole drive train from motor to nozzle,
 so each of the four tools has its own value.
 
-**Your printer already has one per tool**, imported with the rest of your
-machine's numbers on first boot. Re-run this only if you see the blobbing or
-gapping above, or after swapping an extruder gear or motor on one tool.
+Unlike your nozzle offsets and bed mesh, there is no factory pressure-advance
+number waiting to be imported — this command only measures and reports one,
+you decide what to do with it. Run it once per tool and filament type you
+care about, and again if you see the blobbing or gapping above, or after
+swapping an extruder gear or motor on one tool.
 
 ---
 
