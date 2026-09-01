@@ -65,8 +65,12 @@ says what is happening behind it.
 ## What the first boot does
 
 The first boot after a flash is longer than the ones after it, and the screen
-shows a progress bar rather than HelixScreen for most of it. Two things happen
-that happen only once:
+shows a progress bar rather than HelixScreen for most of it. What you'll see,
+in order:
+
+<img src="boot-screen/waiting.png" width="24%" alt="Boot screen: waiting for the printer"> <img src="boot-screen/importing.png" width="24%" alt="Boot screen: reading factory calibration"> <img src="boot-screen/saving.png" width="24%" alt="Boot screen: saving calibration"> <img src="boot-screen/complete.png" width="24%" alt="Boot screen: setup complete">
+
+Two things happen that happen only once:
 
 * **Your machine's factory calibration comes across.** The dock and nozzle
   positions measured for your printer at the factory are copied into Klipper's
