@@ -66,9 +66,9 @@ says what is happening behind it.
 
 The first boot after a flash is longer than the ones after it, and the screen
 shows a progress bar rather than HelixScreen for most of it. What you'll see,
-in order:
+partway through and at the end:
 
-<img src="boot-screen/waiting.png" width="24%" alt="Boot screen: waiting for the printer"> <img src="boot-screen/importing.png" width="24%" alt="Boot screen: reading factory calibration"> <img src="boot-screen/saving.png" width="24%" alt="Boot screen: saving calibration"> <img src="boot-screen/complete.png" width="24%" alt="Boot screen: setup complete">
+<img src="boot-screen/importing.png" width="48%" alt="Boot screen: reading factory calibration"> <img src="boot-screen/complete.png" width="48%" alt="Boot screen: setup complete">
 
 Two things happen that happen only once:
 
