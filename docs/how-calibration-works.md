@@ -12,7 +12,7 @@ section.
 | **Bed mesh** | automatically, at every print start | [Bed mesh](bed-mesh.md) |
 | **Input shaping** | once, and after mechanical changes | — |
 | **VFA compensation** | rarely — it is a property of the motors, and it ships calibrated | — |
-| **Pressure advance** | manually — from HelixScreen's calibration screen or the console, per tool | — |
+| **Pressure advance** | manually — from HelixScreen's calibration screen or the console, per tool | [Pressure advance](pressure-advance.md) |
 
 ---
 
@@ -314,40 +314,14 @@ something that happens to your print without asking.
 
 ### Running it
 
-From the console:
+`FF_PA_CALIBRATE` reports a number; it does not save or apply anything —
+nothing in `printer.cfg` changes and nothing carries over to the next
+toolchange until you put it there yourself. `FF_PA_PROBE` draws a single
+line at one candidate value, for checking the eBoard is discriminating
+between candidates at all before trusting a full sweep. HelixScreen's
+calibration screen (v0.99.115-creator5.5 and later) can start the same run
+from the touchscreen — it now recognises `FF_PA_CALIBRATE` as a calibration
+provider on this machine.
 
-```
-FF_PA_CALIBRATE TOOL=0 TEMP=230
-```
-
-This heats T0's extruder to 230°C if it is not already there, sweeps the
-candidates, and reports a number, in this shape:
-
-```
-ff_pa: T0 pressure_advance = 0.023300   (mean of 3 sweep winners: 0.0200, 0.0250, 0.0250)
-  ...
-  NOT saved and NOT applied. To keep it, put it in printer.cfg yourself:
-      [extruder]
-      pressure_advance: 0.023300
-```
-
-**It reports; it does not save or apply anything.** Nothing in `printer.cfg`
-changes and nothing carries over to the next toolchange — put the number
-under the tool's `[extruder<n>]` section yourself, or try it for the current
-session with `SET_PRESSURE_ADVANCE`.
-
-`FF_PA_PROBE PA=0.02 TOOL=0` draws a single line at one candidate value and
-prints the raw verdict, with no averaging. It exists for checking that the
-eBoard is discriminating between candidates at all before trusting a full
-run — if every candidate comes back with the same verdict,
-`FF_PA_CALIBRATE` refuses to report a number rather than average an
-artefact.
-
-HelixScreen's calibration screen (v0.99.115-creator5.5 and later) can start
-the same sweep from the touchscreen instead of the console — it now
-recognises `FF_PA_CALIBRATE` as a calibration provider on this machine.
-
-All axes need to be homed, a tool mounted, and filament loaded before either
-command will run — each is checked up front rather than discovered halfway
-through a sweep with the carriage's X and Y drivers deliberately disabled for
-the duration.
+The commands, what they print, and what to do with the result are on
+[Pressure advance](pressure-advance.md).
