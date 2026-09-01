@@ -12,6 +12,7 @@ section.
 | **Bed mesh** | automatically, at every print start | [Bed mesh](bed-mesh.md) |
 | **Input shaping** | once, and after mechanical changes | — |
 | **VFA compensation** | rarely — it is a property of the motors, and it ships calibrated | — |
+| **Pressure advance** | manually — from HelixScreen's calibration screen or the console, per tool | — |
 
 ---
 
@@ -277,3 +278,76 @@ is empty, for the same moving-mass reason.
 
 The stock application ran this from its own calibration flow; the commands
 underneath are FlashForge's, unchanged.
+
+---
+
+## Pressure advance
+
+Pressure advance is the correction for the lag between the extruder motor
+turning and plastic actually arriving at the tip: without it, a corner prints
+either a blob (the pressure built up on the way in has to go somewhere) or a
+gap (the pressure never built up to begin with). It is a property of the
+whole drive train from motor to nozzle, so it is calibrated per tool — each
+of the four nozzles gets its own number.
+
+Measuring it needs a live signal, not a ruler. The sweep prints a series of
+short lines at increasing candidate pressure-advance values, each with a
+sudden speed change, and asks the eBoard — the closed FlashForge board that
+also runs the toolchanger's other sensors — whether it saw a clean transition
+or not. That verdict is not something we compute: it comes back from a
+transducer wired to the eBoard's own MCU, running firmware we ship unchanged
+and have not reverse-engineered past the wire format. What is ours is
+everything on the host side — the candidate values, the line geometry, the
+retry and averaging rule — recovered from the stock firmware binary and
+reproduced exactly
+([`notes/51-pa-calibration-recovered.md`](notes/51-pa-calibration-recovered.md)).
+We get the same verdicts the touchscreen does because we ask the same
+firmware the same question.
+
+FlashForge's own firmware runs this automatically, per tool, during the
+nozzle clean at the start of every print. This port deliberately does not: a
+full run is several sweeps of short lines and costs minutes and about a gram
+of filament, every print, and the app only gets away with it because it is
+gated behind a flag most users never see. Here it is a command you run
+yourself, the same way PID tuning and input shaping already are — not
+something that happens to your print without asking.
+
+### Running it
+
+From the console:
+
+```
+FF_PA_CALIBRATE TOOL=0 TEMP=230
+```
+
+This heats T0's extruder to 230°C if it is not already there, sweeps the
+candidates, and reports a number, in this shape:
+
+```
+ff_pa: T0 pressure_advance = 0.023300   (mean of 3 sweep winners: 0.0200, 0.0250, 0.0250)
+  ...
+  NOT saved and NOT applied. To keep it, put it in printer.cfg yourself:
+      [extruder]
+      pressure_advance: 0.023300
+```
+
+**It reports; it does not save or apply anything.** Nothing in `printer.cfg`
+changes and nothing carries over to the next toolchange — put the number
+under the tool's `[extruder<n>]` section yourself, or try it for the current
+session with `SET_PRESSURE_ADVANCE`.
+
+`FF_PA_PROBE PA=0.02 TOOL=0` draws a single line at one candidate value and
+prints the raw verdict, with no averaging. It exists for checking that the
+eBoard is discriminating between candidates at all before trusting a full
+run — if every candidate comes back with the same verdict,
+`FF_PA_CALIBRATE` refuses to report a number rather than average an
+artefact.
+
+HelixScreen's calibration screen (v0.99.115-creator5.5 and later) can start
+the same sweep from the touchscreen instead of the console — it now
+recognises `FF_PA_CALIBRATE` as a calibration provider on this machine.
+
+All axes need to be homed, a tool mounted, and filament loaded before either
+command will run — each is checked up front rather than discovered halfway
+through a sweep with the carriage's X and Y drivers deliberately disabled for
+the duration.

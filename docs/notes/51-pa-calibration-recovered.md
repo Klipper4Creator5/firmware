@@ -11,6 +11,10 @@ The port is built -- see [section 7](#7-the-port). This supersedes two earlier c
 reproducible in full; only the pass/fail verdict stays behind the MCU boundary, and that
 boundary is one we keep -- we ship FlashForge's eBoard firmware unchanged.
 
+The owner/experienced-user-facing writeup -- what this measures, why the scoring is not ours,
+and how to run it -- lives at
+[`../how-calibration-works.md`](../how-calibration-works.md#pressure-advance).
+
 ## 1. Entry points
 
 `CommMgr::paTestMgr(float &pa_out, bool &ok_out, std::string restore_gcode)` @0x791640 is the
