@@ -973,27 +973,63 @@ payload's contents is what surfaced it.
 it was removed outright -- the test says so where the entry used to be, so it
 cannot come back under an exemption.
 
-## Phase 3 — a feed over the network  *(the remaining work)*
+## Phase 3 — a feed over the network  *(the printer's half: done)*
 
 `bin/build-packages.sh` writes `anvil.adb` with `apk mkndx`, and **signs both
-it and every package** when `APK_SIGN_KEY` is set. Serving that directory over
-HTTP from CI and pointing a printer's `etc/apk/repositories` at the URL instead
-of `/mnt/anvil.adb` is what makes partial over-the-network updates real: `apk
-upgrade anvil-moonraker` instead of a 65MB tarball and a reboot.
+it and every package** when `APK_SIGN_KEY` is set. What was missing was the
+other two thirds: a URL the printer asks, and a tree at that URL.
 
-**Most of what this phase used to need is already done.** Signing landed with
-the migration: each package carries its own signature, so there is no
-index-signs-the-feed indirection to arrange, and the printer already refuses a
-package it cannot verify. apk's libfetch is linked in, so HTTPS needs no extra
-binary.
+**The printer now ships knowing where to look.** `bin/common.sh` holds
 
-**The one open piece is certificates.** libfetch defaults to `SSL_VERIFY_PEER`
-and falls back to `SSL_CTX_set_default_verify_paths()`, which resolves to
-`$MODDIR/ssl` — empty. That is the same gap `tools/python/README.md` records
-for CPython, and the same ~200KB `ca-certificates` bundle closes both. Until
-one ships, an `http://` feed works and is not much weaker than it sounds: every
-package is signed, and a signature is what actually decides whether a printer
-installs it.
+    FEED_URL="${FEED_URL:-http://reforge.8941973.xyz/apk}"
+
+and `pkgs/anvil-core` generates `$MODDIR/etc/apk/repositories` from it, beside
+the public key it already shipped. `bin/publish-feed.sh` writes the matching
+tree — `<arch>/anvil.adb` and the packages beside it — and the release workflow
+attaches it as `reforge-apk-feed.tar.gz`, so a host can be filled from any
+release, including ones tagged before the host existed.
+
+**THE POINTER HAD TO SHIP FIRST, and that is why this landed with no host
+running.** A feed cannot tell a printer where the feed is. Every machine
+installed without that file needs a USB stick before it can ever fetch
+anything, so the file has to travel in the `.tgz` — which means shipping a URL
+that 404s for as long as it takes to stand the host up. The cost of doing so
+is bounded, and read out of apk's source rather than assumed: an unreachable
+repository fails `apk upgrade` and nothing else -- `apk_db_repository_check`
+is called from `app_upgrade.c` and not from `app_add.c`. `apk add ./file.apk` does not consult a
+repository at all.
+
+**The entry names the index file rather than a directory**, which is the same
+shape the USB stick uses and is a grammar rather than a preference:
+`src/repoparser.c` reads a line ending `.adb` or `.tar.gz` as an index in
+place — packages as its siblings, named by the `pkgname-spec` `mkndx` wrote
+into the index — and anything else as a directory to look for
+`<url>/<arch>/APKINDEX.tar.gz` under. The v3 directory form would work too, but
+only with `mkndx --pkgname-spec '${arch}/${name}-${version}.apk'`; one layout,
+exercised by every payload build, is worth more than the convention.
+
+**The architecture is a directory in the URL and not a suffix on the file.**
+Package file names carry no architecture, so two architectures served from one
+directory would be two files with one name.
+
+**The replica stopped writing that file.** `case-build-payload.sh` used to
+write its own `etc/apk/repositories` naming `/mnt` and delete it before
+tarring; it now passes `--repositories-file` with a path on the stick, which
+`apk` reads *instead of* the default (`database.c`: the default file and the
+`repositories.d` directories are consulted only when no file is named). So
+what ships is whatever `anvil-core` installed, and the build never reads it.
+
+**The one open piece is still certificates.** libfetch defaults to
+`SSL_VERIFY_PEER` and falls back to `SSL_CTX_set_default_verify_paths()`, which
+resolves to `$MODDIR/ssl` — empty. That is the same gap `tools/python/README.md`
+records for CPython, and the same ~200KB `ca-certificates` bundle closes both.
+Until one ships, the feed is `http://` and is not much weaker than it sounds:
+every package is signed, and a signature is what actually decides whether a
+printer installs it.
+
+**What is left after that is operational, not code:** a host answering at
+`$FEED_URL`, and a decision about who runs `bin/publish-feed.sh` — a release
+step with a deploy secret, or a person with the release tarball.
 
 ## What this does not fix, and is not meant to
 

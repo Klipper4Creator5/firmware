@@ -122,6 +122,24 @@ PKG_EXT=apk
 PKG_INDEX_NAME=anvil.adb
 export PKG_FEED PKG_EXT PKG_INDEX_NAME
 
+# WHERE THAT FEED IS SERVED, and the one line a printer needs to upgrade over
+# the network. $MODDIR/etc/apk/repositories ships in anvil-core carrying
+# "$FEED_URL/$IPK_ARCH/$PKG_INDEX_NAME", so a machine installed today already
+# points at the host, and `apk upgrade` starts working the day the host does
+# without a .tgz having to reach the printer first.
+#
+# THE ARCH IS A DIRECTORY, NOT A SUFFIX. Package file names are
+# <name>-<version>.apk with no architecture in them, so two architectures in
+# one directory would be two files with one name. One directory each is what
+# keeps a second machine from needing a second URL.
+#
+# A SETTING RATHER THAN A LITERAL, so a fork serves its own feed by editing
+# config.env rather than a file that ships. It pairs with APK_SIGN_KEY: the
+# URL says where packages come from and the key says whose they are, and a
+# fork that changes one without the other has a feed its printers refuse.
+FEED_URL="${FEED_URL:-http://reforge.8941973.xyz/apk}"
+export FEED_URL
+
 # apk-tools: pinned by COMMIT and cloned rather than downloaded, because GitLab
 # regenerates tag archives so their sha256 is not a pin.
 APK_TOOLS_DIR="${APK_TOOLS_DIR:-$ROOT/vendor/apk-tools}"

@@ -113,6 +113,52 @@ and then re-runs the end-to-end install against the exact `dist/*.tgz` files
 that get attached — not against a package built from the same tree, but those
 files. Releases are marked pre-release.
 
+## Publishing the feed
+
+A release attaches two `.tgz` installers and one more file:
+`reforge-apk-feed.tar.gz`, which is the `.apk` feed those installers were
+built from, laid out the way the printer expects to fetch it. Unpacking that
+tarball into a web root is the whole publish step.
+
+The URL printers ask is `bin/common.sh`'s `FEED_URL`, and every build bakes it
+into `anvil-core` as `/usr/data/anvil/etc/apk/repositories`:
+
+```
+http://reforge.8941973.xyz/apk/mipsel_xburst2/anvil.adb
+```
+
+Serve the tarball's contents at `http://reforge.8941973.xyz/apk/` — the arch
+directory comes out of the tarball — and printers pick the feed up with
+`apk update && apk upgrade`. The entry ends in the index file rather than
+naming a directory because that is how apk tells the two layouts apart: a
+`.adb` path is read as an index in place with the packages beside it, and
+anything else sends it looking for `<url>/<arch>/APKINDEX.tar.gz`.
+
+From a local build, the same layout without the tarball:
+
+```sh
+./bin/publish-feed.sh                          # stage work/feed-site/ only
+./bin/publish-feed.sh user@host:/srv/apk       # stage, then rsync it there
+```
+
+It uploads the packages first and the index last, on purpose: the index names
+every package by sha256, so a mirror carrying a new index and old packages
+hands printers a checksum for a file that is not there. Nothing is deleted at
+the far end. It refuses to publish an unsigned feed — `ALLOW_UNSIGNED=1` to
+insist — because a printer verifies against the public key that shipped in its
+own `anvil-core`, and packages nothing signed are packages it will not install.
+
+**Plain HTTP, deliberately.** apk's libfetch verifies TLS peers against a
+certificate bundle this printer does not have, and every package is signed —
+the signature, not the transport, is what decides whether a printer installs
+one. `docs/notes/85-packaging.md` has the detail.
+
+**The host does not exist yet.** The URL ships anyway, and that is the point: a
+feed cannot tell a printer where the feed is, so the pointer has to travel in
+the `.tgz`. Machines installed today start fetching the day the host answers.
+Until then `apk upgrade` reports the repository as unavailable, and every other
+apk command — `apk add ./file.apk` included — is unaffected.
+
 ## One kind of flag
 
 There used to be two, and the distinction was the thing to keep straight.

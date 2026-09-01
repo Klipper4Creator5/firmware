@@ -33,6 +33,13 @@ APK_BIN = ROOT / "work" / "host" / "bin" / "apk"
 MODDIR = "/usr/data/anvil"
 ARCH = "mipsel_xburst2"
 
+# The feed's own name, for the same reason: bin/common.sh's default, spelled
+# out so that changing it there is a deliberate act with a test to update and
+# not a typo that ships. A FORK DOES NOT TOUCH THIS -- FEED_URL is set in
+# config.env, which this does not read.
+FEED_URL_DEFAULT = "http://reforge.8941973.xyz/apk"
+INDEX_NAME = "anvil.adb"
+
 
 @pytest.fixture(scope="session", autouse=True)
 def apk_host_present():
@@ -180,14 +187,32 @@ def _installed_db(payload):
     return (payload / "lib" / "apk" / "db" / "installed").read_text()
 
 
+def _owned(payload):
+    """Every path apk recorded as belonging to a package, absolute.
+
+    That record is PLAIN TEXT, not the ADB the package and index use:
+    `F:<dir>` sets the current directory and each following `R:<name>` is a
+    file in it. The paths are relative to the INSTALL ROOT, not to $MODDIR --
+    `F:usr`, `F:usr/data`, `F:usr/data/anvil`, and so on down. That is the
+    whole point of the split this migration rests on: the database lives under
+    $MODDIR but the files it records land at /, so it names them from /.
+    """
+    owned, cwd = set(), ""
+    for line in _installed_db(payload).splitlines():
+        if line.startswith("F:"):
+            cwd = line[2:]
+            owned.add("/" + cwd)
+        elif line.startswith("R:"):
+            owned.add("/" + (cwd + "/" if cwd else "") + line[2:])
+    return owned
+
+
 def test_every_payload_file_is_owned_by_a_package():
     """Everything in the payload came from a package, or is on this list.
 
-    Checked against apk's own record of what it installed. That record is
-    PLAIN TEXT, not the ADB the package and index use: `F:<dir>` sets the
-    current directory and each following `R:<name>` is a file in it. So this
-    reads one file where the opkg version globbed var/lib/opkg/info/*.list,
-    and is the shorter of the two.
+    Checked against apk's own record of what it installed, read by _owned:
+    one plain-text file where the opkg version globbed
+    var/lib/opkg/info/*.list, and the shorter of the two.
 
     The interesting output is not the pass but the allowlist: the files that
     are in the payload and in no package. It should shrink and must not grow
@@ -197,17 +222,7 @@ def test_every_payload_file_is_owned_by_a_package():
     if payload is None:
         return
 
-    # The paths are relative to the INSTALL ROOT, not to $MODDIR -- `F:usr`,
-    # `F:usr/data`, `F:usr/data/anvil`, and so on down. That is the whole
-    # point of the split this migration rests on: the database lives under
-    # $MODDIR but the files it records land at /, so it names them from /.
-    owned, cwd = set(), ""
-    for line in _installed_db(payload).splitlines():
-        if line.startswith("F:"):
-            cwd = line[2:]
-            owned.add("/" + cwd)
-        elif line.startswith("R:"):
-            owned.add("/" + (cwd + "/" if cwd else "") + line[2:])
+    owned = _owned(payload)
     assert owned, "the apk database lists no files at all"
 
     allowed = {
@@ -243,6 +258,85 @@ def test_every_payload_file_is_owned_by_a_package():
         "Either the file should come from a package, or it is new user state "
         "and belongs on the list with a reason."
         % (len(extra), "\n  ".join(sorted(extra)[:20])))
+
+
+def test_the_default_feed_url_is_the_project_s_own():
+    """bin/common.sh's default, which is what every release points printers at.
+
+    NOT the resolved value: FEED_URL is settable in config.env precisely so a
+    fork can serve its own feed, and a test that read the resolved one would
+    fail on that legitimate configuration while passing on a typo committed to
+    common.sh. So this reads the default out of the file.
+
+    It is a plain http URL on purpose. libfetch defaults to SSL_VERIFY_PEER
+    and this printer has no certificate bundle (docs/notes/85-packaging.md,
+    phase 3), and every package is signed -- a signature is what decides
+    whether a printer installs one, not the transport.
+    """
+    common = (ROOT / "bin" / "common.sh").read_text()
+    default = None
+    for line in common.splitlines():
+        if line.startswith("FEED_URL="):
+            default = line.split("{FEED_URL:-", 1)[1].rstrip('}"')
+    assert default, "bin/common.sh no longer defaults FEED_URL"
+    assert default == FEED_URL_DEFAULT, (
+        "bin/common.sh points printers at %r and this test expects %r. If the "
+        "move is deliberate, change it here too -- and remember that machines "
+        "already in the field keep asking the old host until an anvil-core "
+        "naming the new one reaches them THROUGH the old one."
+        % (default, FEED_URL_DEFAULT))
+    assert not default.endswith("/"), (
+        "$FEED_URL must not end in a slash: anvil-core builds the entry as "
+        "$FEED_URL/$IPK_ARCH/%s and a double slash is a different URL to a "
+        "web server." % INDEX_NAME)
+
+
+def test_the_payload_knows_where_its_updates_come_from():
+    """A printer installed from the .tgz can `apk upgrade` without being told.
+
+    THE POINTER HAS TO TRAVEL IN THE PAYLOAD. A feed cannot tell a printer
+    where the feed is, so if this file is not in the package that installs,
+    every machine in the field needs a USB stick before it can fetch anything
+    -- which is the thing packages were adopted to stop.
+
+    It is a PACKAGE MEMBER and not a leftover of the build, so an upgrade can
+    repoint it. The replica writes its own bootstrap entry naming the stick,
+    but through --repositories-file, which is why what ships here is
+    anvil-core's and not the stick's.
+    """
+    payload = _payload()
+    if payload is None:
+        return
+
+    repos = payload / "etc" / "apk" / "repositories"
+    assert repos.is_file(), (
+        "the payload has no %s/etc/apk/repositories, so a printer installed "
+        "from it would not know that a feed exists. anvil-core generates it "
+        "from $FEED_URL." % MODDIR)
+
+    entries = [ln.strip() for ln in repos.read_text().splitlines()
+               if ln.strip() and not ln.strip().startswith("#")]
+    assert len(entries) == 1, "expected one repository entry, got %r" % (entries,)
+    url = entries[0]
+
+    assert url.startswith(("http://", "https://")), (
+        "the shipped feed entry is %r, which is not a URL a printer can "
+        "fetch. A path here means the build shipped its own bootstrap entry "
+        "-- the one naming the USB stick -- instead of anvil-core's." % url)
+    assert url.endswith("/%s/%s" % (ARCH, INDEX_NAME)), (
+        "the shipped feed entry is %r. It has to end /%s/%s: apk reads an "
+        "entry ending .adb as a v3 index in place with the packages beside "
+        "it, and anything else as a directory to look under for "
+        "<url>/<arch>/APKINDEX.tar.gz -- which is not the layout "
+        "bin/publish-feed.sh writes. The architecture is a directory because "
+        "package file names carry no architecture, so two architectures in "
+        "one directory would be two files with one name."
+        % (url, ARCH, INDEX_NAME))
+
+    assert MODDIR + "/etc/apk/repositories" in _owned(payload), (
+        "%s/etc/apk/repositories is in the payload and in no package, so an "
+        "`apk upgrade` could never change where this printer looks."
+        % MODDIR)
 
 
 def test_the_payload_is_dependency_closed():

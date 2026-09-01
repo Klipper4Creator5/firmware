@@ -79,6 +79,35 @@ if [ -n "${APK_SIGN_KEY:-}" ] && [ -f "$APK_SIGN_KEY.pub" ]; then
     pkg_say "anvil-core: shipping the feed's public key"
 fi
 
+# WHERE TO FETCH FROM, beside the key that says whose packages to trust.
+# apk reads <root>/etc/apk/repositories, so this one line is what makes
+# `apk upgrade` on a printer mean the network rather than a USB stick.
+#
+# THE URL NAMES THE INDEX FILE, and that is the whole grammar: apk reads an
+# entry ending .adb as a v3 index in place with the packages as its siblings,
+# and anything else as a directory to look for <url>/<arch>/APKINDEX.tar.gz
+# under. So this is the same shape the stick uses -- one feed layout, built
+# once and exercised by every payload build.
+#
+# IT SHIPS BEFORE THE HOST EXISTS, deliberately. A printer cannot be told a
+# URL by a feed it cannot reach, so the pointer has to travel in the .tgz that
+# installs it; until the host answers, `apk upgrade` says the repository is
+# unavailable and every other apk command is unaffected (`apk add ./file.apk`
+# does not consult a repository at all).
+#
+# PKG_ARCH IS `all` AND THIS LINE NAMES AN ARCHITECTURE, which is not the
+# contradiction it looks like: the string is a directory on a web server, not
+# code, and $IPK_ARCH is the architecture of the feed this build produced.
+mkdir -p "$PKG_WORK/gen"
+cat > "$PKG_WORK/gen/repositories" <<EOF
+# The Reforge package feed -- what \`apk update\` and \`apk upgrade\` read.
+# Its packages are signed with the key in etc/apk/keys/. To stop this
+# printer fetching updates, comment the line below out.
+$FEED_URL/$IPK_ARCH/$PKG_INDEX_NAME
+EOF
+pkg_stage "$PKG_WORK/gen/repositories" "etc/apk/repositories"
+pkg_say "anvil-core: feed is $FEED_URL/$IPK_ARCH/$PKG_INDEX_NAME"
+
 # shellcheck disable=SC2086
 pkg_ship $_top
 

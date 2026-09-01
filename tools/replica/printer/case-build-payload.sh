@@ -32,8 +32,17 @@ APK=$FEED/apk
 # feed flat: apk reads a path ending .adb as a v3 index in place, with the
 # packages as its siblings. A bare directory would send it looking for
 # <dir>/<arch>/Packages.adb instead.
+#
+# ON THE STICK AND NOT AT $PREFIX/etc/apk/repositories, which is the path apk
+# reads by default and which anvil-core OWNS: it ships that file pointing at
+# the network feed, and a build that wrote its own copy there would either be
+# overwritten mid-install or have to delete the package's afterwards. With
+# --repositories-file apk reads this one and nothing else (database.c: the
+# default file and repositories.d are consulted only when no file is named),
+# so what the payload ships is whatever anvil-core installed, unread here.
 mkdir -p $PREFIX/etc/apk
-echo "$FEED/anvil.adb" > $PREFIX/etc/apk/repositories
+BOOTSTRAP_REPOS=/tmp/anvil-bootstrap-repositories
+echo "$FEED/anvil.adb" > $BOOTSTRAP_REPOS
 
 # THE TRUST DIRECTORY IS SEEDED FROM THE STICK, when the feed is signed.
 # anvil-core ships the same public key so a printer keeps it, but
@@ -53,10 +62,16 @@ fi
 # this feed's name is refused as uninstallable without it. Written into the
 # database once by --initdb, not repeated on every command.
 # shellcheck disable=SC2086
-$APK --initdb $UNTRUSTED --arch "$IPK_ARCH" add
+$APK --initdb --repositories-file $BOOTSTRAP_REPOS $UNTRUSTED --arch "$IPK_ARCH" add
 # shellcheck disable=SC2086
-$APK $UNTRUSTED add $MOD_ROOTS
-echo "payload: $($APK info | wc -l) packages installed"
+$APK --repositories-file $BOOTSTRAP_REPOS $UNTRUSTED add $MOD_ROOTS
+# --repositories-file HERE TOO, on a command that reads no repository: by now
+# anvil-core has installed the one naming the network feed, and without this
+# `apk info` tries to fetch it and warns that a host which does not exist yet
+# is unreachable. It is only a warning -- measured, and the reason a URL can
+# ship before its host -- but a build that reaches for the network is not one
+# whose output depends on whether it had any.
+echo "payload: $($APK --repositories-file $BOOTSTRAP_REPOS info | wc -l) packages installed"
 
 # --- compile the boot database ---------------------------------------------
 # WITH THE s6-rc-compile WE SHIP, on the machine it is for, right after the
@@ -89,8 +104,13 @@ echo "payload: s6-rc database $S6RC_DB compiled -- `ls "$S6RC_SRC" | wc -l` defi
 # --- make it shippable -----------------------------------------------------
 # Installing from a file: feed leaves the cache full of SYMLINKS into the feed
 # directory rather than copies, so shipping it would put dangling links on
-# every printer. The repository configuration goes too: it names /mnt, which
-# is a USB stick that will not be there.
+# every printer.
+#
+# $PREFIX/etc/apk/repositories STAYS, and used to be deleted here: it named
+# /mnt, a USB stick that will not be there. It now comes out of anvil-core
+# naming the network feed (bin/common.sh's $FEED_URL), so it is a package
+# member like any other and deleting it would ship a printer that has no idea
+# where its updates come from.
 #
 # $PREFIX/var IS THE BUILD'S, NOT THE PRINTER'S. apk opens
 # <root>/var/log/apk.log whenever it writes (src/context.c) and records
@@ -100,7 +120,7 @@ echo "payload: s6-rc database $S6RC_DB compiled -- `ls "$S6RC_SRC" | wc -l` defi
 # there now that the database is under lib/apk, and an empty var/ in the
 # payload is a directory no package owns. apk recreates what it needs at
 # the first real operation on the printer.
-rm -rf $PREFIX/var $PREFIX/etc/apk/repositories
+rm -rf $PREFIX/var
 
 # NO CLOCK TO NORMALISE, and that is a property rather than an omission:
 # apk records no install time, and mkpkg sets no build-time, so
