@@ -746,13 +746,30 @@ class FFPA:
         self.parked_at = None
 
     def _heat(self, gcmd, tool, extruder):
+        """Heat for TEMP= and return the target to put back afterwards.
+
+        None when TEMP= was not given: a heater the operator set by hand is
+        theirs, and this command does not touch it -- the same "put back what
+        we found" rule as every snapshot in _guarded. With TEMP= the previous
+        target (usually 0) comes back via _restore_heat, so the run does not
+        leave the hotend sitting at calibration temperature."""
         temp = gcmd.get_float('TEMP', None)
         if temp is None:
-            return
+            return None
+        prev = extruder.get_status(self.reactor.monotonic()).get('target', 0.)
         self._run('M104 S%.1f T%d' % (temp, tool))
         self._run('TEMPERATURE_WAIT SENSOR=%s MINIMUM=%.1f MAXIMUM=%.1f'
                   % (extruder.get_name(), temp - self.min_temp_margin,
                      temp + self.min_temp_margin))
+        return prev
+
+    def _restore_heat(self, tool, prev_target):
+        if prev_target is None:
+            return
+        try:
+            self._run('M104 S%.1f T%d' % (prev_target, tool))
+        except self.printer.command_error:
+            pass
 
     # ---------------- commands ----------------
 
@@ -816,7 +833,15 @@ class FFPA:
         self._check_bounds(gcmd, tool)
         self._ensure_extruder(tool)
         extruder = self._extruder()
-        self._heat(gcmd, tool, extruder)
+        prev_target = self._heat(gcmd, tool, extruder)
+        # From here every exit -- success, a failed sweep, a mid-run error --
+        # must put the heater target back, or TEMP= leaves the hotend on.
+        try:
+            self._calibrate_heated(gcmd, verbose, tool)
+        finally:
+            self._restore_heat(tool, prev_target)
+
+    def _calibrate_heated(self, gcmd, verbose, tool):
         extruder = self._extruder()
         if not self.dry_run:
             self._check_can_extrude(gcmd, extruder)
@@ -942,7 +967,13 @@ class FFPA:
         self._check_bounds(gcmd, tool)
         self._ensure_extruder(tool)
         extruder = self._extruder()
-        self._heat(gcmd, tool, extruder)
+        prev_target = self._heat(gcmd, tool, extruder)
+        try:
+            self._probe_heated(gcmd, y, pa_text, tool)
+        finally:
+            self._restore_heat(tool, prev_target)
+
+    def _probe_heated(self, gcmd, y, pa_text, tool):
         extruder = self._extruder()
         if not self.dry_run:
             self._check_can_extrude(gcmd, extruder)
