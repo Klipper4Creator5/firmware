@@ -20,7 +20,8 @@ young. Help and support: [the Discord](https://discord.gg/ggJyfgVA4v).
 
 ## Status
 
-**It runs on a real printer** — a Creator 5 Pro, flashed and printing:
+**It runs on real printers** — both a Creator 5 Pro and a Creator 5 have been
+flashed and exercised; the pictured hardware is the Pro:
 
 <img src="docs/helixscreen-print-status.webp" width="49%" alt="HelixScreen mid-print on the Creator 5 Pro: T2 mounted, layer 2 of 173"> <img src="docs/helixscreen-bed-mesh.webp" width="49%" alt="HelixScreen's bed-mesh screen showing a probed 10x10 mesh">
 
@@ -41,13 +42,13 @@ A checked box happened on that machine; an empty one has not, yet.
   starts it
 - [x] **Wifi**
 - [x] **HelixScreen** on the printer's own screen
-- [ ] **Chamber heater**
-- [ ] **Creator 5 (non-Pro)** — its package builds and passes the same
-  replica test suite, but has not touched hardware
-- [ ] **Going back to stock** — proven on the printer replica, not yet
-  needed on the machine. The stock package restores everything it carries;
-  Moonraker is not in it, so the mod's build stays and keeps working — see
-  [Support](docs/support.md)
+- [x] **Chamber heater** — tested on the Creator 5 Pro; the regular Creator 5
+  correctly uses its heater-free chamber configuration
+- [x] **Creator 5 (non-Pro)** — package installed and exercised on hardware;
+  see the feature-specific validation notes in the [feature list](docs/features.md)
+- [x] **Going back to stock** — tested with the matching stock packages; the
+  stock package restores everything it carries. Moonraker is not in it, so
+  the mod's build stays and keeps working — see [Support](docs/support.md)
 
 **For the tinkerer:**
 
@@ -103,6 +104,9 @@ The full manual is at
 insides — one file, `firmwareExe`, with the stock boot scripts, updater and
 recovery path left untouched — [How it works](docs/how-it-works.md) is under
 *For contributors*.
+
+For the complete beta inventory and validation boundaries, see the
+[feature list](docs/features.md).
 
 ---
 

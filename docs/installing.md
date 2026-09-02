@@ -50,9 +50,10 @@ Not sure which you have? On the printer: **Settings → About**.
 4. **Plug the stick in and power the printer on.** It finds the package by
    itself and starts installing. The screen tells you to wait while it works;
    this takes a few minutes. Do not cut the power.
-5. **Wait for the beep.** The printer sounds when the install has finished and
-   the screen then offers to reboot. Accept it.
-6. **Pull the stick** once it has rebooted — your root password is on it, in
+5. **Wait for the beep.** The printer sounds when the install has finished.
+6. **Reboot manually.** Turn the power switch on the right side of the
+   printer, near the power cable, off and on again.
+7. **Pull the stick** once it has rebooted — your root password is on it, in
    `anvil-password.txt`.
 
 The boot after that one is the long one, and it is the mod's rather than

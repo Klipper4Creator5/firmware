@@ -73,13 +73,16 @@ nav:
   - Using Reforge:
       - Is this for you: is-this-for-you.md
       - Installing: installing.md
+      - Feature list: features.md
       - Your first print: first-print.md
       - Calibration:
           - Read first: calibration-overview.md
           - XYZ tool calibration: calibration.md
           - Bed mesh: bed-mesh.md
           - Pressure advance: pressure-advance.md
+          - VFA calibration: vfa-calibration.md
       - Support: support.md
+      - Known issues: known-issues.md
       - Versions: versions.md
 
   # Past the manual, short of the build system: how the machine behaves and
