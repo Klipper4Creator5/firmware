@@ -1,0 +1,2611 @@
+diff --git a/Makefile b/Makefile
+index 735d18633..8518c1243 100644
+--- a/Makefile
++++ b/Makefile
+@@ -33,9 +33,23 @@ CFLAGS := -iquote $(OUT) -iquote src -iquote $(OUT)board-generic/ \
+ 		-std=gnu11 -O2 -MD -Wall \
+ 		-Wold-style-definition $(call cc-option,$(CC),-Wtype-limits,) \
+     -ffunction-sections -fdata-sections -fno-delete-null-pointer-checks
+-CFLAGS += -flto=auto -fwhole-program -fno-use-linker-plugin -ggdb3
+-
+-OBJS_klipper.elf = $(patsubst %.c, $(OUT)src/%.o,$(src-y))
++# -fno-shrink-wrap and ira-max-loops-num=2 are not style choices: they were
++# established by measuring instruction-identical handlers against the stock
++# image (34 -> 40 with no regressions). Stock places its prologue as if
++# shrink-wrapping were off, and the loop-count cap reproduces its allocation
++# in the remaining cases.
++CFLAGS += -ggdb3 -fno-shrink-wrap --param ira-max-loops-num=2
++
++# FlashForge link the objects in sorted order, not in src-y order: stock's
++# command handlers run adccmds, basecmd, buttons, debugcmds, endstop,
++# gpiocmds, neopixel, pulse_counter, pwmcmds, stepper, tmcuart, trsync --
++# alphabetical, where src-y is not. Only the LINK order is sorted; the .ctr
++# concatenation below must keep src-y order, because that is what assigns
++# message ids, and those already match stock byte for byte.
++src-top-y = $(foreach f,$(src-y),$(if $(findstring /,$f),,$f))
++src-sub-y = $(foreach f,$(src-y),$(if $(findstring /,$f),$f))
++OBJS_klipper.elf = $(sort $(patsubst %.c, $(OUT)src/%.o,$(src-top-y))) \
++                   $(sort $(patsubst %.c, $(OUT)src/%.o,$(src-sub-y)))
+ OBJS_klipper.elf += $(OUT)compile_time_request.o
+ CFLAGS_klipper.elf = $(CFLAGS) -Wl,--gc-sections
+ 
+diff --git a/lib/n32g45x/include/n32g45x.h b/lib/n32g45x/include/n32g45x.h
+new file mode 100644
+index 000000000..fbf6e5b35
+--- /dev/null
++++ b/lib/n32g45x/include/n32g45x.h
+@@ -0,0 +1,256 @@
++// Minimal Nations N32G45x peripheral library definitions
++//
++// Register layouts and constants recovered from the FlashForge levelBoard
++// firmware image.  Names follow the Nations N32G45x standard peripheral
++// library.  Everything is prefixed NS_ so it cannot collide with the CMSIS
++// stm32f103xe.h definitions that Klipper's stm32 port pulls in.
++
++#ifndef __N32G45x_H
++#define __N32G45x_H
++
++#include <stdint.h>
++
++#define __IO volatile
++
++// The CMSIS stm32f1xx.h that Klipper's stm32 port pulls in already declares
++// this identical enum; only declare it when that header is not in play.
++#ifndef IS_FUNCTIONAL_STATE
++typedef enum {DISABLE = 0, ENABLE = !DISABLE} FunctionalState;
++#endif
++
++// ---------------------------------------------------------------- GPIO ----
++
++typedef struct
++{
++    __IO uint32_t PMODE;        // 0x00 pin mode, 2 bits per pin
++    __IO uint32_t POTYPE;       // 0x04 output type, 1 bit per pin
++    __IO uint32_t SR;           // 0x08 slew rate, 1 bit per pin
++    __IO uint32_t PUPD;         // 0x0c pull up/down, 2 bits per pin
++    __IO uint32_t PID;          // 0x10 input data
++    __IO uint32_t POD;          // 0x14 output data
++    __IO uint32_t PBSC;         // 0x18 bit set/clear
++    __IO uint32_t PLOCK;        // 0x1c
++    __IO uint32_t AFL;          // 0x20 alt function, pins 0-7
++    __IO uint32_t AFH;          // 0x24 alt function, pins 8-15
++    __IO uint32_t PBC;          // 0x28 bit clear
++    __IO uint32_t DS;           // 0x2c drive current, 2 bits per pin
++} GPIO_Module;
++
++typedef struct
++{
++    uint32_t Pin;               // 0x00
++    uint32_t GPIO_Mode;         // 0x04
++    uint32_t GPIO_Pull;         // 0x08
++    uint32_t GPIO_Slew_Rate;    // 0x0c
++    uint32_t GPIO_Current;      // 0x10
++    uint32_t GPIO_Alternate;    // 0x14
++} GPIO_InitType;
++
++#define NS_GPIOA ((GPIO_Module *)0x40023400)
++#define NS_GPIOB ((GPIO_Module *)0x40023800)
++#define NS_GPIOC ((GPIO_Module *)0x40023c00)
++#define NS_GPIOD ((GPIO_Module *)0x40024000)
++
++#define GPIO_PIN_ALL    ((uint32_t)0xffff)
++#define GPIO_PIN_9      ((uint32_t)0x0200)
++#define GPIO_PIN_10     ((uint32_t)0x0400)
++
++#define GPIO_MODE_INPUT     ((uint32_t)0x00)
++#define GPIO_MODE_OUT_PP    ((uint32_t)0x01)
++#define GPIO_MODE_AF_PP     ((uint32_t)0x02)
++#define GPIO_MODE_ANALOG    ((uint32_t)0x03)
++#define GPIO_MODE_OUT_OD    ((uint32_t)0x11)
++#define GPIO_MODE_AF_OD     ((uint32_t)0x12)
++
++#define GPIO_NO_PULL        ((uint32_t)0x00)
++#define GPIO_PULL_UP        ((uint32_t)0x01)
++#define GPIO_PULL_DOWN      ((uint32_t)0x02)
++
++#define GPIO_SLEW_RATE_FAST ((uint32_t)0x00)
++#define GPIO_DC_2MA         ((uint32_t)0x00)
++
++#define GPIO_NO_AF          ((uint32_t)0x0f)
++#define GPIO_AF5_USART1     ((uint32_t)0x05)
++
++void GPIO_ConfigPinAF(GPIO_Module *GPIOx, uint32_t af, uint32_t pinpos);
++void GPIO_ConfigPinMode(GPIO_Module *GPIOx, uint32_t mode, uint32_t pinpos);
++void GPIO_InitStruct(GPIO_InitType *GPIO_InitStruct);
++void GPIO_InitPeripheral(GPIO_Module *GPIOx, GPIO_InitType *GPIO_InitStruct);
++void GPIO_SetBits(GPIO_Module *GPIOx, uint32_t pin);
++
++// --------------------------------------------------------------- USART ----
++
++// Note: every USART register is accessed 16 bits wide by the stock firmware
++typedef struct
++{
++    __IO uint16_t STS;          // 0x00 status
++    uint16_t RESERVED0;
++    __IO uint16_t DAT;          // 0x04 data
++    uint16_t RESERVED1;
++    __IO uint16_t BRCF;         // 0x08 baud rate
++    uint16_t RESERVED2;
++    __IO uint16_t CTRL1;        // 0x0c
++    uint16_t RESERVED3;
++    __IO uint16_t CTRL2;        // 0x10
++    uint16_t RESERVED4;
++    __IO uint16_t CTRL3;        // 0x14
++    uint16_t RESERVED5;
++    __IO uint16_t GTP;          // 0x18
++    uint16_t RESERVED6;
++} USART_Module;
++
++typedef struct
++{
++    uint32_t BaudRate;          // 0x00
++    uint16_t WordLength;        // 0x04
++    uint16_t StopBits;          // 0x06
++    uint16_t Parity;            // 0x08
++    uint16_t Mode;              // 0x0a
++    uint16_t HardwareFlowControl; // 0x0c
++} USART_InitType;
++
++#define NS_USART1 ((USART_Module *)0x40013800)
++#define NS_USART2 ((USART_Module *)0x40004400)
++#define NS_USART3 ((USART_Module *)0x40004800)
++#define NS_UART6  ((USART_Module *)0x40015000)
++#define NS_UART7  ((USART_Module *)0x40015400)
++
++#define USART_STS_PEF       ((uint16_t)0x0001)
++#define USART_STS_FEF       ((uint16_t)0x0002)
++#define USART_STS_NEF       ((uint16_t)0x0004)
++#define USART_STS_OREF      ((uint16_t)0x0008)
++#define USART_STS_IDLEF     ((uint16_t)0x0010)
++#define USART_STS_RXDNE     ((uint16_t)0x0020)
++#define USART_STS_TXC       ((uint16_t)0x0040)
++#define USART_STS_TXDE      ((uint16_t)0x0080)
++
++#define USART_CTRL1_RXDNEIEN ((uint16_t)0x0020)
++#define USART_CTRL1_TXDEIEN  ((uint16_t)0x0080)
++#define USART_CTRL1_REN      ((uint16_t)0x0004)
++#define USART_CTRL1_TEN      ((uint16_t)0x0008)
++#define USART_CTRL1_UEN      ((uint16_t)0x2000)
++
++#define USART_WL_8B         ((uint16_t)0x0000)
++#define USART_STPB_1        ((uint16_t)0x0000)
++#define USART_PE_NO         ((uint16_t)0x0000)
++#define USART_MODE_RX       ((uint16_t)0x0004)
++#define USART_MODE_TX       ((uint16_t)0x0008)
++#define USART_HFCTRL_NONE   ((uint16_t)0x0000)
++
++#define USART_FLAG_TXC      ((uint16_t)0x0040)
++// interrupt id: (control register index << 5) | bit position
++#define USART_INT_RXDNE     ((uint16_t)0x0525)
++
++void USART_Init(USART_Module *USARTx, USART_InitType *USART_InitStruct);
++void USART_StructInit(USART_InitType *USART_InitStruct);
++void USART_ConfigBaudRate(USART_Module *USARTx, uint32_t baud);
++void USART_Enable(USART_Module *USARTx);
++void USART_ConfigInt(USART_Module *USARTx, uint16_t USART_INT);
++void USART_ClrFlag(USART_Module *USARTx, uint16_t USART_FLAG);
++
++// ----------------------------------------------------------------- DMA ----
++
++typedef struct
++{
++    __IO uint32_t CHCFG;        // 0x00
++    __IO uint32_t TXNUM;        // 0x04
++    __IO uint32_t PADDR;        // 0x08
++    __IO uint32_t MADDR;        // 0x0c
++    __IO uint32_t CHSEL;        // 0x10 request remap
++} DMA_ChannelType;
++
++typedef struct
++{
++    __IO uint32_t INTSTS;       // 0x00
++    __IO uint32_t INTCLR;       // 0x04
++} DMA_Module;
++
++typedef struct
++{
++    uint32_t PeriphAddr;        // 0x00
++    uint32_t MemAddr;           // 0x04
++    uint32_t Direction;         // 0x08
++    uint32_t BufSize;           // 0x0c
++    uint32_t PeriphInc;         // 0x10
++    uint32_t DMA_MemoryInc;     // 0x14
++    uint32_t PeriphDataSize;    // 0x18
++    uint32_t MemDataSize;       // 0x1c
++    uint32_t CircularMode;      // 0x20
++    uint32_t Priority;          // 0x24
++    uint32_t Mem2Mem;           // 0x28
++} DMA_InitType;
++
++#define NS_DMA1     ((DMA_Module *)0x40020000)
++#define NS_DMA1_CH1 ((DMA_ChannelType *)0x40020008)
++#define NS_DMA1_CH2 ((DMA_ChannelType *)0x4002001c)
++#define NS_DMA1_CH3 ((DMA_ChannelType *)0x40020030)
++#define NS_DMA1_CH4 ((DMA_ChannelType *)0x40020044)
++#define NS_DMA1_CH5 ((DMA_ChannelType *)0x40020058)
++#define NS_DMA1_CH6 ((DMA_ChannelType *)0x4002006c)
++#define NS_DMA1_CH7 ((DMA_ChannelType *)0x40020080)
++#define NS_DMA1_CH8 ((DMA_ChannelType *)0x40020094)
++
++#define DMA_INT_TXC     ((uint32_t)0x00000002)
++
++#define DMA1_INT_TXC1   ((uint32_t)0x00000002)
++#define DMA1_INT_TXC4   ((uint32_t)0x00002000)
++#define DMA1_INT_TXC5   ((uint32_t)0x00020000)
++#define DMA1_FLAG_TXC5  ((uint32_t)0x00020000)
++
++void DMA_DeInit(DMA_ChannelType *channel);
++void DMA_Init(DMA_ChannelType *channel, DMA_InitType *DMA_InitParam);
++void DMA_EnableChannel(DMA_ChannelType *channel);
++void DMA_DisableChannel(DMA_ChannelType *channel);
++void DMA_ConfigInt(DMA_ChannelType *channel, uint32_t DMA_INT);
++uint32_t DMA_GetIntStatus(DMA_Module *DMAy, uint32_t DMAy_INT);
++void DMA_ClrIntPendingBit(DMA_Module *DMAy, uint32_t DMAy_INT);
++uint32_t DMA_GetFlagStatus(DMA_Module *DMAy, uint32_t DMAy_FLAG);
++void DMA_ClearFlag(DMA_Module *DMAy, uint32_t DMAy_FLAG);
++void DMA_RequestRemap(DMA_ChannelType *channel, uint32_t remap);
++
++// ----------------------------------------------------------------- RCC ----
++
++typedef struct
++{
++    uint32_t SysclkFreq;        // 0x00
++    uint32_t HclkFreq;          // 0x04
++    uint32_t Pclk1Freq;         // 0x08
++    uint32_t Pclk2Freq;         // 0x0c
++    uint32_t AdcPllClkFreq;     // 0x10
++    uint32_t AdcHclkFreq;       // 0x14
++} RCC_ClocksType;
++
++#define RCC_AHB_PERIPH_DMA1     ((uint32_t)0x00000001)
++#define RCC_AHB_PERIPH_DMA2     ((uint32_t)0x00000002)
++#define RCC_AHB_PERIPH_GPIOA    ((uint32_t)0x00000080)
++
++#define RCC_APB2_PERIPH_AFIO    ((uint32_t)0x00000001)
++#define RCC_APB2_PERIPH_USART1  ((uint32_t)0x00004000)
++
++void RCC_EnableAHBPeriphClk(uint32_t RCC_AHBPeriph);
++void RCC_EnableAPB2PeriphClk(uint32_t RCC_APB2Periph);
++void RCC_GetClocksFreqValue(RCC_ClocksType *RCC_Clocks);
++
++// ---------------------------------------------------------------- NVIC ----
++
++typedef struct
++{
++    uint8_t NVIC_IRQChannel;                    // 0x00
++    uint8_t NVIC_IRQChannelPreemptionPriority;  // 0x01
++    uint8_t NVIC_IRQChannelSubPriority;         // 0x02
++    uint8_t NVIC_IRQChannelCmd;                 // 0x03
++} NVIC_InitType;
++
++#define NVIC_PriorityGroup_0    ((uint32_t)0x700)
++
++void NVIC_PriorityGroupConfig(uint32_t NVIC_PriorityGroup);
++void NVIC_Init(NVIC_InitType *NVIC_InitStruct);
++
++// N32G45x interrupt numbers.  Note these are NOT identical to a real
++// STM32F103: USART1 is IRQ 36 here, where an F103 would have 37.
++#define N32_DMA1_Channel1_IRQn  11
++#define N32_DMA1_Channel4_IRQn  14
++#define N32_DMA1_Channel5_IRQn  15
++#define N32_USART1_IRQn         36
++
++#endif // n32g45x.h
+diff --git a/lib/n32g45x/n32g45x_periph.c b/lib/n32g45x/n32g45x_periph.c
+new file mode 100644
+index 000000000..7c9bfc4e5
+--- /dev/null
++++ b/lib/n32g45x/n32g45x_periph.c
+@@ -0,0 +1,503 @@
++// Nations N32G45x standard peripheral library - subset used by the
++// FlashForge levelBoard firmware.  Reconstructed from the stock image.
++
++#include <stdint.h>
++#include "n32g45x.h"
++
++typedef struct
++{
++    __IO uint32_t ISER[8];
++    uint32_t RESERVED0[24];
++    __IO uint32_t ICER[8];
++    uint32_t RSERVED1[24];
++    __IO uint32_t ISPR[8];
++    uint32_t RESERVED2[24];
++    __IO uint32_t ICPR[8];
++    uint32_t RESERVED3[24];
++    __IO uint32_t IABR[8];
++    uint32_t RESERVED4[56];
++    __IO uint8_t IP[240];
++} NVIC_Type;
++
++typedef struct
++{
++    __IO uint32_t CPUID;
++    __IO uint32_t ICSR;
++    __IO uint32_t VTOR;
++    __IO uint32_t AIRCR;
++} SCB_Type;
++
++#define NS_NVIC ((NVIC_Type *)0xe000e100)
++#define NS_SCB  ((SCB_Type *)0xe000ed00)
++
++#define AIRCR_VECTKEY_MASK ((uint32_t)0x05fa0000)
++
++#define RCC_BASE      0x40021000
++#define RCC_CFG       (*(__IO uint32_t *)(RCC_BASE + 0x04))
++#define RCC_AHBPCLKEN (*(__IO uint32_t *)(RCC_BASE + 0x14))
++#define RCC_APB2PCLKEN (*(__IO uint32_t *)(RCC_BASE + 0x18))
++
++
++/****************************************************************
++ * NVIC
++ ****************************************************************/
++
++void
++NVIC_PriorityGroupConfig(uint32_t NVIC_PriorityGroup)
++{
++    NS_SCB->AIRCR = AIRCR_VECTKEY_MASK | NVIC_PriorityGroup;
++}
++
++void
++NVIC_Init(NVIC_InitType *NVIC_InitStruct)
++{
++    uint32_t tmppriority = 0x00, tmppre = 0x00, tmpsub = 0x0f;
++
++    if (NVIC_InitStruct->NVIC_IRQChannelCmd != DISABLE) {
++        // Compute the Corresponding IRQ Priority
++        tmppriority = (0x700 - (NS_SCB->AIRCR & (uint32_t)0x700)) >> 0x08;
++        tmppre = (0x4 - tmppriority);
++        tmpsub = tmpsub >> tmppriority;
++
++        tmppriority = (uint32_t)NVIC_InitStruct
++            ->NVIC_IRQChannelPreemptionPriority << tmppre;
++        tmppriority |= NVIC_InitStruct->NVIC_IRQChannelSubPriority & tmpsub;
++        tmppriority = tmppriority << 0x04;
++
++        NS_NVIC->IP[NVIC_InitStruct->NVIC_IRQChannel] = tmppriority;
++
++        // Enable the Selected IRQ Channels
++        NS_NVIC->ISER[NVIC_InitStruct->NVIC_IRQChannel >> 0x05] =
++            (uint32_t)0x01 << (NVIC_InitStruct->NVIC_IRQChannel & (uint8_t)0x1f);
++    } else {
++        // Disable the Selected IRQ Channels
++        NS_NVIC->ICER[NVIC_InitStruct->NVIC_IRQChannel >> 0x05] =
++            (uint32_t)0x01 << (NVIC_InitStruct->NVIC_IRQChannel & (uint8_t)0x1f);
++    }
++}
++
++
++/****************************************************************
++ * GPIO
++ ****************************************************************/
++
++void
++GPIO_ConfigPinAF(GPIO_Module *GPIOx, uint32_t af, uint32_t pinpos)
++{
++    uint32_t tmp;
++    if (pinpos & 0x08) {
++        tmp = GPIOx->AFH;
++        tmp &= ~(0x0ful << ((pinpos & 0x07) * 4));
++        tmp |= af << ((pinpos & 0x07) * 4);
++        GPIOx->AFH = tmp;
++    } else {
++        tmp = GPIOx->AFL;
++        tmp &= ~(0x0ful << ((pinpos & 0x07) * 4));
++        tmp |= af << ((pinpos & 0x07) * 4);
++        GPIOx->AFL = tmp;
++    }
++}
++
++void
++GPIO_ConfigPinMode(GPIO_Module *GPIOx, uint32_t mode, uint32_t pinpos)
++{
++    uint32_t tmp = GPIOx->PMODE;
++    tmp &= ~(0x03ul << (pinpos * 2));
++    tmp |= (mode & 0x03ul) << (pinpos * 2);
++    GPIOx->PMODE = tmp;
++
++    uint32_t base = mode & ~0x10ul;
++    if (base == GPIO_MODE_OUT_PP || base == GPIO_MODE_AF_PP) {
++        tmp = GPIOx->POTYPE;
++        tmp &= ~(0x01ul << pinpos);
++        tmp |= ((mode >> 4) & 0x01ul) << pinpos;
++        GPIOx->POTYPE = tmp;
++    }
++}
++
++void
++GPIO_InitPeripheral(GPIO_Module *GPIOx, GPIO_InitType *GPIO_InitStruct)
++{
++    uint32_t pinpos;
++    for (pinpos = 0; (GPIO_InitStruct->Pin >> pinpos) != 0; pinpos++) {
++        uint32_t currentpin = 0x01ul << pinpos;
++        if (!(GPIO_InitStruct->Pin & currentpin))
++            continue;
++        GPIO_ConfigPinAF(GPIOx, GPIO_InitStruct->GPIO_Alternate, pinpos);
++        GPIO_ConfigPinMode(GPIOx, GPIO_InitStruct->GPIO_Mode, pinpos);
++
++        uint32_t tmp = GPIOx->PUPD;
++        tmp &= ~(0x03ul << (pinpos * 2));
++        tmp |= GPIO_InitStruct->GPIO_Pull << (pinpos * 2);
++        GPIOx->PUPD = tmp;
++
++        tmp = GPIOx->SR;
++        tmp &= ~currentpin;
++        tmp |= GPIO_InitStruct->GPIO_Slew_Rate << pinpos;
++        GPIOx->SR = tmp;
++
++        tmp = GPIOx->DS;
++        tmp &= ~(0x03ul << (pinpos * 2));
++        tmp |= GPIO_InitStruct->GPIO_Current << (pinpos * 2);
++        GPIOx->DS = tmp;
++    }
++}
++
++void
++GPIO_InitStruct(GPIO_InitType *GPIO_InitStruct)
++{
++    GPIO_InitStruct->Pin = GPIO_PIN_ALL;
++    GPIO_InitStruct->GPIO_Slew_Rate = GPIO_SLEW_RATE_FAST;
++    GPIO_InitStruct->GPIO_Mode = GPIO_MODE_INPUT;
++    GPIO_InitStruct->GPIO_Alternate = GPIO_NO_AF;
++    GPIO_InitStruct->GPIO_Pull = GPIO_NO_PULL;
++    GPIO_InitStruct->GPIO_Current = GPIO_DC_2MA;
++}
++
++void
++GPIO_SetBits(GPIO_Module *GPIOx, uint32_t pin)
++{
++    GPIOx->PBSC = pin;
++}
++
++
++/****************************************************************
++ * USART
++ ****************************************************************/
++
++void
++USART_ConfigBaudRate(USART_Module *USARTx, uint32_t baud)
++{
++    RCC_ClocksType RCC_ClocksStatus;
++    uint32_t apbclock, integerdivider, fractionaldivider;
++
++    RCC_GetClocksFreqValue(&RCC_ClocksStatus);
++    if (USARTx == NS_USART1 || USARTx == NS_UART6 || USARTx == NS_UART7)
++        apbclock = RCC_ClocksStatus.Pclk2Freq;
++    else
++        apbclock = RCC_ClocksStatus.Pclk1Freq;
++
++    // Determine the integer part
++    integerdivider = (25 * apbclock) / (4 * baud);
++    uint32_t tmpreg = (integerdivider / 100) << 4;
++
++    // Determine the fractional part
++    fractionaldivider = integerdivider - (100 * (tmpreg >> 4));
++    tmpreg |= ((((fractionaldivider * 16) + 50) / 100)) & ((uint8_t)0x0f);
++
++    USARTx->BRCF = (uint16_t)tmpreg;
++}
++
++void
++USART_Init(USART_Module *USARTx, USART_InitType *USART_InitStruct)
++{
++    USART_ConfigBaudRate(USARTx, USART_InitStruct->BaudRate);
++
++    uint32_t tmpreg = USARTx->CTRL1;
++    tmpreg &= ~((uint16_t)0x1000);
++    tmpreg |= USART_InitStruct->WordLength;
++    USARTx->CTRL1 = tmpreg;
++
++    tmpreg = USARTx->CTRL2;
++    tmpreg &= ~((uint16_t)0x3000);
++    tmpreg |= USART_InitStruct->StopBits;
++    USARTx->CTRL2 = tmpreg;
++
++    tmpreg = USARTx->CTRL1;
++    tmpreg &= ~((uint16_t)0x0600);
++    tmpreg |= USART_InitStruct->Parity;
++    USARTx->CTRL1 = tmpreg;
++
++    tmpreg = USARTx->CTRL1;
++    tmpreg &= ~((uint16_t)0x000c);
++    tmpreg |= USART_InitStruct->Mode;
++    USARTx->CTRL1 = tmpreg;
++
++    tmpreg = USARTx->CTRL3;
++    tmpreg &= ~((uint16_t)0x0300);
++    tmpreg |= USART_InitStruct->HardwareFlowControl;
++    USARTx->CTRL3 = tmpreg;
++}
++
++void
++USART_StructInit(USART_InitType *USART_InitStruct)
++{
++    USART_InitStruct->BaudRate = 9600;
++    USART_InitStruct->WordLength = USART_WL_8B;
++    USART_InitStruct->StopBits = USART_STPB_1;
++    USART_InitStruct->Parity = USART_PE_NO;
++    USART_InitStruct->Mode = USART_MODE_RX | USART_MODE_TX;
++    USART_InitStruct->HardwareFlowControl = USART_HFCTRL_NONE;
++}
++
++void
++USART_Enable(USART_Module *USARTx)
++{
++    USARTx->CTRL1 |= USART_CTRL1_UEN;
++}
++
++void
++USART_ConfigInt(USART_Module *USARTx, uint16_t USART_INT)
++{
++    uint32_t usartxbase = (uint32_t)USARTx;
++    uint32_t usartreg = (((uint8_t)USART_INT) >> 0x05);
++    uint32_t itpos = USART_INT & ((uint16_t)0x001f);
++    uint32_t itmask = ((uint32_t)0x01) << itpos;
++
++    if (usartreg == 0x01)
++        usartxbase += 0x0c;
++    else if (usartreg == 0x02)
++        usartxbase += 0x10;
++    else
++        usartxbase += 0x14;
++    *(__IO uint32_t *)usartxbase |= itmask;
++}
++
++void
++USART_ClrFlag(USART_Module *USARTx, uint16_t USART_FLAG)
++{
++    USARTx->STS = (uint16_t)~USART_FLAG;
++}
++
++
++/****************************************************************
++ * DMA
++ ****************************************************************/
++
++void
++DMA_DeInit(DMA_ChannelType *channel)
++{
++    channel->CHCFG &= ~((uint32_t)0x1);
++    channel->CHCFG = 0;
++    channel->TXNUM = 0;
++    channel->PADDR = 0;
++    channel->MADDR = 0;
++    if (channel == NS_DMA1_CH1)
++        NS_DMA1->INTCLR |= (uint32_t)0x0000000f;
++    else if (channel == NS_DMA1_CH2)
++        NS_DMA1->INTCLR |= (uint32_t)0x000000f0;
++    else if (channel == NS_DMA1_CH3)
++        NS_DMA1->INTCLR |= (uint32_t)0x00000f00;
++    else if (channel == NS_DMA1_CH4)
++        NS_DMA1->INTCLR |= (uint32_t)0x0000f000;
++    else if (channel == NS_DMA1_CH5)
++        NS_DMA1->INTCLR |= (uint32_t)0x000f0000;
++    else if (channel == NS_DMA1_CH6)
++        NS_DMA1->INTCLR |= (uint32_t)0x00f00000;
++    else if (channel == NS_DMA1_CH7)
++        NS_DMA1->INTCLR |= (uint32_t)0x0f000000;
++    else if (channel == NS_DMA1_CH8)
++        NS_DMA1->INTCLR |= (uint32_t)0xf0000000;
++}
++
++void
++DMA_Init(DMA_ChannelType *channel, DMA_InitType *DMA_InitParam)
++{
++    channel->PADDR = DMA_InitParam->PeriphAddr;
++    channel->MADDR = DMA_InitParam->MemAddr;
++
++    uint32_t tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x0010);
++    tmpreg |= DMA_InitParam->Direction;
++    channel->CHCFG = tmpreg;
++    channel->TXNUM = DMA_InitParam->BufSize;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x0040);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->PeriphInc;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x0080);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->DMA_MemoryInc;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x0300);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->PeriphDataSize;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x0c00);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->MemDataSize;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x0020);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->CircularMode;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x3000);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->Priority;
++
++    tmpreg = channel->CHCFG;
++    tmpreg &= ~((uint32_t)0x4000);
++    channel->CHCFG = tmpreg;
++    channel->CHCFG |= DMA_InitParam->Mem2Mem;
++}
++
++void
++DMA_EnableChannel(DMA_ChannelType *channel)
++{
++    channel->CHCFG |= (uint32_t)0x0001;
++}
++
++void
++DMA_DisableChannel(DMA_ChannelType *channel)
++{
++    channel->CHCFG &= ~((uint32_t)0x0001);
++}
++
++void
++DMA_ConfigInt(DMA_ChannelType *channel, uint32_t DMA_INT)
++{
++    channel->CHCFG |= DMA_INT;
++}
++
++uint32_t
++DMA_GetIntStatus(DMA_Module *DMAy, uint32_t DMAy_INT)
++{
++    return (DMAy_INT & DMAy->INTSTS) ? 1 : 0;
++}
++
++void
++DMA_ClrIntPendingBit(DMA_Module *DMAy, uint32_t DMAy_INT)
++{
++    DMAy->INTCLR = DMAy_INT;
++}
++
++uint32_t
++DMA_GetFlagStatus(DMA_Module *DMAy, uint32_t DMAy_FLAG)
++{
++    return (DMAy->INTSTS & DMAy_FLAG) ? 1 : 0;
++}
++
++void
++DMA_ClearFlag(DMA_Module *DMAy, uint32_t DMAy_FLAG)
++{
++    DMAy->INTCLR = DMAy_FLAG;
++}
++
++void
++DMA_RequestRemap(DMA_ChannelType *channel, uint32_t remap)
++{
++    channel->CHSEL = remap;
++}
++
++
++/****************************************************************
++ * RCC
++ ****************************************************************/
++
++void
++RCC_EnableAHBPeriphClk(uint32_t RCC_AHBPeriph)
++{
++    RCC_AHBPeriph |= RCC_AHBPCLKEN;
++    RCC_AHBPCLKEN = RCC_AHBPeriph;
++}
++
++void
++RCC_EnableAPB2PeriphClk(uint32_t RCC_APB2Periph)
++{
++    RCC_APB2Periph |= RCC_APB2PCLKEN;
++    RCC_APB2PCLKEN = RCC_APB2Periph;
++}
++
++// APB/AHB prescaler tables (stock image: 0x0800a7ec / 0x0800a7bc / 0x0800a7cc)
++static const uint8_t APBAHBPresTable[16] = {
++    0, 0, 0, 0, 1, 2, 3, 4, 1, 2, 3, 4, 6, 7, 8, 9
++};
++static const uint8_t ADCHCLKPresTable[16] = {
++    1, 2, 4, 6, 8, 10, 12, 16, 32, 32, 32, 32, 32, 32, 32, 32
++};
++static const uint16_t ADCPLLCLKPresTable[16] = {
++    1, 2, 4, 6, 8, 10, 12, 16, 32, 64, 128, 256, 256, 256, 256, 256
++};
++
++#define HSI_VALUE 8000000
++#define HSE_VALUE 8000000
++#define CFG_PLLMULFCT_MASK      ((uint32_t)0x083C0000)
++#define CFG_PLLSRC_MASK         ((uint32_t)0x00010000)
++#define CFG_PLLHSEPRES_MASK     ((uint32_t)0x00020000)
++#define CFG_SCLKSTS_MASK        ((uint32_t)0x0000000C)
++#define CFG_AHBPRES_SET_MASK    ((uint32_t)0x000000F0)
++#define CFG_APB1PRES_SET_MASK   ((uint32_t)0x00000700)
++#define CFG_APB2PRES_SET_MASK   ((uint32_t)0x00003800)
++#define CFG2_ADCPLLPRES_SET_MASK ((uint32_t)0x000001F0)
++#define CFG2_ADCHPRES_SET_MASK  ((uint32_t)0x0000000F)
++#define RCC_CFG_PLLMULFCT_4     ((uint32_t)0x08000000)
++#define RCC_PLLHSIPRE (*(__IO uint32_t *)(RCC_BASE + 0x40))
++#define RCC_CFG2      (*(__IO uint32_t *)(RCC_BASE + 0x2c))
++
++void
++RCC_GetClocksFreqValue(RCC_ClocksType *RCC_Clocks)
++{
++    uint32_t tmp = 0, pllclk = 0, pllmull = 0, pllsource = 0, presc = 0;
++
++    // PLL clock source and multiplication factor
++    pllmull = RCC_CFG & CFG_PLLMULFCT_MASK;
++    pllsource = RCC_CFG & CFG_PLLSRC_MASK;
++
++    if ((pllmull & RCC_CFG_PLLMULFCT_4) == 0)
++        pllmull = (pllmull >> 18) + 2;          // PLLMUL[4]=0
++    else
++        pllmull = ((pllmull >> 18) - 496) + 1;  // PLLMUL[4]=1
++
++    if (pllsource == 0x00) {
++        // Stock halves HSI only when RCC+0x40 bit 0 is set. The published
++        // SDK halves it unconditionally; this conditional is the single
++        // difference between FlashForge's driver and every public copy.
++        if ((RCC_PLLHSIPRE & 0x00000001) != 0)
++            pllclk = (HSI_VALUE >> 1) * pllmull;
++        else
++            pllclk = HSI_VALUE * pllmull;
++    } else {
++        if ((RCC_CFG & CFG_PLLHSEPRES_MASK) != 0)
++            pllclk = (HSE_VALUE >> 1) * pllmull;
++        else
++            pllclk = HSE_VALUE * pllmull;
++    }
++
++    // SYSCLK source
++    tmp = RCC_CFG & CFG_SCLKSTS_MASK;
++    switch (tmp) {
++    case 0x00:
++        RCC_Clocks->SysclkFreq = HSI_VALUE;
++        break;
++    case 0x04:
++        RCC_Clocks->SysclkFreq = HSE_VALUE;
++        break;
++    case 0x08:
++        RCC_Clocks->SysclkFreq = pllclk;
++        break;
++    default:
++        RCC_Clocks->SysclkFreq = HSI_VALUE;
++        break;
++    }
++
++    tmp = RCC_CFG & CFG_AHBPRES_SET_MASK;
++    tmp = tmp >> 4;
++    presc = APBAHBPresTable[tmp];
++    RCC_Clocks->HclkFreq = RCC_Clocks->SysclkFreq >> presc;
++
++    tmp = RCC_CFG & CFG_APB1PRES_SET_MASK;
++    tmp = tmp >> 8;
++    presc = APBAHBPresTable[tmp];
++    RCC_Clocks->Pclk1Freq = RCC_Clocks->HclkFreq >> presc;
++
++    tmp = RCC_CFG & CFG_APB2PRES_SET_MASK;
++    tmp = tmp >> 11;
++    presc = APBAHBPresTable[tmp];
++    RCC_Clocks->Pclk2Freq = RCC_Clocks->HclkFreq >> presc;
++
++    tmp = RCC_CFG2 & CFG2_ADCHPRES_SET_MASK;
++    presc = ADCHCLKPresTable[tmp];
++    RCC_Clocks->AdcHclkFreq = RCC_Clocks->HclkFreq / presc;
++
++    tmp = RCC_CFG2 & CFG2_ADCPLLPRES_SET_MASK;
++    tmp = tmp >> 4;
++    presc = ADCPLLCLKPresTable[(tmp & 0xF)];    // ignore BIT5
++    RCC_Clocks->AdcPllClkFreq = pllclk / presc;
++}
+diff --git a/lib/stm32f1/include/stm32f103xe.h b/lib/stm32f1/include/stm32f103xe.h
+index 299c0fbd6..6560978aa 100644
+--- a/lib/stm32f1/include/stm32f103xe.h
++++ b/lib/stm32f1/include/stm32f103xe.h
+@@ -146,7 +146,13 @@ typedef enum
+   * @}
+   */
+ 
++/* The N32G45x is a Cortex-M4F wearing an F103-compatible register map,
++   so it takes the M4 core header and has an FPU. */
++#if defined(CORE_CM4)
++#include "core_cm4.h"
++#else
+ #include "core_cm3.h"
++#endif
+ #include "system_stm32f1xx.h"
+ #include <stdint.h>
+ 
+diff --git a/scripts/buildcommands.py b/scripts/buildcommands.py
+index b35873840..ab1566c0d 100644
+--- a/scripts/buildcommands.py
++++ b/scripts/buildcommands.py
+@@ -222,7 +222,13 @@ class Handle_arm_irq:
+             # The ResetHandler was not defined - don't build VectorTable
+             return ""
+         max_irq = max(self.irqs.keys())
+-        table = ["    DefaultHandler,\n"] * (max_irq + armcm_offset + 1)
++        # FlashForge leave the undeclared system-exception slots null and
++        # only point the peripheral IRQ slots at DefaultHandler; stock
++        # levelBoard has zeroes at 0x010..0x034 where upstream Klipper has
++        # DefaultHandler.  armcm_offset is 16, so slots below it are the
++        # system exceptions.
++        table = (["    0,\n"] * armcm_offset
++                 + ["    DefaultHandler,\n"] * (max_irq + 1))
+         defs = []
+         for num, func in self.irqs.items():
+             if num < 1 - armcm_offset:
+@@ -491,6 +497,12 @@ def build_version(extra, cleanbuild):
+     elif 'dirty' in version:
+         cleanbuild = False
+     if not cleanbuild:
++        # Reproducible builds: KLIPPER_BUILD_VERSION pins the whole stamp,
++        # which otherwise carries the wall clock and this machine's hostname
++        # into the data dictionary embedded in the image.
++        forced = os.environ.get('KLIPPER_BUILD_VERSION')
++        if forced:
++            return forced + extra
+         btime = time.strftime("%Y%m%d_%H%M%S")
+         hostname = socket.gethostname()
+         version = "%s-%s-%s" % (version, btime, hostname)
+@@ -526,6 +538,28 @@ def tool_versions(tools):
+     cleanbuild = versions[0] and versions[1] and success == len(tools)
+     return cleanbuild, "gcc: %s binutils: %s" % (versions[0], versions[1])
+ 
++def compress_dict(data):
++    # The stock firmware was deflated with classic zlib.  Some distributions
++    # ship a Python linked against zlib-ng, whose output differs byte for
++    # byte at the same level, which changes the image.  KLIPPER_ZLIB points
++    # at a classic libz when an exact reproduction is wanted.
++    libpath = os.environ.get('KLIPPER_ZLIB')
++    if not libpath:
++        return zlib.compress(data, 9)
++    import ctypes
++    lib = ctypes.CDLL(libpath)
++    lib.compress2.restype = ctypes.c_int
++    lib.compress2.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_ulong),
++                              ctypes.c_char_p, ctypes.c_ulong, ctypes.c_int]
++    n = ctypes.c_ulong(len(data) + len(data) // 100 + 64)
++    buf = ctypes.create_string_buffer(n.value)
++    rc = lib.compress2(buf, ctypes.byref(n), ctypes.c_char_p(data),
++                       ctypes.c_ulong(len(data)), ctypes.c_int(9))
++    if rc != 0:
++        raise error("classic zlib compress2 failed: %d" % (rc,))
++    return buf.raw[:n.value]
++
++
+ # Add version information to the data dictionary
+ class HandleVersions:
+     def __init__(self):
+@@ -570,7 +604,7 @@ class HandleIdentify:
+             f.close()
+ 
+         # Format compressed info into C code
+-        zdatadict = bytearray(zlib.compress(datadict.encode(), 9))
++        zdatadict = bytearray(compress_dict(datadict.encode()))
+         out = []
+         for i in range(len(zdatadict)):
+             if i % 8 == 0:
+diff --git a/src/Kconfig b/src/Kconfig
+index 7dcea3bab..7c2904b7f 100644
+--- a/src/Kconfig
++++ b/src/Kconfig
+@@ -121,7 +121,6 @@ config NEED_SENSOR_BULK
+     depends on WANT_SENSORS || WANT_LIS2DW || WANT_LDC1612
+     default y
+ menu "Optional features (to reduce code size)"
+-    depends on HAVE_LIMITED_CODE_SIZE
+ config WANT_GPIO_BITBANGING
+     bool "Support GPIO \"bit-banging\" devices"
+     depends on HAVE_GPIO
+@@ -193,6 +192,13 @@ config HAVE_BOOTLOADER_REQUEST
+ config HAVE_LIMITED_CODE_SIZE
+     bool
+ 
++# FlashForge Creator 5 board selector.  The four stock boards are built from
++# one tree; a command is compiled on every board but its body folds away where
++# the board does not implement it.
++config FF_BOARD_EBOARD
++    bool "FlashForge eBoard (pressure advance sensor)"
++    default n
++
+ config INLINE_STEPPER_HACK
+     # Enables gcc to inline stepper_event() into the main timer irq handler
+     bool
+diff --git a/src/Makefile b/src/Makefile
+index ed98172e4..761479c3b 100644
+--- a/src/Makefile
++++ b/src/Makefile
+@@ -1,12 +1,10 @@
+ # Main code build rules
+ 
+-src-y += sched.c command.c basecmd.c debugcmds.c
++src-y += sched.c command.c basecmd.c debugcmds.c ff_flashforge.c ff_eddy.c
+ src-$(CONFIG_HAVE_GPIO) += initial_pins.c gpiocmds.c stepper.c endstop.c \
+     trsync.c
+ src-$(CONFIG_HAVE_GPIO_ADC) += adccmds.c
+-src-$(CONFIG_HAVE_GPIO_SPI) += spicmds.c
+ src-$(CONFIG_HAVE_GPIO_SDIO) += sdiocmds.c
+-src-$(CONFIG_HAVE_GPIO_I2C) += i2ccmds.c
+ src-$(CONFIG_HAVE_GPIO_HARD_PWM) += pwmcmds.c
+ 
+ src-$(CONFIG_WANT_GPIO_BITBANGING) += buttons.c tmcuart.c neopixel.c \
+diff --git a/src/adccmds.c b/src/adccmds.c
+index a27dc8c06..d8ae16155 100644
+--- a/src/adccmds.c
++++ b/src/adccmds.c
+@@ -87,7 +87,7 @@ command_query_analog_in(uint32_t *args)
+     a->range_check_count = args[7];
+     if (! a->sample_count)
+         return;
+-    sched_add_timer(&a->timer);
++    sched_add_timer(&a->timer, 31);
+ }
+ DECL_COMMAND(command_query_analog_in,
+              "query_analog_in oid=%c clock=%u sample_ticks=%u sample_count=%c"
+@@ -129,7 +129,7 @@ analog_in_shutdown(void)
+             a->state = a->sample_count + 1;
+             a->next_begin_time += a->rest_time;
+             a->timer.waketime = a->next_begin_time;
+-            sched_add_timer(&a->timer);
++            sched_add_timer(&a->timer, 0);
+         }
+     }
+ }
+diff --git a/src/basecmd.c b/src/basecmd.c
+index 6d26884df..244a85bfd 100644
+--- a/src/basecmd.c
++++ b/src/basecmd.c
+@@ -10,6 +10,7 @@
+ #include "board/misc.h" // alloc_maxsize
+ #include "board/pgm.h" // READP
+ #include "command.h" // DECL_COMMAND
++#include "ff_flashforge.h" // ff_eddy
+ #include "sched.h" // sched_clear_shutdown
+ 
+ 
+@@ -31,7 +32,7 @@ void *
+ alloc_chunk(size_t size)
+ {
+     if (alloc_end + size > dynmem_end())
+-        shutdown("alloc_chunk failed");
++        shutdown_ec(40, "alloc_chunk failed");
+     void *data = alloc_end;
+     alloc_end += ALIGN(size, __alignof__(void*));
+     memset(data, 0, size);
+@@ -47,7 +48,7 @@ alloc_chunks(size_t size, size_t count, uint16_t *avail)
+     while (can_alloc < count && p + size <= end)
+         can_alloc++, p += size;
+     if (!can_alloc)
+-        shutdown("alloc_chunks failed");
++        shutdown_ec(41, "alloc_chunks failed");
+     void *data = alloc_chunk(p - alloc_end);
+     *avail = can_alloc;
+     return data;
+@@ -87,7 +88,7 @@ move_alloc(void)
+     irqstatus_t flag = irq_save();
+     struct move_node *mf = move_free_list;
+     if (!mf)
+-        shutdown("Move queue overflow");
++        shutdown_ec(42, "Move queue overflow");
+     move_free_list = mf->next;
+     irq_restore(flag);
+     return mf;
+@@ -144,7 +145,7 @@ move_queue_setup(struct move_queue_head *mh, int size)
+     mh->first = mh->last = NULL;
+ 
+     if (size > UINT8_MAX || is_finalized())
+-        shutdown("Invalid move request size");
++        shutdown_ec(43, "Invalid move request size");
+     if (size > move_item_size)
+         move_item_size = size;
+ }
+@@ -170,7 +171,7 @@ static void
+ move_finalize(void)
+ {
+     if (is_finalized())
+-        shutdown("Already finalized");
++        shutdown_ec(44, "Already finalized");
+     struct move_queue_head dummy;
+     move_queue_setup(&dummy, sizeof(*move_free_list));
+     move_list = alloc_chunks(move_item_size, 1024, &move_count);
+@@ -193,7 +194,7 @@ void *
+ oid_lookup(uint8_t oid, void *type)
+ {
+     if (oid >= oid_count || type != oids[oid].type)
+-        shutdown("Invalid oid type");
++        shutdown_ec(45, "Invalid oid type");
+     return oids[oid].data;
+ }
+ 
+@@ -201,7 +202,7 @@ void *
+ oid_alloc(uint8_t oid, void *type, uint16_t size)
+ {
+     if (oid >= oid_count || oids[oid].type || is_finalized())
+-        shutdown("Can't assign oid");
++        shutdown_ec(46, "Can't assign oid");
+     oids[oid].type = type;
+     void *data = alloc_chunk(size);
+     oids[oid].data = data;
+@@ -227,7 +228,7 @@ void
+ command_allocate_oids(uint32_t *args)
+ {
+     if (oids)
+-        shutdown("oids already allocated");
++        shutdown_ec(47, "oids already allocated");
+     uint8_t count = args[0];
+     oids = alloc_chunk(sizeof(oids[0]) * count);
+     oid_count = count;
+@@ -339,7 +340,7 @@ stats_update(uint32_t start, uint32_t cur)
+ void
+ command_emergency_stop(uint32_t *args)
+ {
+-    shutdown("Command request");
++    shutdown_ec(49, "Command request");
+ }
+ DECL_COMMAND_FLAGS(command_emergency_stop, HF_IN_SHUTDOWN, "emergency_stop");
+ 
+@@ -350,6 +351,79 @@ command_clear_shutdown(uint32_t *args)
+ }
+ DECL_COMMAND_FLAGS(command_clear_shutdown, HF_IN_SHUTDOWN, "clear_shutdown");
+ 
++/****************************************************************
++ * FlashForge additions
++ ****************************************************************/
++
++void
++command_remove_peel(uint32_t *args)
++{
++    // args[0] ("action") is accepted and ignored by the stock firmware.
++    int32_t peel = ff_eddy_peel;
++    ff_eddy_baseline = ff_eddy_value;
++    sendf("peel_data value=%i", peel);
++}
++DECL_COMMAND(command_remove_peel, "remove_peel action=%u");
++
++// Both PA bodies fold away on every board except the eBoard; the response
++// stays in the data dictionary because DECL_CTR survives dead code
++// elimination.  That is what the stock levelBoard image shows: two "bx lr"
++// handlers and a live "pa_value value=%u" encoder.
++void
++command_get_emcu_pa_value(uint32_t *args)
++{
++    if (!CONFIG_FF_BOARD_EBOARD)
++        return;
++    sendf("pa_value value=%u", ff_pa_value);
++}
++DECL_COMMAND(command_get_emcu_pa_value, "get_emcu_pa_value");
++
++void
++command_pa_action(uint32_t *args)
++{
++    if (!CONFIG_FF_BOARD_EBOARD)
++        return;
++    ff_pa_action(args[0], args[1]);
++}
++DECL_COMMAND(command_pa_action, "pa_action action=%u pc=%u");
++
++void
++command_get_basic_param(uint32_t *args)
++{
++    // args[0] ("num") is accepted and ignored by the stock firmware.
++    uint32_t baseline = ff_eddy_baseline, value = ff_eddy_value;
++    ff_eddy_rebaseline();
++    int32_t diff = (int32_t)(value - baseline);
++    if (diff < 0)
++        diff = -diff;
++    sendf("param_value value=%u reserve=%u", baseline, diff);
++}
++DECL_COMMAND(command_get_basic_param, "get_basic_param num=%u");
++
++// levelBoard.hex reports these three constants verbatim.
++#define FF_MCU_YEAR     2026
++#define FF_MCU_DATE      613
++#define FF_MCU_VERSION  7091
++
++void
++command_get_mcu_version(uint32_t *args)
++{
++    sendf("mcu_version year=%u date=%u version=%u"
++          , FF_MCU_YEAR, FF_MCU_DATE, FF_MCU_VERSION);
++}
++DECL_COMMAND(command_get_mcu_version, "get_mcu_version");
++
++void
++command_set_trigger_threshold(uint32_t *args)
++{
++    ff_trigger_threshold = args[0];
++    ff_eddy_threshold = ff_trigger_threshold;
++    sendf("trigger_threshold threshold=%i", ff_trigger_threshold);
++}
++DECL_COMMAND(command_set_trigger_threshold
++             , "set_trigger_threshold threshold=%i");
++
++
+ void
+ command_identify(uint32_t *args)
+ {
+@@ -365,3 +439,16 @@ command_identify(uint32_t *args)
+ }
+ DECL_COMMAND_FLAGS(command_identify, HF_IN_SHUTDOWN,
+                    "identify offset=%u count=%c");
++
++
++// Board telemetry, emitted alongside Klipper's own shutdown report.  The
++// counters are board specific; the stock image names them per board
++// ("Levelboard", "Eboard", "Eheaterboard", "GDMainboard").
++static uint16_t ff_close_num, ff_temp_waketime;
++
++void
++ff_report_close(void)
++{
++    sendf("Levelboard close=%hu Close_num=%hu Temp_waketime=%hu"
++          , ff_timer_close, ff_close_num, ff_temp_waketime);
++}
+diff --git a/src/buttons.c b/src/buttons.c
+index 43c0820af..3b07b4519 100644
+--- a/src/buttons.c
++++ b/src/buttons.c
+@@ -74,7 +74,7 @@ command_config_buttons(uint32_t *args)
+ {
+     uint8_t button_count = args[1];
+     if (button_count > 8)
+-        shutdown("Max of 8 buttons");
++        shutdown_ec(37, "Max of 8 buttons");
+     struct buttons *b = oid_alloc(
+         args[0], command_config_buttons
+         , sizeof(*b) + sizeof(b->pins[0]) * button_count);
+@@ -89,7 +89,7 @@ command_buttons_add(uint32_t *args)
+     struct buttons *b = oid_lookup(args[0], command_config_buttons);
+     uint8_t pos = args[1];
+     if (pos >= b->button_count)
+-        shutdown("Set button past maximum button count");
++        shutdown_ec(38, "Set button past maximum button count");
+     b->pins[pos] = gpio_in_setup(args[2], args[3]);
+ }
+ DECL_COMMAND(command_buttons_add,
+@@ -107,10 +107,10 @@ command_buttons_query(uint32_t *args)
+     b->retransmit_state = BF_ACKED;
+     b->retransmit_count = args[3];
+     if (b->retransmit_count >= BF_NO_RETRANSMIT)
+-        shutdown("Invalid buttons retransmit count");
++        shutdown_ec(39, "Invalid buttons retransmit count");
+     if (! b->rest_ticks)
+         return;
+-    sched_add_timer(&b->time);
++    sched_add_timer(&b->time, 48);
+ }
+ DECL_COMMAND(command_buttons_query,
+              "buttons_query oid=%c clock=%u rest_ticks=%u retransmit_count=%c"
+diff --git a/src/command.h b/src/command.h
+index 21b3f79b8..4cef2a5b8 100644
+--- a/src/command.h
++++ b/src/command.h
+@@ -40,6 +40,18 @@
+ // Shut down the machine (also declares a static string to transmit)
+ #define shutdown(msg)                           \
+     sched_shutdown(_DECL_STATIC_STR(msg))
++// FlashForge: a shutdown also latches a numeric error code, which the host
++// reads back to name the fault.  The codes were recovered from the stock
++// image; they run in source order within each file.
++extern uint32_t ff_shutdown_code;
++#define shutdown_ec(code, msg) do {             \
++        ff_shutdown_code = (code);              \
++        shutdown(msg);                          \
++    } while (0)
++#define try_shutdown_ec(code, msg) do {         \
++        ff_shutdown_code = (code);              \
++        try_shutdown(msg);                      \
++    } while (0)
+ #define try_shutdown(msg)                       \
+     sched_try_shutdown(_DECL_STATIC_STR(msg))
+ 
+diff --git a/src/endstop.c b/src/endstop.c
+index 779153982..d7e9adef5 100644
+--- a/src/endstop.c
++++ b/src/endstop.c
+@@ -8,6 +8,7 @@
+ #include "board/gpio.h" // struct gpio
+ #include "board/irq.h" // irq_disable
+ #include "command.h" // DECL_COMMAND
++#include "ff_flashforge.h" // ff_endstop_active
+ #include "sched.h" // struct timer
+ #include "trsync.h" // trsync_do_trigger
+ 
+@@ -84,6 +85,8 @@ command_endstop_home(uint32_t *args)
+         // Disable end stop checking
+         e->ts = NULL;
+         e->flags = 0;
++        ff_endstop_active = 0;
++        ff_eddy_free_run = 1;
+         return;
+     }
+     e->rest_time = args[4];
+@@ -92,7 +95,8 @@ command_endstop_home(uint32_t *args)
+     e->flags = ESF_HOMING | (args[5] ? ESF_PIN_HIGH : 0);
+     e->ts = trsync_oid_lookup(args[6]);
+     e->trigger_reason = args[7];
+-    sched_add_timer(&e->time);
++    ff_endstop_active = 1;
++    sched_add_timer(&e->time, 1);
+ }
+ DECL_COMMAND(command_endstop_home,
+              "endstop_home oid=%c clock=%u sample_ticks=%u sample_count=%c"
+@@ -101,15 +105,42 @@ DECL_COMMAND(command_endstop_home,
+ void
+ command_endstop_query_state(uint32_t *args)
+ {
++    ff_endstop_active = 1;
+     uint8_t oid = args[0];
+     struct endstop *e = oid_lookup(oid, command_config_endstop);
+ 
+     irq_disable();
+-    uint8_t eflags = e->flags;
+     uint32_t nextwake = e->nextwake;
++    uint8_t eflags = e->flags;
+     irq_enable();
+ 
+     sendf("endstop_state oid=%c homing=%c next_clock=%u pin_value=%c"
+           , oid, !!(eflags & ESF_HOMING), nextwake, gpio_in_read(e->pin));
+ }
+ DECL_COMMAND(command_endstop_query_state, "endstop_query_state oid=%c");
++
++// FlashForge addition, recovered from levelBoard.hex (0x080055c8).  Re-arms
++// an endstop after a homing attempt: the trigger counter is reloaded from
++// the sample count, the trsync is dropped and the endstop is taken out of
++// homing.
++//
++// NOTE: the stock firmware calls ctr_lookup_encoder() directly here rather
++// than going through the sendf() macro.  That skips the DECL_CTR marker, so
++// "endstop_recover_state oid=%c ok=%c" is never registered as a response and
++// the lookup returns NULL at run time.  Reproduced verbatim so that the
++// generated data dictionary matches the stock firmware.
++void
++command_endstop_recover_state(uint32_t *args)
++{
++    uint8_t oid = args[0];
++    struct endstop *e = oid_lookup(oid, command_config_endstop);
++    irq_disable();
++    e->trigger_count = e->sample_count;
++    e->ts = NULL;
++    e->flags = 0;
++    ff_endstop_active = 0;
++    irq_enable();
++    command_sendf(ctr_lookup_encoder("endstop_recover_state oid=%c ok=%c")
++                  , oid, 1);
++}
++DECL_COMMAND(command_endstop_recover_state, "endstop_recover_state oid=%c");
+diff --git a/src/ff_eddy.c b/src/ff_eddy.c
+new file mode 100644
+index 000000000..5db216555
+--- /dev/null
++++ b/src/ff_eddy.c
+@@ -0,0 +1,608 @@
++// FlashForge Creator5 "levelBoard" eddy-current bed probe front end.
++//
++// Recovered from the stock image work/stock/mcu/levelBoard.bin
++// (load address 0x08004000, Cortex-M3 Thumb-2, no symbols).  Every
++// non-obvious claim below carries the flash address of the instruction
++// that justifies it.  Anything that could not be pinned down is marked
++// "UNCERTAIN" rather than guessed at.
++//
++// What the hardware actually is
++// -----------------------------
++// There is NO ADC in this module.  The probe is an LC oscillator whose
++// frequency is pulled by the steel bed.  The oscillator output is fed
++// into TIM8_ETR (PA0, alternate function 8, 0x08007818..0x0800782E) and
++// TIM8 is put in external-clock mode 2 with ARR=500, so TIM8 raises an
++// update event once every 501 oscillator edges (0x0800783A/0x0800784A).
++// TIM1 free-runs off the internal timer clock as a plain 16-bit tick
++// counter (PSC=0, ARR=0xffff, 0x0800786E..0x0800787C).  DMA1 channel 1
++// is armed circular, one halfword, TIM1->CNT -> a single RAM word, and
++// is requested by the TIM8 update (0x08007780..0x080077FA).  So every
++// DMA completion interrupt hands us the TIM1 tick count at that moment,
++// and the difference between successive captures is
++//
++//     ticks elapsed while the oscillator produced 501 edges
++//
++// i.e. a reciprocal frequency (period) measurement, 16 bits wide.  That
++// difference is "value" as ff_eddy.py sees it.  Larger value == lower
++// oscillator frequency == metal closer.  With CLOCK_FREQ=128000000 one
++// tick is 7.8125 ns.
++//
++// This file may be distributed under the terms of the GNU GPLv3 license.
++
++#include <stddef.h> // NULL
++#include <stdint.h> // uint32_t
++#include <string.h> // memcpy
++#include "autoconf.h" // CONFIG_CLOCK_FREQ
++#include "board/armcm_boot.h" // armcm_enable_irq
++#include "board/gpio.h" // gpio_out_setup
++#include "board/internal.h" // enable_pclock, gpio_peripheral
++#include "board/irq.h" // irq_disable
++#include "board/misc.h" // timer_read_time
++#include "command.h" // DECL_COMMAND
++#include "ff_flashforge.h" // ff_eddy_value
++#include "sched.h" // DECL_TASK
++
++// Number of external oscillator edges per captured sample.
++// TIM8->ARR, 0x08007836 (movw r1, #0x1f4) -> update every ARR+1 = 501.
++#define FF_EDDY_GATE_ARR 500
++
++// One eddy sample is consumed every 500us by the polling timer
++// (0x08006008: mov.w r0, #0x1f4 -> timer_from_us(500)).
++#define FF_EDDY_SAMPLE_US 500
++
++// Ring buffer used for the noise statistics.  11 entries: the copy loop
++// at 0x08007966 walks &ring[0] .. &ring[0]+0x2c, and the sorted median
++// is taken from index 5 (0x080079B8 reads sp+0x18, array base sp+4).
++#define FF_EDDY_NSAMP 11
++
++// Deviation (in TIM1 ticks) above which a sample is treated as a gross
++// excursion rather than as noise -- 0x080079F4 (cmp r3, #0x96).
++#define FF_EDDY_HARD_DEV 150
++
++// Consecutive gross excursions before the endstop is forced to trigger
++// -- 0x08007B6C (cmp r3, #0xe -> fires on the 15th).
++#define FF_EDDY_HARD_COUNT 15
++
++// Consecutive out-of-threshold samples before the sampling reference is
++// dragged to the current reading -- 0x08007A0C (cmp r3, #0x63).
++#define FF_EDDY_DRIFT_COUNT 100
++
++// The auto-calibrated threshold is 3*sigma clamped to this range
++// -- 0x08007B02 (cmp #0x3c) and 0x08007B0C (cmp #0x14).
++#define FF_EDDY_THRESH_MIN 20
++#define FF_EDDY_THRESH_MAX 60
++
++// The signal must stay quiet this long before a recalibration is
++// accepted -- 0x08007A6A (cmp.w r3, #0x7d0).
++#define FF_EDDY_QUIET_MS 2000
++
++// Debounce depths in ff_eddy_check_trigger() -- 0x08007D12 (cmp #3, so
++// the 4th consecutive sample trips) and 0x08007D4A (cmp #2, the 3rd
++// consecutive sample releases).
++#define FF_EDDY_TRIG_COUNT   4
++#define FF_EDDY_UNTRIG_COUNT 3
++
++// Hysteresis, in ticks, below the trigger threshold -- 0x08007D36
++// (subs r7, #2).
++#define FF_EDDY_HYSTERESIS 2
++
++
++/****************************************************************
++ * State
++ ****************************************************************/
++
++// Initialised data (.data runs 0x20000000..0x20000044 and is copied
++// from flash 0x0800A80C by the reset handler at 0x080088D4).
++
++// Threshold as the host set it.  Written and echoed by
++// set_trigger_threshold (0x08004D0A) and read by nothing else.
++int32_t ff_trigger_threshold = 25;               // 0x20000000
++
++// Virtual endstop pin level.  1 == not triggered, 0 == triggered.
++// gpio_in_read() returns this for one specific pin, see below.
++static uint8_t ff_eddy_pin_state = 1;                   // 0x2000003C
++
++// Threshold actually used by the detector.  set_trigger_threshold
++// writes it (0x08004D0C) but ff_eddy_update() overwrites it on every
++// recalibration (0x08007B14), so a host-supplied value is transient.
++int16_t ff_eddy_threshold = 25;                  // 0x2000003E
++
++// Largest median-absolute-deviation still considered "quiet".
++// Never written anywhere in the image; initialiser 0x0800A844 = 2.
++static uint32_t ff_eddy_mad_limit = 2;                  // 0x20000038
++
++// Zero-initialised data (.bss 0x20000044..0x200003A8, 0x080088EA).
++
++static struct timer ff_eddy_timer;                      // 0x20000110
++static struct task_wake ff_eddy_wake;                   // 0x200000AC
++// Set once the first calibration finished; never cleared (0x0800601C).
++static uint8_t ff_eddy_armed;                           // 0x200000AD
++
++static uint32_t ff_eddy_prev_cnt;                       // 0x2000012C
++static volatile uint32_t ff_eddy_dma_capture;           // 0x20000130
++// Written by ff_eddy_check_trigger() (0x08007CEC) and read by nothing.
++static uint32_t ff_eddy_last_dev;                       // 0x20000134
++// Written by ff_eddy_timer_event() (0x08006030) and read by nothing.
++static uint32_t ff_eddy_dbg_baseline;                   // 0x20000138
++static uint8_t ff_eddy_have_filter;                     // 0x2000013C
++static uint8_t ff_eddy_hard_trigger;                    // 0x2000013D
++static uint32_t ff_eddy_mad;                            // 0x20000140
++uint32_t ff_eddy_baseline;                       // 0x20000144
++static int32_t ff_eddy_trig_acc;                        // 0x20000148
++static uint32_t ff_eddy_filter_acc;                     // 0x2000014C
++static uint32_t ff_eddy_sample_ref;                     // 0x20000150
++static uint32_t ff_eddy_sample;                         // 0x20000154
++uint32_t ff_eddy_value;                          // 0x20000158
++static volatile uint32_t ff_eddy_sample_ready;          // 0x2000015C
++static uint8_t ff_eddy_calibrated;                      // 0x20000160
++static uint16_t ff_eddy_outrange_count;                 // 0x20000162
++static uint32_t ff_eddy_ring[FF_EDDY_NSAMP];            // 0x20000164
++static uint8_t ff_eddy_ring_count;                      // 0x20000190
++static uint8_t ff_eddy_ring_pos;                        // 0x20000191
++static uint16_t ff_eddy_inrange_count;                  // 0x20000192
++static uint32_t ff_eddy_quiet_start_ms;                 // 0x20000194
++static uint8_t ff_eddy_untrig_count;                    // 0x20000198
++// Never written in this image, so effectively a constant zero.  It is
++// read at 0x08007AF6 and 0x08007BFC only.
++uint32_t ff_eddy_offset;                         // 0x2000019C
++static uint8_t ff_eddy_trig_count;                      // 0x200001A0
++int32_t ff_eddy_peel;                            // 0x200001A4
++
++
++/****************************************************************
++ * Small helpers
++ ****************************************************************/
++
++// timer_read_time() is DWT->CYCCNT (0x080086F8) and timer_from_us() is
++// "us << 7" (0x080086EC), i.e. exactly 128 ticks/us.  The stock code
++// divides the raw clock by 128000 with a reciprocal multiply
++// (0x08007A44: 0x10624DD3, then >> 45) to get milliseconds.
++static uint32_t
++ff_eddy_now_ms(void)
++{
++    return timer_read_time() / (CONFIG_CLOCK_FREQ / 1000);
++}
++
++// Insertion sort, ascending.  Open coded twice in the stock image
++// (0x080076FE and 0x08007982) with identical structure.
++static void
++ff_eddy_isort(uint32_t *v, uint32_t count)
++{
++    uint32_t i;
++    for (i = 1; i < count; i++) {
++        uint32_t key = v[i], j = i;
++        while (j && v[j - 1] > key) {
++            v[j] = v[j - 1];
++            j--;
++        }
++        v[j] = key;
++    }
++}
++
++// 0x080076DC: copy the ring, sort it, return the middle element.
++static uint32_t
++ff_eddy_median(void)
++{
++    uint32_t tmp[FF_EDDY_NSAMP];
++    memcpy(tmp, ff_eddy_ring, sizeof(tmp));
++    ff_eddy_isort(tmp, FF_EDDY_NSAMP);
++    return tmp[FF_EDDY_NSAMP / 2];
++}
++
++// Newton iteration, 0x08007A9A..0x08007AB6.
++static uint32_t
++ff_eddy_isqrt(uint32_t v)
++{
++    if (!v)
++        return 0;
++    uint32_t r = (v + 1) >> 1;
++    if (v <= r)
++        return v;
++    for (;;) {
++        uint32_t next = (v / r + r) >> 1;
++        if (r <= next)
++            return r;
++        r = next;
++    }
++}
++
++
++/****************************************************************
++ * Front end: TIM8 gate, TIM1 tick counter, DMA1 channel 1
++ ****************************************************************/
++
++// 0x080076AC.  PA1 is driven as a push-pull output and immediately set
++// high (GPIO_Init then a BSRR write of 0x2 at 0x080076CE).  Nothing
++// ever clears it, so this is best read as "power/enable the oscillator".
++// Semantics of the pin are UNCERTAIN; only the electrical behaviour
++// (output, latched high at startup) is established by the image.
++void
++ff_eddy_pin_init(void)
++{
++    gpio_out_setup(GPIO('A', 1), 1);
++}
++DECL_INIT(ff_eddy_pin_init);
++
++// 0x08007780.  Note DMA_DeInit() is called first (0x0800778E ->
++// 0x08008EA4) which also clears the matching bits in DMA1->IFCR.
++void
++ff_eddy_dma_init(void)
++{
++    enable_pclock((uint32_t)DMA1);              // RCC->AHBENR |= 1, 0x08007788
++
++    DMA1_Channel1->CCR = 0;
++    DMA1_Channel1->CPAR = (uint32_t)&TIM1->CNT; // 0x40012C24, lit @0x08007800
++    DMA1_Channel1->CMAR = (uint32_t)&ff_eddy_dma_capture; // 0x20000130
++    DMA1_Channel1->CNDTR = 1;                   // BufferSize = 1
++    DMA1_Channel1->CCR = (0                     // DIR = peripheral -> memory
++                          // PINC and MINC both disabled
++                          | DMA_CCR_PSIZE_0     // 0x100  peripheral halfword
++                          | DMA_CCR_MSIZE_0     // 0x400  memory halfword
++                          | DMA_CCR_CIRC        // 0x20   circular
++                          | DMA_CCR_PL_1);      // 0x2000 priority high
++
++    // 0x080077CC writes 0x32 to DMA1_Channel1 + 0x10.  On a stock
++    // STM32F103 that offset is the reserved word between channel 1 and
++    // channel 2 and the write is a no-op; on the silicon this board
++    // actually uses it is most likely a per-channel request selector,
++    // which is what lets TIM8's update event drive DMA1 channel 1 at
++    // all (on a real F103, TIM8_UP is a DMA2 request).  UNCERTAIN.
++    *(volatile uint32_t *)((uint32_t)DMA1_Channel1 + 0x10) = 0x32;
++
++    // NVIC_Init{IRQChannel=11, PreemptionPriority=0, SubPriority=7,
++    // Cmd=ENABLE} at 0x080077D0..0x080077E6.  IRQ 11 is
++    // DMA1_Channel1_IRQn and vector[27] @0x0800406C == 0x08007895.
++    armcm_enable_irq(DMA1_Channel1_IRQHandler, DMA1_Channel1_IRQn, 0);
++
++    DMA1_Channel1->CCR |= DMA_CCR_TCIE;         // 0x080077EE, flag 0x2
++    DMA1_Channel1->CCR |= DMA_CCR_EN;           // 0x080077F4
++}
++
++// 0x08007808.  Runs before ff_eddy_dma_init(), which it tail calls
++// (0x08007886).
++void
++ff_eddy_counter_init(void)
++{
++    // --- gate timer: TIM8 counts oscillator edges on its ETR pin ---
++    enable_pclock((uint32_t)TIM8);              // APB2ENR |= 0x2000, 0x08007810
++    // PA0 = TIM8_ETR, alternate function 8, "speed" field 2
++    // (GPIO_InitTypeDef built at 0x0800781C..0x0800782C).
++    gpio_peripheral(GPIO('A', 0), GPIO_FUNCTION(8), 0);
++
++    TIM8->PSC = 0;
++    TIM8->ARR = FF_EDDY_GATE_ARR;               // 0x08007836, 500
++    TIM8->EGR = TIM_EGR_UG;                     // TIM_TimeBaseInit does this
++    // TIM_ETRClockMode2Config(TIM8, prescaler 0, polarity 0, filter 0)
++    // -- 0x08007846 -> 0x08008E20, which ends with SMCR |= ECE.
++    TIM8->SMCR = (TIM8->SMCR & ~(0xf00 | 0x8000 | 0x3000)) | TIM_SMCR_ECE;
++    TIM8->DIER |= TIM_DIER_UDE;                 // 0x0800784A, flag 0x100
++    TIM8->CR1 |= TIM_CR1_CEN;                   // 0x08007856
++
++    // --- tick timer: TIM1 free runs on the internal clock ---
++    enable_pclock((uint32_t)TIM1);              // APB2ENR |= 0x800, 0x0800785E
++    TIM1->PSC = 0;
++    TIM1->ARR = 0xffff;                         // 0x0800786A
++    TIM1->EGR = TIM_EGR_UG;                     // 0x08007876
++    TIM1->CR1 |= TIM_CR1_CEN;                   // 0x0800787C
++
++    ff_eddy_dma_init();
++}
++DECL_INIT(ff_eddy_counter_init);
++
++// 0x08007894.  Vector 27 (IRQ 11).
++void
++DMA1_Channel1_IRQHandler(void)
++{
++    if (!(DMA1->ISR & DMA_ISR_TCIF1))           // DMA_GetITStatus(DMA1_IT_TC1)
++        return;
++    DMA1->IFCR = DMA_IFCR_CTCIF1;               // 0x080078A8, flag 0x2
++
++    uint32_t cnt = ff_eddy_dma_capture;
++    uint32_t delta = (uint16_t)(cnt - ff_eddy_prev_cnt);
++    ff_eddy_prev_cnt = cnt;
++    ff_eddy_sample = delta;
++    ff_eddy_sample_ready = 1;
++    ff_eddy_value = delta;
++    sched_wake_task(&ff_eddy_wake);             // 0x080078CC
++}
++
++
++/****************************************************************
++ * Sample processing and auto calibration
++ ****************************************************************/
++
++// 0x080078EC.  Called from the 500us polling timer, not from the DMA
++// interrupt, so at most one sample is consumed per 500us regardless of
++// how fast the oscillator runs.
++static void
++ff_eddy_update(void)
++{
++    if (!ff_eddy_sample_ready)
++        return;
++
++    uint32_t store;                             // what goes into the ring
++    if (!ff_eddy_armed) {
++        // Not calibrated yet: the raw reading is the signal.
++        ff_eddy_inrange_count = 0;
++        ff_eddy_outrange_count = 0;
++        store = ff_eddy_sample;
++    } else {
++        uint32_t value = ff_eddy_sample;        // 0x080079D0
++        int32_t dev = value - ff_eddy_sample_ref;
++        uint16_t adev = dev < 0 ? -dev : dev;
++        int32_t thr = ff_eddy_threshold;
++        uint16_t athr = thr < 0 ? -thr : thr;
++
++        if (adev <= athr) {
++            // Quiet: feed the raw reading to the statistics.
++            ff_eddy_inrange_count = 0;
++            ff_eddy_outrange_count = 0;
++            store = value;
++        } else if (adev > FF_EDDY_HARD_DEV) {
++            // Gross excursion.  Still fed raw, but after a run of them
++            // the endstop is forced to trigger.
++            store = value;
++            ff_eddy_outrange_count++;
++            if (ff_eddy_outrange_count >= FF_EDDY_HARD_COUNT) {
++                ff_eddy_hard_trigger = 1;       // 0x08007B7A
++                ff_eddy_outrange_count = 0;
++            }
++        } else {
++            // Beyond the threshold but not wildly so: this is what a
++            // real probe touch looks like.  Feed the *baseline* to the
++            // statistics so a trigger does not pollute the noise
++            // estimate (0x08007A04 loads ff_eddy_baseline into the
++            // value that 0x08007920 stores).
++            ff_eddy_outrange_count = 0;
++            store = ff_eddy_baseline;
++            ff_eddy_inrange_count++;
++            if (ff_eddy_inrange_count > FF_EDDY_DRIFT_COUNT - 1) {
++                // Stuck off-baseline for 100 samples: assume drift and
++                // move the reference (0x08007A18..0x08007A20).
++                ff_eddy_inrange_count = 0;
++                ff_eddy_baseline = value;
++                ff_eddy_sample_ref = value;
++                store = value;
++            }
++        }
++    }
++
++    // --- common tail, 0x08007912 ---
++    ff_eddy_sample_ready = 0;
++    ff_eddy_ring[ff_eddy_ring_pos] = store;
++    if (++ff_eddy_ring_pos > FF_EDDY_NSAMP - 1)
++        ff_eddy_ring_pos = 0;
++    if (ff_eddy_ring_count <= FF_EDDY_NSAMP - 1)
++        ff_eddy_ring_count++;
++
++    if (!ff_eddy_have_filter) {
++        // Seed the smoothing filter once the ring is full (0x08007A28).
++        if (ff_eddy_ring_count != FF_EDDY_NSAMP)
++            return;
++        ff_eddy_filter_acc = ff_eddy_median() * 4;
++        ff_eddy_have_filter = 1;
++        ff_eddy_quiet_start_ms = ff_eddy_now_ms();
++        return;
++    }
++
++    // Smoothing filter, held at 4x scale: acc = x + 3*acc/4, so
++    // acc/4 is a first order low pass with alpha = 1/4 (0x08007950).
++    ff_eddy_filter_acc = store + (ff_eddy_filter_acc * 3) / 4;
++
++    // Robust noise estimate: median absolute deviation about the
++    // median of the ring (0x0800795C..0x080079BA).
++    uint32_t center = ff_eddy_median();
++    uint32_t devs[FF_EDDY_NSAMP];
++    uint32_t i;
++    for (i = 0; i < FF_EDDY_NSAMP; i++) {
++        uint32_t s = ff_eddy_ring[i];
++        devs[i] = s > center ? s - center : center - s;
++    }
++    ff_eddy_isort(devs, FF_EDDY_NSAMP);
++    ff_eddy_mad = devs[FF_EDDY_NSAMP / 2];
++
++    if (ff_eddy_mad > ff_eddy_mad_limit) {
++        // Noisy: restart the quiet timer (0x080079C4).
++        ff_eddy_quiet_start_ms = 0;
++        return;
++    }
++    uint32_t now = ff_eddy_now_ms();
++    if (!ff_eddy_quiet_start_ms) {
++        ff_eddy_quiet_start_ms = now;           // 0x08007B56
++        return;
++    }
++    if (now - ff_eddy_quiet_start_ms < FF_EDDY_QUIET_MS)
++        return;
++
++    // --- 2s of quiet: recalibrate (0x08007A70..0x08007B3A) ---
++    int64_t sumsq = 0;
++    for (i = 0; i < FF_EDDY_NSAMP; i++) {
++        int32_t d = ff_eddy_ring[i] - center;
++        sumsq += (int32_t)(d * d);
++    }
++    uint32_t sd = ff_eddy_isqrt((uint32_t)(sumsq / FF_EDDY_NSAMP));
++
++    // Never let sigma fall below 1.5 * MAD (and never below 1).
++    uint32_t floor_sd = ff_eddy_mad + ff_eddy_mad / 2;
++    if (floor_sd < 1)
++        floor_sd = 1;
++    if (sd < floor_sd)
++        sd = floor_sd;
++
++    // Scrub outliers out of the ring.  NOTE: this has no observable
++    // effect, because ff_eddy_ring_count/pos are reset a few lines
++    // below and every slot is overwritten before it is read again.
++    if (ff_eddy_ring_count) {
++        uint32_t lim;
++        if (!ff_eddy_mad) {
++            lim = ff_eddy_mad_limit;            // 0x08007AD2
++        } else {
++            // Saturating 3*MAD, 0x08007B84.
++            uint64_t t = (uint64_t)ff_eddy_mad * 3;
++            lim = t > 0xffffffffull ? 0xffffffffu : (uint32_t)t;
++        }
++        for (i = 0; i < ff_eddy_ring_count; i++) {
++            uint32_t s = ff_eddy_ring[i];
++            uint32_t d = s > center ? s - center : center - s;
++            if (lim < d)
++                ff_eddy_ring[i] = center;
++        }
++    }
++
++    // The trigger threshold is derived from the noise, NOT from what
++    // the host asked for: 3 sigma, truncated to int16, clamped 20..60.
++    int16_t thr = (int16_t)(sd * 3);
++    if (thr >= FF_EDDY_THRESH_MAX)
++        thr = FF_EDDY_THRESH_MAX;
++    if (thr < FF_EDDY_THRESH_MIN)
++        thr = FF_EDDY_THRESH_MIN;
++    ff_eddy_threshold = thr;
++
++    ff_eddy_baseline = ff_eddy_offset + ff_eddy_filter_acc / 4;
++    ff_eddy_sample_ref = ff_eddy_baseline;
++    ff_eddy_have_filter = 0;
++    ff_eddy_ring_count = 0;
++    ff_eddy_ring_pos = 0;
++    ff_eddy_quiet_start_ms = 0;
++    ff_eddy_inrange_count = 0;
++    ff_eddy_outrange_count = 0;
++    ff_eddy_calibrated = 1;
++}
++
++// 0x08005FF8, registered by 0x0800630C.
++static uint_fast8_t
++ff_eddy_timer_event(struct timer *t)
++{
++    ff_eddy_update();
++    if (ff_eddy_calibrated == 1 && !ff_eddy_armed) {
++        // First successful calibration arms the comparator for good;
++        // ff_eddy_armed is never cleared anywhere in the image.
++        ff_eddy_armed = 1;
++        ff_eddy_sample_ref = ff_eddy_baseline;
++        ff_eddy_dbg_baseline = ff_eddy_baseline;
++    }
++    t->waketime += timer_from_us(FF_EDDY_SAMPLE_US);
++    return SF_RESCHEDULE;
++}
++
++void
++ff_eddy_timer_init(void)
++{
++    ff_eddy_timer.func = ff_eddy_timer_event;
++    ff_eddy_timer.waketime = timer_read_time()
++                             + timer_from_us(FF_EDDY_SAMPLE_US);
++    ff_eddy_timer.next = NULL;
++    // The stock sched_add_timer() takes a second argument, a caller id
++    // used by the "Levelboard close=..." debug report; this call site
++    // passes 0x62 (0x0800632C).
++    // tag 0x62, read from the stock call site at 0x0800632c
++    sched_add_timer(&ff_eddy_timer, 98);
++}
++DECL_INIT(ff_eddy_timer_init);
++
++
++/****************************************************************
++ * Trigger detection -- drives the virtual endstop pin
++ ****************************************************************/
++
++// 0x08007C98.  Woken once per DMA capture by DMA1_Channel1_IRQHandler.
++// In the stock image the sched_check_wake()/call pair is open coded at
++// the bottom of run_tasks() (0x080063BA..0x080063C6) rather than being
++// dispatched through ctr_run_taskfuncs(); the effect is the same.
++void
++ff_eddy_check_trigger(void)
++{
++    if (!sched_check_wake(&ff_eddy_wake))
++        return;
++
++    irq_disable();
++    uint32_t value = ff_eddy_value;
++    uint8_t hard = ff_eddy_hard_trigger;
++    uint8_t state = ff_eddy_pin_state;
++    if (hard) {
++        ff_eddy_hard_trigger = 0;
++        irq_enable();
++        // Reject value 0 (no oscillator edges at all).
++        if (value - 1 > 0xfffe)
++            return;
++        if (state)
++            ff_eddy_pin_state = 0;
++        ff_eddy_trig_count = 0;
++        ff_eddy_untrig_count = 0;
++        return;
++    }
++    uint32_t baseline = ff_eddy_baseline;
++    int32_t thr = ff_eddy_threshold;
++    irq_enable();
++
++    if (value - 1 > 0xfffe)
++        return;
++
++    int32_t diff = value - baseline;
++    ff_eddy_peel = diff;                        // 0x08007CE0
++    uint32_t adiff = (uint16_t)(diff < 0 ? -diff : diff);
++    ff_eddy_last_dev = adiff;                   // write only
++
++    // acc += (adiff*16 - acc) / 4; filtered = acc / 16   (0x08007CF2)
++    ff_eddy_trig_acc += (((int32_t)adiff << 4) - ff_eddy_trig_acc) >> 2;
++    int32_t filtered = ff_eddy_trig_acc >> 4;
++
++    if (thr <= filtered) {
++        // Above the threshold.
++        ff_eddy_untrig_count = 0;
++        if (++ff_eddy_trig_count <= FF_EDDY_TRIG_COUNT - 1)
++            return;
++        if (ff_eddy_pin_state)
++            ff_eddy_pin_state = 0;
++        ff_eddy_trig_count = FF_EDDY_TRIG_COUNT;
++        return;
++    }
++    if ((int16_t)(thr - FF_EDDY_HYSTERESIS) > filtered) {
++        // Clearly below the threshold.
++        ff_eddy_trig_count = 0;
++        if (++ff_eddy_untrig_count <= FF_EDDY_UNTRIG_COUNT - 1)
++            return;
++        if (!ff_eddy_pin_state)
++            ff_eddy_pin_state = 1;
++        ff_eddy_untrig_count = FF_EDDY_UNTRIG_COUNT;
++        return;
++    }
++    // Inside the hysteresis band: hold, and reset the counter that
++    // would move us out of the current state (0x08007D60).
++    if (ff_eddy_pin_state)
++        ff_eddy_trig_count = 0;
++    else
++        ff_eddy_untrig_count = 0;
++}
++DECL_TASK(ff_eddy_check_trigger);
++
++
++/****************************************************************
++ * Host commands
++ ****************************************************************/
++
++// 0x08007BF4.  Called by get_basic_param; re-zeroes everything against
++// the current reading and declares the sensor calibrated.
++void
++ff_eddy_rebaseline(void)
++{
++    irq_disable();
++    uint32_t base = ff_eddy_value + ff_eddy_offset;
++    ff_eddy_baseline = base;
++    ff_eddy_sample_ref = base;
++    ff_eddy_ring_pos = 0;
++    ff_eddy_ring_count = 0;
++    ff_eddy_filter_acc = base * 4;
++    ff_eddy_have_filter = 1;
++    ff_eddy_quiet_start_ms = 0;
++    ff_eddy_inrange_count = 0;
++    ff_eddy_outrange_count = 0;
++    irq_enable();
++    ff_eddy_trig_acc = 0;
++    ff_eddy_trig_count = 0;
++    ff_eddy_pin_state = 1;
++    ff_eddy_hard_trigger = 0;
++    ff_eddy_untrig_count = 0;
++    ff_eddy_calibrated = 1;
++    ff_eddy_peel = 0;
++}
+diff --git a/src/ff_flashforge.c b/src/ff_flashforge.c
+new file mode 100644
+index 000000000..d3238697b
+--- /dev/null
++++ b/src/ff_flashforge.c
+@@ -0,0 +1,35 @@
++// FlashForge Creator 5 additions to the Klipper MCU firmware.
++//
++// Recovered from the stock board images shipped in control-1.2.9.  The four
++// boards are built from one source tree with a board selector: a command is
++// compiled everywhere but its body folds away on the boards that do not
++// implement it, which is why levelBoard carries an empty get_emcu_pa_value
++// while eBoard has the real one.
++//
++// The command handlers themselves live in basecmd.c -- that is where the
++// stock message ids place them.  This file holds the shared state.
++//
++// This file may be distributed under the terms of the GNU GPLv3 license.
++
++#include "board/irq.h" // irq_disable
++#include "command.h"   // sendf
++#include "ff_flashforge.h"
++
++// Latched by shutdown_ec() so the host can name the fault.
++uint32_t ff_shutdown_code;
++
++// The call site of the last timer scheduled in the past.
++uint8_t ff_timer_close;
++
++// Shared with endstop.c: see ff_flashforge.h.
++uint8_t ff_endstop_active;
++uint8_t ff_eddy_free_run;
++
++uint32_t ff_pa_value;
++
++// The eBoard implementation (eBoard.hex 0x080115ec) reconfigures TIM4, TIM8
++// and a DMA1 stream for the pressure-advance pickup.  Not reconstructed.
++void
++ff_pa_action(uint32_t action, uint32_t pc)
++{
++}
+diff --git a/src/ff_flashforge.h b/src/ff_flashforge.h
+new file mode 100644
+index 000000000..c21d17a8e
+--- /dev/null
++++ b/src/ff_flashforge.h
+@@ -0,0 +1,25 @@
++#ifndef __FF_FLASHFORGE_H
++#define __FF_FLASHFORGE_H
++// State shared between the FlashForge additions and stock Klipper files.
++#include <stdint.h>
++#include "autoconf.h" // CONFIG_FF_BOARD_EBOARD
++
++extern uint32_t ff_shutdown_code;   // latched by shutdown_ec()
++extern uint8_t ff_timer_close;      // call site of the last late timer
++extern uint8_t ff_endstop_active;   // an endstop is being queried or homed
++extern uint8_t ff_eddy_free_run;    // endstop checking is off; sampler idles
++
++// The inductive sensor.  These live at fixed, scattered addresses in the
++// stock image, so they are separate objects rather than one struct.
++extern uint32_t ff_eddy_value;      // 0x20000158 live reading
++extern uint32_t ff_eddy_baseline;   // 0x20000144 reference it is compared to
++extern uint32_t ff_eddy_offset;     // 0x2000019C added when re-baselining
++extern int32_t ff_eddy_peel;        // 0x200001A4 last peel measurement
++extern int32_t ff_trigger_threshold;// 0x20000000 host-set trigger threshold
++extern int16_t ff_eddy_threshold;   // 0x2000003E the value actually compared
++extern uint32_t ff_pa_value;
++
++void ff_eddy_rebaseline(void);
++void ff_pa_action(uint32_t action, uint32_t pc);
++
++#endif // ff_flashforge.h
+diff --git a/src/generic/armcm_boot.c b/src/generic/armcm_boot.c
+index 9d2ce0bbf..5dd62502c 100644
+--- a/src/generic/armcm_boot.c
++++ b/src/generic/armcm_boot.c
+@@ -115,6 +115,30 @@ ResetHandler(void)
+ }
+ DECL_ARMCM_IRQ(ResetHandler, -15);
+ 
++// FlashForge fill three of the fault vectors that Klipper leaves on the
++// weak DefaultHandler.  Recovered from levelBoard.hex: NMI and SVCall
++// return immediately (0x08007da0, 0x08007da8), HardFault spins
++// (0x08007da4).
++void
++NMIHandler(void)
++{
++}
++DECL_ARMCM_IRQ(NMIHandler, -14);
++
++void
++HardFaultHandler(void)
++{
++    for (;;)
++        ;
++}
++DECL_ARMCM_IRQ(HardFaultHandler, -13);
++
++void
++SVCallHandler(void)
++{
++}
++DECL_ARMCM_IRQ(SVCallHandler, -5);
++
+ // Code called for any undefined interrupts
+ void
+ DefaultHandler(void)
+diff --git a/src/generic/armcm_link.lds.S b/src/generic/armcm_link.lds.S
+index 94dd2100d..51e2a9583 100644
+--- a/src/generic/armcm_link.lds.S
++++ b/src/generic/armcm_link.lds.S
+@@ -22,9 +22,30 @@ SECTIONS
+         _text_vectortable_start = .;
+         KEEP(*(.vector_table))
+         _text_vectortable_end = .;
++        /* Stock starts code at 0x08004120, twelve bytes past the end of its
++           69-word vector table, and puts libgcc first: __udivmoddi4 sits at
++           0x0800418C, ahead of the first command handler at 0x08004540. */
++        . = ALIGN(16);
++        *crtbegin.o(.text .text.*)
++        *libgcc.a:(.text .text.*)
+         *(.text .text.*)
+         *(.rodata .rodata*)
+-    } > rom
++        /* Stock links GCC's startup files: __do_global_dtors_aux and
++           frame_dummy from crtbegin.o sit at 0x08004120, ahead of libgcc.
++           They survive --gc-sections only because these arrays KEEP them. */
++        . = ALIGN(4);
++        PROVIDE_HIDDEN(__preinit_array_start = .);
++        KEEP(*(.preinit_array))
++        PROVIDE_HIDDEN(__preinit_array_end = .);
++        PROVIDE_HIDDEN(__init_array_start = .);
++        KEEP(*(SORT(.init_array.*)))
++        KEEP(*(.init_array))
++        PROVIDE_HIDDEN(__init_array_end = .);
++        PROVIDE_HIDDEN(__fini_array_start = .);
++        KEEP(*(SORT(.fini_array.*)))
++        KEEP(*(.fini_array))
++        PROVIDE_HIDDEN(__fini_array_end = .);
++    } > rom =0xffffffff
+ 
+     . = ALIGN(4);
+     _data_flash = .;
+diff --git a/src/generic/armcm_timer.c b/src/generic/armcm_timer.c
+index ef38680a9..fd53d7b8c 100644
+--- a/src/generic/armcm_timer.c
++++ b/src/generic/armcm_timer.c
+@@ -86,7 +86,9 @@ timer_reset(void)
+     if (timer_from_us(100000) <= 0xffffff)
+         // Timer in sched.c already ensures SysTick wont overflow
+         return;
+-    sched_add_timer(&wrap_timer);
++    // Tag unknown: 98 belongs to the FlashForge eddy timer (0x0800630c),
++    // and no stock call site could be attributed to this one.
++    sched_add_timer(&wrap_timer, 0);
+ }
+ DECL_SHUTDOWN(timer_reset);
+ 
+diff --git a/src/generic/serial_irq.c b/src/generic/serial_irq.c
+index 98910735a..30a8932da 100644
+--- a/src/generic/serial_irq.c
++++ b/src/generic/serial_irq.c
+@@ -14,9 +14,12 @@
+ #include "sched.h" // sched_wake_tasks
+ #include "serial_irq.h" // serial_enable_tx_irq
+ 
+-#define RX_BUFFER_SIZE 192
++#define RX_BUFFER_SIZE 384
+ 
+-static uint8_t receive_buf[RX_BUFFER_SIZE], receive_pos;
++// RX_BUFFER_SIZE is 384 here (upstream: 192), so the position index
++// must be wider than the uint8_t upstream uses.
++static uint8_t receive_buf[RX_BUFFER_SIZE];
++static uint16_t receive_pos;
+ static uint8_t transmit_buf[96], transmit_pos, transmit_max;
+ 
+ DECL_CONSTANT("SERIAL_BAUD", CONFIG_SERIAL_BAUD);
+@@ -74,7 +77,8 @@ console_pop_input(uint_fast8_t len)
+ void
+ console_task(void)
+ {
+-    uint_fast8_t rpos = readb(&receive_pos), pop_count;
++    uint_fast8_t rpos = readb(&receive_pos);
++    uint_fast8_t pop_count;
+     int_fast8_t ret = command_find_block(receive_buf, rpos, &pop_count);
+     if (ret > 0)
+         command_dispatch(receive_buf, pop_count);
+diff --git a/src/gpiocmds.c b/src/gpiocmds.c
+index 42c9f3712..9ae6eb7d1 100644
+--- a/src/gpiocmds.c
++++ b/src/gpiocmds.c
+@@ -59,7 +59,7 @@ digital_load_event(struct timer *timer)
+     // Apply next update and remove it from queue
+     struct digital_out_s *d = container_of(timer, struct digital_out_s, timer);
+     if (move_queue_empty(&d->mq))
+-        shutdown("Missed scheduling of next digital out event");
++        shutdown_ec(29, "Missed scheduling of next digital out event");
+     struct move_node *mn = move_queue_pop(&d->mq);
+     struct digital_move *m = container_of(mn, struct digital_move, node);
+     uint32_t on_duration = m->on_duration;
+@@ -86,7 +86,7 @@ digital_load_event(struct timer *timer)
+         struct move_node *nn = move_queue_first(&d->mq);
+         uint32_t wake = container_of(nn, struct digital_move, node)->waketime;
+         if (flags & DF_CHECK_END && timer_is_before(end_time, wake))
+-            shutdown("Scheduled digital out event will exceed max_duration");
++            shutdown_ec(30, "Scheduled digital out event will exceed max_duration");
+         end_time = wake;
+         flags |= DF_CHECK_END;
+     }
+@@ -134,7 +134,7 @@ command_set_digital_out_pwm_cycle(uint32_t *args)
+     struct digital_out_s *d = oid_lookup(args[0], command_config_digital_out);
+     irq_disable();
+     if (!move_queue_empty(&d->mq))
+-        shutdown("Can not set soft pwm cycle ticks while updates pending");
++        shutdown_ec(31, "Can not set soft pwm cycle ticks while updates pending");
+     d->cycle_time = args[1];
+     irq_enable();
+ }
+@@ -157,7 +157,7 @@ command_queue_digital_out(uint32_t *args)
+     }
+     uint8_t flags = d->flags;
+     if (flags & DF_CHECK_END && timer_is_before(d->end_time, time))
+-        shutdown("Scheduled digital out event will exceed max_duration");
++        shutdown_ec(32, "Scheduled digital out event will exceed max_duration");
+     d->end_time = time;
+     d->flags = flags | DF_CHECK_END;
+     if (flags & DF_TOGGLING && timer_is_before(d->timer.waketime, time)) {
+@@ -167,7 +167,7 @@ command_queue_digital_out(uint32_t *args)
+         sched_del_timer(&d->timer);
+         d->timer.waketime = time;
+         d->timer.func = digital_load_event;
+-        sched_add_timer(&d->timer);
++        sched_add_timer(&d->timer, 15);
+     }
+     irq_enable();
+ }
+@@ -180,14 +180,14 @@ command_update_digital_out(uint32_t *args)
+     struct digital_out_s *d = oid_lookup(args[0], command_config_digital_out);
+     sched_del_timer(&d->timer);
+     if (!move_queue_empty(&d->mq))
+-        shutdown("update_digital_out not valid with active queue");
++        shutdown_ec(33, "update_digital_out not valid with active queue");
+     uint8_t value = args[1], flags = d->flags, on_flag = value ? DF_ON : 0;
+     gpio_out_write(d->pin, on_flag);
+     if (!on_flag != !(flags & DF_DEFAULT_ON) && d->max_duration) {
+         d->timer.waketime = d->end_time = timer_read_time() + d->max_duration;
+         d->timer.func = digital_load_event;
+         d->flags = (flags & DF_DEFAULT_ON) | on_flag | DF_CHECK_END;
+-        sched_add_timer(&d->timer);
++        sched_add_timer(&d->timer, 14);
+     } else {
+         d->flags = (flags & DF_DEFAULT_ON) | on_flag;
+     }
+diff --git a/src/neopixel.c b/src/neopixel.c
+index bbea09f84..e802161ec 100644
+--- a/src/neopixel.c
++++ b/src/neopixel.c
+@@ -97,7 +97,7 @@ command_config_neopixel(uint32_t *args)
+     struct gpio_out pin = gpio_out_setup(args[1], 0);
+     uint16_t data_size = args[2];
+     if (data_size & 0x8000)
+-        shutdown("Invalid neopixel data_size");
++        shutdown_ec(26, "Invalid neopixel data_size");
+     struct neopixel_s *n = oid_alloc(args[0], command_config_neopixel
+                                      , sizeof(*n) + data_size);
+     n->pin = pin;
+@@ -183,7 +183,7 @@ command_neopixel_update(uint32_t *args)
+     uint_fast8_t data_len = args[2];
+     uint8_t *data = command_decode_ptr(args[3]);
+     if (pos & 0x8000 || pos + data_len > n->data_size)
+-        shutdown("Invalid neopixel update command");
++        shutdown_ec(27, "Invalid neopixel update command");
+     memcpy(&n->data[pos], data, data_len);
+ }
+ DECL_COMMAND(command_neopixel_update,
+diff --git a/src/pulse_counter.c b/src/pulse_counter.c
+index 7837a3c86..7867b7159 100644
+--- a/src/pulse_counter.c
++++ b/src/pulse_counter.c
+@@ -70,7 +70,7 @@ command_query_counter(uint32_t *args)
+     c->poll_ticks = args[2];
+     c->sample_ticks = args[3];
+     c->next_sample_time = c->timer.waketime; // sample immediately
+-    sched_add_timer(&c->timer);
++    sched_add_timer(&c->timer, 56);
+ }
+ DECL_COMMAND(command_query_counter,
+              "query_counter oid=%c clock=%u poll_ticks=%u sample_ticks=%u");
+diff --git a/src/pwmcmds.c b/src/pwmcmds.c
+index d214a95a7..47e64b94d 100644
+--- a/src/pwmcmds.c
++++ b/src/pwmcmds.c
+@@ -28,7 +28,7 @@ struct pwm_move {
+ static uint_fast8_t
+ pwm_end_event(struct timer *timer)
+ {
+-    shutdown("Missed scheduling of next hard pwm event");
++    shutdown_ec(23, "Missed scheduling of next hard pwm event");
+ }
+ 
+ static uint_fast8_t
+@@ -58,7 +58,7 @@ pwm_event(struct timer *timer)
+     uint32_t wake = container_of(nn, struct pwm_move, node)->waketime;
+     if (value != p->default_value && p->max_duration
+         && timer_is_before(p->timer.waketime + p->max_duration, wake))
+-        shutdown("Scheduled pwm event will exceed max_duration");
++        shutdown_ec(24, "Scheduled pwm event will exceed max_duration");
+     p->timer.waketime = wake;
+     return SF_RESCHEDULE;
+ }
+@@ -97,10 +97,10 @@ command_queue_pwm_out(uint32_t *args)
+     sched_del_timer(&p->timer);
+     if (p->timer.func == pwm_end_event
+         && timer_is_before(p->timer.waketime, m->waketime))
+-        shutdown("Scheduled pwm event will exceed max_duration");
++        shutdown_ec(25, "Scheduled pwm event will exceed max_duration");
+     p->timer.func = pwm_event;
+     p->timer.waketime = m->waketime;
+-    sched_add_timer(&p->timer);
++    sched_add_timer(&p->timer, 45);
+ }
+ DECL_COMMAND(command_queue_pwm_out, "queue_pwm_out oid=%c clock=%u value=%hu");
+ 
+diff --git a/src/sched.c b/src/sched.c
+index 44cce558e..c50312ace 100644
+--- a/src/sched.c
++++ b/src/sched.c
+@@ -83,15 +83,17 @@ insert_timer(struct timer *pos, struct timer *t, uint32_t waketime)
+ 
+ // Schedule a function call at a supplied time.
+ void
+-sched_add_timer(struct timer *add)
++sched_add_timer(struct timer *add, uint8_t tag)
+ {
+     uint32_t waketime = add->waketime;
+     irqstatus_t flag = irq_save();
+     struct timer *tl = SchedStatus.timer_list;
+     if (unlikely(timer_is_before(waketime, tl->waketime))) {
+         // This timer is before all other scheduled timers
+-        if (timer_is_before(waketime, timer_read_time()))
++        if (timer_is_before(waketime, timer_read_time())) {
++            ff_timer_close = tag;
+             try_shutdown("Timer too close");
++        }
+         if (tl == &deleted_timer)
+             add->next = deleted_timer.next;
+         else
+@@ -281,7 +283,7 @@ void
+ sched_clear_shutdown(void)
+ {
+     if (!SchedStatus.shutdown_status)
+-        shutdown("Shutdown cleared when not shutdown");
++        shutdown_ec(22, "Shutdown cleared when not shutdown");
+     if (SchedStatus.shutdown_status == 2)
+         // Ignore attempt to clear shutdown if still processing shutdown
+         return;
+diff --git a/src/sched.h b/src/sched.h
+index 0a2bdc4bc..4a2080e6c 100644
+--- a/src/sched.h
++++ b/src/sched.h
+@@ -26,7 +26,10 @@ struct task_wake {
+ };
+ 
+ // sched.c
+-void sched_add_timer(struct timer*);
++// FlashForge: the tag names the call site, and is reported to the
++// host as `close` if this timer is ever scheduled in the past.
++void sched_add_timer(struct timer*, uint8_t tag);
++extern uint8_t ff_timer_close;
+ void sched_del_timer(struct timer *del);
+ unsigned int sched_timer_dispatch(void);
+ void sched_timer_reset(void);
+diff --git a/src/stepper.c b/src/stepper.c
+index 00a8ff012..34fe4005d 100644
+--- a/src/stepper.c
++++ b/src/stepper.c
+@@ -164,7 +164,7 @@ stepper_event_full(struct timer *t)
+     // Next step event is too close to the last unstep
+     int32_t diff = s->time.waketime - min_next_time;
+     if (diff < (int32_t)-timer_from_us(1000))
+-        shutdown("Stepper too far in past");
++        shutdown_ec(14, "Stepper too far in past");
+ reschedule_min:
+     s->time.waketime = min_next_time;
+     return SF_RESCHEDULE;
+@@ -225,7 +225,7 @@ command_queue_step(uint32_t *args)
+     m->interval = args[1];
+     m->count = args[2];
+     if (!m->count)
+-        shutdown("Invalid count parameter");
++        shutdown_ec(15, "Invalid count parameter");
+     m->add = args[3];
+     m->flags = 0;
+ 
+@@ -244,7 +244,7 @@ command_queue_step(uint32_t *args)
+         s->flags = flags;
+         move_queue_push(&m->node, &s->mq);
+         stepper_load_next(s);
+-        sched_add_timer(&s->time);
++        sched_add_timer(&s->time, 22);
+     }
+     irq_enable();
+ }
+@@ -271,7 +271,7 @@ command_reset_step_clock(uint32_t *args)
+     uint32_t waketime = args[1];
+     irq_disable();
+     if (s->count)
+-        shutdown("Can't reset time when stepper active");
++        shutdown_ec(16, "Can't reset time when stepper active");
+     s->next_step_time = s->time.waketime = waketime;
+     s->flags &= ~SF_NEED_RESET;
+     irq_enable();
+diff --git a/src/stm32/Kconfig b/src/stm32/Kconfig
+index 037e37bbe..d66601268 100644
+--- a/src/stm32/Kconfig
++++ b/src/stm32/Kconfig
+@@ -224,6 +224,11 @@ config FLASH_SIZE
+ 
+ config FLASH_BOOT_ADDRESS
+     hex
++    # This part carries a factory bootloader below the application, and
++    # FlashForge declare the boot address as the application base.  That
++    # makes canboot_reset() fold away, which is why stock's "reset" handler
++    # is a bare NVIC_SystemReset.
++    default 0x8004000 if MACH_N32G45x
+     default 0x8000000
+ 
+ config RAM_START
+@@ -247,7 +252,7 @@ config RAM_SIZE
+     default 0x9000 if MACH_STM32G07x
+     default 0x24000 if MACH_STM32G0Bx
+     default 0x20000 if MACH_STM32H7
+-    default 0x10000 if MACH_N32G45x
++    default 0x4000 if MACH_N32G45x # FF levelBoard: SP=0x20004000
+ 
+ config STACK_SIZE
+     int
+@@ -303,7 +308,7 @@ choice
+     config STM32_FLASH_START_1000
+         bool "4KiB bootloader" if MACH_STM32F1 || MACH_STM32F0
+     config STM32_FLASH_START_4000
+-        bool "16KiB bootloader" if MACH_STM32F207 || MACH_STM32F401 || MACH_STM32F4x5 || MACH_STM32F103 || MACH_STM32F072
++        bool "16KiB bootloader" if MACH_STM32F207 || MACH_STM32F401 || MACH_STM32F4x5 || MACH_STM32F103 || MACH_STM32F072 || MACH_N32G45x
+     config STM32_FLASH_START_20000
+         bool "128KiB bootloader" if MACH_STM32H743 || MACH_STM32H723 || MACH_STM32F7
+ 
+diff --git a/src/stm32/Makefile b/src/stm32/Makefile
+index 5f4d3af5c..6111aff84 100644
+--- a/src/stm32/Makefile
++++ b/src/stm32/Makefile
+@@ -20,7 +20,8 @@ MCU_UPPER := $(shell echo $(CONFIG_MCU) | tr a-z A-Z | tr X x)
+ 
+ CFLAGS-$(CONFIG_MACH_STM32F0) += -mcpu=cortex-m0 -Ilib/stm32f0/include
+ CFLAGS-$(CONFIG_MACH_STM32F103) += -mcpu=cortex-m3
+-CFLAGS-$(CONFIG_MACH_N32G45x) += -mcpu=cortex-m4 -Ilib/n32g45x/include
++CFLAGS-$(CONFIG_MACH_N32G45x) += -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 \
++    -mfloat-abi=softfp -DCORE_CM4 -D__FPU_PRESENT=1 -Ilib/n32g45x/include
+ CFLAGS-$(CONFIG_MACH_STM32F1) += -Ilib/stm32f1/include
+ CFLAGS-$(CONFIG_MACH_STM32F2) += -mcpu=cortex-m3 -Ilib/stm32f2/include
+ CFLAGS-$(CONFIG_MACH_STM32F4) += -mcpu=cortex-m4 -Ilib/stm32f4/include
+@@ -31,7 +32,7 @@ CFLAGS-$(CONFIG_MACH_STM32H7) += -mcpu=cortex-m7 -Ilib/stm32h7/include
+ CFLAGS-$(CONFIG_MACH_STM32L4) += -mcpu=cortex-m4 -Ilib/stm32l4/include
+ CFLAGS += $(CFLAGS-y) -D$(MCU_UPPER) -mthumb -Ilib/cmsis-core -Ilib/fast-hash
+ 
+-CFLAGS_klipper.elf += -nostdlib -lgcc -lc_nano
++CFLAGS_klipper.elf += -nodefaultlibs -lgcc -lc_nano
+ CFLAGS_klipper.elf += -T $(OUT)src/generic/armcm_link.ld
+ $(OUT)klipper.elf: $(OUT)src/generic/armcm_link.ld
+ 
+@@ -47,6 +48,7 @@ src-$(CONFIG_MACH_STM32F103) += ../lib/stm32f1/system_stm32f1xx.c
+ src-$(CONFIG_MACH_STM32F103) += stm32/adc.c
+ src-$(CONFIG_MACH_N32G45x) += ../lib/stm32f1/system_stm32f1xx.c
+ src-$(CONFIG_MACH_N32G45x) += ../lib/n32g45x/n32g45x_adc.c stm32/n32g45x_adc.c
++src-$(CONFIG_MACH_N32G45x) += ../lib/n32g45x/n32g45x_periph.c
+ src-$(CONFIG_MACH_STM32F1) += stm32/stm32f1.c generic/armcm_timer.c stm32/i2c.c
+ src-$(CONFIG_MACH_STM32F2) += ../lib/stm32f2/system_stm32f2xx.c
+ src-$(CONFIG_MACH_STM32F2) += stm32/stm32f4.c generic/armcm_timer.c
+@@ -99,7 +101,7 @@ target-y += $(OUT)klipper.bin
+ 
+ $(OUT)klipper.bin: $(OUT)klipper.elf
+ 	@echo "  Creating hex file $@"
+-	$(Q)$(OBJCOPY) -O binary $< $@
++	$(Q)$(OBJCOPY) -O binary --gap-fill 0xff $< $@
+ 
+ # Flash rules
+ lib/hidflash/hid-flash:
+diff --git a/src/stm32/gpio.c b/src/stm32/gpio.c
+index d19437cbe..35b897a72 100644
+--- a/src/stm32/gpio.c
++++ b/src/stm32/gpio.c
+@@ -78,7 +78,7 @@ struct gpio_out
+ gpio_out_setup(uint32_t pin, uint32_t val)
+ {
+     if (!gpio_valid(pin))
+-        shutdown("Not an output pin");
++        shutdown_ec(11, "Not an output pin");
+     GPIO_TypeDef *regs = digital_regs[GPIO2PORT(pin)];
+     gpio_clock_enable(regs);
+     struct gpio_out g = { .regs=regs, .bit=GPIO2BIT(pin) };
+@@ -130,7 +130,7 @@ struct gpio_in
+ gpio_in_setup(uint32_t pin, int32_t pull_up)
+ {
+     if (!gpio_valid(pin))
+-        shutdown("Not a valid input pin");
++        shutdown_ec(12, "Not a valid input pin");
+     GPIO_TypeDef *regs = digital_regs[GPIO2PORT(pin)];
+     struct gpio_in g = { .regs=regs, .bit=GPIO2BIT(pin) };
+     gpio_in_reset(g, pull_up);
+diff --git a/src/stm32/serial.c b/src/stm32/serial.c
+index 19aa048ea..cd8682c64 100644
+--- a/src/stm32/serial.c
++++ b/src/stm32/serial.c
+@@ -11,13 +11,144 @@
+ #include "internal.h" // enable_pclock
+ #include "sched.h" // DECL_INIT
+ 
++#if CONFIG_MACH_N32G45x && CONFIG_STM32_SERIAL_USART1
++// ==========================================================================
++// FlashForge "levelBoard" (Nations N32G45x) reconstruction.
++//
++// The stock console is upstream Klipper's byte-at-a-time USART1 RXNE/TXE
++// interrupt path, not DMA driven, accessed through the Nations N32G45x
++// peripheral library (lib/n32g45x) instead of Klipper's generic
++// enable_pclock()/gpio_peripheral()/armcm_enable_irq() stm32 helpers, and
++// with USART registers accessed 16 bits wide.  See
++// tools/mcu-recovery/recovered_serial.md for the full analysis, addresses
++// and per-function verification against the stock image.
++// ==========================================================================
++#include "n32g45x.h" // NS_USART1
++
++DECL_CONSTANT_STR("RESERVE_PINS_serial", "PH10,PH9");
++
++#define CR1_FLAGS (USART_CTRL1_UEN | USART_CTRL1_REN | USART_CTRL1_TEN \
++                   | USART_CTRL1_RXDNEIEN)
++
++void
++USARTx_IRQHandler(void)
++{
++    uint16_t sr = NS_USART1->STS;
++    if (sr & (USART_STS_RXDNE | USART_STS_OREF)) {
++        // The ORE flag is automatically cleared by reading SR, followed
++        // by reading DR.
++        serial_rx_byte(NS_USART1->DAT);
++    }
++    if (sr & USART_STS_TXDE && NS_USART1->CTRL1 & USART_CTRL1_TXDEIEN) {
++        uint8_t data;
++        int ret = serial_get_tx_byte(&data);
++        if (ret)
++            NS_USART1->CTRL1 = CR1_FLAGS;
++        else
++            NS_USART1->DAT = data;
++    }
++}
++DECL_ARMCM_IRQ(USARTx_IRQHandler, N32_USART1_IRQn);
++
++void
++serial_enable_tx_irq(void)
++{
++    NS_USART1->CTRL1 = CR1_FLAGS | USART_CTRL1_TXDEIEN;
++}
++
++// Vestigial DMA transmit path.  The stock firmware still carries these two
++// handlers (and still turns on the DMA1 clock in serial_init), but nothing
++// ever configures or starts DMA1 channel 4/5 for USART1, so neither handler
++// can run and this flag is only ever cleared.
++uint8_t tx_dma_active;
++
++void
++DMA1_Channel4_IRQHandler(void)
++{
++    if (DMA_GetIntStatus(NS_DMA1, DMA1_INT_TXC4)) {
++        DMA_ClrIntPendingBit(NS_DMA1, DMA1_INT_TXC4);
++        USART_ClrFlag(NS_USART1, USART_FLAG_TXC);
++        DMA_DisableChannel(NS_DMA1_CH4);
++        tx_dma_active = 0;
++    }
++}
++DECL_ARMCM_IRQ(DMA1_Channel4_IRQHandler, N32_DMA1_Channel4_IRQn);
++
++void
++DMA1_Channel5_IRQHandler(void)
++{
++    if (DMA_GetFlagStatus(NS_DMA1, DMA1_FLAG_TXC5))
++        DMA_ClearFlag(NS_DMA1, DMA1_FLAG_TXC5);
++}
++DECL_ARMCM_IRQ(DMA1_Channel5_IRQHandler, N32_DMA1_Channel5_IRQn);
++
++// Stock's vector table is 69 words long: IRQ 0..52.  IRQ 52 (UART4 on this
++// part's numbering) is padded out to a DefaultHandler slot even though
++// UART4's base address, 0x40004C00, appears nowhere in the image -- UART4
++// is not used.  What actually causes the table to extend that far is not
++// known (no peripheral in this range is otherwise touched); this
++// declaration reproduces the table's length and bytes without asserting a
++// mechanism for it.
++DECL_ARMCM_IRQ(DefaultHandler, 52);
++
++void
++serial_init(void)
++{
++    GPIO_InitType gpio;
++    NVIC_InitType nvic;
++    USART_InitType usart;
++
++    RCC_EnableAHBPeriphClk(RCC_AHB_PERIPH_DMA1);
++    RCC_EnableAHBPeriphClk(RCC_AHB_PERIPH_GPIOA);
++    RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_AFIO);
++    RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_USART1);
++
++    GPIO_InitStruct(&gpio);
++    gpio.Pin = GPIO_PIN_9;
++    gpio.GPIO_Mode = GPIO_MODE_AF_PP;
++    gpio.GPIO_Pull = GPIO_PULL_UP;
++    gpio.GPIO_Alternate = GPIO_AF5_USART1;
++    GPIO_InitPeripheral(NS_GPIOA, &gpio);
++    gpio.Pin = GPIO_PIN_10;
++    gpio.GPIO_Alternate = GPIO_AF5_USART1;
++    GPIO_InitPeripheral(NS_GPIOA, &gpio);
++
++    nvic.NVIC_IRQChannel = N32_USART1_IRQn;
++    nvic.NVIC_IRQChannelPreemptionPriority = 0;
++    nvic.NVIC_IRQChannelSubPriority = 3;
++    nvic.NVIC_IRQChannelCmd = ENABLE;
++    NVIC_Init(&nvic);
++
++    USART_StructInit(&usart);
++    usart.BaudRate = CONFIG_SERIAL_BAUD;
++    usart.WordLength = USART_WL_8B;
++    usart.StopBits = USART_STPB_1;
++    usart.Parity = USART_PE_NO;
++    usart.Mode = USART_MODE_RX | USART_MODE_TX;
++    usart.HardwareFlowControl = USART_HFCTRL_NONE;
++    USART_Init(NS_USART1, &usart);
++
++    USART_ConfigInt(NS_USART1, USART_INT_RXDNE);
++    USART_Enable(NS_USART1);
++}
++DECL_INIT(serial_init);
++
++#else // !(CONFIG_MACH_N32G45x && CONFIG_STM32_SERIAL_USART1)
++
+ // Select the configured serial port
+ #if CONFIG_STM32_SERIAL_USART1
+-  DECL_CONSTANT_STR("RESERVE_PINS_serial", "PA10,PA9");
++  DECL_CONSTANT_STR("RESERVE_PINS_serial", "PH10,PH9");
+   #define GPIO_Rx GPIO('A', 10)
+   #define GPIO_Tx GPIO('A', 9)
+   #define USARTx USART1
+-  #define USARTx_IRQn USART1_IRQn
++  // Stock installs this handler on vector 36 and unmasks NVIC line 36.
++  // The Nations CMSIS header numbers this part exactly like an F103 --
++  // a contiguous enum in which 36 is SPI2 and USART1 is 37 -- so on the
++  // published numbering this handler sits on the wrong vector and can
++  // never fire.  Neither the SPI2 nor the UART4 base address appears
++  // anywhere in the image.  Reproducing the image requires 36; whether
++  // the shipped silicon really numbers USART1 at 36 is unresolved.
++  #define USARTx_IRQn SPI2_IRQn
+ #elif CONFIG_STM32_SERIAL_USART1_ALT_PB7_PB6
+   DECL_CONSTANT_STR("RESERVE_PINS_serial", "PB7,PB6");
+   #define GPIO_Rx GPIO('B', 7)
+@@ -94,3 +225,5 @@ serial_init(void)
+     gpio_peripheral(GPIO_Tx, GPIO_FUNCTION(7), 0);
+ }
+ DECL_INIT(serial_init);
++
++#endif // CONFIG_MACH_N32G45x && CONFIG_STM32_SERIAL_USART1
+diff --git a/src/tmcuart.c b/src/tmcuart.c
+index a2f5f8fcd..6e4ab200b 100644
+--- a/src/tmcuart.c
++++ b/src/tmcuart.c
+@@ -198,7 +198,7 @@ command_tmcuart_send(uint32_t *args)
+     uint8_t *write = command_decode_ptr(args[2]);
+     uint8_t read_len = args[3];
+     if (write_len > sizeof(t->data) || read_len > sizeof(t->data))
+-        shutdown("tmcuart data too large");
++        shutdown_ec(2, "tmcuart data too large");
+     memcpy(t->data, write, write_len);
+     t->pos = 0;
+     t->flags = (t->flags & (TU_LINE_HIGH|TU_PULLUP|TU_SINGLE_WIRE)) | TU_ACTIVE;
+@@ -212,7 +212,7 @@ command_tmcuart_send(uint32_t *args)
+     }
+     irq_disable();
+     t->timer.waketime = timer_read_time() + timer_from_us(200);
+-    sched_add_timer(&t->timer);
++    sched_add_timer(&t->timer, 51);
+     irq_enable();
+ }
+ DECL_COMMAND(command_tmcuart_send, "tmcuart_send oid=%c write=%*s read=%c");
+diff --git a/src/trsync.c b/src/trsync.c
+index 3bf7aa669..5a181ffe6 100644
+--- a/src/trsync.c
++++ b/src/trsync.c
+@@ -87,7 +87,7 @@ trsync_add_signal(struct trsync *ts, struct trsync_signal *tss
+ {
+     irqstatus_t flag = irq_save();
+     if (tss->func || !func)
+-        shutdown("Can't add signal that is already active");
++        shutdown_ec(1, "Can't add signal that is already active");
+     tss->func = func;
+     tss->next = ts->signals;
+     ts->signals = tss;
+@@ -121,7 +121,7 @@ command_trsync_start(uint32_t *args)
+     ts->report_time.waketime = args[1];
+     ts->report_ticks = args[2];
+     if (ts->report_ticks)
+-        sched_add_timer(&ts->report_time);
++        sched_add_timer(&ts->report_time, 29);
+     ts->expire_reason = args[3];
+     irq_enable();
+ }
+@@ -138,7 +138,7 @@ command_trsync_set_timeout(uint32_t *args)
+     if (flags & TSF_CAN_TRIGGER) {
+         sched_del_timer(&ts->expire_time);
+         ts->expire_time.waketime = args[1];
+-        sched_add_timer(&ts->expire_time);
++        sched_add_timer(&ts->expire_time, 28);
+     }
+     irq_enable();
+ }
