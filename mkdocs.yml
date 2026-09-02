@@ -78,6 +78,7 @@ nav:
           - Read first: calibration-overview.md
           - XYZ tool calibration: calibration.md
           - Bed mesh: bed-mesh.md
+          - Pressure advance: pressure-advance.md
       - Support: support.md
       - Versions: versions.md
 
